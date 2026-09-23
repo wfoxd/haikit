@@ -1,0 +1,206 @@
+/**
+ * hai-client — default UI.
+ *
+ * Styles ONLY what the framework renders: transcript blocks, the tool
+ * provenance row, the surface container, and the shell that mountChat() builds.
+ *
+ * It deliberately does not style the inside of your surfaces. Your components
+ * emit their own class names and your own stylesheet owns them — otherwise the
+ * framework starts dictating what your UI looks like.
+ *
+ * Everything is driven by custom properties. Override them in your own sheet:
+ *
+ *   :root { --hai-accent: #b07cff; --hai-bg: #101014; }
+ */
+
+:root {
+  --hai-bg: #0d1013;
+  --hai-panel: #14181d;
+  --hai-panel-2: #11161c;
+  --hai-line: #242c34;
+  --hai-fg: #dde3ea;
+  --hai-dim: #7c8894;
+  --hai-accent: #6ea8fe;
+  --hai-good: #63c49a;
+  --hai-warn: #e0b055;
+  --hai-bad: #e07070;
+  --hai-radius: 10px;
+  --hai-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --hai-sans: ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --hai-inspector-width: 400px;
+}
+
+/* ── shell ──────────────────────────────────────────────────────────── */
+.hai-shell {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--hai-bg);
+  color: var(--hai-fg);
+  font: 14px/1.55 var(--hai-sans);
+}
+.hai-top {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--hai-line);
+  background: var(--hai-panel);
+}
+.hai-title { font-weight: 700; letter-spacing: .04em; }
+.hai-subtitle { color: var(--hai-dim); font-size: 12px; }
+.hai-model { margin-left: auto; font: 11px var(--hai-mono); color: var(--hai-warn); }
+
+.hai-main { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr); min-height: 0; }
+.hai-main.has-inspector { grid-template-columns: minmax(0, 1fr) var(--hai-inspector-width); }
+.hai-chat { display: flex; flex-direction: column; min-height: 0; }
+
+.hai-transcript { flex: 1; overflow-y: auto; padding: 18px 20px 8px; }
+.hai-empty { color: var(--hai-dim); max-width: 60ch; }
+.hai-suggestions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.hai-suggestion {
+  background: var(--hai-panel-2);
+  color: var(--hai-fg);
+  border: 1px solid var(--hai-line);
+  border-radius: 999px;
+  padding: 5px 12px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+}
+.hai-suggestion:hover { border-color: var(--hai-accent); }
+
+/* ── transcript blocks ──────────────────────────────────────────────── */
+.hai-block { margin: 0 0 12px; max-width: 70ch; }
+.hai-user .hai-body {
+  background: #1d2733;
+  border: 1px solid #27333f;
+  border-radius: var(--hai-radius);
+  padding: 8px 12px;
+  display: inline-block;
+}
+.hai-assistant .hai-body { white-space: pre-wrap; }
+.hai-interaction {
+  color: var(--hai-good);
+  font-size: 13px;
+  display: flex;
+  gap: 8px;
+  border-left: 2px solid var(--hai-good);
+  padding-left: 10px;
+}
+.hai-error { color: var(--hai-bad); font: 12px var(--hai-mono); }
+
+/* tool provenance row — chrome for the surface directly beneath it */
+.hai-tool {
+  border: 1px solid var(--hai-line);
+  border-radius: var(--hai-radius) var(--hai-radius) 0 0;
+  background: var(--hai-panel);
+  max-width: none;
+  margin-bottom: 0;
+}
+.hai-tool summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  cursor: pointer;
+  font: 12px var(--hai-mono);
+  list-style: none;
+}
+.hai-tool summary::-webkit-details-marker { display: none; }
+.hai-gear { color: var(--hai-dim); }
+.hai-tname { color: var(--hai-accent); }
+.hai-targs { color: var(--hai-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.hai-tstatus { color: var(--hai-dim); }
+.hai-status-awaiting .hai-tstatus { color: var(--hai-warn); }
+.hai-status-running .hai-tstatus { color: var(--hai-accent); }
+.hai-tool-detail { padding: 0 12px 10px; border-top: 1px solid var(--hai-line); }
+.hai-label { font: 11px var(--hai-mono); color: var(--hai-dim); margin: 8px 0 4px; }
+.hai-digest {
+  margin: 0;
+  padding: 8px 10px;
+  background: #0b0e11;
+  border: 1px solid var(--hai-line);
+  border-radius: 6px;
+  font: 11.5px/1.5 var(--hai-mono);
+  color: var(--hai-good);
+  white-space: pre-wrap;
+  max-height: 180px;
+  overflow: auto;
+}
+
+/* surface container — your component mounts inside this */
+.hai-surface {
+  border: 1px solid var(--hai-line);
+  border-top: none;
+  border-radius: 0 0 var(--hai-radius) var(--hai-radius);
+  background: var(--hai-panel-2);
+  margin-bottom: 14px;
+  overflow: hidden;
+}
+.hai-skeleton, .hai-surface-error { padding: 14px; font: 12px var(--hai-mono); color: var(--hai-dim); }
+.hai-surface-error { color: var(--hai-bad); }
+
+/* ── status + composer ──────────────────────────────────────────────── */
+.hai-status { padding: 0 20px 4px; font-size: 12px; min-height: 18px; color: var(--hai-dim); }
+.hai-status[data-status="awaiting"] { color: var(--hai-warn); }
+.hai-composer { display: flex; gap: 8px; padding: 10px 20px 16px; border-top: 1px solid var(--hai-line); }
+.hai-input {
+  flex: 1;
+  resize: none;
+  background: var(--hai-panel);
+  color: var(--hai-fg);
+  border: 1px solid var(--hai-line);
+  border-radius: 8px;
+  padding: 9px 12px;
+  font: inherit;
+  min-height: 38px;
+  max-height: 180px;
+}
+.hai-input:focus { outline: none; border-color: var(--hai-accent); }
+.hai-send {
+  background: var(--hai-accent);
+  color: var(--hai-bg);
+  border: none;
+  border-radius: 8px;
+  padding: 0 18px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.hai-send:disabled { opacity: .4; cursor: default; }
+
+/* ── context inspector ──────────────────────────────────────────────── */
+.hai-inspector {
+  border-left: 1px solid var(--hai-line);
+  background: var(--hai-panel-2);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.hai-inspector-title { padding: 10px 14px; border-bottom: 1px solid var(--hai-line); font-size: 12px; font-weight: 600; }
+.hai-inspector-title span { color: var(--hai-dim); font-weight: 400; }
+.hai-inspector-body { flex: 1; overflow-y: auto; padding: 12px 14px; }
+.hai-ctx-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 14px;
+  padding: 10px;
+  border: 1px solid var(--hai-line);
+  border-radius: 8px;
+  background: var(--hai-bg);
+  font: 11.5px var(--hai-mono);
+}
+.hai-stat-dim { color: var(--hai-dim); }
+.hai-stat-good { color: var(--hai-good); }
+.hai-msg { margin-bottom: 10px; border-left: 2px solid var(--hai-line); padding-left: 9px; }
+.hai-role { font: 10px var(--hai-mono); text-transform: uppercase; color: var(--hai-dim); letter-spacing: .07em; }
+.hai-mbody { font: 11.5px/1.5 var(--hai-mono); white-space: pre-wrap; word-break: break-word; }
+.hai-tu { color: var(--hai-accent); }
+.hai-tr { color: var(--hai-good); }
+
+@media (max-width: 900px) {
+  .hai-main.has-inspector { grid-template-columns: minmax(0, 1fr); }
+  .hai-inspector { display: none; }
+}

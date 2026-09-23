@@ -1,0 +1,36 @@
+name: ci
+
+on:
+  push: { branches: [main] }
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      # the framework compiles
+      - run: npm run build
+
+      # every consumer still compiles — server code AND browser components,
+      # which are checked against the same shared contract
+      - run: npm run typecheck
+
+      # the four type-level guarantees are still enforced.
+      # this is the check most repos don't have and this one needs.
+      - run: npm run typetest
+
+      # the elicit loop actually works: surface renders, turn parks,
+      # interaction resolves it, binding table rejects what it should
+      - run: npm run smoke
+
+      # what npm would actually serve still works. every check above runs
+      # against workspace symlinks, which hide `files` omissions, bad `exports`
+      # paths and undeclared type dependencies completely.
+      - run: npm run packtest

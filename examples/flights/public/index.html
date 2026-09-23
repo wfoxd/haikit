@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>flights — built on hai</title>
+    <link rel="stylesheet" href="/hai-client/hai.css" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module">
+      import { mountChat } from "/hai-client/app.js";
+      import { registry } from "./components.js";
+
+      mountChat({
+        root: document.querySelector("#app"),
+        registry,
+        title: "flights",
+        subtitle: "tools return UI context, the transcript renders it",
+        emptyText:
+          "One tool execution, two channels: a short digest for the model, the full payload for this browser. Watch the right pane.",
+        suggestions: [
+          "find me flights to Tokyo next Friday",
+          "any nonstops under $500?",
+          "show me the seat map",
+        ],
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,50 @@
+{
+  "name": "@haikit/core",
+  "version": "0.1.0",
+  "description": "The haikit contract layer: declare a UI surface once, implement it on the server and in the browser. Isomorphic, zero runtime dependencies.",
+  "keywords": [
+    "haikit",
+    "llm",
+    "agent",
+    "agentic-ui",
+    "generative-ui",
+    "tool-use",
+    "tool-calling",
+    "ai",
+    "chat"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "prepack": "npm --prefix ../.. run build"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/wfoxd/haikit/tree/main/packages/core#readme",
+  "bugs": {
+    "url": "https://github.com/wfoxd/haikit/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wfoxd/haikit.git",
+    "directory": "packages/core"
+  }
+}

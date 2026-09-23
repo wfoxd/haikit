@@ -1,0 +1,16 @@
+{
+  "name": "flights",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/server/main.ts"
+  },
+  "dependencies": {
+    "@haikit/core": "0.1.0",
+    "@haikit/server": "0.1.0",
+    "@haikit/anthropic": "0.1.0",
+    "@haikit/client": "0.1.0",
+    "zod": "^4.0.0"
+  }
+}

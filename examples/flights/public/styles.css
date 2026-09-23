@@ -1,0 +1,45 @@
+/* This app's own styles. The framework ships /hai-client/hai.css for the
+   transcript, shell and inspector; everything here is inside our surfaces. */
+
+/* surfaces */
+.c-head { display: flex; align-items: baseline; gap: 10px; padding: 9px 12px; border-bottom: 1px solid var(--hai-line); }
+.c-title { font-weight: 600; }
+.c-sub { color: var(--hai-dim); font-size: 12px; }
+.badge {
+  margin-left: auto; font: 10px var(--hai-mono); text-transform: uppercase;
+  letter-spacing: .06em; color: var(--hai-dim); border: 1px solid var(--hai-line);
+  border-radius: 4px; padding: 2px 6px;
+}
+.badge-live { color: var(--hai-warn); border-color: #4a3c1d; background: #241d10; }
+.c-foot { display: flex; align-items: center; gap: 12px; padding: 7px 12px; border-top: 1px solid var(--hai-line); }
+.hint { color: var(--hai-dim); font-size: 11px; margin-left: auto; }
+.link { background: none; border: none; color: var(--hai-accent); cursor: pointer; font-size: 12px; padding: 0; }
+
+table.ft { width: 100%; border-collapse: collapse; font-size: 13px; }
+.ft th {
+  text-align: left; font-weight: 500; color: var(--hai-dim); font-size: 11px;
+  text-transform: uppercase; letter-spacing: .05em; padding: 7px 12px; cursor: pointer;
+  user-select: none; border-bottom: 1px solid var(--hai-line);
+}
+.ft th:hover { color: var(--hai-fg); }
+.ft th.sorted { color: var(--hai-accent); }
+.ft td { padding: 6px 12px; border-bottom: 1px solid #1a2028; }
+.ft tr.selectable { cursor: pointer; }
+.ft tr.selectable:hover td { background: #1a222c; }
+.ft tr.selected td { background: #17301f; }
+.ft tr.nonstop td:first-child { box-shadow: inset 2px 0 0 var(--hai-good); }
+.mono { font-family: var(--hai-mono); font-size: 12px; }
+.price { font-weight: 600; }
+
+.seatmap { padding: 12px; display: flex; flex-direction: column; gap: 4px; }
+.seatrow { display: flex; align-items: center; gap: 4px; }
+.rownum { width: 24px; color: var(--hai-dim); font-size: 11px; }
+.aisle { width: 14px; }
+.seat {
+  width: 26px; height: 24px; border-radius: 4px; font: 10px var(--hai-mono);
+  border: 1px solid var(--hai-line); background: #1b222b; color: var(--hai-fg); cursor: pointer;
+}
+.seat.taken { background: #171b20; color: #3a444e; cursor: not-allowed; }
+.seat.legroom.free { border-color: #2f5f47; color: var(--hai-good); }
+.seat.picked { background: var(--hai-good); color: #06110c; border-color: var(--hai-good); }
+.seat.free:hover:not(:disabled) { border-color: var(--hai-accent); }

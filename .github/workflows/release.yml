@@ -1,0 +1,57 @@
+name: release
+
+on:
+  push: { branches: [main] }
+
+concurrency: release
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      # trusted publishing (OIDC) needs npm >= 11.5.1, and the npm bundled with
+      # node 22 is older than that. without this the publish falls back to
+      # looking for a token that no longer exists.
+      - run: npm install -g npm@latest
+
+      - run: npm ci
+
+      # never publish something that does not pass the same gate as a PR —
+      # build, typecheck, the four guarantees, and the elicit loop end to end
+      - run: npm test
+
+      # the tarballs themselves work: packed, installed clean, and run.
+      # catches `files` omissions that workspace symlinks hide completely.
+      - run: npm run packtest
+
+      # opens/updates a "Version Packages" PR; publishes when that PR merges.
+      #
+      # Auth is trusted publishing: npm verifies this workflow's OIDC identity
+      # against the trusted publisher configured on each package, so there is no
+      # NPM_TOKEN to store, rotate or leak. `id-token: write` above is what makes
+      # that token request possible — remove it and publishing stops working.
+      #
+      # Provenance is automatic under trusted publishing, so NPM_CONFIG_PROVENANCE
+      # is deliberately absent; setting it here would be redundant.
+      #
+      # GITHUB_TOKEN is unrelated to npm — changesets needs it to open the
+      # "Version Packages" PR.
+      - uses: changesets/action@v1
+        with:
+          publish: npm run release
+          version: npx changeset version
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

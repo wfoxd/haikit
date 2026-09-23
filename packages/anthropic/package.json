@@ -1,0 +1,53 @@
+{
+  "name": "@haikit/anthropic",
+  "version": "0.1.0",
+  "description": "Claude model adapter for haikit. Imports only @haikit/core, never the server runtime.",
+  "keywords": [
+    "haikit",
+    "claude",
+    "anthropic",
+    "llm",
+    "agent",
+    "agentic-ui",
+    "tool-use",
+    "ai"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "prepack": "npm --prefix ../.. run build"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.70.0",
+    "@haikit/core": "0.1.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/wfoxd/haikit/tree/main/packages/anthropic#readme",
+  "bugs": {
+    "url": "https://github.com/wfoxd/haikit/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wfoxd/haikit.git",
+    "directory": "packages/anthropic"
+  }
+}

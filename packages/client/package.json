@@ -1,0 +1,54 @@
+{
+  "name": "@haikit/client",
+  "version": "0.1.0",
+  "description": "The haikit browser runtime: streams tool payloads into interactive UI surfaces. Plain ESM, no build step, no dependencies.",
+  "keywords": [
+    "haikit",
+    "llm",
+    "agent",
+    "agentic-ui",
+    "generative-ui",
+    "tool-use",
+    "chat-ui",
+    "sse",
+    "ai"
+  ],
+  "type": "module",
+  "types": "./src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "default": "./src/index.js"
+    },
+    "./app.js": {
+      "types": "./src/app.d.ts",
+      "default": "./src/app.js"
+    },
+    "./transcript.js": {
+      "types": "./src/transcript.d.ts",
+      "default": "./src/transcript.js"
+    },
+    "./hai.css": "./src/hai.css",
+    "./package.json": "./package.json",
+    "./*": "./src/*"
+  },
+  "files": [
+    "src"
+  ],
+  "sideEffects": [
+    "*.css"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/wfoxd/haikit/tree/main/packages/client#readme",
+  "bugs": {
+    "url": "https://github.com/wfoxd/haikit/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wfoxd/haikit.git",
+    "directory": "packages/client"
+  }
+}
