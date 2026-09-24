@@ -9,10 +9,10 @@
     "mock": "npm run build && HAI_SCRIPTED=1 node src/server/main.ts"
   },
   "dependencies": {
-    "@haikit/core": "0.1.0",
-    "@haikit/server": "0.1.0",
-    "@haikit/client": "0.1.0",
-    "@haikit/anthropic": "0.1.0",
+    "@haikit/core": "0.2.0",
+    "@haikit/server": "0.2.0",
+    "@haikit/client": "0.2.0",
+    "@haikit/anthropic": "0.2.0",
     "zod": "^4.0.0"
   }
 }
