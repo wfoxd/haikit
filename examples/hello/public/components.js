@@ -44,9 +44,40 @@ const h = (tag, cls, text) => {
         };
   
         render();
-        return {                                              
-          freeze(sel) { state = "frozen"; picked = sel ?? null; render(); },  
+        return {
+          freeze(sel) { state = "frozen"; picked = sel ?? null; render(); },
         };
+      },
+    },
+
+    // The key must match the surface's `name` exactly. A mismatch is not a
+    // crash — the client renders "unknown component: greeting_card", because
+    // the registry is an allowlist and anything unlisted cannot be mounted.
+    greeting_card: {
+      mount(el, props, ctx) {
+        const g = props.greeting;
+
+        const card = h("div", "card");
+        const text = h("div", "card-text", g.text);
+        if (g.rtl) text.dir = "rtl";
+
+        const meta = h("div", "card-meta", `${g.language} · ${g.script} · ${g.speakersM}M speakers`);
+
+        // A display surface never parks the turn, so there is nothing to
+        // resolve. `inform` adds a line to the conversation after the fact.
+        const copy = h("button", "chip", "copy");
+        copy.onclick = async () => {
+          await navigator.clipboard?.writeText(g.text).catch(() => {});
+          copy.textContent = "copied";
+          ctx.send("copy", { code: g.code });
+        };
+
+        card.append(text, meta, copy);
+        el.append(card);
+
+        // No `freeze` — a display surface is never frozen, because it was
+        // never holding the turn open in the first place.
+        return {};
       },
     },
   };

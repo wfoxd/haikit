@@ -23,6 +23,13 @@ const CASES = [
     action: "choose",
     value: "he",
     expectInResolution: /Chose Hebrew/,
+    display: {
+      message: "show the hebrew one",
+      component: "greeting_card",
+      action: "copy",
+      value: { code: "he" },
+      expectInLabel: /Copied the Hebrew greeting/,
+    },
   },
   {
     name: "flights",
@@ -150,6 +157,51 @@ for (const c of CASES) {
     replay.find((e) => e.type === "error")?.message === "component is frozen"
       ? ok("rejects: component is frozen")
       : bad("a frozen surface accepted a second resolution");
+
+    // 5 · a DISPLAY surface is the other half of the contract: it renders, the
+    //     turn never parks, and an `inform` action lands after the model has
+    //     already finished. Untested, this whole path rots — the tutorial's
+    //     step 08 shipped without a registered component for exactly that
+    //     reason, and the failure is a rendered "unknown component" string
+    //     rather than an error anything would notice.
+    if (c.display) {
+      const d = await sse(`${base}/hai/chat`, { conversationId, message: c.display.message });
+      const dOpen = d.find((e) => e.type === "ui_open");
+      const dStatus = d.filter((e) => e.type === "status").at(-1);
+
+      dOpen?.component === c.display.component && dOpen.mode === "display"
+        ? ok(`renders ${c.display.component} as display`)
+        : bad(`expected ${c.display.component} in display mode, got ${dOpen?.component}/${dOpen?.mode}`);
+      dStatus?.status === "idle" ? ok("display does not park the turn") : bad(`parked at ${dStatus?.status}`);
+
+      // without this the next block throws instead of reporting, and a crashed
+      // harness reads as an infrastructure problem rather than a failed check
+      if (!dOpen) {
+        bad("no display surface to interact with — skipping the rest");
+        child.kill("SIGKILL");
+        continue;
+      }
+
+      // the component must exist in the browser registry, or the client mounts
+      // an error card instead — invisible to every server-side assertion
+      const registry = await fetch(`${base}/components.js`).then((r) => r.text());
+      new RegExp(`\\b${c.display.component}\\s*:`).test(registry)
+        ? ok(`${c.display.component} is registered in components.js`)
+        : bad(`${c.display.component} missing from the client registry → "unknown component"`);
+
+      const informed = await sse(`${base}/hai/interact`, {
+        conversationId,
+        handle: dOpen.handle,
+        action: c.display.action,
+        value: c.display.value,
+      });
+      const iLabel = informed.find(
+        (e) => e.type === "block_start" && e.block.kind === "interaction",
+      )?.block.label ?? "";
+      c.display.expectInLabel.test(iLabel)
+        ? ok("inform action enriches without having blocked")
+        : bad(`inform label was: ${iLabel}`);
+    }
   } finally {
     child.kill("SIGKILL");
   }

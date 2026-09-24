@@ -93,6 +93,23 @@ export function scripted(): ModelAdapter {
         return say("Noted.", onTextDelta);
       }
 
+      // The display path. Renders a card and keeps talking — the turn is never
+      // parked, so there is no tool_result to wait for.
+      const show = text.match(/(?:show|card|big|large).*\b(english|mandarin|spanish|arabic|japanese|hebrew)\b/);
+      if (show) {
+        const code = { english: "en", mandarin: "zh", spanish: "es", arabic: "ar", japanese: "ja", hebrew: "he" }[
+          show[1]!
+        ]!;
+        onTextDelta("Here it is.");
+        return {
+          content: [
+            { type: "text", text: "Here it is." },
+            toolUse("show_greeting", { code }),
+          ],
+          stop_reason: "tool_use",
+        };
+      }
+
       // Dereference: only possible once a picker has been rendered.
       if (handle && /(right-to-left|rtl|left-to-right|ltr|script|latin|arabic|hebrew|han|japanese)/.test(text)) {
         const args: Record<string, unknown> = {};
@@ -125,7 +142,7 @@ export function scripted(): ModelAdapter {
       }
 
       return say(
-        `Try: "greet me", then "which ones are right-to-left?"`,
+        `Try: "greet me", then "which ones are right-to-left?", then "show the hebrew one"`,
         onTextDelta,
       );
     },

@@ -1,5 +1,5 @@
 import type { Greeting } from "../shared/surfaces.ts";      
-import { greetingPicker } from "../shared/surfaces.ts";
+import { greetingCard, greetingPicker } from "../shared/surfaces.ts";
 
 const fmt = (g: Greeting) =>                                
   `${g.language} (${g.code}): ${g.text} — ${g.script}, ${g.speakersM}M`;
@@ -43,4 +43,19 @@ export const greetingPickerServer = greetingPicker.implement({
       return cap(rows, fmt);                              
     },
   },
+});
+
+export const greetingCardServer = greetingCard.implement({
+  digest(props, { handle }) {
+    const g = props.greeting;
+    return `Card for ${g.language}: "${g.text}" (${g.script}). Rendered as ${handle}.`;
+  },
+
+  actions: {
+    copy(value, { props }) {
+      return `Copied the ${props.greeting.language} greeting (${value.code}) to the clipboard.`;
+    },
+  },
+
+  queries: {},
 });
