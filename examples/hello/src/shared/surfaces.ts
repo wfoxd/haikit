@@ -23,10 +23,17 @@ export const greetingPicker = defineSurface({
   queries: {                                            
     filter: query(
       z.object({
-        script: z.string().optional(),                  
+        script: z.string().optional(),
         rtl: z.boolean().optional(),
       }),
-      "Greetings in a given script or writing direction", 
+      "Greetings in a given script or writing direction",
+      {
+        type: "object",
+        properties: {
+          script: { type: "string", description: "Latin, Han, Arabic, Hebrew, Japanese" },
+          rtl: { type: "boolean", description: "true for right-to-left scripts only" },
+        },
+      },
     ),
   },
 });

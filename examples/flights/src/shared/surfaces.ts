@@ -48,8 +48,19 @@ export const flightTable = defineSurface({
         airline: z.string().optional(),
       }),
       "Flights matching price / stop / airline constraints",
+      {
+        type: "object",
+        properties: {
+          maxPrice: { type: "number", description: "upper bound in USD" },
+          nonstop: { type: "boolean", description: "true for nonstop only" },
+          airline: { type: "string", description: "airline name, e.g. Air Canada" },
+        },
+      },
     ),
-    cheapest: query(z.object({ nonstop: z.boolean().optional() }), "The single cheapest flight"),
+    cheapest: query(z.object({ nonstop: z.boolean().optional() }), "The single cheapest flight", {
+      type: "object",
+      properties: { nonstop: { type: "boolean", description: "restrict to nonstop" } },
+    }),
   },
 });
 

@@ -22,38 +22,70 @@ You'll ask for a greeting. The model calls a tool. A picker of 120 translations 
 
 ## 01 · Scaffold
 
-Add a new workspace beside the flights app.
+A standalone project. You do not need the haikit repo checked out — the four packages come from npm.
 
 **`terminal`** — *run*
 
 ```bash
-# from the repo root
-mkdir -p apps/hello/src/{shared,server} apps/hello/public
+mkdir -p haikit_hello/src/{shared,server} haikit_hello/public
+cd haikit_hello
 ```
 
-**`apps/hello/package.json`** — *new file*
+Everything from here on is relative to `haikit_hello/`, and that is where every command in this tutorial runs.
+
+**`package.json`** — *new file*
 
 ```json
 {
-  "name": "hello",
+  "name": "haikit_hello",
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "npm --prefix ../.. run build",
     "start": "node src/server/main.ts",
-    "dev": "npm run build && npm start"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@haikit/core": "0.1.0",
-    "@haikit/server": "0.1.0",
-    "@haikit/client": "0.1.0",
-    "@haikit/anthropic": "0.1.0",
+    "@haikit/core": "^0.1.0",
+    "@haikit/server": "^0.1.0",
+    "@haikit/client": "^0.1.0",
+    "@haikit/anthropic": "^0.1.0",
     "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
   }
 }
 ```
 
-Copy `tsconfig.json` from `apps/flights` unchanged, then `npm install` at the repo root to link the workspace.
+There is no `build` script and nothing to compile. The framework arrives from npm already built, and Node 22+ runs your own `.ts` files directly by stripping the types — so `npm start` is the whole loop.
+
+**`tsconfig.json`** — *new file*
+
+```json
+{
+    "compilerOptions": {
+      "target": "es2023",
+      "lib": ["es2023"],
+      "types": ["node"],
+      "module": "nodenext",
+      "moduleResolution": "nodenext",
+      "strict": true,
+      "noEmit": true,
+      "allowImportingTsExtensions": true,
+      "rewriteRelativeImportExtensions": true
+    },
+    "include": ["src"]
+}
+```
+
+`nodenext` is not optional here. It is what makes TypeScript read the `exports` map in each `@haikit/*` package, and it is why `.ts` extensions appear in the imports later on.
+
+**`terminal`** — *run*
+
+```bash
+npm install
+```
 
 ## 02 · Declare the contract
 
@@ -91,6 +123,13 @@ export const greetingPicker = defineSurface({
         rtl: z.boolean().optional(),
       }),
       "Greetings in a given script or writing direction", // 15
+      {                                                 // 16
+        type: "object",
+        properties: {
+          script: { type: "string", description: "Latin, Han, Arabic, Hebrew, Japanese" },
+          rtl: { type: "boolean", description: "true for right-to-left scripts only" },
+        },
+      },
     ),
   },
 });
@@ -100,7 +139,7 @@ export const greetingPicker = defineSurface({
 
   - **`defineSurface`** — Declares one renderable thing — a picker, a card, a table — as a named, versioned shape. It returns an object with an `.implement()` method the server calls in step 3, and a prop type the browser component renders against in step 5. This is the object that makes the two halves agree.
   - **`resolve(schema)`** — Declares an action that **answers a parked turn**. When the user triggers it, their value becomes the `tool_result` the model was waiting on. The schema describes what the component will send — here a language code. Declaring at least one is what lets a tool use `mode: "elicit"`.
-  - **`query(schema, description?)`** — Declares a named accessor over the stored payload — the only route the model has past the digest. The schema types its arguments; the description is spliced into the auto-generated `query_ui` tool so the model knows the accessor exists. Without at least one, the other 119 rows are unreachable.
+  - **`query(schema, description?, argsJsonSchema?)`** — Declares a named accessor over the stored payload — the only route the model has past the digest. The schema types and validates its arguments server-side; the description and `argsJsonSchema` are spliced into the auto-generated `query_ui` tool, which is how the model learns the accessor exists *and what it takes*. Without at least one query, the other 119 rows are unreachable.
 
 There is also `inform(schema)` for actions that add context without blocking; step 8 uses it.
 
@@ -132,7 +171,9 @@ There is also `inform(schema)` for actions that add context without blocking; st
 
 **14** Both filters optional, so `query_ui(handle, "filter", {})` is legal and returns the top rows rather than erroring.
 
-**15** This string is spliced into the generated `query_ui` tool description, so the model learns what it can ask for.
+**15** This string is spliced into the generated `query_ui` tool description, so the model learns what the accessor is *for*.
+
+**16** And this is how it learns what the accessor *takes*. Leave it out and the model is shown an opaque `args: {}` — it will call `filter` with no arguments, match all 120 rows and answer from the wrong set. The zod schema next to it cannot supply this: schemas are accepted structurally, so the runtime holds a `.parse()` it has no way to introspect. The runtime warns at startup for any query missing it.
 
 > [!NOTE]
 > **Why rtl is the interesting field**
@@ -447,10 +488,15 @@ export const registry = {
 
 ## 06 · Wire it up and run
 
+The whole server in one file: the runtime, the two hai routes, and the static assets. There is no bundler — the app serves its own `public/` alongside the client runtime straight out of its package in `node_modules`, so the browser loads `@haikit/client` as plain ESM.
+
 **`src/server/main.ts`** — *new file*
 
 ```ts
 import http from "node:http";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { createHai, memoryStore, nodeHandler } from "@haikit/server";
 import { anthropic } from "@haikit/anthropic";
 import { tools } from "./tools.ts";
@@ -476,15 +522,42 @@ user's browser, addressable by the handle in the digest (e.g. ui_01).
 
 const handleHai = nodeHandler(hai, "/hai");                  // 7
 
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const PUBLIC = path.resolve(HERE, "../../public");
+const CLIENT = path.dirname(fileURLToPath(import.meta.resolve("@haikit/client")));  // 8
+const MIME: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+};
+
 http
   .createServer(async (req, res) => {
-    if (await handleHai(req, res)) return;                 // 8
-    // static assets — the next block
+    if (await handleHai(req, res)) return;                 // 9
+
+    const url = new URL(req.url ?? "/", "http://localhost");
+    const clientPrefix = "/hai-client/";
+    let file: string;
+    if (url.pathname.startsWith(clientPrefix)) {
+      file = path.join(CLIENT, url.pathname.slice(clientPrefix.length));
+      if (!file.startsWith(CLIENT)) return void res.writeHead(403).end("forbidden");  // 10
+    } else {
+      file = path.join(PUBLIC, url.pathname === "/" ? "index.html" : url.pathname.slice(1));
+      if (!file.startsWith(PUBLIC)) return void res.writeHead(403).end("forbidden");
+    }
+
+    try {
+      const body = await fs.readFile(file);
+      res.writeHead(200, { "content-type": MIME[path.extname(file)] ?? "application/octet-stream" });
+      res.end(body);
+    } catch {
+      res.writeHead(404).end("not found");
+    }
   })
   .listen(5175, () => console.log("hello  http://localhost:5175"));
 ```
 
-**1** The model seam. Swap in your own object with a `generate()` method and the runtime cannot tell — that is how `apps/flights` ships a scripted model for demos.
+**1** The model seam. Swap in your own object with a `generate()` method and the runtime cannot tell — that is how `examples/flights` in the haikit repo ships a scripted model for demos.
 
 **2** The one line to change before shipping. A parked elicit turn is durable state; lose it and that conversation can never be sent again.
 
@@ -498,50 +571,13 @@ http
 
 **7** Mounts `POST /hai/chat` and `POST /hai/interact`. Everything about the elicit state machine lives behind these two routes.
 
-**8** Returns `true` if it handled the request, so hai composes with whatever else your server does rather than owning the process.
+**8** Ask Node where the package actually is rather than hand-writing a path into `node_modules` — hoisting, pnpm and workspaces each put it somewhere different, and a guessed path breaks on whichever one you didn't test.
 
-And the static half of the server. There is no bundler here, so the app serves its own `public/` plus the client runtime straight out of its package — the browser loads `hai-client` as plain ESM.
+**9** Returns `true` if it handled the request, so hai composes with whatever else your server does rather than owning the process.
 
-**`src/server/main.ts`** — *the next block*
+**10** Not decoration. Without this check and its twin below it, a request for `/../../.env` escapes the directory you meant to expose.
 
-```ts
-import fs from "node:fs/promises";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const PUBLIC = path.resolve(HERE, "../../public");
-const CLIENT = path.resolve(HERE, "../../../../packages/hai-client/src");
-const MIME: Record<string, string> = {
-  ".html": "text/html; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-};
-
-// inside createServer, after the `if (await handleHai(...)) return;` line:
-const url = new URL(req.url ?? "/", "http://localhost");
-const clientPrefix = "/hai-client/";
-let file: string;
-if (url.pathname.startsWith(clientPrefix)) {
-  file = path.join(CLIENT, url.pathname.slice(clientPrefix.length));
-  if (!file.startsWith(CLIENT)) return void res.writeHead(403).end("forbidden");
-} else {
-  file = path.join(PUBLIC, url.pathname === "/" ? "index.html" : url.pathname.slice(1));
-  if (!file.startsWith(PUBLIC)) return void res.writeHead(403).end("forbidden");
-}
-
-try {
-  const body = await fs.readFile(file);
-  res.writeHead(200, { "content-type": MIME[path.extname(file)] ?? "application/octet-stream" });
-  res.end(body);
-} catch {
-  res.writeHead(404).end("not found");
-}
-```
-
-The two `startsWith` checks are not decoration — without them a request for `/../../.env` escapes the directory you meant to expose.
-
-And the page. `hai-client` ships the default UI — the shell, transcript, composer and context inspector — so this is the whole of it:
+And the page. `@haikit/client` ships the default UI — the shell, transcript, composer and context inspector — so this is the whole of it:
 
 **`public/index.html`** — *new file*
 
@@ -583,12 +619,7 @@ There is no `app.js`. `mountChat` builds the shell, wires the composer, renders 
 **`terminal`** — *run*
 
 ```bash
-# from the repo root — `build` lives there, not in the app
-npm run build
-node apps/hello/src/server/main.ts
-
-# or, from apps/hello/ — the passthrough scripts from step 1
-npm run dev
+npm start
 ```
 
 > [!WARNING]
@@ -619,6 +650,10 @@ const toolUse = (name: string, input: unknown) => ({
 const CHOSE = /Chose ([^:]+): "([^"]+)"/;
 const RANK = /Rank: #(\d+) of (\d+)/;
 const MATCHED = /^(\d+) of (\d+) match/m;
+// anchored to the selection line. a bare /right-to-left/ over the whole
+// tool_result also matches the digest's "N right-to-left." — which rides along
+// on every resolution — and would claim it of every language picked
+const DIR = /script, (right-to-left|left-to-right),/;
 const SCRIPTS = ["latin", "arabic", "hebrew", "han", "japanese"];
 
 async function say(text: string, onTextDelta: (t: string) => void): Promise<ModelResponse> {
@@ -647,7 +682,7 @@ export function scripted(): ModelAdapter {
           const [, language, greeting] = chose;
           const rank = results.match(RANK);
           const where = rank ? `${language}, #${rank[1]} of ${rank[2]} by speakers` : language;
-          const dir = /right-to-left/.test(results) ? " It reads right to left." : "";
+          const dir = results.match(DIR)?.[1] === "right-to-left" ? " It reads right to left." : "";
           return say(`${greeting}\n\n— ${where}.${dir}`, onTextDelta);
         }
         const m = results.match(MATCHED);
@@ -711,10 +746,10 @@ const hai = createHai({
 **`package.json`** — *edit*
 
 ```json
-"mock": "npm run build && HAI_SCRIPTED=1 node src/server/main.ts"
+"mock": "HAI_SCRIPTED=1 node src/server/main.ts"
 ```
 
-`npm run mock` from `apps/hello/`, and the checkpoint below works end to end: the picker parks the turn, clicking Hebrew returns שלום, עולם! with “#6 of 6 by speakers, reads right to left”, and asking which are right-to-left fires a real `query_ui` dereference.
+`npm run mock`, and the checkpoint below works end to end: the picker parks the turn, clicking Hebrew returns שלום, עולם! with “#6 of 6 by speakers, reads right to left”, and asking which are right-to-left fires a real `query_ui` dereference.
 
 </details>
 
@@ -826,7 +861,7 @@ Register the new surface and tool in `main.ts`, add a component, done.
 
 ## 09 · Break it on purpose
 
-Best way to learn what the framework is actually holding for you. Make each edit, run `npx tsc -p apps/hello --noEmit`, then undo it.
+Best way to learn what the framework is actually holding for you. Make each edit, run `npm run typecheck`, then undo it.
 
 **`src/server/surfaces.ts`** — *try each, then revert*
 
@@ -857,7 +892,7 @@ error TS2353: Object literal may only specify known properties
 > [!TIP]
 > **What you just proved**
 >
-> Each of those is a bug that shipped in the prototype this framework was extracted from. A lazy digest produced a confidently invented fact. An uncapped filter put a whole payload into context permanently. They're compile errors now, not review items — `npm run typetest` in the repo root asserts exactly this, so a guarantee that quietly stops working fails CI.
+> Each of those is a bug that shipped in the prototype this framework was extracted from. A lazy digest produced a confidently invented fact. An uncapped filter put a whole payload into context permanently. They're compile errors now, not review items — `npm run typetest` in the haikit repo asserts exactly this, so a guarantee that quietly stops working fails CI.
 
 ## Where to go next
 

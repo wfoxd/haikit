@@ -27,6 +27,12 @@ const toolUse = (name: string, input: unknown) => ({
 /** Mirrors the strings `choose` returns in ./surfaces.ts. */
 const CHOSE = /Chose ([^:]+): "([^"]+)"/;
 const RANK = /Rank: #(\d+) of (\d+)/;
+/**
+ * Anchored to the selection line's own wording. A bare /right-to-left/ over the
+ * whole tool_result also matches the digest's "N right-to-left." — which rides
+ * along on every resolution — and would claim it of every language picked.
+ */
+const DIR = /script, (right-to-left|left-to-right),/;
 const MATCHED = /^(\d+) of (\d+) match/m;
 
 const SCRIPTS = ["latin", "arabic", "hebrew", "han", "japanese"];
@@ -61,7 +67,7 @@ export function scripted(): ModelAdapter {
           const [, language, greeting] = chose;
           const rank = results.match(RANK);
           const where = rank ? `${language}, #${rank[1]} of ${rank[2]} by speakers` : language;
-          const dir = /right-to-left/.test(results) ? " It reads right to left." : "";
+          const dir = results.match(DIR)?.[1] === "right-to-left" ? " It reads right to left." : "";
           return say(`${greeting}\n\n— ${where}.${dir}`, onTextDelta);
         }
 
