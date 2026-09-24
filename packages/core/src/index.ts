@@ -97,6 +97,17 @@ export interface ActionSpec<K extends ActionKind = ActionKind, V = unknown> {
 export interface QuerySpec<A = unknown> {
   input: Schema<A>;
   description?: string;
+  /**
+   * JSON Schema for this query's arguments, spliced into the derived `query_ui`
+   * tool so the model can see the parameter names.
+   *
+   * Omit it and the model is shown an opaque `args: {}`. It will then call the
+   * query with no arguments, every filter will be a no-op, and it will get the
+   * whole collection back — the exact outcome `cap()` and the digest exist to
+   * prevent. `input` cannot supply this: schemas are accepted structurally, so
+   * the runtime has a `.parse()` and no way to introspect it.
+   */
+  argsJsonSchema?: JsonSchema;
 }
 
 export type ActionMap = Record<string, ActionSpec<ActionKind, any>>;
@@ -109,7 +120,11 @@ export const resolve = <V>(input: Schema<V>): ActionSpec<"resolve", V> => ({ kin
 export const inform = <V>(input: Schema<V>): ActionSpec<"inform", V> => ({ kind: "inform", input });
 
 /** A named accessor over the stored payload. There is no raw dereference. */
-export const query = <A>(input: Schema<A>, description?: string): QuerySpec<A> => ({ input, description });
+export const query = <A>(
+  input: Schema<A>,
+  description?: string,
+  argsJsonSchema?: JsonSchema,
+): QuerySpec<A> => ({ input, description, argsJsonSchema });
 
 // ──────────────────────────────────────────────────────── surfaces
 

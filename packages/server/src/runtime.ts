@@ -48,13 +48,35 @@ export class Hai {
   // ───────────────────────────────────────────────── derived tool
 
   private buildQueryUiTool(): Tool<any> {
-    const catalogue = [...this.surfaces.values()]
-      .map((s) => {
-        const names = Object.keys(s.surface.queries);
-        return names.length ? `${s.surface.name}: ${names.join(", ")}` : null;
-      })
-      .filter(Boolean)
-      .join(" · ");
+    // The model has to be told what each query TAKES, not just that it exists.
+    // Listing bare names leaves `args` opaque, and the model then calls the
+    // query with none — every filter becomes a no-op and it gets the whole
+    // collection back.
+    const entries = [...this.surfaces.values()].flatMap((s) =>
+      Object.entries(s.surface.queries).map(([name, spec]) => {
+        const parts = [`${s.surface.name}.${name}`];
+        if (spec.description) parts.push(`— ${spec.description}`);
+        parts.push(
+          spec.argsJsonSchema
+            ? `args: ${JSON.stringify(spec.argsJsonSchema)}`
+            : "args: (undeclared — omit them)",
+        );
+        return { surface: s.surface.name, name, spec, line: parts.join(" ") };
+      }),
+    );
+
+    // A query whose args are invisible is a silent wrong-answer bug, not a
+    // missing nicety — say so once, at construction, rather than never.
+    const undeclared = entries.filter((e) => !e.spec.argsJsonSchema);
+    if (undeclared.length) {
+      console.warn(
+        `[haikit] query_ui: no argsJsonSchema for ${undeclared.map((e) => `${e.surface}.${e.name}`).join(", ")}. ` +
+          `The model cannot see these parameters and will call the query with no arguments. ` +
+          `A query that genuinely takes none should declare { type: "object", properties: {} }.`,
+      );
+    }
+
+    const catalogue = entries.map((e) => `- ${e.line}`).join("\n");
 
     const self = this;
     return {
@@ -62,14 +84,19 @@ export class Hai {
       description:
         "Dereference a rendered component's full dataset. The digest in your context holds only " +
         "highlights; use this for anything beyond it. Never guess about rows you have not seen. " +
-        (catalogue ? `Available queries — ${catalogue}.` : ""),
+        (catalogue ? `\n\nAvailable queries:\n${catalogue}` : ""),
       input: { parse: (v) => v as any },
       inputJsonSchema: {
         type: "object",
         properties: {
           handle: { type: "string", description: "e.g. ui_01" },
-          query: { type: "string" },
-          args: { type: "object" },
+          query: { type: "string", description: "One of the query names listed in the description." },
+          args: {
+            type: "object",
+            description:
+              "Arguments for the chosen query, matching that query's schema in the description. " +
+              "Pass the constraints the user actually asked for — omitting them matches everything.",
+          },
         },
         required: ["handle", "query"],
       },
