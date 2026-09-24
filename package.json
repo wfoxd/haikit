@@ -18,13 +18,11 @@
     "example:hello": "npm run build && HAI_SCRIPTED=1 node examples/hello/src/server/main.ts",
     "clean": "rm -rf packages/*/dist packages/*/*.tsbuildinfo",
     "release": "npm run build && npx changeset publish",
-    "changeset": "npx changeset",
-    "rename-scope": "node scripts/rename-scope.mjs"
+    "changeset": "npx changeset"
   },
   "devDependencies": {
     "@changesets/cli": "^2.27.0",
     "@types/node": "^24.0.0",
-    "node-html-parser": "^9.0.4",
     "typescript": "^5.9.0"
   }
 }
