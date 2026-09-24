@@ -1,5 +1,5 @@
-import { defineSurface, query, resolve } from "@haikit/core";   
-import { z } from "zod";                                  
+import { defineSurface, inform, query, resolve } from "@haikit/core";
+import { z } from "zod";
 
 export const Greeting = z.object({
   code: z.string(),                                     
@@ -35,5 +35,19 @@ export const greetingPicker = defineSurface({
         },
       },
     ),
+  },
+});
+
+// A display surface: an artifact of the turn, not a question. The model keeps
+// talking whether or not you touch it, so it declares no `resolve` action —
+// which also means `mode: "elicit"` would not compile against it.
+export const greetingCard = defineSurface({
+  name: "greeting_card",
+  version: 1,
+  props: z.object({ greeting: Greeting }),
+
+  actions: {
+    // `inform` enriches the conversation without ever having blocked it.
+    copy: inform(z.object({ code: z.string() })),
   },
 });

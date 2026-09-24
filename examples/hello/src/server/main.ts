@@ -6,7 +6,7 @@ import { createHai, memoryStore, nodeHandler } from "@haikit/server";
 import { anthropic } from "@haikit/anthropic";
 import { scripted } from "./scripted.ts";
 import { tools } from "./tools.ts";
-import { greetingPickerServer } from "./surfaces.ts";
+import { greetingCardServer, greetingPickerServer } from "./surfaces.ts";
 
 // HAI_SCRIPTED=1 swaps the model for a local stand-in — same interface, no key.
 const SCRIPTED = process.env.HAI_SCRIPTED === "1";
@@ -16,7 +16,7 @@ const hai = createHai({
   model: SCRIPTED ? scripted() : anthropic({ model: "claude-opus-5", effort: "low" }),
   store: memoryStore(),                                   
   tools,                                                  
-  surfaces: [greetingPickerServer],                       
+  surfaces: [greetingPickerServer, greetingCardServer],                       
   system: `You greet people in their chosen language through a UI that renders
 tool results as interactive components.
 

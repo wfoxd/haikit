@@ -43,22 +43,13 @@ Everything from here on is relative to `haikit_hello/`, and that is where every 
   "scripts": {
     "start": "node src/server/main.ts",
     "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "@haikit/core": "^0.1.0",
-    "@haikit/server": "^0.1.0",
-    "@haikit/client": "^0.1.0",
-    "@haikit/anthropic": "^0.1.0",
-    "zod": "^4.0.0"
-  },
-  "devDependencies": {
-    "@types/node": "^24.0.0",
-    "typescript": "^5.9.0"
   }
 }
 ```
 
-There is no `build` script and nothing to compile. The framework arrives from npm already built, and Node 22+ runs your own `.ts` files directly by stripping the types — so `npm start` is the whole loop.
+No dependencies listed — you install them in a moment and npm writes the current versions, which beats copying pinned ones out of a page that ages.
+
+There is no `build` script and nothing to compile either. The framework arrives from npm already built, and Node 22+ runs your own `.ts` files directly by stripping the types — so `npm start` is the whole loop.
 
 **`tsconfig.json`** — *new file*
 
@@ -84,7 +75,11 @@ There is no `build` script and nothing to compile. The framework arrives from np
 **`terminal`** — *run*
 
 ```bash
-npm install
+npm install @haikit/core @haikit/server @haikit/client @haikit/anthropic zod
+```
+
+```bash
+npm install -D typescript @types/node
 ```
 
 ## 02 · Declare the contract
@@ -486,6 +481,40 @@ export const registry = {
 >
 > The script chips are *local*: they filter rows already in the browser and never touch the server. Only `choose` round-trips. If filtering a list cost a model round trip, the app would feel broken no matter how good the model is.
 
+Your component emits its own class names, so it needs its own stylesheet. `hai.css` deliberately does not style the inside of a surface — the moment it did, it would be dictating what your UI looks like.
+
+**`public/styles.css`** — *new file*
+
+```css
+/* This app's own styles. The framework ships /hai-client/hai.css for the
+   transcript, shell and inspector; everything here is inside our surface. */
+
+/* theme overrides — every --hai-* token is fair game */
+:root { --hai-accent: #7ab8f5; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 9px 12px 4px; }
+.chip {
+  background: none; color: var(--hai-dim); border: 1px solid var(--hai-line);
+  border-radius: 999px; padding: 3px 10px; font: 11px var(--hai-mono); cursor: pointer;
+}
+.chip:hover { color: var(--hai-fg); border-color: var(--hai-accent); }
+.chip.on { color: var(--hai-bg); background: var(--hai-accent); border-color: var(--hai-accent); }
+
+.rows { padding: 4px 0 8px; }
+.row {
+  display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  gap: 12px; align-items: baseline; padding: 7px 12px;
+  border-bottom: 1px solid #1a2028;
+}
+.row.selectable { cursor: pointer; }
+.row.selectable:hover { background: #1a222c; }
+.row.picked { background: #17301f; }
+.greeting { font-size: 15px; }
+.lang { color: var(--hai-dim); font: 12px var(--hai-mono); }
+```
+
+`index.html` in the next step links this as `/styles.css`, so the filename matters.
+
 ## 06 · Wire it up and run
 
 The whole server in one file: the runtime, the two hai routes, and the static assets. There is no bundler — the app serves its own `public/` alongside the client runtime straight out of its package in `node_modules`, so the browser loads `@haikit/client` as plain ESM.
@@ -796,7 +825,8 @@ Not everything should block. A card showing the chosen greeting large is an *art
 **`src/shared/surfaces.ts`** — *append*
 
 ```ts
-import { inform } from "@haikit/core";
+// add `inform` to the existing @haikit/core import at the top of the file
+import { defineSurface, inform, query, resolve } from "@haikit/core";
 
 export const greetingCard = defineSurface({
   name: "greeting_card",
@@ -812,6 +842,9 @@ export const greetingCard = defineSurface({
 **`src/server/surfaces.ts`** — *append*
 
 ```ts
+// add `greetingCard` to the existing ../shared/surfaces.ts import
+import { greetingCard, greetingPicker } from "../shared/surfaces.ts";
+
 export const greetingCardServer = greetingCard.implement({
   digest(props, { handle }) {
     const g = props.greeting;
@@ -831,6 +864,9 @@ Then a tool that renders it — note the missing third argument:
 **`src/server/tools.ts`** — *append*
 
 ```ts
+// add `greetingCardServer` to the existing ./surfaces.ts import
+import { greetingCardServer, greetingPickerServer } from "./surfaces.ts";
+
 export const showGreeting = defineTool({
   name: "show_greeting",
   description: "Show one greeting as a large card. Display-only — does not block.",
@@ -852,7 +888,73 @@ export const showGreeting = defineTool({
 });
 ```
 
-Register the new surface and tool in `main.ts`, add a component, done.
+Now the browser half. **This is the step that bites** — the registry key must match the surface's `name` exactly, and a mismatch is not a crash. The client renders `unknown component: greeting_card` in place of the card, because the registry is an allowlist and anything unlisted cannot be mounted at all.
+
+**`public/components.js`** — *append inside `registry`*
+
+```js
+  greeting_card: {
+    mount(el, props, ctx) {
+      const g = props.greeting;
+
+      const card = h("div", "card");
+      const text = h("div", "card-text", g.text);
+      if (g.rtl) text.dir = "rtl";
+
+      const meta = h("div", "card-meta", `${g.language} · ${g.script} · ${g.speakersM}M speakers`);
+
+      // A display surface never parked the turn, so there is nothing to
+      // resolve. `inform` adds a line to the conversation after the fact.
+      const copy = h("button", "chip", "copy");
+      copy.onclick = async () => {
+        await navigator.clipboard?.writeText(g.text).catch(() => {});
+        copy.textContent = "copied";
+        ctx.send("copy", { code: g.code });
+      };
+
+      card.append(text, meta, copy);
+      el.append(card);
+
+      // No `freeze` — a display surface is never frozen, because it was never
+      // holding the turn open in the first place.
+      return {};
+    },
+  },
+```
+
+Then two one-line registrations. Miss the first and the model has no tool to call; miss the second and `query_ui` has nothing to dereference and the handle resolves to nothing.
+
+**`src/server/tools.ts`** — *edit*
+
+```ts
+export const tools = [listGreetings, showGreeting];
+```
+
+**`src/server/main.ts`** — *edit*
+
+```ts
+import { greetingCardServer, greetingPickerServer } from "./surfaces.ts";
+
+const hai = createHai({
+  surfaces: [greetingPickerServer, greetingCardServer],
+  // ...unchanged
+});
+```
+
+A little CSS, since `hai.css` styles only what the framework renders — never the inside of your surfaces:
+
+**`public/styles.css`** — *append*
+
+```css
+.card { display: flex; flex-direction: column; gap: 8px; padding: 16px 14px; align-items: flex-start; }
+.card-text { font-size: 28px; line-height: 1.25; }
+.card-meta { color: var(--hai-dim); font: 12px var(--hai-mono); }
+```
+
+> [!TIP]
+> **Checkpoint**
+>
+> Say *“show the hebrew one”*. The card renders inline, and the badge reads **display** rather than **awaiting selection** — the turn completes in one pass instead of parking. Click **copy** and an interaction line appears *after* the model has already finished: that is `inform`, enriching a conversation it never blocked.
 
 | Use | When | Action kind |
 | --- | --- | --- |

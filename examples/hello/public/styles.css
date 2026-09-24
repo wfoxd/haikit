@@ -36,3 +36,8 @@
 .row.picked { background: #17301f; }
 .greeting { font-size: 15px; }
 .lang { color: var(--hai-dim); font: 12px var(--hai-mono); }
+
+/* greeting_card — the display surface from step 08 */
+.card { display: flex; flex-direction: column; gap: 8px; padding: 16px 14px; align-items: flex-start; }
+.card-text { font-size: 28px; line-height: 1.25; }
+.card-meta { color: var(--hai-dim); font: 12px var(--hai-mono); }
