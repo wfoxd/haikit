@@ -71,6 +71,24 @@ export async function conform(label, make) {
     check("batch on an empty list returns empty", (await s.getPayloads([], a.id)).length === 0);
   }
 
+  // ── handles stay unique well past two digits ──────────────────────────
+  // A store that formats handles with SQL lpad() truncates rather than pads:
+  // lpad('100', 2, '0') is '10', and handle 100 collides with handle 10.
+  {
+    // A store with a unique constraint turns the collision into a thrown
+    // duplicate-key error rather than a duplicate — report either as a failure.
+    const s = make();
+    const a = await s.loadConversation(undefined);
+    const handles = [];
+    let error = null;
+    try {
+      for (let i = 0; i < 101; i++) handles.push(await s.putPayload(payload(a.id), a.leaseToken));
+    } catch (err) {
+      error = err;
+    }
+    check("handles stay unique past ui_99", !error && new Set(handles).size === 101);
+  }
+
   // ── one turn in flight per conversation ───────────────────────────────
   {
     const s = make();
@@ -235,6 +253,22 @@ export async function conform(label, make) {
   return failures;
 }
 
+/**
+ * The runtime-level scenarios, run against any store. These are the ones
+ * durable storage exists for — a turn overtaken mid-flight, a surface left
+ * orphaned, a conversation that must not be stranded — so an adapter that only
+ * passes `conform` has not been tested where it matters.
+ */
+export async function integration(label, make) {
+  console.log(`\n${label} — runtime`);
+  await orphanChecks(make);
+  await strandChecks(make);
+  await turnAbortChecks(make);
+  return failures;
+}
+
+export const failureCount = () => failures;
+
 // ── the route turns a refused lease into a status code ──────────────────
 // Driven with a store that always refuses, rather than by racing two real
 // turns: a scripted turn finishes in tens of milliseconds, so a timing-based
@@ -282,10 +316,10 @@ async function routeChecks() {
 // putPayload commits during the turn; the conversation save at the end may be
 // rejected. The row therefore survives a takeover while the winning history
 // never records its handle — and the browser that mounted it is still open.
-async function orphanChecks() {
+async function orphanChecks(make) {
   console.log("\norphaned surfaces");
   const { createHai } = await import("../packages/server/dist/index.js");
-  const store = memoryStore({ leaseMs: 40 });
+  const store = make({ leaseMs: 40 });
   const hai = createHai({
     model: { id: "stub", async generate() { return { content: [], stop_reason: "end_turn" }; } },
     store,
@@ -338,7 +372,7 @@ async function orphanChecks() {
 // lease during the model call, and have its save rejected — leaving the winning
 // history awaiting a surface nobody can click again. Checked in both orders:
 // the takeover landing before the freeze, and after it.
-async function strandChecks() {
+async function strandChecks(make) {
   console.log("\nstranding");
   const { createHai } = await import("../packages/server/dist/index.js");
   const { defineSurface, resolve } = await import("../packages/core/dist/index.js");
@@ -371,7 +405,7 @@ async function strandChecks() {
 
   // ── takeover AFTER the freeze: the freeze was legitimate when it happened
   {
-    const store = memoryStore({ leaseMs: 40 });
+    const store = make({ leaseMs: 40 });
     const hai = createHai({ model: slowModel, store, tools: [], surfaces: [pickerImpl], system: "x" });
     const { id, handle } = await parked(store);
 
@@ -403,7 +437,7 @@ async function strandChecks() {
 
   // ── takeover BEFORE the write: a superseded holder cannot write at all
   {
-    const store = memoryStore({ leaseMs: 40 });
+    const store = make({ leaseMs: 40 });
     const { id } = await parked(store);
     const slow = await store.loadConversation(id);
     await new Promise((r) => setTimeout(r, 70));
@@ -509,11 +543,11 @@ async function clientChecks() {
 // "tool failed" result for the model. A StaleLease must not take that path: it
 // would hand the lost lease back to the model as information and keep paying
 // for hops whose output the fenced save will discard.
-async function turnAbortChecks() {
+async function turnAbortChecks(make) {
   console.log("\nsuperseded turns");
   const { createHai } = await import("../packages/server/dist/index.js");
   const { defineSurface, defineTool } = await import("../packages/core/dist/index.js");
-  const store = memoryStore({ leaseMs: 40 });
+  const store = make({ leaseMs: 40 });
   const any = { parse: (v) => v };
 
   const card = defineSurface({ name: "card", version: 1, props: any, actions: {}, queries: {} });
@@ -567,11 +601,9 @@ async function turnAbortChecks() {
 // same suite against itself, and must not inherit a run or a process.exit().
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   await conform("memoryStore", (opts) => memoryStore(opts));
+  await integration("memoryStore", (opts) => memoryStore(opts));
   await routeChecks();
-  await orphanChecks();
-  await strandChecks();
   await clientChecks();
-  await turnAbortChecks();
 
   // Said plainly because a suite that looks exhaustive is worse than one that
   // admits its edges: nothing here can prove lease acquisition is atomic. This

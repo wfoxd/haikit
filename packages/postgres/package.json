@@ -1,0 +1,52 @@
+{
+  "name": "@haikit/postgres",
+  "version": "0.3.0",
+  "description": "Postgres store adapter for haikit: durable conversations, fenced turn leases, write-once payloads. Bring your own driver.",
+  "keywords": [
+    "haikit",
+    "postgres",
+    "postgresql",
+    "llm",
+    "agent",
+    "agentic-ui",
+    "store",
+    "durable"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "prepack": "npm --prefix ../.. run build"
+  },
+  "dependencies": {
+    "@haikit/core": "0.2.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/wfoxd/haikit/tree/main/packages/postgres#readme",
+  "bugs": {
+    "url": "https://github.com/wfoxd/haikit/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wfoxd/haikit.git",
+    "directory": "packages/postgres"
+  }
+}

@@ -2,8 +2,9 @@
 
 ```bash
 npm install
-npm test          # typecheck + typetest + smoke
+npm test          # typecheck, typetest, storetest, pgtest, smoke
 npm run packtest  # pack the tarballs, install them clean, use them
+npm run pgtest    # @haikit/postgres on PGlite; set HAIKIT_PG_URL to add a real server
 ```
 
 ## Layout
@@ -13,6 +14,7 @@ packages/core        contracts — the four type guarantees live here
 packages/server      runtime, elicit state machine, routes
 packages/client      browser runtime + default UI (plain ESM, no build)
 packages/anthropic   model adapter
+packages/postgres    durable store adapter (bring your own driver)
 examples/*           demonstrations. private, never published
 scripts/             typetest.mjs, storetest.mjs, smoke.mjs, packtest.mjs
 ```

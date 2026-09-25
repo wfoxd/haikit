@@ -7,13 +7,14 @@
     "examples/*"
   ],
   "scripts": {
-    "build": "tsc -b packages/core packages/server packages/anthropic",
+    "build": "tsc -b packages/core packages/server packages/anthropic packages/postgres",
     "typecheck": "npm run build && tsc -p examples/flights --noEmit && tsc -p examples/flights/tsconfig.browser.json && tsc -p examples/hello --noEmit",
     "typetest": "node scripts/typetest.mjs",
     "smoke": "node scripts/smoke.mjs",
     "storetest": "node scripts/storetest.mjs",
+    "pgtest": "node packages/postgres/test/conform.mjs",
     "packtest": "node scripts/packtest.mjs",
-    "test": "npm run typecheck && npm run typetest && npm run storetest && npm run smoke",
+    "test": "npm run typecheck && npm run typetest && npm run storetest && npm run pgtest && npm run smoke",
     "prepublish-check": "npm run test && npm run packtest",
     "example:flights": "npm run build && HAI_SCRIPTED=1 node examples/flights/src/server/main.ts",
     "example:hello": "npm run build && HAI_SCRIPTED=1 node examples/hello/src/server/main.ts",
@@ -23,7 +24,9 @@
   },
   "devDependencies": {
     "@changesets/cli": "^2.27.0",
+    "@electric-sql/pglite": "^0.5.8",
     "@types/node": "^24.0.0",
+    "pg": "^8.23.0",
     "typescript": "^5.9.0"
   }
 }

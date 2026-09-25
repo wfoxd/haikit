@@ -5,6 +5,17 @@
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
-  "ignore": ["hello", "flights"],
-  "fixed": [["@haikit/core", "@haikit/server", "@haikit/client", "@haikit/anthropic"]]
+  "ignore": [
+    "hello",
+    "flights"
+  ],
+  "fixed": [
+    [
+      "@haikit/core",
+      "@haikit/server",
+      "@haikit/client",
+      "@haikit/anthropic",
+      "@haikit/postgres"
+    ]
+  ]
 }
