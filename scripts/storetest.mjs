@@ -52,6 +52,50 @@ export async function conform(label, make) {
     check("the store exposes no payload mutation", !("freezePayload" in s));
   }
 
+  // ── a lease TTL that would disable mutual exclusion is refused ────────
+  // Zero or negative expires every lease the moment it is taken, so every load
+  // acquires; Infinity strands a crashed turn's conversation forever. Neither
+  // may be accepted quietly.
+  {
+    const refused = (leaseMs) => {
+      try {
+        make({ leaseMs });
+        return false;
+      } catch (err) {
+        return err instanceof RangeError;
+      }
+    };
+    check(
+      "a zero, negative, NaN or infinite lease TTL is refused",
+      [0, -1, NaN, Infinity].every(refused),
+    );
+  }
+
+  // ── payload props of every JSON type survive a round trip ─────────────
+  // A store that stores JSON and guesses on the way out whether it still needs
+  // parsing breaks on string scalars: "hello" comes back as a JS string, looks
+  // like unparsed text, and JSON.parse throws.
+  {
+    const s = make();
+    const a = await s.loadConversation(undefined);
+    const shapes = ["hello", "", 42, true, null, [1, "two"], { nested: { deep: ["x"] } }];
+    const handles = [];
+    for (const props of shapes) {
+      handles.push(await s.putPayload({ ...payload(a.id), props }, a.leaseToken));
+    }
+    let single = [];
+    let batch = [];
+    let error = null;
+    try {
+      for (const h of handles) single.push((await s.getPayload(h, a.id)).props);
+      batch = (await s.getPayloads(handles, a.id)).map((r) => r.props);
+    } catch (err) {
+      error = err;
+    }
+    const same = (got) => JSON.stringify(got) === JSON.stringify(shapes);
+    check("payload props of every JSON type round-trip, including bare strings", !error && same(single) && same(batch));
+  }
+
   // ── batch read matches the single read, and drops what it should ──────
   {
     const s = make();

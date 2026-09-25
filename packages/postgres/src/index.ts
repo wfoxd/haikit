@@ -85,16 +85,20 @@ export async function migrate(db: Queryable): Promise<void> {
   for (const statement of schema) await db.query(statement);
 }
 
+// jsonb is always read as text and parsed here. Drivers disagree on whether
+// they parse jsonb themselves, and guessing from the result's type cannot work:
+// a jsonb string scalar parsed by the driver is a JS string too, and parsing it
+// a second time throws. Taking text every time removes the guess.
 const CONVERSATION_COLUMNS = `
-  id, status, messages, handles, frozen, pending, lease_token,
+  id, status, messages::text AS messages, handles::text AS handles,
+  frozen::text AS frozen, pending::text AS pending, lease_token,
   (extract(epoch FROM lease_until) * 1000)::float8 AS lease_until_ms`;
 
 const PAYLOAD_COLUMNS = `
-  handle, conversation_id, component, version, props, mode,
+  handle, conversation_id, component, version, props::text AS props, mode,
   (extract(epoch FROM created_at) * 1000)::float8 AS created_at_ms`;
 
-/** Most drivers parse jsonb into values; a few hand back text. Accept both. */
-const json = (value: unknown) => (typeof value === "string" ? JSON.parse(value) : value);
+const json = (text: string) => JSON.parse(text);
 
 const toConversation = (row: any): Conversation => ({
   id: row.id,
@@ -122,6 +126,13 @@ const newId = () => `conv_${globalThis.crypto.randomUUID().replaceAll("-", "")}`
 
 export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapter {
   const leaseMs = options.leaseMs ?? LEASE_MS;
+  // Zero or negative makes every lease expire the moment it is taken, so every
+  // load acquires and the one-turn-in-flight guarantee silently disappears.
+  // Infinity would strand a crashed turn's conversation forever. Refuse both
+  // here, loudly, rather than run with no mutual exclusion at all.
+  if (!Number.isFinite(leaseMs) || leaseMs <= 0) {
+    throw new RangeError(`leaseMs must be a positive, finite number of milliseconds (got ${leaseMs})`);
+  }
 
   /** A fenced write matched nothing. Say which of the two reasons applies. */
   async function stale(conversationId: string): Promise<never> {
