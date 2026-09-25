@@ -42,15 +42,15 @@ export async function conform(label, make) {
     a.leaseUntil = null;
     await s.saveConversation(a);
     const b = await s.loadConversation(undefined);
-    const h = await s.putPayload(payload(a.id));
+    const h = await s.putPayload(payload(a.id), a.leaseToken);
 
     check("read is scoped to the owning conversation", (await s.getPayload(h, b.id)) === null);
     check("read succeeds for the owner", (await s.getPayload(h, a.id))?.handle === h);
 
-    await s.freezePayload(h, b.id);
+    await s.freezePayload(h, b.id, b.leaseToken);
     check("freeze from another conversation is a no-op", (await s.getPayload(h, a.id)).state === "live");
 
-    await s.freezePayload(h, a.id);
+    await s.freezePayload(h, a.id, a.leaseToken);
     check("freeze from the owner applies", (await s.getPayload(h, a.id)).state === "frozen");
   }
 
@@ -61,9 +61,9 @@ export async function conform(label, make) {
     a.leaseUntil = null;
     await s.saveConversation(a);
     const b = await s.loadConversation(undefined);
-    const h1 = await s.putPayload(payload(a.id));
-    const h2 = await s.putPayload(payload(a.id));
-    const other = await s.putPayload(payload(b.id));
+    const h1 = await s.putPayload(payload(a.id), a.leaseToken);
+    const h2 = await s.putPayload(payload(a.id), a.leaseToken);
+    const other = await s.putPayload(payload(b.id), b.leaseToken);
 
     const got = await s.getPayloads([h1, h2, other, "ui_9999"], a.id);
     check(
@@ -243,14 +243,10 @@ async function orphanChecks() {
 
   // a turn renders a surface, then loses its lease and is superseded
   const slow = await store.loadConversation(undefined);
-  const handle = await store.putPayload({
-    conversationId: slow.id,
-    component: "c",
-    version: 1,
-    props: {},
-    mode: "display",
-    state: "live",
-  });
+  const handle = await store.putPayload(
+    { conversationId: slow.id, component: "c", version: 1, props: {}, mode: "display", state: "live" },
+    slow.leaseToken,
+  );
   slow.handles.push(handle);
 
   await new Promise((r) => setTimeout(r, 70));
@@ -281,12 +277,68 @@ async function orphanChecks() {
   check("interacting with an orphaned handle is refused", refused === "unknown handle");
 }
 
+// ── a superseded turn cannot strand a conversation ──────────────────────
+// Freezing is not like writing a new payload. It mutates a row the *winning*
+// history still depends on: freeze the handle a parked turn is awaiting and
+// that conversation awaits a surface that can never resolve, failing every
+// later interaction with "component is frozen". Permanently unsendable — the
+// exact outcome durable storage exists to prevent.
+async function strandChecks() {
+  console.log("\nstranding");
+  const store = memoryStore({ leaseMs: 40 });
+
+  const setup = await store.loadConversation(undefined);
+  const handle = await store.putPayload(
+    { conversationId: setup.id, component: "picker", version: 1, props: {}, mode: "elicit", state: "live" },
+    setup.leaseToken,
+  );
+  setup.handles.push(handle);
+  setup.status = "awaiting";
+  setup.pending = { toolUseId: "t1", handle, digest: "d", results: [] };
+  setup.leaseUntil = null;
+  await store.saveConversation(setup);
+
+  const slow = await store.loadConversation(setup.id); // /interact begins
+  await new Promise((r) => setTimeout(r, 70)); // its lease expires mid-turn
+
+  const winner = await store.loadConversation(setup.id); // still parked, taken over
+  winner.leaseUntil = null;
+  await store.saveConversation(winner);
+
+  let freezeRefused = false;
+  try {
+    await store.freezePayload(handle, slow.id, slow.leaseToken);
+  } catch (err) {
+    freezeRefused = isStaleLease(err);
+  }
+  check("a superseded holder cannot freeze", freezeRefused);
+
+  let putRefused = false;
+  try {
+    await store.putPayload(
+      { conversationId: slow.id, component: "c", version: 1, props: {}, mode: "display", state: "live" },
+      slow.leaseToken,
+    );
+  } catch (err) {
+    putRefused = isStaleLease(err);
+  }
+  check("a superseded holder cannot write a payload", putRefused);
+
+  const survived = await store.loadConversation(setup.id);
+  const row = await store.getPayload(handle, setup.id);
+  check(
+    "the surviving conversation can still resolve what it awaits",
+    survived.pending?.handle === handle && row.state === "live",
+  );
+}
+
 // Only when invoked directly. A Postgres adapter imports `conform` to run this
 // same suite against itself, and must not inherit a run or a process.exit().
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   await conform("memoryStore", (opts) => memoryStore(opts));
   await routeChecks();
   await orphanChecks();
+  await strandChecks();
 
   // Said plainly because a suite that looks exhaustive is worse than one that
   // admits its edges: nothing here can prove lease acquisition is atomic. This

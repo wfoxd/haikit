@@ -48,6 +48,14 @@ export function memoryStore(options: MemoryStoreOptions = {}): StoreAdapter {
   const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
   const newToken = () => globalThis.crypto.randomUUID();
 
+  /** Every durable mutation presents the token it was issued. A holder that has
+   *  been superseded must not keep writing — see freezePayload's contract for
+   *  why that is not merely untidy. */
+  const fence = (conversationId: string, leaseToken: string | null) => {
+    const stored = conversations.get(conversationId);
+    if (stored && stored.leaseToken !== leaseToken) throw new StaleLease(conversationId);
+  };
+
   return {
     async loadConversation(id) {
       if (id && conversations.has(id)) {
@@ -81,7 +89,8 @@ export function memoryStore(options: MemoryStoreOptions = {}): StoreAdapter {
       conversations.set(conversation.id, copy(conversation));
     },
 
-    async putPayload(record) {
+    async putPayload(record, leaseToken) {
+      fence(record.conversationId, leaseToken);
       const handle = `ui_${String(++handleSeq).padStart(2, "0")}`;
       payloads.set(handle, copy({ ...record, handle, createdAt: Date.now() }));
       return handle;
@@ -106,7 +115,8 @@ export function memoryStore(options: MemoryStoreOptions = {}): StoreAdapter {
     /** Scoped for the same reason as getPayload, and enforced the same way —
      *  handles happen to be globally unique here, but a store that numbers them
      *  per conversation must behave identically. */
-    async freezePayload(handle, conversationId) {
+    async freezePayload(handle, conversationId, leaseToken) {
+      fence(conversationId, leaseToken);
       const record = payloads.get(handle);
       if (record && record.conversationId === conversationId) record.state = "frozen";
     },

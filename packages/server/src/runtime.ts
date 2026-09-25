@@ -130,7 +130,7 @@ export class Hai {
     // receive a tool_result, so close the pending one out honestly first.
     if (conversation.status === "awaiting" && conversation.pending) {
       const { toolUseId, handle, results, digest } = conversation.pending;
-      await this.config.store.freezePayload(handle, conversation.id);
+      await this.config.store.freezePayload(handle, conversation.id, conversation.leaseToken);
       emit({ type: "ui_state", handle, state: "frozen" });
       conversation.messages.push({
         role: "user",
@@ -187,7 +187,7 @@ export class Hai {
 
     if (spec.kind === "resolve") {
       if (conversation.pending?.handle !== input.handle) throw new Error("nothing awaiting this handle");
-      await this.config.store.freezePayload(input.handle, conversation.id);
+      await this.config.store.freezePayload(input.handle, conversation.id, conversation.leaseToken);
       emit({ type: "ui_state", handle: input.handle, state: "frozen", selection: value });
       emit({ type: "block_start", block: { kind: "interaction", id: this.nid("b"), handle: input.handle, label } });
 
@@ -308,14 +308,17 @@ export class Hai {
         // Validate before storing: props may originate outside this process.
         const parsed = impl.surface.props.parse(props);
 
-        const handle = await this.config.store.putPayload({
-          conversationId: conversation.id,
-          component: impl.surface.name,
-          version: impl.surface.version,
-          props: parsed,
-          mode: surfaceMode,
-          state: "live",
-        });
+        const handle = await this.config.store.putPayload(
+          {
+            conversationId: conversation.id,
+            component: impl.surface.name,
+            version: impl.surface.version,
+            props: parsed,
+            mode: surfaceMode,
+            state: "live",
+          },
+          conversation.leaseToken,
+        );
 
         conversation.handles.push(handle);
 

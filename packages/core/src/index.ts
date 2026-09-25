@@ -453,13 +453,19 @@ export interface StoreAdapter {
   /**
    * Store a payload and return its handle.
    *
-   * A row written here outlives the turn that wrote it. If that turn is later
-   * overtaken, its conversation save is rejected but this row is not — the
-   * winning history simply never references the handle. Those orphans are inert
-   * (see `Conversation.handles`), but a durable store still has to sweep them,
-   * which is what `createdAt` is for.
+   * Fenced: throws `StaleLease` unless `leaseToken` is the conversation's
+   * current one. A superseded turn must stop writing rather than run to
+   * completion and be discarded at the end.
+   *
+   * A row written *before* the lease was lost still outlives its turn — the
+   * conversation save is rejected but the row is not, so the winning history
+   * never references the handle. Those orphans are inert (see
+   * `Conversation.handles`); a durable store sweeps them by `createdAt`.
    */
-  putPayload(record: Omit<PayloadRecord, "handle" | "createdAt">): Promise<string>;
+  putPayload(
+    record: Omit<PayloadRecord, "handle" | "createdAt">,
+    leaseToken: string | null,
+  ): Promise<string>;
   getPayload(handle: string, conversationId: string): Promise<PayloadRecord | null>;
   /**
    * Batch form of `getPayload`, scoped the same way. Missing or out-of-scope
@@ -476,8 +482,16 @@ export interface StoreAdapter {
    * meaningful inside the conversation that produced it. Without the scope a
    * store cannot number handles per conversation, because `handle` alone would
    * not identify a row.
+   *
+   * Fenced, and unlike `putPayload` this one is load-bearing rather than
+   * hygienic. Freezing mutates a row the *winning* history still depends on: a
+   * superseded `/interact` that freezes a pending handle leaves the surviving
+   * conversation awaiting a surface that can never resolve, and every later
+   * interaction fails with "component is frozen". That conversation is
+   * permanently unsendable — the exact outcome durable storage exists to
+   * prevent. Throws `StaleLease` when the token does not match.
    */
-  freezePayload(handle: string, conversationId: string): Promise<void>;
+  freezePayload(handle: string, conversationId: string, leaseToken: string | null): Promise<void>;
 }
 
 /** Rough token estimate. Only used to surface the economics in the UI. */

@@ -75,7 +75,27 @@ before either writes, and both acquire. No conformance test can hold an adapter
 to this — a single process cannot interleave two acquisitions — so it is called
 out as a review item rather than left implied.
 
-**4. An interaction is refused unless the conversation records its handle.**
+**4. Every durable payload mutation is fenced.**
+
+```diff
+- putPayload(record): Promise<string>
++ putPayload(record, leaseToken: string | null): Promise<string>
+- freezePayload(handle, conversationId): Promise<void>
++ freezePayload(handle, conversationId, leaseToken: string | null): Promise<void>
+```
+
+Fencing only the conversation save was not enough, and `freezePayload` is the
+reason. It mutates a row the *winning* history still depends on: a superseded
+`/interact` that freezes a pending handle leaves the surviving conversation
+awaiting a surface that can never resolve, so every later interaction fails with
+`component is frozen`. That conversation is permanently unsendable — precisely
+the outcome durable storage exists to prevent.
+
+`putPayload` is fenced for a weaker reason: an orphaned row is inert, but a
+superseded turn should stop working rather than run to completion and be
+discarded.
+
+**5. An interaction is refused unless the conversation records its handle.**
 
 `putPayload` commits during a turn; the conversation save at the end may be
 rejected. A turn that rendered a surface and was then overtaken therefore leaves
