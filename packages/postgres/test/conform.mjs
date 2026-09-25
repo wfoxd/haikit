@@ -184,9 +184,24 @@ async function concurrencyChecks(pool) {
 // ── a real server: when one is provided ────────────────────────────────────
 if (process.env.HAIKIT_PG_URL) {
   const { default: pg } = await import("pg");
-  const pool = new pg.Pool({ connectionString: process.env.HAIKIT_PG_URL, max: 25 });
+  const url = process.env.HAIKIT_PG_URL;
+
+  // Every run works inside a schema of its own, created here and dropped at the
+  // end. Every test connection's search_path is that schema alone, so the
+  // suite's unqualified haikit_* table names cannot resolve to anything that
+  // existed before it ran — pointing HAIKIT_PG_URL at a real database by
+  // mistake cannot read, write or drop its data. The name is generated from
+  // hex digits only, so interpolating it as an identifier is safe.
+  const isolated = `haikit_test_${globalThis.crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
+  const admin = new pg.Client({ connectionString: url });
+  await admin.connect();
+  await admin.query(`CREATE SCHEMA ${isolated}`);
+  const pool = new pg.Pool({ connectionString: url, max: 25, options: `-c search_path=${isolated}` });
+
   try {
-    await pool.query(`DROP TABLE IF EXISTS haikit_payloads, haikit_conversations`);
+    const { rows } = await pool.query(`SELECT current_schema() AS schema`);
+    if (rows[0].schema !== isolated) throw new Error(`refusing to run: connections resolve to ${rows[0].schema}`);
+    console.log(`\n  real server: running in throwaway schema ${isolated}`);
     await migrate(pool);
     await conform("postgres (server)", (opts) => pgStore(pool, opts));
     await integration("postgres (server)", (opts) => pgStore(pool, opts));
@@ -194,6 +209,8 @@ if (process.env.HAIKIT_PG_URL) {
     await concurrencyChecks(pool);
   } finally {
     await pool.end();
+    await admin.query(`DROP SCHEMA ${isolated} CASCADE`);
+    await admin.end();
   }
 } else {
   console.log("\n  skipped: real-server concurrency checks (set HAIKIT_PG_URL)");
