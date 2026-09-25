@@ -518,9 +518,13 @@ export interface StoreAdapter {
   ): Promise<string>;
   getPayload(handle: string, conversationId: string): Promise<PayloadRecord | null>;
   /**
-   * Batch form of `getPayload`, scoped the same way. Missing or out-of-scope
-   * handles are omitted rather than returned as null, so the result may be
-   * shorter than the input.
+   * Batch form of `getPayload`, scoped the same way, and defined as exactly
+   * that: the result is what calling `getPayload` once per input handle would
+   * return, in input order, with the nulls dropped. Missing or out-of-scope
+   * handles are omitted, so the result may be shorter than the input; a handle
+   * listed twice appears twice. Stores must not "improve" on this by
+   * deduplicating — two adapters that disagree here make any caller's count
+   * depend on which store it runs against.
    *
    * Exists because the context inspector reads every live payload on every
    * turn. One call per handle is a map lookup in memory and a round trip over a

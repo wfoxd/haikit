@@ -61,14 +61,28 @@ export async function conform(label, make) {
     const b = await s.loadConversation(undefined);
     const h1 = await s.putPayload(payload(a.id), a.leaseToken);
     const h2 = await s.putPayload(payload(a.id), a.leaseToken);
-    const other = await s.putPayload(payload(b.id), b.leaseToken);
+    // b gets more payloads than a, so its last handle exists only in b under
+    // any numbering scheme. (With per-conversation numbering b's first handle
+    // is also "ui_01" — a handle a legitimately has — and asking for it would
+    // test nothing about scope.)
+    await s.putPayload(payload(b.id), b.leaseToken);
+    await s.putPayload(payload(b.id), b.leaseToken);
+    const onlyInB = await s.putPayload(payload(b.id), b.leaseToken);
+    check("the out-of-scope handle really does not exist in a", (await s.getPayload(onlyInB, a.id)) === null);
 
-    const got = await s.getPayloads([h1, h2, other, "ui_9999"], a.id);
+    const got = await s.getPayloads([h1, h2, onlyInB, "ui_9999"], a.id);
     check(
       "batch returns only in-scope, existing handles",
-      got.length === 2 && got.every((r) => [h1, h2].includes(r.handle)),
+      got.length === 2 && got[0].handle === h1 && got[1].handle === h2 && got.every((r) => r.conversationId === a.id),
     );
     check("batch on an empty list returns empty", (await s.getPayloads([], a.id)).length === 0);
+
+    // defined as getPayload once per input handle: order kept, duplicates kept
+    const repeated = await s.getPayloads([h2, h1, h2], a.id);
+    check(
+      "batch keeps input order and duplicates, like repeated single reads",
+      repeated.map((r) => r.handle).join() === [h2, h1, h2].join(),
+    );
   }
 
   // ── handles stay unique well past two digits ──────────────────────────

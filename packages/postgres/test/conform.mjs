@@ -170,6 +170,79 @@ async function concurrencyChecks(pool) {
   }
 }
 
+/**
+ * The sweep/save invariant under real contention: no interleaving of turns,
+ * lease takeovers and sweeps may leave a saved history pointing at a payload
+ * that no longer exists. Randomised rather than scripted, because the races
+ * that matter are the ones nobody thought to script — the first version of
+ * sweepOrphans had exactly such a race and passed every scripted check.
+ */
+async function sweepRaceChecks(pool) {
+  const short = pgStore(pool, { leaseMs: 25 });
+  const ids = [];
+  for (let i = 0; i < 6; i++) {
+    const c = await short.loadConversation(undefined);
+    c.leaseUntil = null;
+    await short.saveConversation(c);
+    ids.push(c.id);
+  }
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const deadline = Date.now() + 3000;
+  let saves = 0;
+  let superseded = 0;
+  let sweeps = 0;
+
+  // 8 turns on 6 conversations, each render followed by a pause that often
+  // outlives the 25ms lease — sometimes someone takes over, sometimes nobody
+  // does and the slow turn's save still succeeds. Both are the cases a sweep
+  // has to get right.
+  const worker = async () => {
+    while (Date.now() < deadline) {
+      const id = ids[Math.floor(Math.random() * ids.length)];
+      let c;
+      try {
+        c = await short.loadConversation(id);
+      } catch {
+        await sleep(2);
+        continue;
+      }
+      const h = await short.putPayload(payload(id), c.leaseToken).catch(() => null);
+      if (!h) continue;
+      c.handles.push(h);
+      await sleep(Math.random() * 50);
+      c.leaseUntil = null;
+      try {
+        await short.saveConversation(c);
+        saves++;
+      } catch {
+        superseded++;
+      }
+    }
+  };
+  const sweeper = async () => {
+    while (Date.now() < deadline) {
+      await sweepOrphans(pool, { olderThanMs: 0 }); // no grace period at all
+      sweeps++;
+      await sleep(3);
+    }
+  };
+  await Promise.all([...Array.from({ length: 8 }, worker), sweeper()]);
+
+  const { rows } = await pool.query(
+    `SELECT c.id, h.handle
+       FROM haikit_conversations c, jsonb_array_elements_text(c.handles) AS h(handle)
+      WHERE c.id = ANY($1)
+        AND NOT EXISTS (SELECT 1 FROM haikit_payloads p WHERE p.conversation_id = c.id AND p.handle = h.handle)`,
+    [ids],
+  );
+  check(
+    `turns, takeovers and sweeps racing leave no dangling handle ` +
+      `(${saves} saves, ${superseded} superseded, ${sweeps} sweeps, ${rows.length} dangling)`,
+    rows.length === 0 && saves > 0 && superseded > 0 && sweeps > 0,
+  );
+}
+
 // ── PGlite: always ─────────────────────────────────────────────────────────
 {
   const db = new PGlite();
@@ -207,6 +280,7 @@ if (process.env.HAIKIT_PG_URL) {
     await integration("postgres (server)", (opts) => pgStore(pool, opts));
     await adapterChecks("postgres (server)", pool);
     await concurrencyChecks(pool);
+    await sweepRaceChecks(pool);
   } finally {
     await pool.end();
     await admin.query(`DROP SCHEMA ${isolated} CASCADE`);

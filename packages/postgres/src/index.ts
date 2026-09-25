@@ -246,8 +246,13 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
             AND handle IN (SELECT jsonb_array_elements_text($2::jsonb))`,
         [conversationId, JSON.stringify(handles)],
       );
-      const order = new Map(handles.map((h, i) => [h, i] as const));
-      return rows.map(toPayload).sort((a, b) => order.get(a.handle)! - order.get(b.handle)!);
+      // `IN` returns each row once; the contract is one result per input
+      // handle, duplicates and order included — map the input, not the rows.
+      const byHandle = new Map(rows.map((row) => [row.handle, toPayload(row)] as const));
+      return handles.flatMap((h) => {
+        const record = byHandle.get(h);
+        return record ? [{ ...record }] : [];
+      });
     },
   };
 }
