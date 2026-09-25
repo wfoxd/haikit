@@ -1,6 +1,6 @@
 {
   "name": "@haikit/postgres",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Postgres store adapter for haikit: durable conversations, fenced turn leases, write-once payloads. Bring your own driver.",
   "keywords": [
     "haikit",
@@ -34,7 +34,7 @@
     "prepack": "npm --prefix ../.. run build"
   },
   "dependencies": {
-    "@haikit/core": "0.3.0"
+    "@haikit/core": "0.3.1"
   },
   "publishConfig": {
     "access": "public"
