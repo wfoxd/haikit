@@ -69,6 +69,9 @@ export const schema: readonly string[] = [
      version         integer NOT NULL,
      props           jsonb NOT NULL,
      mode            text NOT NULL,
+     -- the lease the writing turn held. Only a newer token proves that turn can
+     -- never save again, which is what makes an unreferenced row an orphan.
+     lease_token     text NOT NULL,
      created_at      timestamptz NOT NULL DEFAULT now(),
      PRIMARY KEY (conversation_id, handle)
    )`,
@@ -201,14 +204,14 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
         `WITH owner AS (
            UPDATE haikit_conversations
               SET handle_seq = handle_seq + 1
-            WHERE id = $1::text AND lease_token = $2
+            WHERE id = $1::text AND lease_token = $2::text
             RETURNING handle_seq
          )
-         INSERT INTO haikit_payloads (conversation_id, handle, component, version, props, mode)
+         INSERT INTO haikit_payloads (conversation_id, handle, component, version, props, mode, lease_token)
          SELECT $1::text,
                 -- ui_01 … ui_09, ui_10 … ui_99, ui_100: pad, never truncate
                 'ui_' || CASE WHEN handle_seq < 10 THEN '0' ELSE '' END || handle_seq,
-                $3::text, $4::integer, $5::jsonb, $6::text
+                $3::text, $4::integer, $5::jsonb, $6::text, $2::text
            FROM owner
          RETURNING handle`,
         [
@@ -251,22 +254,28 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
 
 export interface SweepOptions {
   /**
-   * Only sweep rows at least this old. Keep it above your lease TTL: a turn
-   * inserts its payloads before it saves the history that references them, so
-   * a young row can look orphaned while its turn is still running.
+   * Only sweep rows at least this old. A grace period for operators, not a
+   * safety bound: whether a row is an orphan is decided by lease tokens below,
+   * so no value here can delete a payload a turn is still going to reference.
    */
   olderThanMs: number;
 }
 
 /**
- * Delete orphaned payloads: rows written by a turn that was then overtaken, so
- * the surviving history never recorded their handles. They are inert — an
- * interaction on one is refused — but they are still rows.
+ * Delete orphaned payloads: rows written by a turn that can never save the
+ * history that would reference them.
  *
- * Conversations with a live lease are skipped regardless of age, so an
- * in-flight turn's not-yet-recorded payloads are never touched. Deleting
- * conversations themselves is retention policy, not garbage collection, and is
- * left to you.
+ * A turn inserts its payloads before it saves, so an unreferenced row is not
+ * evidence of anything by itself — the turn may simply not have saved yet. Nor
+ * is an expired lease: a turn slower than its TTL keeps running, and if nobody
+ * took the conversation over, its save still succeeds. The only proof that a
+ * writer is finished is that the conversation's lease has since been issued to
+ * someone else. Every payload records the token its writer held, and a row is
+ * swept only when it is unreferenced *and* that token has been superseded.
+ *
+ * Consequence: a turn that crashed leaves its rows until the conversation is
+ * next used, since only then is a new token issued. That is the safe direction.
+ * Deleting conversations themselves is retention policy, and is left to you.
  */
 export async function sweepOrphans(db: Queryable, options: SweepOptions): Promise<{ deleted: number }> {
   const { rows } = await db.query(
@@ -274,7 +283,7 @@ export async function sweepOrphans(db: Queryable, options: SweepOptions): Promis
       USING haikit_conversations c
       WHERE p.conversation_id = c.id
         AND p.created_at < now() - $1::float8 * interval '1 millisecond'
-        AND (c.lease_until IS NULL OR c.lease_until <= now())
+        AND p.lease_token IS DISTINCT FROM c.lease_token
         AND NOT (c.handles @> jsonb_build_array(p.handle))
       RETURNING p.handle`,
     [options.olderThanMs],

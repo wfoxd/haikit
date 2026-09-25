@@ -34,7 +34,7 @@
     "prepack": "npm --prefix ../.. run build"
   },
   "dependencies": {
-    "@haikit/core": "0.2.0"
+    "@haikit/core": "0.3.0"
   },
   "publishConfig": {
     "access": "public"

@@ -59,6 +59,13 @@ import { sweepOrphans } from "@haikit/postgres";
 await sweepOrphans(pool, { olderThanMs: 24 * 60 * 60 * 1000 });
 ```
 
-Keep `olderThanMs` above your lease TTL. Conversations with a turn in flight are
-skipped regardless. Deleting whole conversations is retention policy, not
-garbage collection, and is left to you.
+A row is swept only when no history references it **and** the turn that wrote
+it can never save again — which is proven by the conversation's lease having
+been issued to someone else since. An expired lease is not enough: a turn slower
+than its TTL keeps running, and if nobody took over, its save still succeeds.
+So `olderThanMs` is a grace period, not a safety bound; no value of it can
+delete a payload a turn is still going to reference.
+
+A turn that crashed leaves its rows until the conversation is next used, since
+only then is a new token issued. Deleting whole conversations is retention
+policy, not garbage collection, and is left to you.

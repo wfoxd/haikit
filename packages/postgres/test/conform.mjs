@@ -81,26 +81,52 @@ async function adapterChecks(label, db) {
     check("a cleared pending turn is stored as SQL NULL", rows[0].is_null === true);
   }
 
-  // orphan sweep removes only what no history references, and never mid-turn
+  // An unreferenced row is only an orphan once its writer can never save.
   {
+    // the turn that wrote `orphan` finished without referencing it, and the
+    // conversation has since been leased again — that writer is done for good
     const keep = await store.loadConversation(undefined);
     const kept = await store.putPayload(payload(keep.id), keep.leaseToken);
     const orphan = await store.putPayload(payload(keep.id), keep.leaseToken);
-    keep.handles.push(kept); // only `kept` made it into the surviving history
+    keep.handles.push(kept);
     keep.leaseUntil = null;
     await store.saveConversation(keep);
+    const next = await store.loadConversation(keep.id); // a later turn: new token
+    next.leaseUntil = null;
+    await store.saveConversation(next);
 
-    const busy = await store.loadConversation(undefined); // lease still live
+    // a turn still holding its lease, mid-way between render and save
+    const busy = await store.loadConversation(undefined);
     const inFlight = await store.putPayload(payload(busy.id), busy.leaseToken);
 
     await db.query(`UPDATE haikit_payloads SET created_at = now() - interval '1 hour'`);
     await sweepOrphans(db, { olderThanMs: 60_000 });
 
     check("sweep keeps a payload the history references", (await store.getPayload(kept, keep.id)) !== null);
-    check("sweep removes an orphaned payload", (await store.getPayload(orphan, keep.id)) === null);
+    check("sweep removes a payload whose writer was superseded", (await store.getPayload(orphan, keep.id)) === null);
+    check("sweep never touches a turn still holding its lease", (await store.getPayload(inFlight, busy.id)) !== null);
+  }
+
+  // A turn slower than its lease keeps running, and if nobody took the
+  // conversation over, its save still succeeds. Sweeping on "lease expired"
+  // deleted its payload in that window and left the saved history pointing at
+  // a missing row. Only a superseded token proves the writer is finished.
+  {
+    const short = pgStore(db, { leaseMs: 40 });
+    const slow = await short.loadConversation(undefined);
+    const h = await short.putPayload(payload(slow.id), slow.leaseToken);
+    slow.handles.push(h); // in memory only — not saved yet
+    await new Promise((r) => setTimeout(r, 70)); // the lease lapses; nobody takes over
+
+    await db.query(`UPDATE haikit_payloads SET created_at = now() - interval '1 hour'`);
+    await sweepOrphans(db, { olderThanMs: 60_000 }); // runs mid-turn
+
+    slow.leaseUntil = null;
+    await short.saveConversation(slow); // succeeds: the token was never superseded
+    const saved = await short.loadConversation(slow.id);
     check(
-      "sweep never touches a conversation with a turn in flight",
-      (await store.getPayload(inFlight, busy.id)) !== null,
+      "sweep keeps a payload whose turn outlived its lease",
+      saved.handles.includes(h) && (await short.getPayload(h, slow.id)) !== null,
     );
   }
 }

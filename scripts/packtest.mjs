@@ -83,6 +83,23 @@ try {
     check(`@haikit/${name} ships LICENSE`, () => has("LICENSE"));
     check(`@haikit/${name} ships README.md`, () => has("README.md"));
 
+    // Internal dependencies must name the version being released. The consumer
+    // install below overrides every @haikit/* dependency with a local tarball,
+    // so a stale pin — @haikit/postgres once required core 0.2.0, which lacks
+    // the errors it imports — would install fine here and break every real
+    // consumer. Check the manifest itself.
+    check(`@haikit/${name} depends on this release of its siblings`, () => {
+      const pkg = JSON.parse(run("tar", ["-xzOf", tgz[name], "package/package.json"], work));
+      const stale = Object.entries(pkg.dependencies ?? {})
+        .filter(([dep]) => dep.startsWith("@haikit/"))
+        .filter(([dep, range]) => {
+          const sibling = JSON.parse(readFileSync(join(ROOT, "packages", dep.slice(8), "package.json"), "utf8"));
+          return range !== sibling.version;
+        });
+      if (stale.length) throw new Error(stale.map(([d, r]) => `${d}@${r}`).join(", "));
+      return true;
+    });
+
     const manifest = JSON.parse(readFileSync(join(ROOT, "packages", name, "package.json"), "utf8"));
 
     // every exports target resolves to a real entry in the archive
