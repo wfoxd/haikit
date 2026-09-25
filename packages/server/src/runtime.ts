@@ -131,7 +131,9 @@ export class Hai {
     // receive a tool_result, so close the pending one out honestly first.
     if (conversation.status === "awaiting" && conversation.pending) {
       const { toolUseId, handle, results, digest } = conversation.pending;
-      await this.config.store.freezePayload(handle, conversation.id, conversation.leaseToken);
+      // Recorded on the conversation, not the payload, so it commits with the
+      // history that explains it — see Conversation.frozen.
+      conversation.frozen.push(handle);
       emit({ type: "ui_state", handle, state: "frozen" });
       conversation.messages.push({
         role: "user",
@@ -164,9 +166,10 @@ export class Hai {
     // Membership of the surviving `handles` is what makes those orphans inert.
     if (!conversation.handles.includes(input.handle)) throw new Error("unknown handle");
 
+    if (conversation.frozen.includes(input.handle)) throw new Error("component is frozen");
+
     const record = await this.config.store.getPayload(input.handle, conversation.id);
     if (!record) throw new Error("unknown handle");
-    if (record.state === "frozen") throw new Error("component is frozen");
 
     const impl = this.surfaces.get(record.component);
     if (!impl) throw new Error(`unknown component: ${record.component}`);
@@ -188,7 +191,7 @@ export class Hai {
 
     if (spec.kind === "resolve") {
       if (conversation.pending?.handle !== input.handle) throw new Error("nothing awaiting this handle");
-      await this.config.store.freezePayload(input.handle, conversation.id, conversation.leaseToken);
+      conversation.frozen.push(input.handle);
       emit({ type: "ui_state", handle: input.handle, state: "frozen", selection: value });
       emit({ type: "block_start", block: { kind: "interaction", id: this.nid("b"), handle: input.handle, label } });
 
@@ -316,7 +319,6 @@ export class Hai {
             version: impl.surface.version,
             props: parsed,
             mode: surfaceMode,
-            state: "live",
           },
           conversation.leaseToken,
         );

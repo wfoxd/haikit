@@ -49,8 +49,8 @@ export function memoryStore(options: MemoryStoreOptions = {}): StoreAdapter {
   const newToken = () => globalThis.crypto.randomUUID();
 
   /** Every durable mutation presents the token it was issued. A holder that has
-   *  been superseded must not keep writing — see freezePayload's contract for
-   *  why that is not merely untidy.
+   *  been superseded must stop writing rather than run to completion and be
+   *  discarded at the end.
    *
    *  Atomic here only because nothing awaits between this check and the write
    *  that follows it: JavaScript cannot interleave another request into a
@@ -78,6 +78,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): StoreAdapter {
         status: "idle",
         messages: [],
         handles: [],
+        frozen: [],
         pending: null,
         leaseUntil: Date.now() + leaseMs,
         leaseToken: newToken(),
@@ -115,15 +116,6 @@ export function memoryStore(options: MemoryStoreOptions = {}): StoreAdapter {
         if (record && record.conversationId === conversationId) out.push(copy(record));
       }
       return out;
-    },
-
-    /** Scoped for the same reason as getPayload, and enforced the same way —
-     *  handles happen to be globally unique here, but a store that numbers them
-     *  per conversation must behave identically. */
-    async freezePayload(handle, conversationId, leaseToken) {
-      fence(conversationId, leaseToken);
-      const record = payloads.get(handle);
-      if (record && record.conversationId === conversationId) record.state = "frozen";
     },
   };
 }

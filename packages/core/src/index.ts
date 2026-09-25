@@ -303,6 +303,18 @@ export interface Conversation {
    * overtaken leaves its rows behind while its conversation save is discarded.
    */
   handles: string[];
+  /**
+   * Handles whose elicit turn has been answered — resolved by a click, or closed
+   * out by a typed override. An interaction on one of these is refused.
+   *
+   * This lives on the conversation, not on the payload, because freezing is half
+   * of one transition: the other half is the history recording what the user
+   * chose. Split across two rows, a turn could freeze the payload while it still
+   * held the lease, lose the lease before saving, and leave the surviving history
+   * awaiting a surface that can never be clicked again. On one fenced row the two
+   * halves commit together or not at all.
+   */
+  frozen: string[];
   pending: Pending | null;
   /** Turn lease expiry. A dead process leaves this in the past. */
   leaseUntil: number | null;
@@ -318,6 +330,12 @@ export interface Conversation {
   leaseToken: string | null;
 }
 
+/**
+ * A rendered surface's data. **Immutable once written**: everything about a
+ * surface that changes over the conversation lives on the fenced conversation
+ * row instead (see `Conversation.frozen`), so no payload write can ever disagree
+ * with the history that references it.
+ */
 export interface PayloadRecord {
   handle: string;
   conversationId: string;
@@ -325,7 +343,6 @@ export interface PayloadRecord {
   version: number;
   props: unknown;
   mode: "display" | "elicit";
-  state: "live" | "frozen";
   createdAt: number;
 }
 
@@ -461,9 +478,8 @@ export interface StoreAdapter {
    * -- rowCount 0 → throw StaleLease
    * ```
    *
-   * The same applies to every fenced write — `putPayload` and `freezePayload`
-   * must check the token and write in one statement or one transaction, not as a
-   * lookup followed by a mutation. Like acquisition, this is a review item: a
+   * The same applies to `putPayload`, the only other fenced write: check the
+   * token and insert in one statement, not as a lookup followed by a write. Like acquisition, this is a review item: a
    * single-process suite cannot interleave the two halves to catch it.
    */
   saveConversation(conversation: Conversation): Promise<void>;
@@ -494,21 +510,6 @@ export interface StoreAdapter {
    * network, so the loop is O(surfaces) queries per turn against a real store.
    */
   getPayloads(handles: string[], conversationId: string): Promise<PayloadRecord[]>;
-  /**
-   * Scoped like `getPayload`, and for the same reason: a handle is only
-   * meaningful inside the conversation that produced it. Without the scope a
-   * store cannot number handles per conversation, because `handle` alone would
-   * not identify a row.
-   *
-   * Fenced, and unlike `putPayload` this one is load-bearing rather than
-   * hygienic. Freezing mutates a row the *winning* history still depends on: a
-   * superseded `/interact` that freezes a pending handle leaves the surviving
-   * conversation awaiting a surface that can never resolve, and every later
-   * interaction fails with "component is frozen". That conversation is
-   * permanently unsendable — the exact outcome durable storage exists to
-   * prevent. Throws `StaleLease` when the token does not match.
-   */
-  freezePayload(handle: string, conversationId: string, leaseToken: string | null): Promise<void>;
 }
 
 /** Rough token estimate. Only used to surface the economics in the UI. */

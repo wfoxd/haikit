@@ -28,7 +28,6 @@ const payload = (conversationId) => ({
   version: 1,
   props: { rows: [1, 2, 3] },
   mode: "elicit",
-  state: "live",
 });
 
 /** @param {() => import("@haikit/core").StoreAdapter} make */
@@ -47,11 +46,10 @@ export async function conform(label, make) {
     check("read is scoped to the owning conversation", (await s.getPayload(h, b.id)) === null);
     check("read succeeds for the owner", (await s.getPayload(h, a.id))?.handle === h);
 
-    await s.freezePayload(h, b.id, b.leaseToken);
-    check("freeze from another conversation is a no-op", (await s.getPayload(h, a.id)).state === "live");
-
-    await s.freezePayload(h, a.id, a.leaseToken);
-    check("freeze from the owner applies", (await s.getPayload(h, a.id)).state === "frozen");
+    // Payloads are write-once. Anything that changes about a surface lives on
+    // the fenced conversation row, so a store offering a way to mutate one would
+    // reopen the split-write hole that Conversation.frozen closes.
+    check("the store exposes no payload mutation", !("freezePayload" in s));
   }
 
   // ── batch read matches the single read, and drops what it should ──────
@@ -244,7 +242,7 @@ async function orphanChecks() {
   // a turn renders a surface, then loses its lease and is superseded
   const slow = await store.loadConversation(undefined);
   const handle = await store.putPayload(
-    { conversationId: slow.id, component: "c", version: 1, props: {}, mode: "display", state: "live" },
+    { conversationId: slow.id, component: "c", version: 1, props: {}, mode: "display" },
     slow.leaseToken,
   );
   slow.handles.push(handle);
@@ -278,58 +276,97 @@ async function orphanChecks() {
 }
 
 // ── a superseded turn cannot strand a conversation ──────────────────────
-// Freezing is not like writing a new payload. It mutates a row the *winning*
-// history still depends on: freeze the handle a parked turn is awaiting and
-// that conversation awaits a surface that can never resolve, failing every
-// later interaction with "component is frozen". Permanently unsendable — the
-// exact outcome durable storage exists to prevent.
+// Answering an elicit surface is one transition with two halves: the surface
+// stops accepting clicks, and the history records what was chosen. When the
+// first half lived on the payload and the second on the conversation, a turn
+// could freeze the payload while it still legitimately held the lease, lose the
+// lease during the model call, and have its save rejected — leaving the winning
+// history awaiting a surface nobody can click again. Checked in both orders:
+// the takeover landing before the freeze, and after it.
 async function strandChecks() {
   console.log("\nstranding");
-  const store = memoryStore({ leaseMs: 40 });
+  const { createHai } = await import("../packages/server/dist/index.js");
+  const { defineSurface, resolve } = await import("../packages/core/dist/index.js");
+  const any = { parse: (v) => v };
+  const picker = defineSurface({ name: "picker", version: 1, props: any, actions: { choose: resolve(any) }, queries: {} });
+  const pickerImpl = picker.implement({ digest: () => "d", actions: { choose: (v) => `chose ${v}` }, queries: {} });
 
-  const setup = await store.loadConversation(undefined);
-  const handle = await store.putPayload(
-    { conversationId: setup.id, component: "picker", version: 1, props: {}, mode: "elicit", state: "live" },
-    setup.leaseToken,
-  );
-  setup.handles.push(handle);
-  setup.status = "awaiting";
-  setup.pending = { toolUseId: "t1", handle, digest: "d", results: [] };
-  setup.leaseUntil = null;
-  await store.saveConversation(setup);
+  // a model slow enough to outlive a 40ms lease
+  const slowModel = {
+    id: "slow",
+    async generate() {
+      await new Promise((r) => setTimeout(r, 90));
+      return { content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" };
+    },
+  };
 
-  const slow = await store.loadConversation(setup.id); // /interact begins
-  await new Promise((r) => setTimeout(r, 70)); // its lease expires mid-turn
-
-  const winner = await store.loadConversation(setup.id); // still parked, taken over
-  winner.leaseUntil = null;
-  await store.saveConversation(winner);
-
-  let freezeRefused = false;
-  try {
-    await store.freezePayload(handle, slow.id, slow.leaseToken);
-  } catch (err) {
-    freezeRefused = isStaleLease(err);
-  }
-  check("a superseded holder cannot freeze", freezeRefused);
-
-  let putRefused = false;
-  try {
-    await store.putPayload(
-      { conversationId: slow.id, component: "c", version: 1, props: {}, mode: "display", state: "live" },
-      slow.leaseToken,
+  async function parked(store) {
+    const c = await store.loadConversation(undefined);
+    const handle = await store.putPayload(
+      { conversationId: c.id, component: "picker", version: 1, props: {}, mode: "elicit" },
+      c.leaseToken,
     );
-  } catch (err) {
-    putRefused = isStaleLease(err);
+    c.handles.push(handle);
+    c.status = "awaiting";
+    c.pending = { toolUseId: "t1", handle, digest: "d", results: [] };
+    c.leaseUntil = null;
+    await store.saveConversation(c);
+    return { id: c.id, handle };
   }
-  check("a superseded holder cannot write a payload", putRefused);
 
-  const survived = await store.loadConversation(setup.id);
-  const row = await store.getPayload(handle, setup.id);
-  check(
-    "the surviving conversation can still resolve what it awaits",
-    survived.pending?.handle === handle && row.state === "live",
-  );
+  // ── takeover AFTER the freeze: the freeze was legitimate when it happened
+  {
+    const store = memoryStore({ leaseMs: 40 });
+    const hai = createHai({ model: slowModel, store, tools: [], surfaces: [pickerImpl], system: "x" });
+    const { id, handle } = await parked(store);
+
+    const a = await store.loadConversation(id);
+    const aTurn = hai.interact(a, { handle, action: "choose", value: "he" }, () => {}); // freezes, then waits on the model
+    await new Promise((r) => setTimeout(r, 60)); // A's lease has expired mid-call
+    const b = await store.loadConversation(id); // B takes over from pre-A history
+    await aTurn;
+
+    let aRejected = false;
+    try {
+      a.leaseUntil = null;
+      await store.saveConversation(a);
+    } catch (err) {
+      aRejected = isStaleLease(err);
+    }
+    check("the superseded resolution is rejected", aRejected);
+    check("the winning history does not see the lost freeze", !b.frozen.includes(handle));
+
+    let clicked = "";
+    try {
+      await hai.interact(b, { handle, action: "choose", value: "he" }, () => {});
+      clicked = "resolved";
+    } catch (err) {
+      clicked = err.message;
+    }
+    check("the surviving conversation can still resolve what it awaits", clicked === "resolved");
+  }
+
+  // ── takeover BEFORE the write: a superseded holder cannot write at all
+  {
+    const store = memoryStore({ leaseMs: 40 });
+    const { id } = await parked(store);
+    const slow = await store.loadConversation(id);
+    await new Promise((r) => setTimeout(r, 70));
+    const winner = await store.loadConversation(id);
+    winner.leaseUntil = null;
+    await store.saveConversation(winner);
+
+    let putRefused = false;
+    try {
+      await store.putPayload(
+        { conversationId: slow.id, component: "c", version: 1, props: {}, mode: "display" },
+        slow.leaseToken,
+      );
+    } catch (err) {
+      putRefused = isStaleLease(err);
+    }
+    check("a superseded holder cannot write a payload", putRefused);
+  }
 }
 
 // ── a 409 in the tail of the previous turn is not a user-visible error ──

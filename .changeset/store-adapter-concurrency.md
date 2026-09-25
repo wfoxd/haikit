@@ -13,18 +13,29 @@ one cannot. Groundwork for a Postgres adapter, but each is a real fix on its own
 **Breaking, for `StoreAdapter` implementers only.** Applications calling
 `createHai({ store: memoryStore() })` need no change.
 
-**1. `freezePayload` is scoped.**
+**1. Payloads are immutable; frozen state moves onto the conversation.**
 
 ```diff
-- freezePayload(handle: string): Promise<void>
-+ freezePayload(handle: string, conversationId: string): Promise<void>
+- freezePayload(handle: string): Promise<void>        // removed
+  interface PayloadRecord {
+-   state: "live" | "frozen";                         // removed
+  }
+  interface Conversation {
++   frozen: string[];
+  }
 ```
 
-`getPayload` was already scoped — a handle from another conversation must not
-resolve — but `freezePayload` was not. Not exploitable, since every call site
-freezes a handle a scoped `getPayload` just returned, but it forced handles to be
-globally unique: without the conversation, `handle` alone does not identify a
-row. A store numbering handles per conversation could not implement it.
+Answering an elicit surface is one transition with two halves: the surface stops
+accepting clicks, and the history records what the user chose. The first half
+lived on the payload row and the second on the conversation row, so no amount of
+fencing could keep them together — a turn could legitimately freeze the payload,
+lose its lease during the model call, and have its save rejected, leaving the
+surviving history awaiting a surface that could never be clicked again.
+
+Both halves now live on the conversation row and commit in the same fenced save.
+Payloads are write-once, so a durable store needs no transaction spanning two
+tables. This also removes the scoping gap `freezePayload` had (it took no
+conversation id), rather than patching it.
 
 **2. `getPayloads` batches the context read.**
 
@@ -75,32 +86,22 @@ before either writes, and both acquire. No conformance test can hold an adapter
 to this — a single process cannot interleave two acquisitions — so it is called
 out as a review item rather than left implied.
 
-**4. Every durable payload mutation is fenced.**
+**4. `putPayload` is fenced.**
 
 ```diff
 - putPayload(record): Promise<string>
 + putPayload(record, leaseToken: string | null): Promise<string>
-- freezePayload(handle, conversationId): Promise<void>
-+ freezePayload(handle, conversationId, leaseToken: string | null): Promise<void>
 ```
 
-Fencing only the conversation save was not enough, and `freezePayload` is the
-reason. It mutates a row the *winning* history still depends on: a superseded
-`/interact` that freezes a pending handle leaves the surviving conversation
-awaiting a surface that can never resolve, so every later interaction fails with
-`component is frozen`. That conversation is permanently unsendable — precisely
-the outcome durable storage exists to prevent.
-
-`putPayload` is fenced for a weaker reason: an orphaned row is inert, but a
-superseded turn should stop working rather than run to completion and be
-discarded. For that to actually happen, `StaleLease` now escapes the tool
-boundary instead of being converted into an ordinary "tool failed" result, which
-would have handed the lost lease back to the model and kept paying for hops whose
+A superseded turn should stop working rather than run to completion and be
+discarded. For that to actually happen, `StaleLease` escapes the tool boundary
+instead of being converted into an ordinary "tool failed" result, which would
+have handed the lost lease back to the model and kept paying for hops whose
 output the fenced save discards.
 
-Every fenced write — `saveConversation` included — is documented as needing its
-token check and its write to be one statement, for the same reason as lease
-acquisition.
+Both fenced writes — `saveConversation` and `putPayload` — are documented as
+needing the token check and the write to be one statement, for the same reason
+as lease acquisition.
 
 **5. An interaction is refused unless the conversation records its handle.**
 
