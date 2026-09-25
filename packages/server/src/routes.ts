@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { isConversationBusy, isStaleLease } from "@haikit/core";
 import type { Emit, WireEvent } from "@haikit/core";
 import type { Hai } from "./runtime.js";
 
@@ -18,13 +19,25 @@ export function nodeHandler(hai: Hai, basePath = "/hai") {
     if (route !== "/chat" && route !== "/interact") return false;
 
     const body = await readJson(req);
-    const conversation = await hai.config.store.loadConversation(body.conversationId);
+
+    // Before the SSE stream opens, because a rejected load has no stream to
+    // report into — and an uncaught throw here would take down the request.
+    let conversation;
+    try {
+      conversation = await hai.config.store.loadConversation(body.conversationId);
+    } catch (err) {
+      if (!isConversationBusy(err)) throw err;
+      res.writeHead(409, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: (err as Error).message }));
+      return true;
+    }
 
     const emit = openSSE(res);
     if (route === "/chat") {
       emit({ type: "hello", conversationId: conversation.id, model: hai.config.model.id });
     }
 
+    let superseded = false;
     try {
       if (route === "/chat") {
         await hai.send(conversation, String(body.message ?? ""), emit);
@@ -36,10 +49,30 @@ export function nodeHandler(hai: Hai, basePath = "/hai") {
         );
       }
     } catch (err) {
+      if (isStaleLease(err)) superseded = true;
       emit({ type: "error", message: (err as Error).message });
+    } finally {
+      // The lease lives exactly as long as the request. Releasing it any
+      // earlier — when a turn parks, say — lets the client's next interaction
+      // arrive before this request has finished writing, and the two turns
+      // interleave on one conversation.
+      //
+      // Only the expiry is cleared. The token has to survive so the save below
+      // can still prove this request is the rightful holder.
+      conversation.leaseUntil = null;
+      try {
+        // A turn that already hit a fence knows its save would be rejected too;
+        // attempting it only repeats the same error to the client.
+        if (!superseded) await hai.config.store.saveConversation(conversation);
+      } catch (err) {
+        // Overtaken while we were slow: another turn already wrote newer state
+        // under a fresh token. Dropping this write is the correct outcome, but
+        // the client asked for something it is not getting, so say so.
+        if (!isStaleLease(err)) throw err;
+        emit({ type: "error", message: (err as Error).message });
+      }
     }
 
-    await hai.config.store.saveConversation(conversation);
     res.end();
     return true;
   };

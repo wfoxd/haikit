@@ -26,13 +26,65 @@ export function createChat({ endpoint = "/hai", registry }) {
 
   const notify = (event) => listeners.forEach((fn) => fn(state, event));
 
+  /**
+   * Requests open or waiting to go out — which is not the same as
+   * `state.status`.
+   *
+   * The server emits `awaiting` and `idle` from inside the turn, then releases
+   * its lease and saves after that frame has already reached us. Gating on
+   * status lets the next request go out during that tail, and the server
+   * answers 409. It matters because the composer is deliberately live while
+   * awaiting — "pick an option above, or type to override" — so an override
+   * there is the intended affordance, not a misuse.
+   *
+   * Requests are chained rather than refused: one never starts until the
+   * previous response has closed, so this client cannot collide with itself.
+   */
+  let busy = 0;
+  let chain = Promise.resolve();
+
   // ── transport: SSE over POST (EventSource cannot POST) ──────────────
-  async function stream(path, body) {
-    const res = await fetch(endpoint + path, {
+  function enqueue(path, body) {
+    busy++;
+    const run = chain.then(() => pump(path, body)).finally(() => {
+      busy--;
+    });
+    chain = run.catch(() => {});
+    return run;
+  }
+
+  const post = (path, body) =>
+    fetch(endpoint + path, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ conversationId: state.conversationId, ...body }),
     });
+
+  async function pump(path, body) {
+    let res = await post(path, body);
+
+    // 409 means someone else holds this conversation's turn. Almost always that
+    // is the previous request's own tail, milliseconds from finishing — but it
+    // can also be a second tab, which no client-side guard can prevent. One
+    // retry covers the first and gives up honestly on the second.
+    if (res.status === 409) {
+      await new Promise((r) => setTimeout(r, 150));
+      res = await post(path, body);
+    }
+
+    // A non-SSE response carries no `data:` frames, so parsing it as a stream
+    // would fail silently and the UI would just sit there.
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({}));
+      apply({
+        type: "error",
+        message:
+          detail.error ??
+          (res.status === 409 ? "another turn is already in flight" : `request failed (${res.status})`),
+      });
+      return;
+    }
+
     const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
     let buffer = "";
     for (;;) {
@@ -143,14 +195,22 @@ export function createChat({ endpoint = "/hai", registry }) {
     return surface.instance;
   }
 
+  // A message is queued, never dropped. mountChat has already cleared the
+  // textarea by the time this runs, so refusing a send here does not decline
+  // it — it deletes what the user typed. That was true under the old
+  // `status === "streaming"` gate too, via the Enter key, which ignores the
+  // disabled send button.
   async function send(text) {
-    if (!text.trim() || state.status === "streaming") return;
-    await stream("/chat", { message: text });
+    if (!text.trim()) return;
+    await enqueue("/chat", { message: text });
   }
 
+  // A click carries nothing the user authored, and stacking them is worse than
+  // dropping them: a double-click on a picker row would resolve it and then
+  // queue a second resolution into "component is frozen".
   async function interact(handle, action, value) {
-    if (state.status === "streaming") return;
-    await stream("/interact", { handle, action, value });
+    if (busy) return;
+    await enqueue("/interact", { handle, action, value });
   }
 
   return {

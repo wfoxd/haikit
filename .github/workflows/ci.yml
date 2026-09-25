@@ -26,6 +26,10 @@ jobs:
       # this is the check most repos don't have and this one needs.
       - run: npm run typetest
 
+      # every StoreAdapter rule an in-process store could ignore and a
+      # networked one cannot: handle scoping, batch reads, turn leasing
+      - run: npm run storetest
+
       # the elicit loop actually works: surface renders, turn parks,
       # interaction resolves it, binding table rejects what it should
       - run: npm run smoke

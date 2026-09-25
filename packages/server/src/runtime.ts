@@ -1,5 +1,6 @@
 import {
   estTokens,
+  isStaleLease,
   makeCap,
   type AnySurfaceImpl,
   type Conversation,
@@ -19,11 +20,7 @@ export interface HaiConfig {
   surfaces: AnySurfaceImpl[];
   /** Guard against runaway tool loops. */
   maxHops?: number;
-  /** Turn lease duration; a dead process releases after this. */
-  leaseMs?: number;
 }
-
-const LEASE_MS = 120_000;
 
 export class Hai {
   readonly config: HaiConfig;
@@ -134,7 +131,9 @@ export class Hai {
     // receive a tool_result, so close the pending one out honestly first.
     if (conversation.status === "awaiting" && conversation.pending) {
       const { toolUseId, handle, results, digest } = conversation.pending;
-      await this.config.store.freezePayload(handle);
+      // Recorded on the conversation, not the payload, so it commits with the
+      // history that explains it — see Conversation.frozen.
+      conversation.frozen.push(handle);
       emit({ type: "ui_state", handle, state: "frozen" });
       conversation.messages.push({
         role: "user",
@@ -160,9 +159,17 @@ export class Hai {
     input: { handle: string; action: string; value: unknown },
     emit: Emit,
   ): Promise<void> {
+    // The payload row carries a conversation id, but that alone is not enough.
+    // A turn that rendered a surface and was then overtaken leaves a row behind:
+    // its conversation save is rejected, so the winning history never records
+    // the handle, yet the row and the browser that mounted it both still exist.
+    // Membership of the surviving `handles` is what makes those orphans inert.
+    if (!conversation.handles.includes(input.handle)) throw new Error("unknown handle");
+
+    if (conversation.frozen.includes(input.handle)) throw new Error("component is frozen");
+
     const record = await this.config.store.getPayload(input.handle, conversation.id);
     if (!record) throw new Error("unknown handle");
-    if (record.state === "frozen") throw new Error("component is frozen");
 
     const impl = this.surfaces.get(record.component);
     if (!impl) throw new Error(`unknown component: ${record.component}`);
@@ -184,7 +191,7 @@ export class Hai {
 
     if (spec.kind === "resolve") {
       if (conversation.pending?.handle !== input.handle) throw new Error("nothing awaiting this handle");
-      await this.config.store.freezePayload(input.handle);
+      conversation.frozen.push(input.handle);
       emit({ type: "ui_state", handle: input.handle, state: "frozen", selection: value });
       emit({ type: "block_start", block: { kind: "interaction", id: this.nid("b"), handle: input.handle, label } });
 
@@ -215,7 +222,6 @@ export class Hai {
 
   private async runTurn(conversation: Conversation, emit: Emit): Promise<void> {
     conversation.status = "streaming";
-    conversation.leaseUntil = Date.now() + (this.config.leaseMs ?? LEASE_MS);
     emit({ type: "status", status: "streaming" });
 
     const toolDefs = [...this.tools.values()].map((t) => ({
@@ -272,7 +278,6 @@ export class Hai {
         // Hold the resolved siblings too — the API is all-or-nothing per batch.
         conversation.status = "awaiting";
         conversation.pending = { ...parked, results };
-        conversation.leaseUntil = null;
         emit({ type: "status", status: "awaiting" });
         await this.emitContext(conversation, emit);
         return;
@@ -282,7 +287,6 @@ export class Hai {
     }
 
     conversation.status = "idle";
-    conversation.leaseUntil = null;
     emit({ type: "status", status: "idle" });
     await this.emitContext(conversation, emit);
   }
@@ -308,14 +312,16 @@ export class Hai {
         // Validate before storing: props may originate outside this process.
         const parsed = impl.surface.props.parse(props);
 
-        const handle = await this.config.store.putPayload({
-          conversationId: conversation.id,
-          component: impl.surface.name,
-          version: impl.surface.version,
-          props: parsed,
-          mode: surfaceMode,
-          state: "live",
-        });
+        const handle = await this.config.store.putPayload(
+          {
+            conversationId: conversation.id,
+            component: impl.surface.name,
+            version: impl.surface.version,
+            props: parsed,
+            mode: surfaceMode,
+          },
+          conversation.leaseToken,
+        );
 
         conversation.handles.push(handle);
 
@@ -346,16 +352,21 @@ export class Hai {
       const ret = await tool.run(input, ctx);
       return { ret, mode };
     } catch (err) {
+      // A tool error is information for the model; a lost lease is not. Fencing
+      // exists so a superseded turn stops — converting StaleLease into "tool
+      // failed" would hand it back to the model and keep paying for hops whose
+      // output the fenced save is going to discard anyway.
+      if (isStaleLease(err)) throw err;
       return { ret: { model: `${call.name} failed: ${(err as Error).message}` }, mode: null };
     }
   }
 
   private async emitContext(conversation: Conversation, emit: Emit) {
+    // One batched read, not one per handle: this runs on every turn, and a
+    // conversation accumulates handles for as long as it lives.
+    const records = await this.config.store.getPayloads(conversation.handles, conversation.id);
     let uiTokens = 0;
-    for (const handle of conversation.handles) {
-      const record = await this.config.store.getPayload(handle, conversation.id);
-      if (record) uiTokens += estTokens(record.props);
-    }
+    for (const record of records) uiTokens += estTokens(record.props);
     emit({
       type: "context",
       messages: conversation.messages,

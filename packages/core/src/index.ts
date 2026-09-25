@@ -295,12 +295,47 @@ export interface Conversation {
   id: string;
   status: ConversationStatus;
   messages: Message[];
+  /**
+   * Every handle this conversation's surviving history rendered.
+   *
+   * Load-bearing, not bookkeeping: an interaction is refused unless its handle
+   * appears here. A payload row alone is not proof, because a turn that was
+   * overtaken leaves its rows behind while its conversation save is discarded.
+   */
   handles: string[];
+  /**
+   * Handles whose elicit turn has been answered — resolved by a click, or closed
+   * out by a typed override. An interaction on one of these is refused.
+   *
+   * This lives on the conversation, not on the payload, because freezing is half
+   * of one transition: the other half is the history recording what the user
+   * chose. Split across two rows, a turn could freeze the payload while it still
+   * held the lease, lose the lease before saving, and leave the surviving history
+   * awaiting a surface that can never be clicked again. On one fenced row the two
+   * halves commit together or not at all.
+   */
+  frozen: string[];
   pending: Pending | null;
-  /** Turn lease. A dead process leaves this in the past. */
+  /** Turn lease expiry. A dead process leaves this in the past. */
   leaseUntil: number | null;
+  /**
+   * Fencing token, reissued every time the lease is acquired.
+   *
+   * Expiry alone is not mutual exclusion. A request slower than the TTL loses
+   * the lease while still running; another process takes it and saves a newer
+   * turn; the first then finishes and writes its stale copy over the top. The
+   * token is what lets `saveConversation` tell those two apart — a holder whose
+   * token no longer matches the stored one has been superseded.
+   */
+  leaseToken: string | null;
 }
 
+/**
+ * A rendered surface's data. **Immutable once written**: everything about a
+ * surface that changes over the conversation lives on the fenced conversation
+ * row instead (see `Conversation.frozen`), so no payload write can ever disagree
+ * with the history that references it.
+ */
 export interface PayloadRecord {
   handle: string;
   conversationId: string;
@@ -308,7 +343,6 @@ export interface PayloadRecord {
   version: number;
   props: unknown;
   mode: "display" | "elicit";
-  state: "live" | "frozen";
   createdAt: number;
 }
 
@@ -353,12 +387,146 @@ export interface ModelAdapter {
   generate(request: ModelRequest): Promise<ModelResponse>;
 }
 
+/**
+ * Thrown by `loadConversation` when another request already holds the turn.
+ *
+ * Detected by `name` rather than `instanceof`: a duplicated install of this
+ * package would give two distinct classes, and the check must not silently
+ * start returning 500 for a case that is really a 409.
+ */
+export class ConversationBusy extends Error {
+  readonly name = "ConversationBusy";
+  constructor(id: string) {
+    super(`conversation ${id} is busy — another turn is in flight`);
+  }
+}
+
+export const isConversationBusy = (err: unknown): boolean =>
+  err instanceof Error && err.name === "ConversationBusy";
+
+/**
+ * Thrown by `saveConversation` when the caller's lease was superseded while its
+ * turn was still running. The write is rejected; the newer turn stands.
+ */
+export class StaleLease extends Error {
+  readonly name = "StaleLease";
+  constructor(id: string, detail = "was taken over by a newer turn — this write was discarded") {
+    super(`conversation ${id} ${detail}`);
+  }
+}
+
+export const isStaleLease = (err: unknown): boolean =>
+  err instanceof Error && err.name === "StaleLease";
+
 export interface StoreAdapter {
+  /**
+   * Load a conversation, creating one when `id` is undefined, and **acquire the
+   * turn lease**.
+   *
+   * A conversation may have exactly one turn in flight. Without that, two
+   * overlapping requests each load a copy, each mutate it, and the second
+   * `saveConversation` silently discards the first turn's messages. An
+   * in-process store hides this by handing back one shared object; anything
+   * networked does not.
+   *
+   * The lease must be checked here rather than at save time: a conflict
+   * discovered after the turn has run has already cost a model call.
+   *
+   * Throws `ConversationBusy` if a live lease is held. A lease older than its
+   * TTL is expired and may be taken — that is what releases a conversation
+   * stranded by a crashed process.
+   *
+   * **Acquisition must be atomic.** Reading the lease and then writing a new one
+   * is two operations, and two instances can both read "expired" before either
+   * writes — so both acquire, and the exclusion this method exists for is gone.
+   * Express it as one conditional statement, not a read followed by an update:
+   *
+   * ```sql
+   * UPDATE conversations
+   *    SET lease_until = now() + $ttl, lease_token = gen_random_uuid()
+   *  WHERE id = $1 AND (lease_until IS NULL OR lease_until < now())
+   *  RETURNING *
+   * ```
+   *
+   * No row returned means the lease was live. Note that no conformance test can
+   * hold you to this: a single-process suite cannot interleave two acquisitions,
+   * so a read-then-write implementation passes everything and still races in
+   * production. It is a review item, not a testable one.
+   */
   loadConversation(id: string | undefined): Promise<Conversation>;
+  /**
+   * Persist a conversation, **rejecting a holder that has been superseded**.
+   *
+   * Throws `StaleLease` when `conversation.leaseToken` no longer matches the
+   * stored one. Without that check, expiry-based leasing still loses updates:
+   * a request slower than the TTL is overtaken, and its final write clobbers the
+   * turn that overtook it.
+   *
+   * The returned conversation must be independent of stored state. A store that
+   * hands back a live reference cannot detect staleness at all, because the
+   * caller's copy and the stored one are the same object.
+   *
+   * **The token check and the write must be one operation**, for the same reason
+   * as acquisition. Read-the-token-then-update lets a takeover land in between:
+   * the old holder sees its own token, the new holder writes, and the old update
+   * then clobbers it. Compare-and-set in a single statement and treat zero rows
+   * as stale:
+   *
+   * ```sql
+   * UPDATE conversations SET messages = $3, ...
+   *  WHERE id = $1 AND lease_token = $2
+   * -- rowCount 0 → throw StaleLease
+   * ```
+   *
+   * That statement also rejects two cases a read-then-write check tends to wave
+   * through, and a store must reject them too: a conversation that does not
+   * exist (there is no row to match), and a null token (`NULL = x` is never
+   * true). Saving a conversation this store never issued a lease for is not an
+   * upsert — every conversation begins at `loadConversation`.
+   *
+   * Like acquisition, atomicity is a review item: a single-process suite cannot
+   * interleave the two halves to catch a read-then-write implementation.
+   */
   saveConversation(conversation: Conversation): Promise<void>;
-  putPayload(record: Omit<PayloadRecord, "handle" | "createdAt">): Promise<string>;
+  /**
+   * Store a payload and return its handle.
+   *
+   * Fenced: throws `StaleLease` unless `leaseToken` is the conversation's
+   * current one. A superseded turn must stop writing rather than run to
+   * completion and be discarded at the end. As with `saveConversation`, check
+   * and insert in one statement:
+   *
+   * ```sql
+   * INSERT INTO payloads (conversation_id, handle, ...)
+   * SELECT $1, $2, ... WHERE EXISTS (
+   *   SELECT 1 FROM conversations WHERE id = $1 AND lease_token = $3)
+   * -- rowCount 0 → throw StaleLease
+   * ```
+   *
+   * That shape rejects an unknown conversation and a null token for free, and a
+   * store must too — otherwise a caller holding no lease at all can create rows
+   * that no conversation owns.
+   *
+   * A row written *before* the lease was lost still outlives its turn — the
+   * conversation save is rejected but the row is not, so the winning history
+   * never references the handle. Those orphans are inert (see
+   * `Conversation.handles`); a durable store sweeps them by `createdAt`.
+   */
+  putPayload(
+    record: Omit<PayloadRecord, "handle" | "createdAt">,
+    leaseToken: string | null,
+  ): Promise<string>;
   getPayload(handle: string, conversationId: string): Promise<PayloadRecord | null>;
-  freezePayload(handle: string): Promise<void>;
+  /**
+   * Batch form of `getPayload`, scoped the same way. Missing or out-of-scope
+   * handles are omitted rather than returned as null, so the result may be
+   * shorter than the input.
+   *
+   * Exists because the context inspector reads every live payload on every
+   * turn. One call per handle is a map lookup in memory and a round trip over a
+   * network, so the loop is O(surfaces) queries per turn against a real store.
+   */
+  getPayloads(handles: string[], conversationId: string): Promise<PayloadRecord[]>;
 }
 
 /** Rough token estimate. Only used to surface the economics in the UI. */
