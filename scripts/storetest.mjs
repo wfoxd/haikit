@@ -11,7 +11,8 @@
  */
 
 import { memoryStore } from "../packages/server/dist/store.js";
-import { ConversationBusy, isConversationBusy } from "../packages/core/dist/index.js";
+import { ConversationBusy, isConversationBusy, isStaleLease } from "../packages/core/dist/index.js";
+import { pathToFileURL } from "node:url";
 
 let failures = 0;
 const ok = (m) => console.log(`  \x1b[32m✓\x1b[0m ${m}`);
@@ -117,15 +118,75 @@ export async function conform(label, make) {
     const b = await s.loadConversation(undefined);
     check("undefined id always creates a fresh conversation", a.id !== b.id);
   }
-}
 
-await conform("memoryStore", (opts) => memoryStore(opts));
+  // ── the loaded conversation is a copy, not stored state ───────────────
+  // A store that returns a live reference cannot detect a stale writer, because
+  // the caller's copy and the stored row are the same object.
+  {
+    const s = make();
+    const a = await s.loadConversation(undefined);
+    a.messages.push({ role: "user", content: "not saved yet" });
+    a.leaseUntil = null;
+    await s.saveConversation({ ...a, messages: [] });
+
+    const reloaded = await s.loadConversation(a.id);
+    check("mutating a loaded conversation does not write through", reloaded.messages.length === 0);
+  }
+
+  // ── an overtaken turn cannot overwrite the turn that overtook it ──────
+  // The reason expiry alone is not mutual exclusion: a request slower than the
+  // TTL loses the lease while still running, and must not win the final write.
+  {
+    const s = make({ leaseMs: 40 });
+    const slow = await s.loadConversation(undefined);
+
+    await new Promise((r) => setTimeout(r, 70)); // slow turn outlives its lease
+
+    const overtaker = await s.loadConversation(slow.id); // allowed: lease expired
+    overtaker.messages.push({ role: "user", content: "newer turn" });
+    overtaker.leaseUntil = null;
+    await s.saveConversation(overtaker);
+
+    let rejected = false;
+    slow.messages.push({ role: "user", content: "stale turn" });
+    slow.leaseUntil = null;
+    try {
+      await s.saveConversation(slow);
+    } catch (err) {
+      rejected = isStaleLease(err);
+    }
+    check("a superseded holder's save is rejected", rejected);
+
+    const winner = await s.loadConversation(slow.id);
+    check(
+      "the newer turn's messages survive",
+      winner.messages.length === 1 && winner.messages[0].content === "newer turn",
+    );
+  }
+
+  // ── the rightful holder's save still succeeds ─────────────────────────
+  {
+    const s = make();
+    const a = await s.loadConversation(undefined);
+    a.messages.push({ role: "user", content: "mine" });
+    a.leaseUntil = null;
+    let saved = true;
+    try {
+      await s.saveConversation(a);
+    } catch {
+      saved = false;
+    }
+    check("an uncontested save succeeds", saved);
+  }
+
+  return failures;
+}
 
 // ── the route turns a refused lease into a status code ──────────────────
 // Driven with a store that always refuses, rather than by racing two real
 // turns: a scripted turn finishes in tens of milliseconds, so a timing-based
 // test passes or fails on scheduler luck.
-{
+async function routeChecks() {
   console.log("\nroutes");
   const { createHai, nodeHandler } = await import("../packages/server/dist/index.js");
   const http = await import("node:http");
@@ -164,5 +225,11 @@ await conform("memoryStore", (opts) => memoryStore(opts));
   }
 }
 
-console.log(failures ? `\n${failures} check(s) failed\n` : "\nstore: all checks passed\n");
-process.exit(failures ? 1 : 0);
+// Only when invoked directly. A Postgres adapter imports `conform` to run this
+// same suite against itself, and must not inherit a run or a process.exit().
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  await conform("memoryStore", (opts) => memoryStore(opts));
+  await routeChecks();
+  console.log(failures ? `\n${failures} check(s) failed\n` : "\nstore: all checks passed\n");
+  process.exit(failures ? 1 : 0);
+}

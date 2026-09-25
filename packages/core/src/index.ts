@@ -297,8 +297,18 @@ export interface Conversation {
   messages: Message[];
   handles: string[];
   pending: Pending | null;
-  /** Turn lease. A dead process leaves this in the past. */
+  /** Turn lease expiry. A dead process leaves this in the past. */
   leaseUntil: number | null;
+  /**
+   * Fencing token, reissued every time the lease is acquired.
+   *
+   * Expiry alone is not mutual exclusion. A request slower than the TTL loses
+   * the lease while still running; another process takes it and saves a newer
+   * turn; the first then finishes and writes its stale copy over the top. The
+   * token is what lets `saveConversation` tell those two apart — a holder whose
+   * token no longer matches the stored one has been superseded.
+   */
+  leaseToken: string | null;
 }
 
 export interface PayloadRecord {
@@ -370,6 +380,20 @@ export class ConversationBusy extends Error {
 export const isConversationBusy = (err: unknown): boolean =>
   err instanceof Error && err.name === "ConversationBusy";
 
+/**
+ * Thrown by `saveConversation` when the caller's lease was superseded while its
+ * turn was still running. The write is rejected; the newer turn stands.
+ */
+export class StaleLease extends Error {
+  readonly name = "StaleLease";
+  constructor(id: string) {
+    super(`conversation ${id} was taken over by a newer turn — this save was discarded`);
+  }
+}
+
+export const isStaleLease = (err: unknown): boolean =>
+  err instanceof Error && err.name === "StaleLease";
+
 export interface StoreAdapter {
   /**
    * Load a conversation, creating one when `id` is undefined, and **acquire the
@@ -389,6 +413,18 @@ export interface StoreAdapter {
    * stranded by a crashed process.
    */
   loadConversation(id: string | undefined): Promise<Conversation>;
+  /**
+   * Persist a conversation, **rejecting a holder that has been superseded**.
+   *
+   * Throws `StaleLease` when `conversation.leaseToken` no longer matches the
+   * stored one. Without that check, expiry-based leasing still loses updates:
+   * a request slower than the TTL is overtaken, and its final write clobbers the
+   * turn that overtook it.
+   *
+   * The returned conversation must be independent of stored state. A store that
+   * hands back a live reference cannot detect staleness at all, because the
+   * caller's copy and the stored one are the same object.
+   */
   saveConversation(conversation: Conversation): Promise<void>;
   putPayload(record: Omit<PayloadRecord, "handle" | "createdAt">): Promise<string>;
   getPayload(handle: string, conversationId: string): Promise<PayloadRecord | null>;

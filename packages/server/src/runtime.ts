@@ -19,11 +19,7 @@ export interface HaiConfig {
   surfaces: AnySurfaceImpl[];
   /** Guard against runaway tool loops. */
   maxHops?: number;
-  /** Turn lease duration; a dead process releases after this. */
-  leaseMs?: number;
 }
-
-const LEASE_MS = 120_000;
 
 export class Hai {
   readonly config: HaiConfig;
@@ -215,7 +211,6 @@ export class Hai {
 
   private async runTurn(conversation: Conversation, emit: Emit): Promise<void> {
     conversation.status = "streaming";
-    conversation.leaseUntil = Date.now() + (this.config.leaseMs ?? LEASE_MS);
     emit({ type: "status", status: "streaming" });
 
     const toolDefs = [...this.tools.values()].map((t) => ({
@@ -272,7 +267,6 @@ export class Hai {
         // Hold the resolved siblings too — the API is all-or-nothing per batch.
         conversation.status = "awaiting";
         conversation.pending = { ...parked, results };
-        conversation.leaseUntil = null;
         emit({ type: "status", status: "awaiting" });
         await this.emitContext(conversation, emit);
         return;
@@ -282,7 +276,6 @@ export class Hai {
     }
 
     conversation.status = "idle";
-    conversation.leaseUntil = null;
     emit({ type: "status", status: "idle" });
     await this.emitContext(conversation, emit);
   }
