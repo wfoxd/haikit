@@ -14,7 +14,7 @@ packages/server      runtime, elicit state machine, routes
 packages/client      browser runtime + default UI (plain ESM, no build)
 packages/anthropic   model adapter
 examples/*           demonstrations. private, never published
-scripts/             typetest.mjs, smoke.mjs, packtest.mjs
+scripts/             typetest.mjs, storetest.mjs, smoke.mjs, packtest.mjs
 ```
 
 ## Two rules with teeth

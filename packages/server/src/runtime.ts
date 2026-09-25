@@ -134,7 +134,7 @@ export class Hai {
     // receive a tool_result, so close the pending one out honestly first.
     if (conversation.status === "awaiting" && conversation.pending) {
       const { toolUseId, handle, results, digest } = conversation.pending;
-      await this.config.store.freezePayload(handle);
+      await this.config.store.freezePayload(handle, conversation.id);
       emit({ type: "ui_state", handle, state: "frozen" });
       conversation.messages.push({
         role: "user",
@@ -184,7 +184,7 @@ export class Hai {
 
     if (spec.kind === "resolve") {
       if (conversation.pending?.handle !== input.handle) throw new Error("nothing awaiting this handle");
-      await this.config.store.freezePayload(input.handle);
+      await this.config.store.freezePayload(input.handle, conversation.id);
       emit({ type: "ui_state", handle: input.handle, state: "frozen", selection: value });
       emit({ type: "block_start", block: { kind: "interaction", id: this.nid("b"), handle: input.handle, label } });
 
@@ -351,11 +351,11 @@ export class Hai {
   }
 
   private async emitContext(conversation: Conversation, emit: Emit) {
+    // One batched read, not one per handle: this runs on every turn, and a
+    // conversation accumulates handles for as long as it lives.
+    const records = await this.config.store.getPayloads(conversation.handles, conversation.id);
     let uiTokens = 0;
-    for (const handle of conversation.handles) {
-      const record = await this.config.store.getPayload(handle, conversation.id);
-      if (record) uiTokens += estTokens(record.props);
-    }
+    for (const record of records) uiTokens += estTokens(record.props);
     emit({
       type: "context",
       messages: conversation.messages,

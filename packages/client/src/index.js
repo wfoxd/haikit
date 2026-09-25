@@ -33,6 +33,21 @@ export function createChat({ endpoint = "/hai", registry }) {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ conversationId: state.conversationId, ...body }),
     });
+
+    // A non-SSE response carries no `data:` frames, so parsing it as a stream
+    // would fail silently and the UI would just sit there. 409 is the server
+    // refusing a second concurrent turn on this conversation.
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({}));
+      apply({
+        type: "error",
+        message:
+          detail.error ??
+          (res.status === 409 ? "another turn is already in flight" : `request failed (${res.status})`),
+      });
+      return;
+    }
+
     const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
     let buffer = "";
     for (;;) {

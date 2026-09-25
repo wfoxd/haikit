@@ -353,12 +353,62 @@ export interface ModelAdapter {
   generate(request: ModelRequest): Promise<ModelResponse>;
 }
 
+/**
+ * Thrown by `loadConversation` when another request already holds the turn.
+ *
+ * Detected by `name` rather than `instanceof`: a duplicated install of this
+ * package would give two distinct classes, and the check must not silently
+ * start returning 500 for a case that is really a 409.
+ */
+export class ConversationBusy extends Error {
+  readonly name = "ConversationBusy";
+  constructor(id: string) {
+    super(`conversation ${id} is busy — another turn is in flight`);
+  }
+}
+
+export const isConversationBusy = (err: unknown): boolean =>
+  err instanceof Error && err.name === "ConversationBusy";
+
 export interface StoreAdapter {
+  /**
+   * Load a conversation, creating one when `id` is undefined, and **acquire the
+   * turn lease**.
+   *
+   * A conversation may have exactly one turn in flight. Without that, two
+   * overlapping requests each load a copy, each mutate it, and the second
+   * `saveConversation` silently discards the first turn's messages. An
+   * in-process store hides this by handing back one shared object; anything
+   * networked does not.
+   *
+   * The lease must be checked here rather than at save time: a conflict
+   * discovered after the turn has run has already cost a model call.
+   *
+   * Throws `ConversationBusy` if a live lease is held. A lease older than its
+   * TTL is expired and may be taken — that is what releases a conversation
+   * stranded by a crashed process.
+   */
   loadConversation(id: string | undefined): Promise<Conversation>;
   saveConversation(conversation: Conversation): Promise<void>;
   putPayload(record: Omit<PayloadRecord, "handle" | "createdAt">): Promise<string>;
   getPayload(handle: string, conversationId: string): Promise<PayloadRecord | null>;
-  freezePayload(handle: string): Promise<void>;
+  /**
+   * Batch form of `getPayload`, scoped the same way. Missing or out-of-scope
+   * handles are omitted rather than returned as null, so the result may be
+   * shorter than the input.
+   *
+   * Exists because the context inspector reads every live payload on every
+   * turn. One call per handle is a map lookup in memory and a round trip over a
+   * network, so the loop is O(surfaces) queries per turn against a real store.
+   */
+  getPayloads(handles: string[], conversationId: string): Promise<PayloadRecord[]>;
+  /**
+   * Scoped like `getPayload`, and for the same reason: a handle is only
+   * meaningful inside the conversation that produced it. Without the scope a
+   * store cannot number handles per conversation, because `handle` alone would
+   * not identify a row.
+   */
+  freezePayload(handle: string, conversationId: string): Promise<void>;
 }
 
 /** Rough token estimate. Only used to surface the economics in the UI. */

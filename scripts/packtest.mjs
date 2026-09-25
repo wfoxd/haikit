@@ -187,9 +187,13 @@ out.capShown = capped.shown;
 out.capTotal = capped.total;
 out.capReportsOmission = capped.text.includes("47");
 
-// the store round-trips a conversation
+// the store round-trips a conversation. loadConversation acquires the turn
+// lease, so the first load must be released before the second — exactly what
+// the route does at the end of a request.
 const store = memoryStore();
 const convo = await store.loadConversation(undefined);
+convo.leaseUntil = null;
+await store.saveConversation(convo);
 out.storeRoundTrip = (await store.loadConversation(convo.id)).id === convo.id;
 
 // a runtime can be constructed from the installed packages alone

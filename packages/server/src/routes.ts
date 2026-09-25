@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { isConversationBusy } from "@haikit/core";
 import type { Emit, WireEvent } from "@haikit/core";
 import type { Hai } from "./runtime.js";
 
@@ -18,7 +19,18 @@ export function nodeHandler(hai: Hai, basePath = "/hai") {
     if (route !== "/chat" && route !== "/interact") return false;
 
     const body = await readJson(req);
-    const conversation = await hai.config.store.loadConversation(body.conversationId);
+
+    // Before the SSE stream opens, because a rejected load has no stream to
+    // report into — and an uncaught throw here would take down the request.
+    let conversation;
+    try {
+      conversation = await hai.config.store.loadConversation(body.conversationId);
+    } catch (err) {
+      if (!isConversationBusy(err)) throw err;
+      res.writeHead(409, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: (err as Error).message }));
+      return true;
+    }
 
     const emit = openSSE(res);
     if (route === "/chat") {
@@ -37,9 +49,14 @@ export function nodeHandler(hai: Hai, basePath = "/hai") {
       }
     } catch (err) {
       emit({ type: "error", message: (err as Error).message });
+    } finally {
+      // The lease is per request. A turn that completed or parked already
+      // cleared it; a turn that threw did not, and would otherwise strand the
+      // conversation until the TTL expired.
+      conversation.leaseUntil = null;
+      await hai.config.store.saveConversation(conversation);
     }
 
-    await hai.config.store.saveConversation(conversation);
     res.end();
     return true;
   };
