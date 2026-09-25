@@ -248,10 +248,12 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
       );
       // `IN` returns each row once; the contract is one result per input
       // handle, duplicates and order included — map the input, not the rows.
+      // Each occurrence is a deep copy, as a separate getPayload would be: a
+      // shallow spread would hand two results one shared `props` object.
       const byHandle = new Map(rows.map((row) => [row.handle, toPayload(row)] as const));
       return handles.flatMap((h) => {
         const record = byHandle.get(h);
-        return record ? [{ ...record }] : [];
+        return record ? [structuredClone(record)] : [];
       });
     },
   };

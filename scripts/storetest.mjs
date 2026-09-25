@@ -83,6 +83,12 @@ export async function conform(label, make) {
       "batch keeps input order and duplicates, like repeated single reads",
       repeated.map((r) => r.handle).join() === [h2, h1, h2].join(),
     );
+    // …and like repeated single reads, every result is its own object
+    repeated[0].props.rows.push("mutated");
+    check(
+      "duplicate batch results do not share nested state",
+      repeated[2].props.rows.length === 3 && (await s.getPayload(h2, a.id)).props.rows.length === 3,
+    );
   }
 
   // ── handles stay unique well past two digits ──────────────────────────
