@@ -52,6 +52,50 @@ export async function conform(label, make) {
     check("the store exposes no payload mutation", !("freezePayload" in s));
   }
 
+  // ── a lease TTL that would disable mutual exclusion is refused ────────
+  // Zero or negative expires every lease the moment it is taken, so every load
+  // acquires; Infinity strands a crashed turn's conversation forever. Neither
+  // may be accepted quietly.
+  {
+    const refused = (leaseMs) => {
+      try {
+        make({ leaseMs });
+        return false;
+      } catch (err) {
+        return err instanceof RangeError;
+      }
+    };
+    check(
+      "a zero, negative, NaN or infinite lease TTL is refused",
+      [0, -1, NaN, Infinity].every(refused),
+    );
+  }
+
+  // ── payload props of every JSON type survive a round trip ─────────────
+  // A store that stores JSON and guesses on the way out whether it still needs
+  // parsing breaks on string scalars: "hello" comes back as a JS string, looks
+  // like unparsed text, and JSON.parse throws.
+  {
+    const s = make();
+    const a = await s.loadConversation(undefined);
+    const shapes = ["hello", "", 42, true, null, [1, "two"], { nested: { deep: ["x"] } }];
+    const handles = [];
+    for (const props of shapes) {
+      handles.push(await s.putPayload({ ...payload(a.id), props }, a.leaseToken));
+    }
+    let single = [];
+    let batch = [];
+    let error = null;
+    try {
+      for (const h of handles) single.push((await s.getPayload(h, a.id)).props);
+      batch = (await s.getPayloads(handles, a.id)).map((r) => r.props);
+    } catch (err) {
+      error = err;
+    }
+    const same = (got) => JSON.stringify(got) === JSON.stringify(shapes);
+    check("payload props of every JSON type round-trip, including bare strings", !error && same(single) && same(batch));
+  }
+
   // ── batch read matches the single read, and drops what it should ──────
   {
     const s = make();
@@ -61,14 +105,52 @@ export async function conform(label, make) {
     const b = await s.loadConversation(undefined);
     const h1 = await s.putPayload(payload(a.id), a.leaseToken);
     const h2 = await s.putPayload(payload(a.id), a.leaseToken);
-    const other = await s.putPayload(payload(b.id), b.leaseToken);
+    // b gets more payloads than a, so its last handle exists only in b under
+    // any numbering scheme. (With per-conversation numbering b's first handle
+    // is also "ui_01" — a handle a legitimately has — and asking for it would
+    // test nothing about scope.)
+    await s.putPayload(payload(b.id), b.leaseToken);
+    await s.putPayload(payload(b.id), b.leaseToken);
+    const onlyInB = await s.putPayload(payload(b.id), b.leaseToken);
+    check("the out-of-scope handle really does not exist in a", (await s.getPayload(onlyInB, a.id)) === null);
 
-    const got = await s.getPayloads([h1, h2, other, "ui_9999"], a.id);
+    const got = await s.getPayloads([h1, h2, onlyInB, "ui_9999"], a.id);
     check(
       "batch returns only in-scope, existing handles",
-      got.length === 2 && got.every((r) => [h1, h2].includes(r.handle)),
+      got.length === 2 && got[0].handle === h1 && got[1].handle === h2 && got.every((r) => r.conversationId === a.id),
     );
     check("batch on an empty list returns empty", (await s.getPayloads([], a.id)).length === 0);
+
+    // defined as getPayload once per input handle: order kept, duplicates kept
+    const repeated = await s.getPayloads([h2, h1, h2], a.id);
+    check(
+      "batch keeps input order and duplicates, like repeated single reads",
+      repeated.map((r) => r.handle).join() === [h2, h1, h2].join(),
+    );
+    // …and like repeated single reads, every result is its own object
+    repeated[0].props.rows.push("mutated");
+    check(
+      "duplicate batch results do not share nested state",
+      repeated[2].props.rows.length === 3 && (await s.getPayload(h2, a.id)).props.rows.length === 3,
+    );
+  }
+
+  // ── handles stay unique well past two digits ──────────────────────────
+  // A store that formats handles with SQL lpad() truncates rather than pads:
+  // lpad('100', 2, '0') is '10', and handle 100 collides with handle 10.
+  {
+    // A store with a unique constraint turns the collision into a thrown
+    // duplicate-key error rather than a duplicate — report either as a failure.
+    const s = make();
+    const a = await s.loadConversation(undefined);
+    const handles = [];
+    let error = null;
+    try {
+      for (let i = 0; i < 101; i++) handles.push(await s.putPayload(payload(a.id), a.leaseToken));
+    } catch (err) {
+      error = err;
+    }
+    check("handles stay unique past ui_99", !error && new Set(handles).size === 101);
   }
 
   // ── one turn in flight per conversation ───────────────────────────────
@@ -235,6 +317,22 @@ export async function conform(label, make) {
   return failures;
 }
 
+/**
+ * The runtime-level scenarios, run against any store. These are the ones
+ * durable storage exists for — a turn overtaken mid-flight, a surface left
+ * orphaned, a conversation that must not be stranded — so an adapter that only
+ * passes `conform` has not been tested where it matters.
+ */
+export async function integration(label, make) {
+  console.log(`\n${label} — runtime`);
+  await orphanChecks(make);
+  await strandChecks(make);
+  await turnAbortChecks(make);
+  return failures;
+}
+
+export const failureCount = () => failures;
+
 // ── the route turns a refused lease into a status code ──────────────────
 // Driven with a store that always refuses, rather than by racing two real
 // turns: a scripted turn finishes in tens of milliseconds, so a timing-based
@@ -282,10 +380,10 @@ async function routeChecks() {
 // putPayload commits during the turn; the conversation save at the end may be
 // rejected. The row therefore survives a takeover while the winning history
 // never records its handle — and the browser that mounted it is still open.
-async function orphanChecks() {
+async function orphanChecks(make) {
   console.log("\norphaned surfaces");
   const { createHai } = await import("../packages/server/dist/index.js");
-  const store = memoryStore({ leaseMs: 40 });
+  const store = make({ leaseMs: 40 });
   const hai = createHai({
     model: { id: "stub", async generate() { return { content: [], stop_reason: "end_turn" }; } },
     store,
@@ -338,7 +436,7 @@ async function orphanChecks() {
 // lease during the model call, and have its save rejected — leaving the winning
 // history awaiting a surface nobody can click again. Checked in both orders:
 // the takeover landing before the freeze, and after it.
-async function strandChecks() {
+async function strandChecks(make) {
   console.log("\nstranding");
   const { createHai } = await import("../packages/server/dist/index.js");
   const { defineSurface, resolve } = await import("../packages/core/dist/index.js");
@@ -371,7 +469,7 @@ async function strandChecks() {
 
   // ── takeover AFTER the freeze: the freeze was legitimate when it happened
   {
-    const store = memoryStore({ leaseMs: 40 });
+    const store = make({ leaseMs: 40 });
     const hai = createHai({ model: slowModel, store, tools: [], surfaces: [pickerImpl], system: "x" });
     const { id, handle } = await parked(store);
 
@@ -403,7 +501,7 @@ async function strandChecks() {
 
   // ── takeover BEFORE the write: a superseded holder cannot write at all
   {
-    const store = memoryStore({ leaseMs: 40 });
+    const store = make({ leaseMs: 40 });
     const { id } = await parked(store);
     const slow = await store.loadConversation(id);
     await new Promise((r) => setTimeout(r, 70));
@@ -509,11 +607,11 @@ async function clientChecks() {
 // "tool failed" result for the model. A StaleLease must not take that path: it
 // would hand the lost lease back to the model as information and keep paying
 // for hops whose output the fenced save will discard.
-async function turnAbortChecks() {
+async function turnAbortChecks(make) {
   console.log("\nsuperseded turns");
   const { createHai } = await import("../packages/server/dist/index.js");
   const { defineSurface, defineTool } = await import("../packages/core/dist/index.js");
-  const store = memoryStore({ leaseMs: 40 });
+  const store = make({ leaseMs: 40 });
   const any = { parse: (v) => v };
 
   const card = defineSurface({ name: "card", version: 1, props: any, actions: {}, queries: {} });
@@ -567,11 +665,9 @@ async function turnAbortChecks() {
 // same suite against itself, and must not inherit a run or a process.exit().
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   await conform("memoryStore", (opts) => memoryStore(opts));
+  await integration("memoryStore", (opts) => memoryStore(opts));
   await routeChecks();
-  await orphanChecks();
-  await strandChecks();
   await clientChecks();
-  await turnAbortChecks();
 
   // Said plainly because a suite that looks exhaustive is worse than one that
   // admits its edges: nothing here can prove lease acquisition is atomic. This

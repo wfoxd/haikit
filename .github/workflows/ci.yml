@@ -7,6 +7,20 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    # A real server, so the Postgres store's concurrency checks run on every PR.
+    # Those are the only checks that can catch a store whose lease acquisition
+    # is a read followed by a write — one process can never interleave that.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: haikit
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -29,6 +43,12 @@ jobs:
       # every StoreAdapter rule an in-process store could ignore and a
       # networked one cannot: handle scoping, batch reads, turn leasing
       - run: npm run storetest
+
+      # the same contract against @haikit/postgres: PGlite in-process, then a
+      # real server with twenty connections racing for one lease
+      - run: npm run pgtest
+        env:
+          HAIKIT_PG_URL: postgres://postgres:haikit@localhost:5432/postgres
 
       # the elicit loop actually works: surface renders, turn parks,
       # interaction resolves it, binding table rejects what it should

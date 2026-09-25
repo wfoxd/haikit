@@ -40,6 +40,13 @@ export interface MemoryStoreOptions {
  */
 export function memoryStore(options: MemoryStoreOptions = {}): StoreAdapter {
   const leaseMs = options.leaseMs ?? LEASE_MS;
+  // Zero or negative makes every lease expire the moment it is taken, so every
+  // load acquires and the one-turn-in-flight guarantee silently disappears.
+  // Infinity would strand a crashed turn's conversation forever. Refuse both
+  // here, loudly, rather than run with no mutual exclusion at all.
+  if (!Number.isFinite(leaseMs) || leaseMs <= 0) {
+    throw new RangeError(`leaseMs must be a positive, finite number of milliseconds (got ${leaseMs})`);
+  }
   const conversations = new Map<string, Conversation>();
   const payloads = new Map<string, PayloadRecord>();
   let convSeq = 0;

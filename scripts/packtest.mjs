@@ -19,7 +19,7 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const PACKAGES = ["core", "server", "client", "anthropic"];
+const PACKAGES = ["core", "server", "client", "anthropic", "postgres"];
 
 let pass = 0;
 const failures = [];
@@ -83,6 +83,23 @@ try {
     check(`@haikit/${name} ships LICENSE`, () => has("LICENSE"));
     check(`@haikit/${name} ships README.md`, () => has("README.md"));
 
+    // Internal dependencies must name the version being released. The consumer
+    // install below overrides every @haikit/* dependency with a local tarball,
+    // so a stale pin — @haikit/postgres once required core 0.2.0, which lacks
+    // the errors it imports — would install fine here and break every real
+    // consumer. Check the manifest itself.
+    check(`@haikit/${name} depends on this release of its siblings`, () => {
+      const pkg = JSON.parse(run("tar", ["-xzOf", tgz[name], "package/package.json"], work));
+      const stale = Object.entries(pkg.dependencies ?? {})
+        .filter(([dep]) => dep.startsWith("@haikit/"))
+        .filter(([dep, range]) => {
+          const sibling = JSON.parse(readFileSync(join(ROOT, "packages", dep.slice(8), "package.json"), "utf8"));
+          return range !== sibling.version;
+        });
+      if (stale.length) throw new Error(stale.map(([d, r]) => `${d}@${r}`).join(", "));
+      return true;
+    });
+
     const manifest = JSON.parse(readFileSync(join(ROOT, "packages", name, "package.json"), "utf8"));
 
     // every exports target resolves to a real entry in the archive
@@ -136,6 +153,7 @@ try {
           "@haikit/server": fileDep("server"),
           "@haikit/client": fileDep("client"),
           "@haikit/anthropic": fileDep("anthropic"),
+          "@haikit/postgres": fileDep("postgres"),
           zod: "^4.0.0",
         },
         overrides: { "@haikit/core": fileDep("core") },
@@ -158,6 +176,7 @@ try {
 import { defineSurface, resolve as resolveAction, query, makeCap, defineTool } from "@haikit/core";
 import { createHai, memoryStore, nodeHandler } from "@haikit/server";
 import { anthropic } from "@haikit/anthropic";
+import { pgStore, migrate, schema, sweepOrphans } from "@haikit/postgres";
 import { createChat } from "@haikit/client";
 import { mountChat } from "@haikit/client/app.js";
 import { renderTranscript, h } from "@haikit/client/transcript.js";
@@ -167,6 +186,10 @@ const out = {};
 out.coreExports = [defineSurface, resolveAction, query, makeCap, defineTool].every(f => typeof f === "function");
 out.serverExports = [createHai, memoryStore, nodeHandler].every(f => typeof f === "function");
 out.anthropicExport = typeof anthropic === "function";
+out.postgresExports = [pgStore, migrate, sweepOrphans].every((f) => typeof f === "function") && Array.isArray(schema);
+// a store built from the tarball satisfies the adapter shape, with any driver
+const pgShaped = pgStore({ query: async () => ({ rows: [] }) });
+out.postgresIsStore = ["loadConversation", "saveConversation", "putPayload", "getPayload", "getPayloads"].every((m) => typeof pgShaped[m] === "function");
 out.clientExports = [createChat, mountChat, renderTranscript, h].every(f => typeof f === "function");
 
 // the contract layer does real work, not just re-export shapes
@@ -223,6 +246,8 @@ console.log(JSON.stringify(out));
   check("@haikit/core named exports", () => runtime.coreExports === true);
   check("@haikit/server named exports", () => runtime.serverExports === true);
   check("@haikit/anthropic named export", () => runtime.anthropicExport === true);
+  check("@haikit/postgres named exports", () => runtime.postgresExports === true);
+  check("@haikit/postgres builds a StoreAdapter", () => runtime.postgresIsStore === true);
   check("@haikit/client named exports (incl. subpaths)", () => runtime.clientExports === true);
   check("defineSurface builds a surface", () => runtime.surfaceName === "packtest_picker");
   check("cap() caps (3 of 47)", () => runtime.capShown === 3 && runtime.capTotal === 47);
@@ -263,9 +288,10 @@ console.log(JSON.stringify(out));
   writeFileSync(
     join(consumer, "use.ts"),
     `
-import { defineSurface, resolve as resolveAction, query, makeCap, type Capped } from "@haikit/core";
+import { defineSurface, resolve as resolveAction, query, makeCap, type Capped, type StoreAdapter } from "@haikit/core";
 import { createHai, memoryStore, nodeHandler } from "@haikit/server";
 import { anthropic } from "@haikit/anthropic";
+import { pgStore } from "@haikit/postgres";
 import { createChat, type Registry, type MountCtx } from "@haikit/client";
 import { mountChat } from "@haikit/client/app.js";
 import { h } from "@haikit/client/transcript.js";
@@ -297,6 +323,9 @@ const registry: Registry = {
   } },
 };
 void registry;
+// the store type-checks as a StoreAdapter, with a structurally-typed driver
+const durable: StoreAdapter = pgStore({ query: async (_text: string, _params?: unknown[]) => ({ rows: [] }) });
+void durable;
 void createChat; void mountChat; void createHai; void memoryStore; void nodeHandler; void anthropic; void makeCap;
 `,
   );
