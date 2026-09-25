@@ -50,7 +50,12 @@ export function memoryStore(options: MemoryStoreOptions = {}): StoreAdapter {
 
   /** Every durable mutation presents the token it was issued. A holder that has
    *  been superseded must not keep writing — see freezePayload's contract for
-   *  why that is not merely untidy. */
+   *  why that is not merely untidy.
+   *
+   *  Atomic here only because nothing awaits between this check and the write
+   *  that follows it: JavaScript cannot interleave another request into a
+   *  synchronous run. Put an `await` between them and the compare-and-set the
+   *  contract requires is silently gone. */
   const fence = (conversationId: string, leaseToken: string | null) => {
     const stored = conversations.get(conversationId);
     if (stored && stored.leaseToken !== leaseToken) throw new StaleLease(conversationId);

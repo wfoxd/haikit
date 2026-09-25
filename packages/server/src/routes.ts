@@ -37,6 +37,7 @@ export function nodeHandler(hai: Hai, basePath = "/hai") {
       emit({ type: "hello", conversationId: conversation.id, model: hai.config.model.id });
     }
 
+    let superseded = false;
     try {
       if (route === "/chat") {
         await hai.send(conversation, String(body.message ?? ""), emit);
@@ -48,6 +49,7 @@ export function nodeHandler(hai: Hai, basePath = "/hai") {
         );
       }
     } catch (err) {
+      if (isStaleLease(err)) superseded = true;
       emit({ type: "error", message: (err as Error).message });
     } finally {
       // The lease lives exactly as long as the request. Releasing it any
@@ -59,7 +61,9 @@ export function nodeHandler(hai: Hai, basePath = "/hai") {
       // can still prove this request is the rightful holder.
       conversation.leaseUntil = null;
       try {
-        await hai.config.store.saveConversation(conversation);
+        // A turn that already hit a fence knows its save would be rejected too;
+        // attempting it only repeats the same error to the client.
+        if (!superseded) await hai.config.store.saveConversation(conversation);
       } catch (err) {
         // Overtaken while we were slow: another turn already wrote newer state
         // under a fresh token. Dropping this write is the correct outcome, but

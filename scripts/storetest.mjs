@@ -342,39 +342,133 @@ async function clientChecks() {
   const { createChat } = await import("../packages/client/src/index.js");
   const http = await import("node:http");
 
+  // The server records what it received and how many requests were ever open at
+  // once. Each response is held briefly, so overlap would be observable if the
+  // client let two requests out together.
+  let mode = "409-once";
   let calls = 0;
+  let open = 0;
+  let maxOpen = 0;
+  const received = [];
   const server = http.createServer((req, res) => {
-    calls++;
-    if (calls === 1) {
-      // first attempt lands while the previous request is still releasing
-      res.writeHead(409, { "content-type": "application/json" });
-      res.end(JSON.stringify({ error: "conversation conv_1 is busy" }));
-      return;
-    }
-    res.writeHead(200, { "content-type": "text/event-stream" });
-    res.write(`data: ${JSON.stringify({ type: "hello", conversationId: "conv_1", model: "m" })}\n\n`);
-    res.write(`data: ${JSON.stringify({ type: "status", status: "idle" })}\n\n`);
-    res.end();
+    let raw = "";
+    req.on("data", (c) => (raw += c));
+    req.on("end", async () => {
+      calls++;
+      if (mode === "409-once" && calls === 1) {
+        // lands while the previous request is still releasing its lease
+        res.writeHead(409, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "conversation conv_1 is busy" }));
+        return;
+      }
+      open++;
+      maxOpen = Math.max(maxOpen, open);
+      received.push({ path: req.url, body: JSON.parse(raw) });
+      await new Promise((r) => setTimeout(r, 40));
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(`data: ${JSON.stringify({ type: "hello", conversationId: "conv_1", model: "m" })}\n\n`);
+      res.write(`data: ${JSON.stringify({ type: "status", status: "idle" })}\n\n`);
+      open--;
+      res.end();
+    });
   });
   await new Promise((r) => server.listen(5378, r));
 
   try {
+    // ── the tail of the previous turn is not a user-visible error
     const chat = createChat({ endpoint: "http://127.0.0.1:5378/hai", registry: {} });
     await chat.send("override");
-
     check("a transient 409 is retried, not surfaced", !chat.state.blocks.some((b) => b.kind === "error"));
     check("the retry actually reached the server", calls === 2);
     check("the retried turn is applied", chat.state.conversationId === "conv_1");
 
-    // a second request while one is in flight must not be sent at all
-    calls = 0;
-    const first = chat.send("one");
-    const second = await chat.send("two").then(() => "returned");
-    await first;
-    check("a send while a request is in flight is dropped", second === "returned" && calls <= 2);
+    // ── a message typed while a request is open is queued, never dropped.
+    // mountChat clears the textarea before calling send(), so a refused send
+    // is not declined — it is deleted.
+    mode = "ok";
+    received.length = 0;
+    maxOpen = 0;
+    const fresh = createChat({ endpoint: "http://127.0.0.1:5378/hai", registry: {} });
+    await Promise.all([fresh.send("one"), fresh.send("two")]);
+    const messages = received.map((r) => r.body.message);
+    check("a send during an open request is delivered, not dropped", messages.includes("two"));
+    check("queued sends go out in the order they were made", messages.join(",") === "one,two");
+    check("queued sends never overlap on the wire", maxOpen === 1);
+    check(
+      "a queued send inherits the conversation the first one created",
+      received[1]?.body.conversationId === "conv_1",
+    );
+
+    // ── a click while busy is dropped rather than stacked: a double-click on a
+    // picker row would otherwise resolve it and then queue "component is frozen"
+    received.length = 0;
+    await Promise.all([fresh.send("three"), fresh.interact("ui_01", "choose", "he")]);
+    check(
+      "an interaction while a request is open is not stacked",
+      received.length === 1 && received[0].path.endsWith("/chat"),
+    );
   } finally {
     server.close();
   }
+}
+
+// ── a fence tripped inside a tool stops the turn ────────────────────────
+// putPayload runs inside tool.run(), and the runtime turns tool errors into a
+// "tool failed" result for the model. A StaleLease must not take that path: it
+// would hand the lost lease back to the model as information and keep paying
+// for hops whose output the fenced save will discard.
+async function turnAbortChecks() {
+  console.log("\nsuperseded turns");
+  const { createHai } = await import("../packages/server/dist/index.js");
+  const { defineSurface, defineTool } = await import("../packages/core/dist/index.js");
+  const store = memoryStore({ leaseMs: 40 });
+  const any = { parse: (v) => v };
+
+  const card = defineSurface({ name: "card", version: 1, props: any, actions: {}, queries: {} });
+  const cardImpl = card.implement({ digest: () => "a card", actions: {}, queries: {} });
+
+  let conversationId;
+  const show = defineTool({
+    name: "show",
+    description: "render a card",
+    input: any,
+    inputJsonSchema: { type: "object", properties: {} },
+    async run(_input, ctx) {
+      await new Promise((r) => setTimeout(r, 70)); // this turn outlives its lease
+      const winner = await store.loadConversation(conversationId); // and is taken over
+      winner.leaseUntil = null;
+      await store.saveConversation(winner);
+      return ctx.render(cardImpl, {}); // fenced write — must trip
+    },
+  });
+
+  let generations = 0;
+  const hai = createHai({
+    model: {
+      id: "stub",
+      async generate() {
+        generations++;
+        return generations === 1
+          ? { content: [{ type: "tool_use", id: "tu1", name: "show", input: {} }], stop_reason: "tool_use" }
+          : { content: [{ type: "text", text: "kept going" }], stop_reason: "end_turn" };
+      },
+    },
+    store,
+    tools: [show],
+    surfaces: [cardImpl],
+    system: "x",
+  });
+
+  const conversation = await store.loadConversation(undefined);
+  conversationId = conversation.id;
+  let thrown = null;
+  try {
+    await hai.send(conversation, "show me", () => {});
+  } catch (err) {
+    thrown = err;
+  }
+  check("a fence tripped inside a tool aborts the turn", isStaleLease(thrown));
+  check("no further model hops after the fence trips", generations === 1);
 }
 
 // Only when invoked directly. A Postgres adapter imports `conform` to run this
@@ -385,12 +479,13 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   await orphanChecks();
   await strandChecks();
   await clientChecks();
+  await turnAbortChecks();
 
   // Said plainly because a suite that looks exhaustive is worse than one that
   // admits its edges: nothing here can prove lease acquisition is atomic. This
   // process cannot interleave two acquisitions, so a read-then-write adapter
   // passes every check above and still races. Review that per adapter.
-  console.log("\n  not covered: atomicity of lease acquisition (single process)");
+  console.log("\n  not covered: atomicity of lease acquisition or of fenced writes (single process)");
 
   console.log(failures ? `\n${failures} check(s) failed\n` : "\nstore: all checks passed\n");
   process.exit(failures ? 1 : 0);

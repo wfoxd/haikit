@@ -93,7 +93,14 @@ the outcome durable storage exists to prevent.
 
 `putPayload` is fenced for a weaker reason: an orphaned row is inert, but a
 superseded turn should stop working rather than run to completion and be
-discarded.
+discarded. For that to actually happen, `StaleLease` now escapes the tool
+boundary instead of being converted into an ordinary "tool failed" result, which
+would have handed the lost lease back to the model and kept paying for hops whose
+output the fenced save discards.
+
+Every fenced write — `saveConversation` included — is documented as needing its
+token check and its write to be one statement, for the same reason as lease
+acquisition.
 
 **5. An interaction is refused unless the conversation records its handle.**
 
@@ -113,8 +120,12 @@ there. It also gates requests on whether one is actually in flight rather than o
 `state.status`: the server emits `awaiting` from inside the turn and releases its
 lease afterwards, and the composer is deliberately live in that state ("pick an
 option above — or type to override"), so an override landing in that window is
-normal rather than misuse. A 409 is retried once before being surfaced, which
-also covers a second tab that no client-side gate can prevent.
+normal rather than misuse. Sends are **queued** rather than refused —
+`mountChat` clears the textarea before calling `send`, so a refused send deletes
+what the user typed — and go out strictly one at a time. A click while a request
+is open is still dropped, since stacking it would turn a double-click into
+"component is frozen". A 409 is retried once before being surfaced, which covers
+a second tab that no client-side gate can prevent.
 
 Also new: `npm run storetest`, a conformance suite asserting all of the above
 against `memoryStore`, so the reference implementation and a real one cannot

@@ -448,6 +448,23 @@ export interface StoreAdapter {
    * The returned conversation must be independent of stored state. A store that
    * hands back a live reference cannot detect staleness at all, because the
    * caller's copy and the stored one are the same object.
+   *
+   * **The token check and the write must be one operation**, for the same reason
+   * as acquisition. Read-the-token-then-update lets a takeover land in between:
+   * the old holder sees its own token, the new holder writes, and the old update
+   * then clobbers it. Compare-and-set in a single statement and treat zero rows
+   * as stale:
+   *
+   * ```sql
+   * UPDATE conversations SET messages = $3, ...
+   *  WHERE id = $1 AND lease_token = $2
+   * -- rowCount 0 → throw StaleLease
+   * ```
+   *
+   * The same applies to every fenced write — `putPayload` and `freezePayload`
+   * must check the token and write in one statement or one transaction, not as a
+   * lookup followed by a mutation. Like acquisition, this is a review item: a
+   * single-process suite cannot interleave the two halves to catch it.
    */
   saveConversation(conversation: Conversation): Promise<void>;
   /**

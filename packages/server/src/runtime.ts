@@ -1,5 +1,6 @@
 import {
   estTokens,
+  isStaleLease,
   makeCap,
   type AnySurfaceImpl,
   type Conversation,
@@ -349,6 +350,11 @@ export class Hai {
       const ret = await tool.run(input, ctx);
       return { ret, mode };
     } catch (err) {
+      // A tool error is information for the model; a lost lease is not. Fencing
+      // exists so a superseded turn stops — converting StaleLease into "tool
+      // failed" would hand it back to the model and keep paying for hops whose
+      // output the fenced save is going to discard anyway.
+      if (isStaleLease(err)) throw err;
       return { ret: { model: `${call.name} failed: ${(err as Error).message}` }, mode: null };
     }
   }

@@ -27,25 +27,30 @@ export function createChat({ endpoint = "/hai", registry }) {
   const notify = (event) => listeners.forEach((fn) => fn(state, event));
 
   /**
-   * Whether a request is still open — which is not the same as `state.status`.
+   * Requests open or waiting to go out — which is not the same as
+   * `state.status`.
    *
    * The server emits `awaiting` and `idle` from inside the turn, then releases
    * its lease and saves after that frame has already reached us. Gating on
-   * status therefore lets the next request go out during the tail of the
-   * previous one, and the server answers 409. That matters because the composer
-   * is deliberately live while awaiting — "pick an option above, or type to
-   * override" — so the override is a normal thing to do, not a misuse.
+   * status lets the next request go out during that tail, and the server
+   * answers 409. It matters because the composer is deliberately live while
+   * awaiting — "pick an option above, or type to override" — so an override
+   * there is the intended affordance, not a misuse.
+   *
+   * Requests are chained rather than refused: one never starts until the
+   * previous response has closed, so this client cannot collide with itself.
    */
-  let inFlight = false;
+  let busy = 0;
+  let chain = Promise.resolve();
 
   // ── transport: SSE over POST (EventSource cannot POST) ──────────────
-  async function stream(path, body) {
-    inFlight = true;
-    try {
-      await pump(path, body);
-    } finally {
-      inFlight = false;
-    }
+  function enqueue(path, body) {
+    busy++;
+    const run = chain.then(() => pump(path, body)).finally(() => {
+      busy--;
+    });
+    chain = run.catch(() => {});
+    return run;
   }
 
   const post = (path, body) =>
@@ -190,17 +195,22 @@ export function createChat({ endpoint = "/hai", registry }) {
     return surface.instance;
   }
 
-  // Both gate on `inFlight`, not on `state.status` — see its declaration. The
-  // window between the `awaiting` frame and the server releasing its lease is
-  // exactly where a user is invited to type an override.
+  // A message is queued, never dropped. mountChat has already cleared the
+  // textarea by the time this runs, so refusing a send here does not decline
+  // it — it deletes what the user typed. That was true under the old
+  // `status === "streaming"` gate too, via the Enter key, which ignores the
+  // disabled send button.
   async function send(text) {
-    if (!text.trim() || inFlight) return;
-    await stream("/chat", { message: text });
+    if (!text.trim()) return;
+    await enqueue("/chat", { message: text });
   }
 
+  // A click carries nothing the user authored, and stacking them is worse than
+  // dropping them: a double-click on a picker row would resolve it and then
+  // queue a second resolution into "component is frozen".
   async function interact(handle, action, value) {
-    if (inFlight) return;
-    await stream("/interact", { handle, action, value });
+    if (busy) return;
+    await enqueue("/interact", { handle, action, value });
   }
 
   return {
