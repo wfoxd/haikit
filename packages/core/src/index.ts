@@ -295,6 +295,13 @@ export interface Conversation {
   id: string;
   status: ConversationStatus;
   messages: Message[];
+  /**
+   * Every handle this conversation's surviving history rendered.
+   *
+   * Load-bearing, not bookkeeping: an interaction is refused unless its handle
+   * appears here. A payload row alone is not proof, because a turn that was
+   * overtaken leaves its rows behind while its conversation save is discarded.
+   */
   handles: string[];
   pending: Pending | null;
   /** Turn lease expiry. A dead process leaves this in the past. */
@@ -411,6 +418,23 @@ export interface StoreAdapter {
    * Throws `ConversationBusy` if a live lease is held. A lease older than its
    * TTL is expired and may be taken — that is what releases a conversation
    * stranded by a crashed process.
+   *
+   * **Acquisition must be atomic.** Reading the lease and then writing a new one
+   * is two operations, and two instances can both read "expired" before either
+   * writes — so both acquire, and the exclusion this method exists for is gone.
+   * Express it as one conditional statement, not a read followed by an update:
+   *
+   * ```sql
+   * UPDATE conversations
+   *    SET lease_until = now() + $ttl, lease_token = gen_random_uuid()
+   *  WHERE id = $1 AND (lease_until IS NULL OR lease_until < now())
+   *  RETURNING *
+   * ```
+   *
+   * No row returned means the lease was live. Note that no conformance test can
+   * hold you to this: a single-process suite cannot interleave two acquisitions,
+   * so a read-then-write implementation passes everything and still races in
+   * production. It is a review item, not a testable one.
    */
   loadConversation(id: string | undefined): Promise<Conversation>;
   /**
@@ -426,6 +450,15 @@ export interface StoreAdapter {
    * caller's copy and the stored one are the same object.
    */
   saveConversation(conversation: Conversation): Promise<void>;
+  /**
+   * Store a payload and return its handle.
+   *
+   * A row written here outlives the turn that wrote it. If that turn is later
+   * overtaken, its conversation save is rejected but this row is not — the
+   * winning history simply never references the handle. Those orphans are inert
+   * (see `Conversation.handles`), but a durable store still has to sweep them,
+   * which is what `createdAt` is for.
+   */
   putPayload(record: Omit<PayloadRecord, "handle" | "createdAt">): Promise<string>;
   getPayload(handle: string, conversationId: string): Promise<PayloadRecord | null>;
   /**

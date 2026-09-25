@@ -69,6 +69,24 @@ writing, and the two turns interleave.
 previously the runtime overwrote `leaseUntil` with its own value, so a store
 configured for 40ms silently became 120s under the default config.
 
+Acquisition is documented as needing to be **atomic**: one conditional update,
+not a read followed by a write. Two instances can both observe an expired lease
+before either writes, and both acquire. No conformance test can hold an adapter
+to this — a single process cannot interleave two acquisitions — so it is called
+out as a review item rather than left implied.
+
+**4. An interaction is refused unless the conversation records its handle.**
+
+`putPayload` commits during a turn; the conversation save at the end may be
+rejected. A turn that rendered a surface and was then overtaken therefore leaves
+a live payload row that the winning history never references — and the browser
+that mounted it is still open and can still click. Scoping by conversation id
+does not catch this, because the row genuinely belongs to that conversation.
+
+`Conversation.handles` is now load-bearing rather than bookkeeping: membership is
+checked before any interaction, which makes orphaned surfaces inert. The rows
+themselves still need sweeping, which is what `createdAt` is for.
+
 `@haikit/client` now checks `res.ok` before parsing a response as SSE — a 409
 carries no `data:` frames, so it previously failed silently and the UI just sat
 there.

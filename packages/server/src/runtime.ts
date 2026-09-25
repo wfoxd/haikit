@@ -156,6 +156,13 @@ export class Hai {
     input: { handle: string; action: string; value: unknown },
     emit: Emit,
   ): Promise<void> {
+    // The payload row carries a conversation id, but that alone is not enough.
+    // A turn that rendered a surface and was then overtaken leaves a row behind:
+    // its conversation save is rejected, so the winning history never records
+    // the handle, yet the row and the browser that mounted it both still exist.
+    // Membership of the surviving `handles` is what makes those orphans inert.
+    if (!conversation.handles.includes(input.handle)) throw new Error("unknown handle");
+
     const record = await this.config.store.getPayload(input.handle, conversation.id);
     if (!record) throw new Error("unknown handle");
     if (record.state === "frozen") throw new Error("component is frozen");

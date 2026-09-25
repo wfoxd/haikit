@@ -225,11 +225,75 @@ async function routeChecks() {
   }
 }
 
+// ── an overtaken turn's surface cannot be interacted with ───────────────
+// putPayload commits during the turn; the conversation save at the end may be
+// rejected. The row therefore survives a takeover while the winning history
+// never records its handle — and the browser that mounted it is still open.
+async function orphanChecks() {
+  console.log("\norphaned surfaces");
+  const { createHai } = await import("../packages/server/dist/index.js");
+  const store = memoryStore({ leaseMs: 40 });
+  const hai = createHai({
+    model: { id: "stub", async generate() { return { content: [], stop_reason: "end_turn" }; } },
+    store,
+    tools: [],
+    surfaces: [],
+    system: "x",
+  });
+
+  // a turn renders a surface, then loses its lease and is superseded
+  const slow = await store.loadConversation(undefined);
+  const handle = await store.putPayload({
+    conversationId: slow.id,
+    component: "c",
+    version: 1,
+    props: {},
+    mode: "display",
+    state: "live",
+  });
+  slow.handles.push(handle);
+
+  await new Promise((r) => setTimeout(r, 70));
+  const winner = await store.loadConversation(slow.id); // lease expired, taken
+  winner.leaseUntil = null;
+  await store.saveConversation(winner);
+
+  let staleRejected = false;
+  try {
+    await store.saveConversation(slow);
+  } catch (err) {
+    staleRejected = isStaleLease(err);
+  }
+  check("the overtaken turn's save is rejected", staleRejected);
+
+  const row = await store.getPayload(handle, slow.id);
+  check("its payload row still exists (orphan)", row !== null);
+  check("the winning history does not record the handle", !winner.handles.includes(handle));
+
+  // the client that mounted it is still open and can still click
+  const live = await store.loadConversation(slow.id);
+  let refused = "";
+  try {
+    await hai.interact(live, { handle, action: "copy", value: {} }, () => {});
+  } catch (err) {
+    refused = err.message;
+  }
+  check("interacting with an orphaned handle is refused", refused === "unknown handle");
+}
+
 // Only when invoked directly. A Postgres adapter imports `conform` to run this
 // same suite against itself, and must not inherit a run or a process.exit().
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   await conform("memoryStore", (opts) => memoryStore(opts));
   await routeChecks();
+  await orphanChecks();
+
+  // Said plainly because a suite that looks exhaustive is worse than one that
+  // admits its edges: nothing here can prove lease acquisition is atomic. This
+  // process cannot interleave two acquisitions, so a read-then-write adapter
+  // passes every check above and still races. Review that per adapter.
+  console.log("\n  not covered: atomicity of lease acquisition (single process)");
+
   console.log(failures ? `\n${failures} check(s) failed\n` : "\nstore: all checks passed\n");
   process.exit(failures ? 1 : 0);
 }
