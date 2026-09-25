@@ -26,17 +26,49 @@ export function createChat({ endpoint = "/hai", registry }) {
 
   const notify = (event) => listeners.forEach((fn) => fn(state, event));
 
+  /**
+   * Whether a request is still open — which is not the same as `state.status`.
+   *
+   * The server emits `awaiting` and `idle` from inside the turn, then releases
+   * its lease and saves after that frame has already reached us. Gating on
+   * status therefore lets the next request go out during the tail of the
+   * previous one, and the server answers 409. That matters because the composer
+   * is deliberately live while awaiting — "pick an option above, or type to
+   * override" — so the override is a normal thing to do, not a misuse.
+   */
+  let inFlight = false;
+
   // ── transport: SSE over POST (EventSource cannot POST) ──────────────
   async function stream(path, body) {
-    const res = await fetch(endpoint + path, {
+    inFlight = true;
+    try {
+      await pump(path, body);
+    } finally {
+      inFlight = false;
+    }
+  }
+
+  const post = (path, body) =>
+    fetch(endpoint + path, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ conversationId: state.conversationId, ...body }),
     });
 
+  async function pump(path, body) {
+    let res = await post(path, body);
+
+    // 409 means someone else holds this conversation's turn. Almost always that
+    // is the previous request's own tail, milliseconds from finishing — but it
+    // can also be a second tab, which no client-side guard can prevent. One
+    // retry covers the first and gives up honestly on the second.
+    if (res.status === 409) {
+      await new Promise((r) => setTimeout(r, 150));
+      res = await post(path, body);
+    }
+
     // A non-SSE response carries no `data:` frames, so parsing it as a stream
-    // would fail silently and the UI would just sit there. 409 is the server
-    // refusing a second concurrent turn on this conversation.
+    // would fail silently and the UI would just sit there.
     if (!res.ok) {
       const detail = await res.json().catch(() => ({}));
       apply({
@@ -158,13 +190,16 @@ export function createChat({ endpoint = "/hai", registry }) {
     return surface.instance;
   }
 
+  // Both gate on `inFlight`, not on `state.status` — see its declaration. The
+  // window between the `awaiting` frame and the server releasing its lease is
+  // exactly where a user is invited to type an override.
   async function send(text) {
-    if (!text.trim() || state.status === "streaming") return;
+    if (!text.trim() || inFlight) return;
     await stream("/chat", { message: text });
   }
 
   async function interact(handle, action, value) {
-    if (state.status === "streaming") return;
+    if (inFlight) return;
     await stream("/interact", { handle, action, value });
   }
 

@@ -332,6 +332,51 @@ async function strandChecks() {
   );
 }
 
+// ── a 409 in the tail of the previous turn is not a user-visible error ──
+// The server emits `awaiting` from inside the turn and releases its lease
+// afterwards, and the composer is deliberately live in that state ("pick an
+// option above — or type to override"). An override landing in that window is
+// normal, so the client retries once rather than surfacing the refusal.
+async function clientChecks() {
+  console.log("\nclient");
+  const { createChat } = await import("../packages/client/src/index.js");
+  const http = await import("node:http");
+
+  let calls = 0;
+  const server = http.createServer((req, res) => {
+    calls++;
+    if (calls === 1) {
+      // first attempt lands while the previous request is still releasing
+      res.writeHead(409, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "conversation conv_1 is busy" }));
+      return;
+    }
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    res.write(`data: ${JSON.stringify({ type: "hello", conversationId: "conv_1", model: "m" })}\n\n`);
+    res.write(`data: ${JSON.stringify({ type: "status", status: "idle" })}\n\n`);
+    res.end();
+  });
+  await new Promise((r) => server.listen(5378, r));
+
+  try {
+    const chat = createChat({ endpoint: "http://127.0.0.1:5378/hai", registry: {} });
+    await chat.send("override");
+
+    check("a transient 409 is retried, not surfaced", !chat.state.blocks.some((b) => b.kind === "error"));
+    check("the retry actually reached the server", calls === 2);
+    check("the retried turn is applied", chat.state.conversationId === "conv_1");
+
+    // a second request while one is in flight must not be sent at all
+    calls = 0;
+    const first = chat.send("one");
+    const second = await chat.send("two").then(() => "returned");
+    await first;
+    check("a send while a request is in flight is dropped", second === "returned" && calls <= 2);
+  } finally {
+    server.close();
+  }
+}
+
 // Only when invoked directly. A Postgres adapter imports `conform` to run this
 // same suite against itself, and must not inherit a run or a process.exit().
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
@@ -339,6 +384,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   await routeChecks();
   await orphanChecks();
   await strandChecks();
+  await clientChecks();
 
   // Said plainly because a suite that looks exhaustive is worse than one that
   // admits its edges: nothing here can prove lease acquisition is atomic. This

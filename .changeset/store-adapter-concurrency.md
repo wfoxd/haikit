@@ -109,7 +109,12 @@ themselves still need sweeping, which is what `createdAt` is for.
 
 `@haikit/client` now checks `res.ok` before parsing a response as SSE — a 409
 carries no `data:` frames, so it previously failed silently and the UI just sat
-there.
+there. It also gates requests on whether one is actually in flight rather than on
+`state.status`: the server emits `awaiting` from inside the turn and releases its
+lease afterwards, and the composer is deliberately live in that state ("pick an
+option above — or type to override"), so an override landing in that window is
+normal rather than misuse. A 409 is retried once before being surfaced, which
+also covers a second tab that no client-side gate can prevent.
 
 Also new: `npm run storetest`, a conformance suite asserting all of the above
 against `memoryStore`, so the reference implementation and a real one cannot
