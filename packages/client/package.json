@@ -1,6 +1,6 @@
 {
   "name": "@haikit/client",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "The haikit browser runtime: streams tool payloads into interactive UI surfaces. Plain ESM, no build step, no dependencies.",
   "keywords": [
     "haikit",

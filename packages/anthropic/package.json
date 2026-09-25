@@ -1,6 +1,6 @@
 {
   "name": "@haikit/anthropic",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Claude model adapter for haikit. Imports only @haikit/core, never the server runtime.",
   "keywords": [
     "haikit",
@@ -35,7 +35,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.70.0",
-    "@haikit/core": "0.3.0"
+    "@haikit/core": "0.3.1"
   },
   "publishConfig": {
     "access": "public"
