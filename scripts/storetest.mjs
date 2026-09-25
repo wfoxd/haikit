@@ -119,16 +119,71 @@ export async function conform(label, make) {
 
   // ── the loaded conversation is a copy, not stored state ───────────────
   // A store that returns a live reference cannot detect a stale writer, because
-  // the caller's copy and the stored row are the same object.
+  // the caller's copy and the stored row are the same object. The mutation is
+  // never saved: the lease simply lapses and the conversation is loaded again.
+  // (An earlier version of this check saved an empty message list, which
+  // overwrote whatever a shared object had leaked — it could not fail.)
+  {
+    const s = make({ leaseMs: 30 });
+    const created = await s.loadConversation(undefined);
+    created.leaseUntil = null;
+    await s.saveConversation(created);
+
+    const a = await s.loadConversation(created.id); // the path every turn takes
+    a.messages.push({ role: "user", content: "never saved" });
+    a.handles.push("ui_never_saved");
+    await new Promise((r) => setTimeout(r, 50)); // lease lapses; nothing written
+
+    const reloaded = await s.loadConversation(created.id);
+    check(
+      "mutating a loaded conversation does not write through",
+      reloaded.messages.length === 0 && reloaded.handles.length === 0,
+    );
+  }
+
+  // ── a write must present a lease this store issued ────────────────────
+  // The documented compare-and-set rejects these for free — no row matches an
+  // unknown id, and NULL never equals a token — so a store must reject them
+  // too, or a caller holding no lease at all can create state nobody owns.
   {
     const s = make();
-    const a = await s.loadConversation(undefined);
-    a.messages.push({ role: "user", content: "not saved yet" });
-    a.leaseUntil = null;
-    await s.saveConversation({ ...a, messages: [] });
+    const refused = async (fn) => {
+      try {
+        await fn();
+        return false;
+      } catch (err) {
+        return isStaleLease(err);
+      }
+    };
 
-    const reloaded = await s.loadConversation(a.id);
-    check("mutating a loaded conversation does not write through", reloaded.messages.length === 0);
+    check(
+      "a payload write for an unknown conversation is refused",
+      await refused(() => s.putPayload(payload("conv_unknown"), "any-token")),
+    );
+
+    // Guards against the realistic adapter bug: reading "no token" as "no
+    // fencing requested" and skipping the comparison.
+    const a = await s.loadConversation(undefined);
+    check(
+      "a payload write with a null token is refused",
+      await refused(() => s.putPayload(payload(a.id), null)),
+    );
+
+    check(
+      "saving a conversation that was never loaded is refused",
+      await refused(() =>
+        s.saveConversation({
+          id: "conv_never_loaded",
+          status: "idle",
+          messages: [],
+          handles: [],
+          frozen: [],
+          pending: null,
+          leaseUntil: null,
+          leaseToken: null,
+        }),
+      ),
+    );
   }
 
   // ── an overtaken turn cannot overwrite the turn that overtook it ──────

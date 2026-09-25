@@ -101,7 +101,10 @@ output the fenced save discards.
 
 Both fenced writes — `saveConversation` and `putPayload` — are documented as
 needing the token check and the write to be one statement, for the same reason
-as lease acquisition.
+as lease acquisition. Neither accepts a conversation the store never issued a
+lease for: saving is not an upsert, and a payload cannot be written against an
+unknown conversation or with a null token — both of which the documented
+compare-and-set rejects for free.
 
 **5. An interaction is refused unless the conversation records its handle.**
 

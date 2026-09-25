@@ -58,7 +58,13 @@ export function memoryStore(options: MemoryStoreOptions = {}): StoreAdapter {
    *  contract requires is silently gone. */
   const fence = (conversationId: string, leaseToken: string | null) => {
     const stored = conversations.get(conversationId);
-    if (stored && stored.leaseToken !== leaseToken) throw new StaleLease(conversationId);
+    // Mirrors the SQL shape in the contract: no matching row fails the
+    // compare-and-set exactly like a superseded token does. A null token needs
+    // no case of its own — a stored lease is never null, so it cannot match,
+    // just as `NULL = x` is never true. What must not happen is treating a
+    // missing token as "unfenced" and skipping this comparison.
+    if (!stored) throw new StaleLease(conversationId, "does not exist — no lease was ever issued for it");
+    if (stored.leaseToken !== leaseToken) throw new StaleLease(conversationId);
   };
 
   return {
@@ -88,10 +94,9 @@ export function memoryStore(options: MemoryStoreOptions = {}): StoreAdapter {
     },
 
     async saveConversation(conversation) {
-      const stored = conversations.get(conversation.id);
-      if (stored && stored.leaseToken !== conversation.leaseToken) {
-        throw new StaleLease(conversation.id);
-      }
+      // Same rule as every other fenced write. Not an upsert: a conversation
+      // this store never issued a lease for cannot be created by saving it.
+      fence(conversation.id, conversation.leaseToken);
       conversations.set(conversation.id, copy(conversation));
     },
 

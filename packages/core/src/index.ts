@@ -410,8 +410,8 @@ export const isConversationBusy = (err: unknown): boolean =>
  */
 export class StaleLease extends Error {
   readonly name = "StaleLease";
-  constructor(id: string) {
-    super(`conversation ${id} was taken over by a newer turn — this save was discarded`);
+  constructor(id: string, detail = "was taken over by a newer turn — this write was discarded") {
+    super(`conversation ${id} ${detail}`);
   }
 }
 
@@ -478,9 +478,14 @@ export interface StoreAdapter {
    * -- rowCount 0 → throw StaleLease
    * ```
    *
-   * The same applies to `putPayload`, the only other fenced write: check the
-   * token and insert in one statement, not as a lookup followed by a write. Like acquisition, this is a review item: a
-   * single-process suite cannot interleave the two halves to catch it.
+   * That statement also rejects two cases a read-then-write check tends to wave
+   * through, and a store must reject them too: a conversation that does not
+   * exist (there is no row to match), and a null token (`NULL = x` is never
+   * true). Saving a conversation this store never issued a lease for is not an
+   * upsert — every conversation begins at `loadConversation`.
+   *
+   * Like acquisition, atomicity is a review item: a single-process suite cannot
+   * interleave the two halves to catch a read-then-write implementation.
    */
   saveConversation(conversation: Conversation): Promise<void>;
   /**
@@ -488,7 +493,19 @@ export interface StoreAdapter {
    *
    * Fenced: throws `StaleLease` unless `leaseToken` is the conversation's
    * current one. A superseded turn must stop writing rather than run to
-   * completion and be discarded at the end.
+   * completion and be discarded at the end. As with `saveConversation`, check
+   * and insert in one statement:
+   *
+   * ```sql
+   * INSERT INTO payloads (conversation_id, handle, ...)
+   * SELECT $1, $2, ... WHERE EXISTS (
+   *   SELECT 1 FROM conversations WHERE id = $1 AND lease_token = $3)
+   * -- rowCount 0 → throw StaleLease
+   * ```
+   *
+   * That shape rejects an unknown conversation and a null token for free, and a
+   * store must too — otherwise a caller holding no lease at all can create rows
+   * that no conversation owns.
    *
    * A row written *before* the lease was lost still outlives its turn — the
    * conversation save is rejected but the row is not, so the winning history
