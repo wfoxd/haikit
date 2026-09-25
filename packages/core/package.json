@@ -1,6 +1,6 @@
 {
   "name": "@haikit/core",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "The haikit contract layer: declare a UI surface once, implement it on the server and in the browser. Isomorphic, zero runtime dependencies.",
   "keywords": [
     "haikit",

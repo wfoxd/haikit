@@ -1,6 +1,6 @@
 {
   "name": "@haikit/server",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "The haikit server runtime: agent loop, elicit state machine, derived query_ui, and the interaction security boundary.",
   "keywords": [
     "haikit",
@@ -36,7 +36,7 @@
     "prepack": "npm --prefix ../.. run build"
   },
   "dependencies": {
-    "@haikit/core": "0.2.0",
+    "@haikit/core": "0.3.0",
     "@types/node": ">=22"
   },
   "publishConfig": {
