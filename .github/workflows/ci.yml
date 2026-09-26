@@ -3,6 +3,9 @@ name: ci
 on:
   push: { branches: [main] }
   pull_request:
+  # release.yml dispatches this on the Version Packages PR, which pull_request
+  # never sees — see verify-release-pr there, and dispatch-status below.
+  workflow_dispatch:
 
 jobs:
   verify:
@@ -58,3 +61,25 @@ jobs:
       # against workspace symlinks, which hide `files` omissions, bad `exports`
       # paths and undeclared type dependencies completely.
       - run: npm run packtest
+
+  # A dispatched run's `verify` check is recorded on the commit, but GitHub
+  # leaves workflow_dispatch runs out of the commit's check rollup, so it never
+  # satisfies a PR's required `verify` check — tested in #11, not assumed.
+  # Report the result as a commit status of the same name, which the ruleset
+  # does count. A job of its own, so the job running the repo's code never
+  # holds statuses: write.
+  dispatch-status:
+    needs: verify
+    if: always() && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      statuses: write
+    steps:
+      - run: |
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f state="$STATE" -f context=verify \
+            -f description="ci.yml via workflow_dispatch" -f target_url="$RUN_URL"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STATE: ${{ needs.verify.result == 'success' && 'success' || 'failure' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

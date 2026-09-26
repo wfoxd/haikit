@@ -13,6 +13,8 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    outputs:
+      release-pr: ${{ steps.changesets.outputs.pullRequestNumber }}
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
@@ -50,8 +52,35 @@ jobs:
       # GITHUB_TOKEN is unrelated to npm — changesets needs it to open the
       # "Version Packages" PR.
       - uses: changesets/action@v1
+        id: changesets
         with:
           publish: npm run release
           version: npx changeset version
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # The Version Packages PR is opened and pushed with GITHUB_TOKEN, and events
+  # caused by GITHUB_TOKEN start no workflows (GitHub's guard against runs
+  # triggering runs). So ci.yml never ran on it, and the required `verify` check
+  # waited forever until someone closed and reopened the PR.
+  #
+  # workflow_dispatch is one of the two events GITHUB_TOKEN may start, so run
+  # ci.yml on the release branch explicitly. A dispatched run's check does not
+  # count toward a PR's required checks, so ci.yml also reports the result as a
+  # `verify` commit status (its dispatch-status job), which does. No PAT or app
+  # token needed.
+  verify-release-pr:
+    needs: release
+    if: needs.release.outputs.release-pr != ''
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write        # dispatch a workflow
+      pull-requests: read   # find the PR's branch
+    steps:
+      - run: |
+          branch=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json headRefName --jq .headRefName)
+          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$branch"
+          echo "dispatched ci.yml on $branch for #$PR" >> "$GITHUB_STEP_SUMMARY"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ needs.release.outputs.release-pr }}
