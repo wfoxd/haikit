@@ -39,6 +39,7 @@ To build your own, follow the tutorial, or read `examples/hello` — it is about
 | [`@haikit/server`](packages/server) | agent loop, elicit state machine, derived `query_ui`, routes |
 | [`@haikit/client`](packages/client) | browser runtime + default UI. Plain ESM, no build step |
 | [`@haikit/anthropic`](packages/anthropic) | Claude model adapter |
+| [`@haikit/postgres`](packages/postgres) | durable store adapter. Bring your own driver |
 
 Adapters depend on `@haikit/core` only — never on the runtime. That is what keeps
 the model and store seams swappable.
@@ -92,10 +93,9 @@ not asserted in prose.
 Working, and honest about what isn't done.
 
 - **`memoryStore()` is development-only.** A parked elicit turn is durable
-  state; lose `pending` and that conversation can never be sent again. A
-  Postgres store implements the same four-method interface.
-- **Turn leases are recorded but not reclaimed.** A process dying mid-turn
-  leaves a lease in the past; nothing sweeps it yet.
+  state; lose `pending` and that conversation can never be sent again. Ship
+  with [`@haikit/postgres`](packages/postgres), or implement the five-method
+  `StoreAdapter` for your own database.
 - **No `ui_patch`.** The model cannot mutate a live surface in place, so a
   refresh re-renders and loses scroll and sort state.
 - **Payload staleness is undefined.** A picker parked for a week resolves

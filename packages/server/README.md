@@ -18,4 +18,5 @@ the client could name a tool, a prompt injection inside any tool result would
 become a button wired to it.
 
 `memoryStore()` is for development. A parked elicit turn is durable state —
-lose `pending` and that conversation can never be sent again.
+lose `pending` and that conversation can never be sent again. Ship with
+[`@haikit/postgres`](https://www.npmjs.com/package/@haikit/postgres).

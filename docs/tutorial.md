@@ -588,7 +588,7 @@ http
 
 **1** The model seam. Swap in your own object with a `generate()` method and the runtime cannot tell — that is how `examples/flights` in the haikit repo ships a scripted model for demos.
 
-**2** The one line to change before shipping. A parked elicit turn is durable state; lose it and that conversation can never be sent again.
+**2** The one line to change before shipping. A parked elicit turn is durable state; lose it and that conversation can never be sent again. *Before you ship*, at the end, swaps in Postgres.
 
 **3** Your tools. The framework appends `query_ui` to this list at construction time.
 
@@ -1002,7 +1002,27 @@ You now have every concept in the framework, in about 150 lines. The next app di
 
 ### Before you ship anything real
 
-- **Replace `memoryStore()`.** A parked elicit turn is durable state — lose `pending` and that conversation can never be sent again. The interface is four methods; a Postgres implementation is an afternoon.
+- **Replace `memoryStore()`.** A parked elicit turn is durable state — lose `pending` and that conversation can never be sent again. `@haikit/postgres` is the drop-in replacement, and it takes the driver you already use:
+
+  ```bash
+  npm install @haikit/postgres pg
+  npm install -D @types/pg
+  ```
+
+  ```ts
+  import pg from "pg";
+  import { pgStore, migrate } from "@haikit/postgres";
+
+  const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+  await migrate(pool); // creates its two tables if they don't exist
+
+  const hai = createHai({
+    // model, tools, surfaces and system exactly as before
+    store: pgStore(pool),
+  });
+  ```
+
+  Several server instances can share one database safely: a conversation takes one turn at a time however many processes receive its requests. On another database, implement `StoreAdapter` from `@haikit/core`: five methods, each documented with what it has to guarantee, and `packages/postgres` in the haikit repo is a worked example.
 - **Decide what stale means.** Greetings don't rot, but prices and availability do. TTL the payload, re-validate on resolve, or freeze it with an explanation. Silently resolving stale data is the wrong answer.
 - **Gate the destructive tools.** An approval card is structurally identical to what you built in steps 2–6: a two-button surface with a `resolve` action. Same machinery, no new concepts.
 
