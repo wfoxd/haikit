@@ -309,6 +309,7 @@ const impl = picker.implement({
   digest: (props) => String(props.rows.length),
   actions: { pick: (v) => v },
   queries: { filter: (_args, { props, cap }): Capped => cap(props.rows, String) },
+  staleAfterMs: 15 * 60_000,
 });
 void impl;
 
@@ -319,10 +320,19 @@ const registry: Registry = {
     const btn = h("button", "x", props.rows[0]);
     btn.disabled = ctx.state === "frozen";
     el.append(btn);
-    return { freeze: () => { btn.disabled = true; } };
+    return {
+      freeze: () => { btn.disabled = true; },
+      expire: () => { btn.textContent = "out of date"; },
+    };
   } },
 };
 void registry;
+// the expiry state and reset() are part of the published client types
+declare const chat: ReturnType<typeof createChat>;
+const notice: string | null = chat.state.expired;
+const deadline: number | null = chat.state.expiresAt;
+chat.reset();
+void notice; void deadline;
 // the store type-checks as a StoreAdapter, with a structurally-typed driver
 const durable: StoreAdapter = pgStore({ query: async (_text: string, _params?: unknown[]) => ({ rows: [] }) });
 void durable;

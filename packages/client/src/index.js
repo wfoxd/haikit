@@ -19,9 +19,17 @@ export function createChat({ endpoint = "/hai", registry }) {
     model: "",
     status: "idle",
     blocks: [],
-    /** handle -> { component, version, mode, props, state, instance } */
+    /** handle -> { component, version, mode, props, state, instance, element } */
     surfaces: new Map(),
     context: { messages: [], modelTokens: 0, uiTokens: 0 },
+    /**
+     * When this conversation goes out of date, by this browser's clock: the
+     * earliest freshness window among its surfaces, counted from when each one
+     * arrived. Null while nothing it shows can go stale.
+     */
+    expiresAt: null,
+    /** The notice, once the conversation is out of date. Final until `reset()`. */
+    expired: null,
   };
 
   const notify = (event) => listeners.forEach((fn) => fn(state, event));
@@ -43,12 +51,23 @@ export function createChat({ endpoint = "/hai", registry }) {
   let busy = 0;
   let chain = Promise.resolve();
 
+  /**
+   * Bumped by `reset()`. A request belongs to the conversation that was current
+   * when it was made: one still queued is never sent, and one already open has
+   * its events dropped — otherwise a late `hello` would pull this client back
+   * into the conversation it just left.
+   */
+  let generation = 0;
+
   // ── transport: SSE over POST (EventSource cannot POST) ──────────────
   function enqueue(path, body) {
+    const gen = generation;
     busy++;
-    const run = chain.then(() => pump(path, body)).finally(() => {
-      busy--;
-    });
+    const run = chain
+      .then(() => (gen === generation ? pump(path, body, gen) : undefined))
+      .finally(() => {
+        busy--;
+      });
     chain = run.catch(() => {});
     return run;
   }
@@ -60,7 +79,7 @@ export function createChat({ endpoint = "/hai", registry }) {
       body: JSON.stringify({ conversationId: state.conversationId, ...body }),
     });
 
-  async function pump(path, body) {
+  async function pump(path, body, gen) {
     let res = await post(path, body);
 
     // 409 means someone else holds this conversation's turn. Almost always that
@@ -69,8 +88,10 @@ export function createChat({ endpoint = "/hai", registry }) {
     // retry covers the first and gives up honestly on the second.
     if (res.status === 409) {
       await new Promise((r) => setTimeout(r, 150));
+      if (gen !== generation) return;
       res = await post(path, body);
     }
+    if (gen !== generation) return;
 
     // A non-SSE response carries no `data:` frames, so parsing it as a stream
     // would fail silently and the UI would just sit there.
@@ -93,6 +114,12 @@ export function createChat({ endpoint = "/hai", registry }) {
       buffer += value;
       let i;
       while ((i = buffer.indexOf("\n\n")) >= 0) {
+        // Per frame, not per chunk: a subscriber may call reset() from inside
+        // apply(), and the rest of this chunk belongs to the old conversation.
+        if (gen !== generation) {
+          reader.cancel().catch(() => {});
+          return;
+        }
         const frame = buffer.slice(0, i);
         buffer = buffer.slice(i + 2);
         const line = frame.split("\n").find((l) => l.startsWith("data: "));
@@ -133,8 +160,17 @@ export function createChat({ endpoint = "/hai", registry }) {
           state: "live",
           props: null,
           instance: null,
+          element: null,
         });
         state.blocks.push({ kind: "ui", id: `ui:${event.handle}`, handle: event.handle, toolId: event.toolId });
+        if (typeof event.staleAfterMs === "number") {
+          const at = Date.now() + event.staleAfterMs;
+          if (state.expiresAt === null || at < state.expiresAt) {
+            state.expiresAt = at;
+            closingWindow = event.staleAfterMs;
+            schedule();
+          }
+        }
         break;
 
       case "ui_props": {
@@ -164,8 +200,60 @@ export function createChat({ endpoint = "/hai", registry }) {
         state.blocks.push({ kind: "error", id: `e${state.blocks.length}`, message: event.message });
         state.status = "idle";
         break;
+
+      // The local timer and the server can both report this; once is enough.
+      case "expired":
+        if (state.expired) return;
+        state.expired = event.message;
+        state.status = "idle";
+        clearTimeout(timer);
+        state.blocks.push({ kind: "expired", id: `x${state.blocks.length}`, message: event.message });
+        for (const surface of state.surfaces.values()) seal(surface);
+        break;
     }
     notify(event);
+  }
+
+  // ── expiry ─────────────────────────────────────────────────────────
+  // The server refuses every request on an out-of-date conversation. Knowing
+  // the deadline here too means a tab left open greys out on time, rather than
+  // looking live until a click comes back refused.
+
+  let timer = null;
+  let closingWindow = 0;
+
+  const outOfDate = () => state.expiresAt !== null && Date.now() >= state.expiresAt;
+
+  const expireHere = () =>
+    apply({
+      type: "expired",
+      message:
+        `This conversation is out of date — results shown here were only valid for ` +
+        `${duration(closingWindow)}. Start a new conversation for current results.`,
+    });
+
+  // One timer, for the earliest deadline. setTimeout fires at once for delays
+  // past about 24.8 days, so a long wait is taken in steps.
+  function schedule() {
+    clearTimeout(timer);
+    if (state.expiresAt === null || state.expired) return;
+    const wait = Math.min(Math.max(state.expiresAt - Date.now(), 0), 2_147_483_647);
+    timer = setTimeout(() => (outOfDate() ? expireHere() : schedule()), wait);
+  }
+
+  /** Checked against the clock as well as the flag: a laptop that slept
+   *  through the deadline may not have run the timer yet. */
+  function closed() {
+    if (!state.expired && outOfDate()) expireHere();
+    return state.expired !== null;
+  }
+
+  /** Nothing inside an out-of-date surface may reach the server again. */
+  function seal(surface) {
+    if (!surface.element) return;
+    surface.element.inert = true;
+    surface.element.dataset.expired = "";
+    surface.instance?.expire?.();
   }
 
   /**
@@ -184,6 +272,7 @@ export function createChat({ endpoint = "/hai", registry }) {
     }
 
     element.replaceChildren();
+    surface.element = element;
     surface.instance = definition.mount(element, surface.props, {
       handle,
       mode: surface.mode,
@@ -192,16 +281,17 @@ export function createChat({ endpoint = "/hai", registry }) {
       // name declared in the contract — never a tool, never a handler.
       send: (action, value) => interact(handle, action, value),
     });
+    if (state.expired) seal(surface);
     return surface.instance;
   }
 
-  // A message is queued, never dropped. mountChat has already cleared the
-  // textarea by the time this runs, so refusing a send here does not decline
-  // it — it deletes what the user typed. That was true under the old
-  // `status === "streaming"` gate too, via the Enter key, which ignores the
-  // disabled send button.
+  // A message is queued, never dropped — busy is not a reason to refuse one.
+  // The only refusal is an out-of-date conversation, which the server would
+  // refuse too, and it happens before the first await: a caller that clears
+  // its input can check `state.expired` straight after calling and keep the
+  // text instead.
   async function send(text) {
-    if (!text.trim()) return;
+    if (!text.trim() || closed()) return;
     await enqueue("/chat", { message: text });
   }
 
@@ -209,8 +299,27 @@ export function createChat({ endpoint = "/hai", registry }) {
   // dropping them: a double-click on a picker row would resolve it and then
   // queue a second resolution into "component is frozen".
   async function interact(handle, action, value) {
-    if (busy) return;
+    if (busy || closed()) return;
     await enqueue("/interact", { handle, action, value });
+  }
+
+  /**
+   * Start over. The next send begins a new conversation. Anything queued for
+   * the old one is never sent, and anything still open has its events dropped.
+   */
+  function reset() {
+    generation++;
+    clearTimeout(timer);
+    Object.assign(state, {
+      conversationId: null,
+      status: "idle",
+      blocks: [],
+      context: { messages: [], modelTokens: 0, uiTokens: 0 },
+      expiresAt: null,
+      expired: null,
+    });
+    state.surfaces.clear();
+    notify({ type: "reset" });
   }
 
   return {
@@ -218,9 +327,27 @@ export function createChat({ endpoint = "/hai", registry }) {
     send,
     interact,
     mount,
+    reset,
     subscribe(fn) {
       listeners.add(fn);
       return () => listeners.delete(fn);
     },
   };
+}
+
+/** "2 hours", "15 minutes" — for a sentence a person reads. */
+function duration(ms) {
+  const units = [
+    [86_400_000, "day"],
+    [3_600_000, "hour"],
+    [60_000, "minute"],
+    [1_000, "second"],
+  ];
+  for (const [size, name] of units) {
+    if (ms >= size) {
+      const n = Math.floor(ms / size);
+      return `${n} ${name}${n === 1 ? "" : "s"}`;
+    }
+  }
+  return "under a second";
 }

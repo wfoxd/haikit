@@ -18,6 +18,15 @@ not style the inside of your surfaces; your components emit their own class
 names and your stylesheet owns them. Every colour is a `--hai-*` custom
 property, so override what you like.
 
+## Out-of-date conversations
+
+The server closes a conversation once any surface passes its freshness window.
+The client knows each window too, so a tab left open closes on time instead of
+looking live until a click is refused: `state.expired` holds the notice,
+`send` and `interact` stop sending, and each surface's element is made `inert`
+with `data-expired` set. `chat.reset()` starts a new conversation; the default
+transcript renders the notice with a button that calls it.
+
 ## Serving it
 
 This package ships source, not a bundle. With a bundler, import normally. With

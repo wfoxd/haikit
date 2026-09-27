@@ -22,6 +22,7 @@ const str: Schema<string> = { parse: (v) => v as string };
 picker.implement({
   actions: { choose: () => "x" },
   queries: { filter: (_a, { props: p, cap }) => cap(p.rows, String) },
+  staleAfterMs: "never",
 });
 
 // ── GUARANTEE 2: a query must return Capped, i.e. must call cap() ──────
@@ -32,6 +33,7 @@ picker.implement({
     // @ts-expect-error  a raw array is not assignable to Capped
     filter: (_args, { props: p }) => p.rows,
   },
+  staleAfterMs: "never",
 });
 
 picker.implement({
@@ -41,6 +43,7 @@ picker.implement({
     // @ts-expect-error  a hand-built object literal cannot satisfy Capped
     filter: () => ({ text: "3 of 47", shown: 3, total: 47 }),
   },
+  staleAfterMs: "never",
 });
 
 // ── GUARANTEE 3: elicit requires a declared resolve action ─────────────
@@ -53,6 +56,25 @@ picker.implement({
   // @ts-expect-error  'deleteEverything' is not declared in the contract
   actions: { choose: () => "x", deleteEverything: () => "boom" },
   queries: { filter: (_a, { props: p, cap }) => cap(p.rows, String) },
+  staleAfterMs: "never",
+});
+
+// ── GUARANTEE 5: a surface must decide when its data goes out of date ──
+// There is no default: the one a framework would pick, never, is the silent
+// version of the bug — a week-old picker resolving against last week's data.
+// @ts-expect-error  Property 'staleAfterMs' is missing
+picker.implement({
+  digest: () => "x",
+  actions: { choose: () => "x" },
+  queries: { filter: (_a, { props: p, cap }) => cap(p.rows, String) },
+});
+
+picker.implement({
+  digest: () => "x",
+  actions: { choose: () => "x" },
+  queries: { filter: (_a, { props: p, cap }) => cap(p.rows, String) },
+  // @ts-expect-error  a window is milliseconds or "never" — not a duration string
+  staleAfterMs: "15m",
 });
 
 // ── props are typed from the contract ──────────────────────────────────

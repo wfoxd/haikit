@@ -23,6 +23,7 @@ const CASES = [
     action: "choose",
     value: "he",
     expectInResolution: /Chose Hebrew/,
+    staleAfterMs: undefined, // greetings never go out of date
     display: {
       message: "show the hebrew one",
       component: "greeting_card",
@@ -41,6 +42,7 @@ const CASES = [
     action: "select",
     value: "AC832",
     expectInResolution: /Selected: Air Canada AC832/,
+    staleAfterMs: 15 * 60_000,
   },
 ];
 
@@ -115,6 +117,10 @@ for (const c of CASES) {
     turn.some((e) => e.type === "ui_props")
       ? ok("payload reaches the browser")
       : bad("no ui_props");
+    // the browser needs the window to close a conversation left open on time
+    uiOpen?.staleAfterMs === c.staleAfterMs
+      ? ok(c.staleAfterMs ? `its ${c.staleAfterMs / 60_000}-minute window reaches the browser` : "no window is sent for data that never goes stale")
+      : bad(`expected staleAfterMs ${c.staleAfterMs}, got ${uiOpen?.staleAfterMs}`);
     status?.status === "awaiting" ? ok("turn parks") : bad(`status is ${status?.status}`);
 
     // the digest must be short; the payload must not be in it

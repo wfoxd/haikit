@@ -96,6 +96,27 @@ export async function conform(label, make) {
     check("payload props of every JSON type round-trip, including bare strings", !error && same(single) && same(batch));
   }
 
+  // ── createdAt is when the payload was written, in epoch milliseconds ──
+  // Every freshness window is measured from it. The runtime fails closed on a
+  // value that isn't a number, but a wrong number it cannot detect: seconds
+  // instead of milliseconds would close every conversation on its first
+  // request.
+  {
+    const s = make();
+    const a = await s.loadConversation(undefined);
+    const before = Date.now();
+    const h = await s.putPayload(payload(a.id), a.leaseToken);
+    const after = Date.now();
+    const single = (await s.getPayload(h, a.id))?.createdAt;
+    const [batched] = await s.getPayloads([h], a.id);
+    const slack = 60_000; // a database server's clock may differ a little from this one
+    check(
+      "createdAt is epoch milliseconds from when the payload was written",
+      typeof single === "number" && single >= before - slack && single <= after + slack,
+    );
+    check("the batch read reports the same createdAt", batched?.createdAt === single);
+  }
+
   // ── batch read matches the single read, and drops what it should ──────
   {
     const s = make();
@@ -328,6 +349,7 @@ export async function integration(label, make) {
   await orphanChecks(make);
   await strandChecks(make);
   await turnAbortChecks(make);
+  await expiryChecks(make);
   return failures;
 }
 
@@ -442,7 +464,12 @@ async function strandChecks(make) {
   const { defineSurface, resolve } = await import("../packages/core/dist/index.js");
   const any = { parse: (v) => v };
   const picker = defineSurface({ name: "picker", version: 1, props: any, actions: { choose: resolve(any) }, queries: {} });
-  const pickerImpl = picker.implement({ digest: () => "d", actions: { choose: (v) => `chose ${v}` }, queries: {} });
+  const pickerImpl = picker.implement({
+    digest: () => "d",
+    actions: { choose: (v) => `chose ${v}` },
+    queries: {},
+    staleAfterMs: "never",
+  });
 
   // a model slow enough to outlive a 40ms lease
   const slowModel = {
@@ -554,10 +581,27 @@ async function clientChecks() {
       open++;
       maxOpen = Math.max(maxOpen, open);
       received.push({ path: req.url, body: JSON.parse(raw) });
-      await new Promise((r) => setTimeout(r, 40));
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      if (mode === "fail-slow") {
+        await wait(40);
+        open--;
+        res.writeHead(500, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "the old request failed" }));
+        return;
+      }
+      // "split" answers at once and sends the rest of its stream 40ms later
+      if (mode !== "split") await wait(mode === "late-refusal" ? 100 : 40);
+      const frame = (event) => res.write(`data: ${JSON.stringify(event)}\n\n`);
       res.writeHead(200, { "content-type": "text/event-stream" });
-      res.write(`data: ${JSON.stringify({ type: "hello", conversationId: "conv_1", model: "m" })}\n\n`);
-      res.write(`data: ${JSON.stringify({ type: "status", status: "idle" })}\n\n`);
+      frame({ type: "hello", conversationId: "conv_1", model: "m" });
+      if (mode === "split") await wait(40);
+      if (mode === "expiring" || mode === "server-refuses" || mode === "split") {
+        // a picker good for 40ms
+        frame({ type: "ui_open", handle: "ui_01", toolId: "b1", component: "c", version: 1, mode: "elicit", staleAfterMs: 40 });
+        frame({ type: "ui_props", handle: "ui_01", props: {} });
+      }
+      if (mode === "server-refuses" || mode === "late-refusal") frame({ type: "expired", message: "server says" });
+      frame({ type: "status", status: "idle" });
       open--;
       res.end();
     });
@@ -597,6 +641,105 @@ async function clientChecks() {
       "an interaction while a request is open is not stacked",
       received.length === 1 && received[0].path.endsWith("/chat"),
     );
+
+    // ── a tab left open closes the conversation on time, by itself
+    const endpoint = "http://127.0.0.1:5378/hai";
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    mode = "expiring";
+    const tab = createChat({ endpoint, registry: {} });
+    await tab.send("show me");
+    check(
+      "the deadline is known as soon as the surface arrives",
+      typeof tab.state.expiresAt === "number" && tab.state.expired === null,
+    );
+    await sleep(70);
+    check(
+      "an open tab closes the conversation when the window passes",
+      typeof tab.state.expired === "string" && tab.state.blocks.at(-1)?.kind === "expired",
+    );
+    received.length = 0;
+    await tab.interact("ui_01", "choose", "x");
+    await tab.send("still there?");
+    check("an out-of-date conversation sends nothing more", received.length === 0);
+
+    // the local deadline passes while a request is open, and the server's
+    // refusal arrives after it — the order that needs de-duplicating
+    mode = "expiring";
+    const slow = createChat({ endpoint, registry: {} });
+    await slow.send("show me"); // a picker good for 40ms
+    mode = "late-refusal"; // the next answer takes 100ms, and is a refusal
+    await slow.send("again");
+    check(
+      "a refusal arriving after the local deadline adds no second notice",
+      slow.state.blocks.filter((b) => b.kind === "expired").length === 1,
+    );
+
+    // the other order: the server says it first
+    mode = "server-refuses";
+    const told = createChat({ endpoint, registry: {} });
+    await told.send("hi");
+    await sleep(70);
+    check(
+      "the server's refusal and the local deadline make one notice, not two",
+      told.state.expired === "server says" && told.state.blocks.filter((b) => b.kind === "expired").length === 1,
+    );
+
+    // ── reset() starts over
+    tab.reset();
+    const s = tab.state;
+    check(
+      "reset() clears the conversation",
+      s.conversationId === null && s.blocks.length === 0 && s.surfaces.size === 0 &&
+        s.expired === null && s.expiresAt === null,
+    );
+    mode = "ok";
+    received.length = 0;
+    await tab.send("a new one");
+    check(
+      "the next send starts a new conversation",
+      received.length === 1 && received[0].body.conversationId == null && tab.state.conversationId === "conv_1",
+    );
+
+    // a request still open cannot pull the client back into what it left
+    const racing = createChat({ endpoint, registry: {} });
+    const inFlight = racing.send("slow"); // the server holds it for 40ms
+    await sleep(10);
+    racing.reset();
+    await inFlight;
+    check(
+      "events from a request open during reset() are dropped",
+      racing.state.conversationId === null && racing.state.blocks.length === 0,
+    );
+
+    // a stream already delivering when reset() lands stops applying mid-way
+    mode = "split";
+    const midway = createChat({ endpoint, registry: {} });
+    const streaming = midway.send("hi");
+    for (let i = 0; i < 100 && midway.state.conversationId === null; i++) await sleep(2);
+    midway.reset(); // `hello` has landed; the surface is 40ms away
+    await streaming;
+    check(
+      "the rest of a stream open during reset() is dropped",
+      midway.state.conversationId === null && midway.state.blocks.length === 0 && midway.state.expiresAt === null,
+    );
+
+    // a request that fails after reset() does not report into the new one
+    mode = "fail-slow";
+    const failing = createChat({ endpoint, registry: {} });
+    const doomed = failing.send("hi");
+    await sleep(10);
+    failing.reset();
+    await doomed;
+    check("an old request's failure is not shown in the new conversation", failing.state.blocks.length === 0);
+
+    // …and one still queued is never sent at all
+    mode = "ok";
+    received.length = 0;
+    const queued = createChat({ endpoint, registry: {} });
+    const sends = [queued.send("one"), queued.send("two")];
+    queued.reset();
+    await Promise.all(sends);
+    check("sends queued before reset() are never sent", received.length === 0);
   } finally {
     server.close();
   }
@@ -615,7 +758,7 @@ async function turnAbortChecks(make) {
   const any = { parse: (v) => v };
 
   const card = defineSurface({ name: "card", version: 1, props: any, actions: {}, queries: {} });
-  const cardImpl = card.implement({ digest: () => "a card", actions: {}, queries: {} });
+  const cardImpl = card.implement({ digest: () => "a card", actions: {}, queries: {}, staleAfterMs: "never" });
 
   let conversationId;
   const show = defineTool({
@@ -661,12 +804,217 @@ async function turnAbortChecks(make) {
   check("no further model hops after the fence trips", generations === 1);
 }
 
+// ── an out-of-date conversation is closed ───────────────────────────────
+// Once any surface is past its freshness window, every request — typed or
+// clicked — is refused before the model runs, and nothing is recorded. The
+// user starts a new conversation; the model is never asked to cope with it.
+async function expiryChecks(make) {
+  console.log("\nexpiry");
+  const { createHai, nodeHandler } = await import("../packages/server/dist/index.js");
+  const { defineSurface, resolve, inform } = await import("../packages/core/dist/index.js");
+  const http = await import("node:http");
+  const any = { parse: (v) => v };
+  const later = () => new Promise((r) => setTimeout(r, 70));
+
+  const surface = (name, staleAfterMs) =>
+    defineSurface({ name, version: 1, props: any, actions: { choose: resolve(any), note: inform(any) }, queries: {} })
+      .implement({
+        digest: () => name,
+        actions: { choose: (v) => `chose ${v}`, note: (v) => `noted ${v}` },
+        queries: {},
+        staleAfterMs,
+      });
+  const quick = surface("quick", 40);
+  const forever = surface("forever", "never");
+
+  let generations = 0;
+  const model = {
+    id: "stub",
+    async generate() {
+      generations++;
+      return { content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" };
+    },
+  };
+  const store = make();
+  const hai = createHai({ model, store, tools: [], surfaces: [quick, forever], system: "x" });
+
+  /** A saved conversation that rendered these surfaces. `parked` leaves the
+   *  first one awaiting an answer; `answered` freezes it as already answered. */
+  async function conversation(impls, { parked = false, answered = false } = {}) {
+    const c = await store.loadConversation(undefined);
+    for (const impl of impls) {
+      c.handles.push(
+        await store.putPayload(
+          { conversationId: c.id, component: impl.surface.name, version: 1, props: {}, mode: parked ? "elicit" : "display" },
+          c.leaseToken,
+        ),
+      );
+    }
+    if (parked) {
+      c.status = "awaiting";
+      c.pending = { toolUseId: "t1", handle: c.handles[0], digest: "d", results: [] };
+    }
+    if (answered) c.frozen.push(c.handles[0]);
+    c.leaseUntil = null;
+    await store.saveConversation(c);
+    return c;
+  }
+
+  /** One request, the way routes.ts runs it: acquire, act, release. */
+  async function request(id, act, runtime = hai) {
+    const c = await store.loadConversation(id);
+    const events = [];
+    const before = generations;
+    await act(runtime, c, (e) => events.push(e));
+    c.leaseUntil = null;
+    await store.saveConversation(c);
+    return { expired: events.find((e) => e.type === "expired"), modelCalls: generations - before };
+  }
+  const say = (text) => (rt, c, emit) => rt.send(c, text, emit);
+  const click = (handle, action) => (rt, c, emit) => rt.interact(c, { handle, action, value: "x" }, emit);
+
+  /** The stored conversation, without holding its lease afterwards. */
+  async function peek(id) {
+    const c = await store.loadConversation(id);
+    c.leaseUntil = null;
+    await store.saveConversation(c);
+    return c;
+  }
+
+  {
+    const c = await conversation([quick]);
+    const r = await request(c.id, say("hi"));
+    check("inside its window, a conversation runs as before", !r.expired && r.modelCalls === 1);
+  }
+
+  {
+    const c = await conversation([quick]);
+    await later();
+    const r = await request(c.id, say("hi"));
+    check(
+      "past its window, a typed message is refused with a way forward",
+      /out of date.*Start a new conversation/.test(r.expired?.message ?? ""),
+    );
+    check("…before the model runs", r.modelCalls === 0);
+    check("…and nothing is recorded", (await peek(c.id)).messages.length === 0);
+  }
+
+  // the case this exists for: a picker left open, clicked days later
+  {
+    const c = await conversation([quick], { parked: true });
+    await later();
+    const r = await request(c.id, click(c.handles[0], "choose"));
+    const after = await peek(c.id);
+    check("a click on an out-of-date picker is refused", !!r.expired && r.modelCalls === 0);
+    check(
+      "…and the picker is left unanswered, not resolved or frozen",
+      after.pending?.handle === c.handles[0] && !after.frozen.includes(c.handles[0]),
+    );
+  }
+
+  {
+    const c = await conversation([quick, forever]);
+    await later();
+    const r = await request(c.id, click(c.handles[1], "note"));
+    check("one out-of-date surface closes the whole conversation", !!r.expired && r.modelCalls === 0);
+  }
+
+  // what the user picked is still in the model's context at the old price
+  {
+    const c = await conversation([quick], { answered: true });
+    await later();
+    const r = await request(c.id, say("book it"));
+    check("an answered surface still closes the conversation", !!r.expired && r.modelCalls === 0);
+  }
+
+  {
+    const c = await conversation([forever]);
+    await later();
+    const r = await request(c.id, say("hi"));
+    check('a "never" surface never closes a conversation', !r.expired && r.modelCalls === 1);
+  }
+
+  // A store returning an unreadable createdAt must not make every surface
+  // fresh forever — NaN compares false against every deadline.
+  {
+    const unreadable = {
+      ...store,
+      getPayloads: async (handles, id) =>
+        (await store.getPayloads(handles, id)).map((r) => ({ ...r, createdAt: Number.NaN })),
+    };
+    const strict = createHai({ model, store: unreadable, tools: [], surfaces: [quick, forever], system: "x" });
+    const c = await conversation([quick]);
+    const r = await request(c.id, say("hi"), strict);
+    check("a payload whose age can't be read counts as out of date", !!r.expired && r.modelCalls === 0);
+  }
+
+  // over HTTP: refused inside the stream, and the lease is still released
+  {
+    const c = await conversation([quick]);
+    await later();
+    const handler = nodeHandler(hai, "/hai");
+    const server = http.createServer(async (req, res) => {
+      if (!(await handler(req, res))) res.writeHead(404).end();
+    });
+    await new Promise((r) => server.listen(0, "127.0.0.1", r));
+    try {
+      const res = await fetch(`http://127.0.0.1:${server.address().port}/hai/chat`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ conversationId: c.id, message: "hi" }),
+      });
+      const body = await res.text();
+      check("the route streams the refusal", res.status === 200 && body.includes('"type":"expired"'));
+      let released = true;
+      try {
+        await peek(c.id);
+      } catch {
+        released = false;
+      }
+      check("a refused request still releases its lease", released);
+    } finally {
+      server.close();
+    }
+  }
+}
+
+// ── a window has to be a real decision ──────────────────────────────────
+// The type makes staleAfterMs required; JavaScript callers never see the type.
+async function windowChecks() {
+  console.log("\nfreshness windows");
+  const { createHai } = await import("../packages/server/dist/index.js");
+  const { defineSurface } = await import("../packages/core/dist/index.js");
+  const any = { parse: (v) => v };
+  const model = { id: "stub", async generate() { return { content: [], stop_reason: "end_turn" }; } };
+
+  const refused = (staleAfterMs) => {
+    const impl = defineSurface({ name: "w", version: 1, props: any, actions: {}, queries: {} }).implement({
+      digest: () => "w",
+      actions: {},
+      queries: {},
+      staleAfterMs,
+    });
+    try {
+      createHai({ model, store: memoryStore(), tools: [], surfaces: [impl], system: "x" });
+      return false;
+    } catch (err) {
+      return err instanceof RangeError && err.message.includes("surface w");
+    }
+  };
+  check(
+    "a missing, zero, negative, NaN, infinite or misspelled window is refused",
+    [undefined, 0, -1, NaN, Infinity, "15m", "Never"].every(refused),
+  );
+  check('a positive window and "never" are accepted', !refused(1) && !refused("never"));
+}
+
 // Only when invoked directly. A Postgres adapter imports `conform` to run this
 // same suite against itself, and must not inherit a run or a process.exit().
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   await conform("memoryStore", (opts) => memoryStore(opts));
   await integration("memoryStore", (opts) => memoryStore(opts));
   await routeChecks();
+  await windowChecks();
   await clientChecks();
 
   // Said plainly because a suite that looks exhaustive is worse than one that

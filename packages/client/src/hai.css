@@ -141,6 +141,30 @@
 .hai-skeleton, .hai-surface-error { padding: 14px; font: 12px var(--hai-mono); color: var(--hai-dim); }
 .hai-surface-error { color: var(--hai-bad); }
 
+/* out of date — the runtime has made the surface inert; this only shows it */
+.hai-surface[data-expired] { opacity: .45; filter: grayscale(.7); }
+.hai-expired {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--hai-warn);
+  border-radius: var(--hai-radius);
+  color: var(--hai-warn);
+}
+.hai-expired .hai-body { flex: 1 1 30ch; }
+.hai-new {
+  background: var(--hai-warn);
+  color: var(--hai-bg);
+  border: none;
+  border-radius: 8px;
+  padding: 6px 14px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
 /* ── status + composer ──────────────────────────────────────────────── */
 .hai-status { padding: 0 20px 4px; font-size: 12px; min-height: 18px; color: var(--hai-dim); }
 .hai-status[data-status="awaiting"] { color: var(--hai-warn); }
@@ -158,6 +182,7 @@
   max-height: 180px;
 }
 .hai-input:focus { outline: none; border-color: var(--hai-accent); }
+.hai-input:disabled { opacity: .5; }
 .hai-send {
   background: var(--hai-accent);
   color: var(--hai-bg);

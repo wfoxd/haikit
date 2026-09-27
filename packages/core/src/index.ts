@@ -5,11 +5,12 @@
  * by app code on both sides of the wire. Zero runtime dependencies: schemas are
  * accepted structurally, so zod works but is not required.
  *
- * Four guarantees are enforced here, in the type system:
+ * Five guarantees are enforced here, in the type system:
  *   1. a surface cannot exist without a `digest`
  *   2. a query's return value can only be produced by `cap()`
  *   3. `mode: "elicit"` only accepts a surface declaring a `resolve` action
  *   4. declaring an action is the only way to make it round-trip
+ *   5. a surface cannot exist without deciding when its data goes out of date
  */
 
 // ───────────────────────────────────────────────────────── schemas
@@ -154,6 +155,23 @@ export interface SurfaceImplDef<P, A extends ActionMap, Q extends QueryMap> {
 
   /** GUARANTEE 2 — must return `Capped`, i.e. must call `ctx.cap`. */
   queries: { [K in keyof Q]: (args: Infer<Q[K]["input"]>, ctx: QueryCtx<P>) => Capped };
+
+  /**
+   * GUARANTEE 5 — required. How long this surface's data may be acted on, in
+   * milliseconds from when it was rendered, or `"never"` for data that does not
+   * go out of date.
+   *
+   * Once any surface in a conversation is past its window, the conversation is
+   * closed: every further request — a click or a typed message — is refused
+   * before the model runs, and the user is asked to start a new conversation.
+   * Answered surfaces count too, because what the user picked from one is still
+   * sitting in the model's context at the price it was shown at.
+   *
+   * There is deliberately no default. The one a framework would pick, never, is
+   * the silent version of the bug this exists for: a picker left open over a
+   * weekend resolves against last week's prices, and nothing says so.
+   */
+  staleAfterMs: number | "never";
 }
 
 export interface Surface<P, A extends ActionMap, Q extends QueryMap> {
@@ -359,12 +377,27 @@ export type WireEvent =
   | { type: "block_start"; block: Block }
   | { type: "text_delta"; id: string; text: string }
   | { type: "block_update"; id: string; status: string; ms: number; result: string }
-  | { type: "ui_open"; handle: string; toolId: string; component: string; version: number; mode: string }
+  | {
+      type: "ui_open";
+      handle: string;
+      toolId: string;
+      component: string;
+      version: number;
+      mode: string;
+      /** The surface's freshness window. Absent when it never goes out of date. */
+      staleAfterMs?: number;
+    }
   | { type: "ui_props"; handle: string; props: unknown }
   | { type: "ui_state"; handle: string; state: "frozen"; selection?: unknown }
   | { type: "status"; status: ConversationStatus }
   | { type: "context"; messages: Message[]; modelTokens: number; uiTokens: number }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  /**
+   * The conversation is past a surface's freshness window, so this request was
+   * refused before the model ran and nothing was recorded. Final: every later
+   * request on this conversation gets the same answer.
+   */
+  | { type: "expired"; message: string };
 
 export type Emit = (event: WireEvent) => void;
 

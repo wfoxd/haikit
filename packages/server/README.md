@@ -17,6 +17,11 @@ action *means* is resolved server-side from the surface's declared contract. If
 the client could name a tool, a prompt injection inside any tool result would
 become a button wired to it.
 
+**A conversation closes once any of its surfaces passes its `staleAfterMs`.**
+From then on both routes answer with an `expired` event and the model is not
+called, so a picker left open over a weekend cannot resolve against last week's
+data. The user starts a new conversation.
+
 `memoryStore()` is for development. A parked elicit turn is durable state —
 lose `pending` and that conversation can never be sent again. Ship with
 [`@haikit/postgres`](https://www.npmjs.com/package/@haikit/postgres).

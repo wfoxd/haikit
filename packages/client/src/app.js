@@ -83,8 +83,10 @@ export function mountChat({
   const send = () => {
     const text = input.value.trim();
     if (!text) return;
-    input.value = "";
     chat.send(text);
+    // send() refuses an out-of-date conversation before its first await, so
+    // this already knows: keep the text for the new conversation instead
+    if (!chat.state.expired) input.value = "";
   };
 
   function renderEmpty() {
@@ -108,14 +110,17 @@ export function mountChat({
     else renderTranscript(transcript, chat);
 
     modelEl.textContent = state.model;
-    sendBtn.disabled = state.status === "streaming";
+    input.disabled = state.expired !== null;
+    sendBtn.disabled = state.status === "streaming" || state.expired !== null;
     statusEl.dataset.status = state.status;
     statusEl.textContent =
       state.status === "streaming" ? "thinking…"
       : state.status === "awaiting" ? "awaiting your selection in the component above"
       : "";
     input.placeholder =
-      state.status === "awaiting" ? "pick an option above — or type to override" : placeholder;
+      state.expired ? "start a new conversation to continue"
+      : state.status === "awaiting" ? "pick an option above — or type to override"
+      : placeholder;
 
     if (inspectorBody) renderInspector(inspectorBody, state.context);
   });

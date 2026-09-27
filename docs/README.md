@@ -2,7 +2,7 @@
 
 | | |
 | --- | --- |
-| [**spec.md**](spec.md) | Design spec — the dual channel, the contract split, elicit mode, the four guarantees, package topology |
+| [**spec.md**](spec.md) | Design spec — the dual channel, the contract split, elicit mode, the five guarantees, package topology |
 | [**tutorial.md**](tutorial.md) | Build *Hello, World!* as a haikit app in nine steps, annotated line by line |
 
 These Markdown files are the source of truth: edit them directly. They were

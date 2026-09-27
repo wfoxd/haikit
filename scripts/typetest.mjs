@@ -86,3 +86,4 @@ console.log("  1. a surface cannot exist without a digest");
 console.log("  2. a query's return value can only be produced by cap()");
 console.log("  3. mode:\"elicit\" requires a declared resolve action");
 console.log("  4. an undeclared action does not exist");
+console.log("  5. a surface cannot exist without a freshness window");
