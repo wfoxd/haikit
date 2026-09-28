@@ -1,6 +1,6 @@
 # Build a haikit app
 
-> Hello, World! in whichever language the world picks — the smallest app that still shows what haikit is for. Nine steps, annotated line by line.
+> Hello, World! in whichever language the world picks — the smallest app that still shows what haikit is for. Ten steps, annotated line by line.
 
 ## Hello, World! — in whichever language the world picks
 
@@ -265,8 +265,6 @@ export const greetingPickerServer = greetingPicker.implement({  // 4
       return cap(rows, fmt);                              // 19
     },
   },
-
-  staleAfterMs: "never",                                  // 20
 });
 ```
 
@@ -306,9 +304,7 @@ export const greetingPickerServer = greetingPicker.implement({  // 4
 
 **18** Sort **before** capping. An unsorted cap returns an arbitrary 8, which misleads as badly as silent truncation.
 
-**19** The only way to produce this function's return type. Forgetting it is the compile error you will trigger deliberately in step 9.
-
-**20** How long this data may be acted on, in milliseconds, or `"never"`. `"never"` is the default, so this line only says it out loud: greetings don't go out of date. A flight table would say `15 * 60_000`, and 15 minutes after it rendered, the conversation would close: every further click or message is refused before the model runs, and the user is offered a new conversation.
+**19** The only way to produce this function's return type. Forgetting it is the compile error you will trigger deliberately in step 10.
 
 And the data. Six rows to start; add as many as you like.
 
@@ -860,7 +856,6 @@ export const greetingCardServer = greetingCard.implement({
     },
   },
   queries: {},
-  staleAfterMs: "never", // greetings don't go out of date
 });
 ```
 
@@ -966,7 +961,39 @@ A little CSS, since `hai.css` styles only what the framework renders — never t
 | elicit | The model's next sentence depends on the answer | resolve |
 | display | It doesn't — the UI is a result, not a question | inform (or none) |
 
-## 09 · Break it on purpose
+## 09 · Let it go out of date
+
+Greetings never go stale, but most things a picker shows do: prices move, seats get taken, stock runs out. A surface can declare how long its data may be acted on, and haikit won't let a conversation act on it after that. Try it with a window short enough to watch.
+
+**`src/server/surfaces.ts`** — *edit, then revert at the end of this step*
+
+```ts
+export const greetingPickerServer = greetingPicker.implement({
+  // ...digest, actions and queries unchanged
+  staleAfterMs: 20_000,
+});
+```
+
+Restart with `npm start`, ask for a greeting, and **don't pick one**. Twenty seconds after you sent the message:
+
+- the picker greys out and stops responding to clicks
+- a notice appears: *“This conversation is out of date — results shown here were only valid for 20 seconds. Start a new conversation for current results.”*
+- the message box is disabled
+
+That is the browser keeping time. It learned the window when the picker arrived, and counts from when your message left, so it can never run later than the server does. The server doesn't rely on it: it checks every request before the model runs, and refuses one on an out-of-date conversation without recording anything. A second tab, or a laptop that slept through the deadline, gets the same refusal.
+
+Click **Start a new conversation**. The transcript clears, and your next message starts a fresh conversation with a fresh picker.
+
+Now pick a greeting inside the 20 seconds, let the model answer, and wait. The conversation still closes when the window runs out. The picker was answered, but what you chose from it is still in the model's context, and for data that goes stale that is exactly the part that goes stale: the price of the flight you picked, not only the list you picked it from.
+
+Delete the line again. Without it the window is `"never"`, which is right for greetings.
+
+> [!TIP]
+> **What you just saw**
+>
+> The window is recorded with each payload as it renders, and a conversation is held to the stricter of that and whatever your code declares later. A deploy can shorten a window for conversations already open. Renaming a surface, removing it, or relaxing its window can't make data already shown last any longer.
+
+## 10 · Break it on purpose
 
 Best way to learn what the framework is actually holding for you. Make each edit, run `npm run typecheck`, then undo it.
 
@@ -1028,11 +1055,11 @@ You now have every concept in the framework, in about 150 lines. The next app di
   ```
 
   Several server instances can share one database safely: a conversation takes one turn at a time however many processes receive its requests. On another database, implement `StoreAdapter` from `@haikit/core`: five methods, each documented with what it has to guarantee, and `packages/postgres` in the haikit repo is a worked example.
-- **Set real freshness windows.** A surface never goes out of date unless it says so: `"never"` is the default, which is right for greetings and wrong for prices and availability. Give those surfaces the window their data actually holds for, such as `staleAfterMs: 15 * 60_000` for fares. Once any surface in a conversation passes its window, the conversation closes: every request is refused before the model runs, and the default UI offers *Start a new conversation*. With your own UI, show `chat.state.expired` and call `chat.reset()`.
+- **Set real freshness windows.** Step 9 showed what one does. `"never"` is the default and right for greetings; prices and availability need the window their data actually holds for, such as `staleAfterMs: 15 * 60_000` for fares. With your own UI instead of `mountChat`, show `chat.state.expired` and call `chat.reset()` to start over.
 - **Gate the destructive tools.** An approval card is structurally identical to what you built in steps 2–6: a two-button surface with a `resolve` action. Same machinery, no new concepts.
 
 ### Things that will tempt you
 
-**A `render_ui(component, props)` tool** so the model can compose interface freely. It feels flexible and it dissolves every guarantee in step 9 — the registry stops being typed, reviewable, or bounded. Tools owning their rendering contract is the constraint that makes the rest work.
+**A `render_ui(component, props)` tool** so the model can compose interface freely. It feels flexible and it dissolves every guarantee in step 10 — the registry stops being typed, reviewable, or bounded. Tools owning their rendering contract is the constraint that makes the rest work.
 
 **Putting the rows in context “just this once”** because a digest is fiddly to write. Remember context is re-sent every turn: 120 greetings inline over a ten-turn conversation costs more than a hundred dereferences.
