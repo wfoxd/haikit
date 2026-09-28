@@ -43,8 +43,6 @@ export const greetingPickerServer = greetingPicker.implement({
       return cap(rows, fmt);                              
     },
   },
-
-  staleAfterMs: "never",                                  
 });
 
 export const greetingCardServer = greetingCard.implement({
@@ -60,6 +58,4 @@ export const greetingCardServer = greetingCard.implement({
   },
 
   queries: {},
-
-  staleAfterMs: "never", // greetings don't go out of date
 });
