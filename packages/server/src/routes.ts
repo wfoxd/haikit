@@ -4,9 +4,11 @@ import type { Emit, WireEvent } from "@haikit/core";
 import type { Hai } from "./runtime.js";
 
 /**
- * Node http handler for the two routes. Returns true if it handled the request.
+ * Node http handler for the three routes. Returns true if it handled the
+ * request.
  *
- * Both routes stream SSE, because both can resume the agent loop. Note what the
+ * All three stream SSE: chat and interact because both can resume the agent
+ * loop, start because the init tool it runs can render surfaces. Note what the
  * interact route accepts: {handle, action, value} and nothing else. The client
  * cannot name a tool, a handler, or an action target.
  */
@@ -16,9 +18,18 @@ export function nodeHandler(hai: Hai, basePath = "/hai") {
     if (req.method !== "POST" || !url.pathname.startsWith(basePath)) return false;
 
     const route = url.pathname.slice(basePath.length);
-    if (route !== "/chat" && route !== "/interact") return false;
+    if (route !== "/chat" && route !== "/interact" && route !== "/start") return false;
 
     const body = await readJson(req);
+
+    // Nothing to run before the first message: answer with an empty stream and
+    // create no conversation, so an app without init doesn't get one for every
+    // page view. Its first message starts the conversation, as it always has.
+    if (route === "/start" && !hai.config.init) {
+      openSSE(res);
+      res.end();
+      return true;
+    }
 
     // Before the SSE stream opens, because a rejected load has no stream to
     // report into — and an uncaught throw here would take down the request.
@@ -33,7 +44,7 @@ export function nodeHandler(hai: Hai, basePath = "/hai") {
     }
 
     const emit = openSSE(res);
-    if (route === "/chat") {
+    if (route === "/chat" || route === "/start") {
       emit({ type: "hello", conversationId: conversation.id, model: hai.config.model.id });
     }
 
@@ -41,6 +52,8 @@ export function nodeHandler(hai: Hai, basePath = "/hai") {
     try {
       if (route === "/chat") {
         await hai.send(conversation, String(body.message ?? ""), emit);
+      } else if (route === "/start") {
+        await hai.start(conversation, emit);
       } else {
         await hai.interact(
           conversation,

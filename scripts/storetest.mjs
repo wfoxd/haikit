@@ -689,6 +689,21 @@ async function clientChecks() {
       received.length === 1 && received[0].path.endsWith("/chat"),
     );
 
+    // ── start() opens the conversation before anything is typed
+    mode = "ok";
+    received.length = 0;
+    const opening = createChat({ endpoint: "http://127.0.0.1:5378/hai", registry: {} });
+    await opening.start();
+    await opening.send("hello");
+    check(
+      "start() posts /start with no conversation, and the first message joins the one it opened",
+      received[0]?.path.endsWith("/start") && received[0].body.conversationId == null &&
+        received[1]?.path.endsWith("/chat") && received[1].body.conversationId === "conv_1",
+    );
+    received.length = 0;
+    const again = await opening.start();
+    check("start() does nothing once there is a conversation", again === false && received.length === 0);
+
     // ── a tab left open closes the conversation on time, by itself
     const endpoint = "http://127.0.0.1:5378/hai";
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -1544,6 +1559,138 @@ async function initChecks(make) {
     check(
       "a text-only init overtaken mid-flight stops before the model runs",
       isStaleLease(r.error) && runs === 1 && seen.length === 0 && after.messages.length === 0,
+    );
+  }
+
+  // ── started before any input: init runs, the model does not
+  {
+    runs = 0;
+    seen.length = 0;
+    behaviour = "ok";
+    const r = await request(undefined, (c, emit) => hai.start(c, emit));
+    const opened = r.c;
+    const m = opened.messages;
+    check(
+      "start() runs init before anything is typed, without calling the model",
+      runs === 1 && seen.length === 0 && !r.error && opened.status === "idle",
+    );
+    check(
+      "…opening the history with a framework marker, then init's call and result",
+      m.length === 3 && m[0].role === "user" && m[0].content === "[conversation started]" &&
+        m[1].content?.[0]?.name === "load_profile" && m[2].content?.[0]?.type === "tool_result",
+    );
+    check(
+      "…and shows init in the transcript without inventing a user message",
+      !r.events.some((e) => e.type === "block_start" && e.block.kind === "user") &&
+        r.events.some((e) => e.type === "block_start" && e.block.kind === "tool" && e.block.name === "load_profile"),
+    );
+    await request(opened.id, (c, emit) => hai.start(c, emit));
+    check("a second start() does nothing", runs === 1 && seen.length === 0);
+    await request(opened.id, say("greet me"));
+    const first = seen[0]?.messages ?? [];
+    check(
+      "the first message then reaches the model after init, without running init again",
+      runs === 1 && seen.length === 1 && first.length === 4 &&
+        first[0].content === "[conversation started]" && first.at(-1).content === "greet me",
+    );
+  }
+
+  // ── an init picker before any input: answering it lets the model reply
+  {
+    runs = 0;
+    seen.length = 0;
+    behaviour = "pick";
+    const r = await request(undefined, (c, emit) => hai.start(c, emit));
+    behaviour = "ok";
+    const parked = r.c;
+    check(
+      "start() with an init picker parks before anything is typed",
+      seen.length === 0 && parked.status === "awaiting" && parked.messages[0]?.content === "[conversation started]",
+    );
+    await request(parked.id, (c, emit) => hai.interact(c, { handle: parked.handles[0], action: "choose", value: "work" }, emit));
+    const answered = seen[0]?.messages.at(-1)?.content?.[0];
+    check(
+      "…and answering it lets the model reply",
+      seen.length === 1 && answered?.type === "tool_result" && /Chose work/.test(answered.content),
+    );
+  }
+
+  // ── a failed start records nothing, and the first message runs init instead
+  {
+    runs = 0;
+    seen.length = 0;
+    behaviour = "throw";
+    const r = await request(undefined, (c, emit) => hai.start(c, emit));
+    behaviour = "ok";
+    const saved = await store.loadConversation(r.c.id);
+    saved.leaseUntil = null;
+    await store.saveConversation(saved);
+    check(
+      "a start whose init throws is refused and records nothing",
+      /initialisation failed/.test(r.error?.message ?? "") && saved.messages.length === 0 && seen.length === 0,
+    );
+    await request(r.c.id, say("hi"));
+    check(
+      "…and the first message runs init instead",
+      runs === 2 && seen.length === 1 && seen[0].messages[0].content === "hi",
+    );
+  }
+
+  // ── without an init tool, start() does nothing
+  {
+    const plain = createHai({ model, store, tools: [], surfaces: [], system: "x" });
+    const r = await request(undefined, (c, emit) => plain.start(c, emit));
+    check(
+      "start() without an init tool quietly does nothing",
+      !r.error && r.c.messages.length === 0 && r.events.length === 0,
+    );
+  }
+
+  // ── over HTTP
+  {
+    const http = await import("node:http");
+    const { nodeHandler } = await import("../packages/server/dist/index.js");
+    let loads = 0;
+    const counting = {
+      ...store,
+      loadConversation: (id) => {
+        loads++;
+        return store.loadConversation(id);
+      },
+    };
+    const serve = async (runtime, path, body) => {
+      const handler = nodeHandler(runtime, "/hai");
+      const server = http.createServer(async (req, res) => {
+        if (!(await handler(req, res))) res.writeHead(404).end();
+      });
+      await new Promise((r) => server.listen(0, "127.0.0.1", r));
+      try {
+        const res = await fetch(`http://127.0.0.1:${server.address().port}/hai${path}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        return { status: res.status, text: await res.text() };
+      } finally {
+        server.close();
+      }
+    };
+    runs = 0;
+    loads = 0;
+    behaviour = "ok";
+    const withInit = createHai({ model, store: counting, tools: [], surfaces: [picker, card], system: "x", init });
+    const a = await serve(withInit, "/start", {});
+    check(
+      "POST /start opens a conversation, runs init, and streams it",
+      a.status === 200 && a.text.includes('"type":"hello"') && a.text.includes('"name":"load_profile"') &&
+        runs === 1 && loads === 1,
+    );
+    loads = 0;
+    const without = createHai({ model, store: counting, tools: [], surfaces: [], system: "x" });
+    const b = await serve(without, "/start", {});
+    check(
+      "POST /start without an init tool creates no conversation",
+      b.status === 200 && b.text === "" && loads === 0,
     );
   }
 

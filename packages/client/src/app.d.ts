@@ -17,7 +17,9 @@ export interface MountChatOptions {
 
 /**
  * Builds the shell, wires the composer, renders the transcript and mounts your
- * surfaces. The ten-line path to a running app.
+ * surfaces. The ten-line path to a running app. It starts the conversation as
+ * soon as it opens, and again after `reset()`, so a server with an init tool
+ * runs it before the user types.
  *
  * It is a convenience, not the API — everything it does is built on `createChat`
  * and `renderTranscript`. Dropping to those when this shell stops fitting is the

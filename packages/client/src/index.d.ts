@@ -111,6 +111,13 @@ export interface Chat {
    * cleared its input can then put the text back.
    */
   send(text: string): Promise<boolean>;
+  /**
+   * Start the conversation before the user types, so a server with an init
+   * tool runs it now and anything it shows is already there. Does nothing once
+   * this chat has a conversation, and a server without an init tool creates
+   * nothing. `mountChat` calls it when it opens and after `reset()`.
+   */
+  start(): Promise<boolean>;
   interact(handle: string, action: string, value: unknown): Promise<void>;
   /** Mounts the surface for `handle` into `element`. Null if props have not arrived. */
   mount(handle: string, element: HTMLElement): SurfaceInstance | null;
