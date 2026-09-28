@@ -248,8 +248,10 @@ export class Hai {
     for (const record of records) {
       const window = this.surfaces.get(record.component)?.impl.staleAfterMs;
       if (window === undefined || window === "never") continue;
+      // A timestamp that is not a finite number cannot prove anything is fresh:
+      // NaN would compare as expired by luck, and Infinity as fresh forever.
       const expiredAt = record.createdAt + window;
-      if (expiredAt > now) continue; // false for NaN, so an unreadable age expires
+      if (Number.isFinite(record.createdAt) && expiredAt > now) continue;
       if (!first || expiredAt < first.expiredAt) first = { expiredAt, age: now - record.createdAt, window };
     }
     if (!first) return false;

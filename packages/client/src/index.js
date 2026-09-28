@@ -24,8 +24,9 @@ export function createChat({ endpoint = "/hai", registry }) {
     context: { messages: [], modelTokens: 0, uiTokens: 0 },
     /**
      * When this conversation goes out of date, by this browser's clock: the
-     * earliest freshness window among its surfaces, counted from when each one
-     * arrived. Null while nothing it shows can go stale.
+     * earliest freshness window among its surfaces, each counted from when the
+     * request that rendered it was sent — so never later than the server's own
+     * deadline. Null while nothing it shows can go stale.
      */
     expiresAt: null,
     /** The notice, once the conversation is out of date. Final until `reset()`. */
@@ -53,18 +54,35 @@ export function createChat({ endpoint = "/hai", registry }) {
 
   /**
    * Bumped by `reset()`. A request belongs to the conversation that was current
-   * when it was made: one still queued is never sent, and one already open has
-   * its events dropped — otherwise a late `hello` would pull this client back
-   * into the conversation it just left.
+   * when it was made, and carries that conversation's abort signal: reset()
+   * aborts it, so one still queued is refused by fetch before anything is sent,
+   * and one already open stops. Waiting instead would queue the new
+   * conversation's first request behind a stream that can stay open for a whole
+   * model turn. Events already read are dropped too, so a stray `hello` cannot
+   * pull this client back into the conversation it just left.
    */
   let generation = 0;
+  let aborter = new AbortController();
+
+  /**
+   * When the request now streaming was sent. The server stamps every surface
+   * it renders after that request arrived, so a freshness deadline counted from
+   * here is never later than the server's — however long the model takes, or
+   * a buffering proxy holds the stream back.
+   */
+  let sentAt = 0;
 
   // ── transport: SSE over POST (EventSource cannot POST) ──────────────
   function enqueue(path, body) {
     const gen = generation;
+    const { signal } = aborter;
     busy++;
     const run = chain
-      .then(() => (gen === generation ? pump(path, body, gen) : undefined))
+      .then(() => pump(path, body, gen, signal))
+      .catch((err) => {
+        // aborted by reset(): it belonged to a conversation the user has left
+        if (gen === generation) throw err;
+      })
       .finally(() => {
         busy--;
       });
@@ -72,15 +90,17 @@ export function createChat({ endpoint = "/hai", registry }) {
     return run;
   }
 
-  const post = (path, body) =>
+  const post = (path, body, signal) =>
     fetch(endpoint + path, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ conversationId: state.conversationId, ...body }),
+      signal,
     });
 
-  async function pump(path, body, gen) {
-    let res = await post(path, body);
+  async function pump(path, body, gen, signal) {
+    sentAt = Date.now();
+    let res = await post(path, body, signal);
 
     // 409 means someone else holds this conversation's turn. Almost always that
     // is the previous request's own tail, milliseconds from finishing — but it
@@ -88,15 +108,15 @@ export function createChat({ endpoint = "/hai", registry }) {
     // retry covers the first and gives up honestly on the second.
     if (res.status === 409) {
       await new Promise((r) => setTimeout(r, 150));
-      if (gen !== generation) return;
-      res = await post(path, body);
+      res = await post(path, body, signal); // rejects at once if reset() aborted it meanwhile
     }
-    if (gen !== generation) return;
 
     // A non-SSE response carries no `data:` frames, so parsing it as a stream
     // would fail silently and the UI would just sit there.
     if (!res.ok) {
       const detail = await res.json().catch(() => ({}));
+      // an abort during that read is swallowed by the catch, so check here
+      if (gen !== generation) return;
       apply({
         type: "error",
         message:
@@ -116,10 +136,8 @@ export function createChat({ endpoint = "/hai", registry }) {
       while ((i = buffer.indexOf("\n\n")) >= 0) {
         // Per frame, not per chunk: a subscriber may call reset() from inside
         // apply(), and the rest of this chunk belongs to the old conversation.
-        if (gen !== generation) {
-          reader.cancel().catch(() => {});
-          return;
-        }
+        // The abort stops later reads; it cannot recall what is already here.
+        if (gen !== generation) return;
         const frame = buffer.slice(0, i);
         buffer = buffer.slice(i + 2);
         const line = frame.split("\n").find((l) => l.startsWith("data: "));
@@ -164,7 +182,7 @@ export function createChat({ endpoint = "/hai", registry }) {
         });
         state.blocks.push({ kind: "ui", id: `ui:${event.handle}`, handle: event.handle, toolId: event.toolId });
         if (typeof event.staleAfterMs === "number") {
-          const at = Date.now() + event.staleAfterMs;
+          const at = sentAt + event.staleAfterMs;
           if (state.expiresAt === null || at < state.expiresAt) {
             state.expiresAt = at;
             closingWindow = event.staleAfterMs;
@@ -305,10 +323,12 @@ export function createChat({ endpoint = "/hai", registry }) {
 
   /**
    * Start over. The next send begins a new conversation. Anything queued for
-   * the old one is never sent, and anything still open has its events dropped.
+   * the old one is never sent, and anything still open is aborted.
    */
   function reset() {
     generation++;
+    aborter.abort();
+    aborter = new AbortController();
     clearTimeout(timer);
     Object.assign(state, {
       conversationId: null,

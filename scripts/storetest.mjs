@@ -563,6 +563,7 @@ async function clientChecks() {
   // once. Each response is held briefly, so overlap would be observable if the
   // client let two requests out together.
   let mode = "409-once";
+  const hanging = [];
   let calls = 0;
   let open = 0;
   let maxOpen = 0;
@@ -582,26 +583,52 @@ async function clientChecks() {
       maxOpen = Math.max(maxOpen, open);
       received.push({ path: req.url, body: JSON.parse(raw) });
       const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      const sse = (...events) => events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join("");
+      const hello = { type: "hello", conversationId: "conv_1", model: "m" };
+      const picker = (staleAfterMs) => [
+        { type: "ui_open", handle: "ui_01", toolId: "b1", component: "c", version: 1, mode: "elicit", staleAfterMs },
+        { type: "ui_props", handle: "ui_01", props: {} },
+      ];
+      const idle = { type: "status", status: "idle" };
+
       if (mode === "fail-slow") {
+        // the failure's headers arrive at once, its body 40ms later
+        res.writeHead(500, { "content-type": "application/json" });
+        res.flushHeaders();
         await wait(40);
         open--;
-        res.writeHead(500, { "content-type": "application/json" });
         res.end(JSON.stringify({ error: "the old request failed" }));
         return;
       }
-      // "split" answers at once and sends the rest of its stream 40ms later
-      if (mode !== "split") await wait(mode === "late-refusal" ? 100 : 40);
-      const frame = (event) => res.write(`data: ${JSON.stringify(event)}\n\n`);
+      if (mode === "hang") {
+        // a stream that stays open, like a long model turn
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.write(sse(hello));
+        hanging.push(res);
+        open--;
+        return;
+      }
+      if (mode === "one-chunk") {
+        // everything in a single write, so it arrives as a single chunk
+        await wait(40);
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        open--;
+        res.end(sse(hello, ...picker(120), idle));
+        return;
+      }
+
+      // "split" answers at once and sends the rest of its stream 40ms later;
+      // "slow-render" is a turn whose surface arrives 150ms after the request
+      if (mode !== "split") await wait({ "late-refusal": 250, "slow-render": 150 }[mode] ?? 40);
+      const frame = (event) => res.write(sse(event));
       res.writeHead(200, { "content-type": "text/event-stream" });
-      frame({ type: "hello", conversationId: "conv_1", model: "m" });
+      frame(hello);
       if (mode === "split") await wait(40);
-      if (mode === "expiring" || mode === "server-refuses" || mode === "split") {
-        // a picker good for 40ms
-        frame({ type: "ui_open", handle: "ui_01", toolId: "b1", component: "c", version: 1, mode: "elicit", staleAfterMs: 40 });
-        frame({ type: "ui_props", handle: "ui_01", props: {} });
+      if (["expiring", "server-refuses", "split", "slow-render"].includes(mode)) {
+        picker(mode === "slow-render" ? 200 : 120).forEach(frame);
       }
       if (mode === "server-refuses" || mode === "late-refusal") frame({ type: "expired", message: "server says" });
-      frame({ type: "status", status: "idle" });
+      frame(idle);
       open--;
       res.end();
     });
@@ -647,12 +674,27 @@ async function clientChecks() {
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     mode = "expiring";
     const tab = createChat({ endpoint, registry: {} });
-    await tab.send("show me");
+    await tab.send("show me"); // a picker good for 120ms, arriving ~40ms in
     check(
       "the deadline is known as soon as the surface arrives",
       typeof tab.state.expiresAt === "number" && tab.state.expired === null,
     );
-    await sleep(70);
+
+    // The server stamps a surface after the request arrives, so the browser
+    // counts from when it sent the request. Counting from arrival would run
+    // late by however long the turn took, or a proxy held the stream.
+    mode = "slow-render";
+    const slowTurn = createChat({ endpoint, registry: {} });
+    const sentAt = Date.now();
+    await slowTurn.send("show me"); // the surface arrives ~150ms in, good for 200ms
+    const counted = slowTurn.state.expiresAt - sentAt;
+    check(
+      `the browser's deadline is counted from the request, not the arrival (${counted}ms of a 200ms window)`,
+      counted >= 190 && counted < 275,
+    );
+    slowTurn.reset();
+    mode = "expiring";
+    await sleep(150);
     check(
       "an open tab closes the conversation when the window passes",
       typeof tab.state.expired === "string" && tab.state.blocks.at(-1)?.kind === "expired",
@@ -666,8 +708,8 @@ async function clientChecks() {
     // refusal arrives after it — the order that needs de-duplicating
     mode = "expiring";
     const slow = createChat({ endpoint, registry: {} });
-    await slow.send("show me"); // a picker good for 40ms
-    mode = "late-refusal"; // the next answer takes 100ms, and is a refusal
+    await slow.send("show me"); // a picker good for 120ms, arriving ~40ms in
+    mode = "late-refusal"; // the next answer takes 250ms, and is a refusal
     await slow.send("again");
     check(
       "a refusal arriving after the local deadline adds no second notice",
@@ -678,7 +720,7 @@ async function clientChecks() {
     mode = "server-refuses";
     const told = createChat({ endpoint, registry: {} });
     await told.send("hi");
-    await sleep(70);
+    await sleep(150); // past the local deadline too
     check(
       "the server's refusal and the local deadline make one notice, not two",
       told.state.expired === "server says" && told.state.blocks.filter((b) => b.kind === "expired").length === 1,
@@ -723,6 +765,36 @@ async function clientChecks() {
       midway.state.conversationId === null && midway.state.blocks.length === 0 && midway.state.expiresAt === null,
     );
 
+    // a subscriber that resets mid-chunk: the rest of that chunk is the old
+    // conversation's, even though it has already been read off the wire
+    mode = "one-chunk";
+    const eager = createChat({ endpoint, registry: {} });
+    eager.subscribe((_s, event) => {
+      if (event.type === "hello") eager.reset();
+    });
+    await eager.send("hi");
+    check(
+      "a reset from inside a subscriber drops the rest of the chunk",
+      eager.state.conversationId === null && eager.state.surfaces.size === 0 && eager.state.expiresAt === null,
+    );
+
+    // an old stream that is still open does not hold up the new conversation
+    mode = "hang";
+    const stuck = createChat({ endpoint, registry: {} });
+    const abandoned = stuck.send("a long turn");
+    for (let i = 0; i < 100 && stuck.state.conversationId === null; i++) await sleep(2);
+    stuck.reset();
+    mode = "ok";
+    received.length = 0;
+    const within = (p, ms) => Promise.race([p.then(() => true, () => false), sleep(ms).then(() => false)]);
+    check(
+      "a new conversation is not queued behind a stream the old one left open",
+      await within(stuck.send("a new one"), 1000),
+    );
+    await stuck.interact("ui_01", "choose", "x");
+    check("…and the old stream no longer counts as busy", received.some((r) => r.path.endsWith("/interact")));
+    check("the abandoned request settles without an error", await within(abandoned, 1000));
+
     // a request that fails after reset() does not report into the new one
     mode = "fail-slow";
     const failing = createChat({ endpoint, registry: {} });
@@ -741,6 +813,7 @@ async function clientChecks() {
     await Promise.all(sends);
     check("sends queued before reset() are never sent", received.length === 0);
   } finally {
+    for (const res of hanging) res.end();
     server.close();
   }
 }
@@ -934,18 +1007,27 @@ async function expiryChecks(make) {
     check('a "never" surface never closes a conversation', !r.expired && r.modelCalls === 1);
   }
 
-  // A store returning an unreadable createdAt must not make every surface
-  // fresh forever — NaN compares false against every deadline.
+  // A store returning an unreadable createdAt must fail closed. Each of these
+  // reaches the deadline arithmetic differently: NaN compares false, Infinity
+  // compares fresh forever, a string concatenates, null adds as zero.
   {
-    const unreadable = {
-      ...store,
-      getPayloads: async (handles, id) =>
-        (await store.getPayloads(handles, id)).map((r) => ({ ...r, createdAt: Number.NaN })),
-    };
-    const strict = createHai({ model, store: unreadable, tools: [], surfaces: [quick, forever], system: "x" });
-    const c = await conversation([quick]);
-    const r = await request(c.id, say("hi"), strict);
-    check("a payload whose age can't be read counts as out of date", !!r.expired && r.modelCalls === 0);
+    const bad = [Number.NaN, Infinity, -Infinity, "yesterday", null, undefined];
+    const refusedFor = [];
+    for (const createdAt of bad) {
+      const unreadable = {
+        ...store,
+        getPayloads: async (handles, id) =>
+          (await store.getPayloads(handles, id)).map((r) => ({ ...r, createdAt })),
+      };
+      const strict = createHai({ model, store: unreadable, tools: [], surfaces: [quick, forever], system: "x" });
+      const c = await conversation([quick]); // fresh by its real timestamp
+      const r = await request(c.id, say("hi"), strict);
+      if (r.expired && r.modelCalls === 0) refusedFor.push(createdAt);
+    }
+    check(
+      `a payload whose age can't be read counts as out of date (${refusedFor.length}/${bad.length}: NaN, ±Infinity, string, null, undefined)`,
+      refusedFor.length === bad.length,
+    );
   }
 
   // over HTTP: refused inside the stream, and the lease is still released

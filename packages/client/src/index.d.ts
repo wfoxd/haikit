@@ -87,8 +87,9 @@ export interface ChatState {
   context: { messages: any[]; modelTokens: number; uiTokens: number };
   /**
    * When this conversation goes out of date, in this browser's clock (epoch
-   * ms): the earliest freshness window among its surfaces, counted from when
-   * each arrived. Null while nothing it shows can go stale.
+   * ms): the earliest freshness window among its surfaces, each counted from
+   * when the request that rendered it was sent — so never later than the
+   * server's own deadline. Null while nothing it shows can go stale.
    */
   expiresAt: number | null;
   /**
@@ -108,8 +109,8 @@ export interface Chat {
   mount(handle: string, element: HTMLElement): SurfaceInstance | null;
   /**
    * Start a new conversation on the next send. Anything queued for the old one
-   * is never sent, and a request still open has its remaining events dropped.
-   * Subscribers are notified with `{ type: "reset" }`.
+   * is never sent, and a request still open is aborted — the new conversation
+   * never waits behind it. Subscribers are notified with `{ type: "reset" }`.
    */
   reset(): void;
   /** Returns an unsubscribe function. */
