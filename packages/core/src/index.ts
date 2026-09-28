@@ -170,6 +170,11 @@ export interface SurfaceImplDef<P, A extends ActionMap, Q extends QueryMap> {
    * There is deliberately no default. The one a framework would pick, never, is
    * the silent version of the bug this exists for: a picker left open over a
    * weekend resolves against last week's prices, and nothing says so.
+   *
+   * The window is recorded with each payload as it renders, and a request is
+   * held to the stricter of that and whatever the code declares by then. A
+   * later deploy can tighten a window; renaming a surface, removing it or
+   * relaxing its window never lets data already shown last longer.
    */
   staleAfterMs: number | "never";
 }
@@ -362,6 +367,13 @@ export interface PayloadRecord {
   props: unknown;
   mode: "display" | "elicit";
   createdAt: number;
+  /**
+   * The surface's freshness window when this payload rendered — recorded, not
+   * looked up later, because a later deploy may rename or remove the surface or
+   * relax its window. `null` only on payloads written before windows existed.
+   * A store must return exactly what it was given, `"never"` included.
+   */
+  staleAfterMs: number | "never" | null;
 }
 
 // ─────────────────────────────────────────────────── wire protocol
@@ -539,6 +551,10 @@ export interface StoreAdapter {
    * That shape rejects an unknown conversation and a null token for free, and a
    * store must too — otherwise a caller holding no lease at all can create rows
    * that no conversation owns.
+   *
+   * Every field comes back exactly as given — `staleAfterMs` included, as a
+   * number or the string `"never"`. It is what holds data to the window it was
+   * shown under after a deploy changes the surface.
    *
    * A row written *before* the lease was lost still outlives its turn — the
    * conversation save is rejected but the row is not, so the winning history

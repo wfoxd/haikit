@@ -315,9 +315,11 @@ export function createChat({ endpoint = "/hai", registry }) {
 
   // A click carries nothing the user authored, and stacking them is worse than
   // dropping them: a double-click on a picker row would resolve it and then
-  // queue a second resolution into "component is frozen".
+  // queue a second resolution into "component is frozen". The deadline is
+  // checked first, so a click that cannot be sent still closes a conversation
+  // whose timer slept through its deadline.
   async function interact(handle, action, value) {
-    if (busy || closed()) return;
+    if (closed() || busy) return;
     await enqueue("/interact", { handle, action, value });
   }
 

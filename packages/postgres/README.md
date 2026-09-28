@@ -41,8 +41,14 @@ exactly one to win.
 ## Schema
 
 Two tables, `haikit_conversations` and `haikit_payloads`. `migrate()` creates
-them if they do not exist; if you use your own migration tool, the statements
-are exported as `schema`.
+them if they do not exist and brings existing ones up to date; if you use your
+own migration tool, the statements are exported as `schema`.
+
+**Upgrading to 0.4:** run `migrate()` once. It adds `stale_after_ms` to
+`haikit_payloads`: the freshness window each payload was rendered under, so a
+later deploy that renames a surface or relaxes its window cannot make data
+already shown last longer. Rows written before the column existed read as
+unknown and are held to the window your code declares.
 
 Handles are numbered per conversation, so every conversation's digests start at
 `ui_01`.

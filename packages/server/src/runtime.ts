@@ -244,24 +244,27 @@ export class Hai {
     const records = await this.config.store.getPayloads(conversation.handles, conversation.id);
 
     // the surface that went out of date first is the one that closed it
-    let first: { expiredAt: number; age: number; window: number } | null = null;
+    let first: { expiredAt: number; age: number; window: number | undefined } | null = null;
     for (const record of records) {
-      const window = this.surfaces.get(record.component)?.impl.staleAfterMs;
-      if (window === undefined || window === "never") continue;
+      const window = strictest(record.staleAfterMs, this.surfaces.get(record.component)?.impl.staleAfterMs);
+      if (window === "never") continue;
       // A timestamp that is not a finite number cannot prove anything is fresh:
-      // NaN would compare as expired by luck, and Infinity as fresh forever.
-      const expiredAt = record.createdAt + window;
-      if (Number.isFinite(record.createdAt) && expiredAt > now) continue;
-      if (!first || expiredAt < first.expiredAt) first = { expiredAt, age: now - record.createdAt, window };
+      // Infinity would compare fresh forever, and a bigint would throw on the
+      // arithmetic. Replace it before doing any, so each counts as expired —
+      // and so does a payload whose window is known nowhere.
+      const createdAt = Number.isFinite(record.createdAt) ? record.createdAt : Number.NaN;
+      const expiredAt = createdAt + (window ?? Number.NaN);
+      if (expiredAt > now) continue;
+      if (!first || expiredAt < first.expiredAt) first = { expiredAt, age: now - createdAt, window };
     }
     if (!first) return false;
 
     const shown = Number.isFinite(first.age) ? `results shown ${duration(first.age)} ago` : "results shown here";
+    const verdict =
+      first.window === undefined ? "can no longer be checked" : `were only valid for ${duration(first.window)}`;
     emit({
       type: "expired",
-      message:
-        `This conversation is out of date — ${shown} were only valid for ${duration(first.window)}. ` +
-        `Start a new conversation for current results.`,
+      message: `This conversation is out of date — ${shown} ${verdict}. Start a new conversation for current results.`,
     });
     return true;
   }
@@ -367,6 +370,9 @@ export class Hai {
             version: impl.surface.version,
             props: parsed,
             mode: surfaceMode,
+            // recorded now, so no later deploy can relax the window this data
+            // was shown under — see the stricter-of in refuseIfExpired
+            staleAfterMs: impl.impl.staleAfterMs,
           },
           conversation.leaseToken,
         );
@@ -441,6 +447,23 @@ function checkWindow(s: AnySurfaceImpl) {
     `surface ${s.surface.name}: staleAfterMs must be a positive, finite number of milliseconds, ` +
       `or "never" (got ${got})`,
   );
+}
+
+/**
+ * The window a payload is held to: the stricter of the one recorded when it
+ * rendered and the one the code declares now. Recorded is what the data was
+ * shown under, and survives the surface being renamed or removed; current
+ * catches a window tightened since. Neither may relax the other. Undefined
+ * when neither is known — an old payload whose surface is gone — which the
+ * caller counts as expired.
+ */
+function strictest(recorded: unknown, current: unknown): number | "never" | undefined {
+  const valid = (w: unknown): w is number | "never" =>
+    w === "never" || (typeof w === "number" && Number.isFinite(w) && w > 0);
+  const known = [recorded, current].filter(valid);
+  if (!known.length) return undefined;
+  const finite = known.filter((w): w is number => w !== "never");
+  return finite.length ? Math.min(...finite) : "never";
 }
 
 /** "2 hours", "15 minutes" — for a sentence a person reads. */

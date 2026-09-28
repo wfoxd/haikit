@@ -117,6 +117,25 @@ export async function conform(label, make) {
     check("the batch read reports the same createdAt", batched?.createdAt === single);
   }
 
+  // ── a payload's window comes back exactly as it went in ───────────────
+  // It is what holds data to the window it was shown under after a deploy
+  // renames the surface or relaxes its window. "never" is a string, and a
+  // store that turns it into a number, null or Infinity has lost it.
+  {
+    const s = make();
+    const a = await s.loadConversation(undefined);
+    const windows = [900_000, "never", 1];
+    const handles = [];
+    for (const staleAfterMs of windows) {
+      handles.push(await s.putPayload({ ...payload(a.id), staleAfterMs }, a.leaseToken));
+    }
+    const single = [];
+    for (const h of handles) single.push((await s.getPayload(h, a.id))?.staleAfterMs);
+    const batched = (await s.getPayloads(handles, a.id)).map((r) => r.staleAfterMs);
+    const same = (got) => JSON.stringify(got) === JSON.stringify(windows);
+    check(`a payload's window round-trips, "never" included`, same(single) && same(batched));
+  }
+
   // ── batch read matches the single read, and drops what it should ──────
   {
     const s = make();
@@ -704,6 +723,25 @@ async function clientChecks() {
     await tab.send("still there?");
     check("an out-of-date conversation sends nothing more", received.length === 0);
 
+    // A laptop that slept through the deadline has not run the timer yet. A
+    // click is dropped while a request is open, but it must still close the
+    // conversation — the clock says so even though the timer has not.
+    mode = "expiring";
+    const asleep = createChat({ endpoint, registry: {} });
+    await asleep.send("show me"); // a picker good for 120ms; its timer is still pending
+    mode = "hang";
+    void asleep.send("another turn"); // stays open, so the client is busy
+    for (let i = 0; i < 100 && asleep.state.status !== "idle"; i++) await sleep(2);
+    const realNow = Date.now;
+    Date.now = () => realNow() + 60_000; // the wall clock jumped; the timer did not fire
+    try {
+      await asleep.interact("ui_01", "choose", "x");
+    } finally {
+      Date.now = realNow;
+    }
+    check("a click while busy still closes a conversation past its deadline", asleep.state.expired !== null);
+    asleep.reset();
+
     // the local deadline passes while a request is open, and the server's
     // refusal arrives after it — the order that needs de-duplicating
     mode = "expiring";
@@ -884,7 +922,7 @@ async function turnAbortChecks(make) {
 async function expiryChecks(make) {
   console.log("\nexpiry");
   const { createHai, nodeHandler } = await import("../packages/server/dist/index.js");
-  const { defineSurface, resolve, inform } = await import("../packages/core/dist/index.js");
+  const { defineSurface, defineTool, resolve, inform } = await import("../packages/core/dist/index.js");
   const http = await import("node:http");
   const any = { parse: (v) => v };
   const later = () => new Promise((r) => setTimeout(r, 70));
@@ -911,14 +949,22 @@ async function expiryChecks(make) {
   const store = make();
   const hai = createHai({ model, store, tools: [], surfaces: [quick, forever], system: "x" });
 
-  /** A saved conversation that rendered these surfaces. `parked` leaves the
-   *  first one awaiting an answer; `answered` freezes it as already answered. */
-  async function conversation(impls, { parked = false, answered = false } = {}) {
+  /** A saved conversation that rendered these surfaces, each recording its
+   *  window as the runtime does. `parked` leaves the first awaiting an answer;
+   *  `answered` freezes it; `legacy` writes rows from before windows existed. */
+  async function conversation(impls, { parked = false, answered = false, legacy = false } = {}) {
     const c = await store.loadConversation(undefined);
     for (const impl of impls) {
       c.handles.push(
         await store.putPayload(
-          { conversationId: c.id, component: impl.surface.name, version: 1, props: {}, mode: parked ? "elicit" : "display" },
+          {
+            conversationId: c.id,
+            component: impl.surface.name,
+            version: 1,
+            props: {},
+            mode: parked ? "elicit" : "display",
+            staleAfterMs: legacy ? null : impl.impl.staleAfterMs,
+          },
           c.leaseToken,
         ),
       );
@@ -1007,11 +1053,102 @@ async function expiryChecks(make) {
     check('a "never" surface never closes a conversation', !r.expired && r.modelCalls === 1);
   }
 
+  // ── the window is the one the data was shown under ────────────────────
+  // A later deploy runs different code against the same stored conversations.
+  // It may tighten a window; it may not relax one for data already shown.
+  const deploy = (...surfaces) => createHai({ model, store, tools: [], surfaces, system: "x" });
+
+  {
+    // the runtime records the window as it renders
+    const show = defineTool({
+      name: "show",
+      description: "render quick",
+      input: any,
+      inputJsonSchema: { type: "object", properties: {} },
+      run: (_input, ctx) => ctx.render(quick, {}),
+    });
+    let step = 0;
+    const rendering = createHai({
+      model: {
+        id: "r",
+        async generate() {
+          return step++ === 0
+            ? { content: [{ type: "tool_use", id: "tu1", name: "show", input: {} }], stop_reason: "tool_use" }
+            : { content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" };
+        },
+      },
+      store,
+      tools: [show],
+      surfaces: [quick, forever],
+      system: "x",
+    });
+    const c = await store.loadConversation(undefined);
+    await rendering.send(c, "show me", () => {});
+    c.leaseUntil = null;
+    await store.saveConversation(c);
+    check(
+      "a render records the window it was shown under",
+      (await store.getPayload(c.handles[0], c.id))?.staleAfterMs === 40,
+    );
+  }
+
+  {
+    const c = await conversation([quick]);
+    await later();
+    const r = await request(c.id, say("hi"), deploy(surface("quick", "never"), forever));
+    check('a deploy that relaxes the window to "never" does not revive old data', !!r.expired && r.modelCalls === 0);
+  }
+
+  {
+    const c = await conversation([quick]);
+    await later();
+    const r = await request(c.id, say("hi"), deploy(surface("quick", 60_000), forever));
+    check("a deploy that relaxes it to a longer window does not either", !!r.expired && r.modelCalls === 0);
+  }
+
+  {
+    const c = await conversation([quick]);
+    await later();
+    const r = await request(c.id, say("hi"), deploy(forever));
+    check("a deploy that removes the surface does not revive old data", !!r.expired && r.modelCalls === 0);
+  }
+
+  {
+    const c = await conversation([forever]); // recorded as "never"
+    await later();
+    const r = await request(c.id, say("hi"), deploy(quick, surface("forever", 40)));
+    check("a deploy that tightens the window applies to old data", !!r.expired && r.modelCalls === 0);
+  }
+
+  // rows written before windows existed are held to what the code says now
+  {
+    const stale = await conversation([quick], { legacy: true });
+    const fresh = await conversation([forever], { legacy: true });
+    await later();
+    const r1 = await request(stale.id, say("hi"));
+    const r2 = await request(fresh.id, say("hi"));
+    check(
+      "an old row with no recorded window is held to the current one",
+      !!r1.expired && !r2.expired && r2.modelCalls === 1,
+    );
+  }
+
+  // …and one whose surface is gone too has no window anywhere: it proves
+  // nothing is fresh, so it expires at once
+  {
+    const c = await conversation([quick], { legacy: true });
+    const r = await request(c.id, say("hi"), deploy(forever));
+    check(
+      "a payload whose window is known nowhere counts as out of date",
+      /can no longer be checked/.test(r.expired?.message ?? "") && r.modelCalls === 0,
+    );
+  }
+
   // A store returning an unreadable createdAt must fail closed. Each of these
   // reaches the deadline arithmetic differently: NaN compares false, Infinity
   // compares fresh forever, a string concatenates, null adds as zero.
   {
-    const bad = [Number.NaN, Infinity, -Infinity, "yesterday", null, undefined];
+    const bad = [Number.NaN, Infinity, -Infinity, "yesterday", null, undefined, 1n, Symbol("t")];
     const refusedFor = [];
     for (const createdAt of bad) {
       const unreadable = {
@@ -1025,7 +1162,7 @@ async function expiryChecks(make) {
       if (r.expired && r.modelCalls === 0) refusedFor.push(createdAt);
     }
     check(
-      `a payload whose age can't be read counts as out of date (${refusedFor.length}/${bad.length}: NaN, ±Infinity, string, null, undefined)`,
+      `a payload whose age can't be read counts as out of date (${refusedFor.length}/${bad.length}: NaN, ±Infinity, string, null, undefined, bigint, symbol)`,
       refusedFor.length === bad.length,
     );
   }
