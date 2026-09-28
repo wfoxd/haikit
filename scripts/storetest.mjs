@@ -1335,6 +1335,13 @@ async function initChecks(make) {
       }
       if (behaviour === "pick") return ctx.render(picker, {}, { mode: "elicit" });
       if (behaviour === "card") return ctx.render(card, {});
+      if (behaviour === "slow-text") {
+        await new Promise((r) => setTimeout(r, 70)); // outlives the 40ms lease
+        const winner = await store.loadConversation(takeover);
+        winner.leaseUntil = null;
+        await store.saveConversation(winner);
+        return ctx.text("Profile: Ada."); // no fenced write of its own
+      }
       if (behaviour === "slow") {
         await new Promise((r) => setTimeout(r, 70)); // outlives the 40ms lease
         const winner = await store.loadConversation(takeover);
@@ -1457,6 +1464,10 @@ async function initChecks(make) {
       /initialisation failed/.test(shown.error?.message ?? "") &&
         left.messages.length === 0 && left.handles.length === 0 && left.status === "idle" && left.pending === null,
     );
+    check(
+      "…and the browser never receives that surface",
+      !shown.events.some((e) => e.type === "ui_open" || e.type === "ui_props"),
+    );
     behaviour = "ok";
     runs = 0;
     seen.length = 0;
@@ -1512,6 +1523,27 @@ async function initChecks(make) {
     check(
       "an init overtaken mid-flight stops at the fence and records nothing",
       isStaleLease(r.error) && seen.length === 0 && after.messages.length === 0,
+    );
+  }
+
+  // ── the same, for an init that only returns text: it has no fenced write of
+  // its own, so the commit after it is what keeps the model from running
+  {
+    runs = 0;
+    seen.length = 0;
+    const fresh = await store.loadConversation(undefined);
+    fresh.leaseUntil = null;
+    await store.saveConversation(fresh);
+    takeover = fresh.id;
+    behaviour = "slow-text";
+    const r = await request(fresh.id, say("hi"));
+    behaviour = "ok";
+    const after = await store.loadConversation(fresh.id);
+    after.leaseUntil = null;
+    await store.saveConversation(after);
+    check(
+      "a text-only init overtaken mid-flight stops before the model runs",
+      isStaleLease(r.error) && runs === 1 && seen.length === 0 && after.messages.length === 0,
     );
   }
 

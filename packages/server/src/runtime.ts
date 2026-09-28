@@ -10,6 +10,7 @@ import {
   type Tool,
   type ToolCtx,
   type ToolReturn,
+  type WireEvent,
 } from "@haikit/core";
 
 export interface HaiConfig {
@@ -210,10 +211,19 @@ export class Hai {
     emit({ type: "status", status: "streaming" });
     emit({ type: "block_start", block: { kind: "tool", id: toolBlockId, name: init.name, input: {}, status: "running" } });
 
+    // Surfaces are held until init succeeds. One shown by a start that is then
+    // refused would look live in the browser, and every click on it would be
+    // rejected: its handle never reaches the history.
+    const held: WireEvent[] = [];
+    const hold: Emit = (e) => {
+      if (e.type === "ui_open" || e.type === "ui_props") held.push(e);
+      else emit(e);
+    };
+
     const started = Date.now();
     let outcome: { ret: ToolReturn; mode: "display" | "elicit" | null };
     try {
-      outcome = await this.invokeTool(conversation, call, emit, toolBlockId, { init: true });
+      outcome = await this.invokeTool(conversation, call, hold, toolBlockId, { init: true });
     } catch (err) {
       // undo what the tool's renders recorded; their payload rows are orphans
       conversation.handles.length = before.handles;
@@ -225,6 +235,7 @@ export class Hai {
     }
     const { ret, mode } = outcome;
     const ms = Date.now() - started;
+    for (const e of held) emit(e);
 
     conversation.messages.push({ role: "user", content: text });
     conversation.messages.push({ role: "assistant", content: [call] });
@@ -243,6 +254,13 @@ export class Hai {
       role: "user",
       content: [{ type: "tool_result", tool_use_id: call.id, content: ret.model }],
     });
+
+    // Commit before the model runs. An init that only returns text makes no
+    // fenced write of its own, so a request that outlived its lease while init
+    // ran would otherwise go on to call the model for a history its final save
+    // will lose. This save is fenced: it throws StaleLease if another request
+    // has taken the conversation over, and the model never runs here.
+    await this.config.store.saveConversation(conversation);
     return false;
   }
 
