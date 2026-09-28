@@ -592,7 +592,7 @@ async function clientChecks() {
     req.on("data", (c) => (raw += c));
     req.on("end", async () => {
       calls++;
-      if (mode === "409-once" && calls === 1) {
+      if (mode === "409-always" || (mode === "409-once" && calls === 1)) {
         // lands while the previous request is still releasing its lease
         res.writeHead(409, { "content-type": "application/json" });
         res.end(JSON.stringify({ error: "conversation conv_1 is busy" }));
@@ -768,10 +768,16 @@ async function clientChecks() {
     await queuedPast.send("show me"); // a picker good for 120ms, arriving ~40ms in
     mode = "late-refusal"; // the turn ahead takes 250ms
     received.length = 0;
-    await Promise.all([queuedPast.send("ahead"), queuedPast.send("queued behind it")]);
+    const outcomes = await Promise.all([queuedPast.send("ahead"), queuedPast.send("queued behind it")]);
     check(
       "a message queued past the deadline is never sent",
       received.some((r) => r.body.message === "ahead") && !received.some((r) => r.body.message === "queued behind it"),
+    );
+    // the default UI cleared the text box when it queued; this is how it knows
+    // to give the text back instead of losing it
+    check(
+      "send() reports which one went out: true for the first, false for the one turned away",
+      outcomes[0] === true && outcomes[1] === false,
     );
 
     // a 409 waits 150ms and retries once; a deadline passing in that wait
@@ -782,10 +788,20 @@ async function clientChecks() {
     mode = "409-once";
     calls = 0; // so this next call is the refused one
     received.length = 0;
-    await retrying.send("refused, then retried past the deadline");
+    const retried = await retrying.send("refused, then retried past the deadline");
     check(
       "a 409 retry is not sent once the deadline passes during its wait",
-      calls === 1 && received.length === 0 && retrying.state.expired !== null,
+      calls === 1 && received.length === 0 && retrying.state.expired !== null && retried === false,
+    );
+
+    // still busy after the retry: the server turned the message away unread,
+    // so it did not go out, and the UI can give the text back
+    mode = "409-always";
+    const blocked = createChat({ endpoint, registry: {} });
+    const taken = await blocked.send("while another tab holds the turn");
+    check(
+      "a message the server keeps refusing as busy reports that it did not go out",
+      taken === false && blocked.state.blocks.some((b) => b.kind === "error"),
     );
 
     // the local deadline passes while a request is open, and the server's
@@ -820,10 +836,10 @@ async function clientChecks() {
     );
     mode = "ok";
     received.length = 0;
-    await tab.send("a new one");
+    const went = await tab.send("a new one");
     check(
-      "the next send starts a new conversation",
-      received.length === 1 && received[0].body.conversationId == null && tab.state.conversationId === "conv_1",
+      "the next send starts a new conversation, and reports that it went out",
+      received.length === 1 && received[0].body.conversationId == null && tab.state.conversationId === "conv_1" && went === true,
     );
 
     // a request still open cannot pull the client back into what it left
@@ -894,8 +910,11 @@ async function clientChecks() {
     const queued = createChat({ endpoint, registry: {} });
     const sends = [queued.send("one"), queued.send("two")];
     queued.reset();
-    await Promise.all(sends);
-    check("sends queued before reset() are never sent", received.length === 0);
+    const results = await Promise.all(sends);
+    check(
+      "sends queued before reset() are never sent, and say so",
+      received.length === 0 && results.every((sent) => sent === false),
+    );
   } finally {
     for (const res of hanging) res.end();
     server.close();
@@ -1281,8 +1300,9 @@ async function expiryChecks(make) {
   }
 }
 
-// ── a window has to be a real decision ──────────────────────────────────
-// The type makes staleAfterMs required; JavaScript callers never see the type.
+// ── a window, when given, has to be a real one ──────────────────────────
+// Leaving it out means "never". The type rules out invalid values, but
+// JavaScript callers never see the type.
 async function windowChecks() {
   console.log("\nfreshness windows");
   const { createHai } = await import("../packages/server/dist/index.js");

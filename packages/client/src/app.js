@@ -83,10 +83,17 @@ export function mountChat({
   const send = () => {
     const text = input.value.trim();
     if (!text) return;
-    chat.send(text);
+    const sending = chat.send(text);
     // send() refuses an out-of-date conversation before its first await, so
     // this already knows: keep the text for the new conversation instead
-    if (!chat.state.expired) input.value = "";
+    if (chat.state.expired) return;
+    input.value = "";
+    // A message queued behind a long turn can still be turned away later, if
+    // the conversation goes out of date before its turn comes. Give the text
+    // back then, unless something new has been typed since.
+    sending.then((sent) => {
+      if (!sent && !input.value) input.value = text;
+    });
   };
 
   function renderEmpty() {

@@ -76,9 +76,11 @@ export function createChat({ endpoint = "/hai", registry }) {
   function enqueue(path, body) {
     const gen = generation;
     const { signal } = aborter;
+    // set by pump once the server has answered this request itself
+    const outcome = { sent: false };
     busy++;
     const run = chain
-      .then(() => pump(path, body, gen, signal))
+      .then(() => pump(path, body, gen, signal, outcome))
       .catch((err) => {
         // aborted by reset(): it belonged to a conversation the user has left
         if (gen === generation) throw err;
@@ -87,7 +89,7 @@ export function createChat({ endpoint = "/hai", registry }) {
         busy--;
       });
     chain = run.catch(() => {});
-    return run;
+    return run.then(() => outcome.sent);
   }
 
   const post = (path, body, signal) =>
@@ -98,7 +100,7 @@ export function createChat({ endpoint = "/hai", registry }) {
       signal,
     });
 
-  async function pump(path, body, gen, signal) {
+  async function pump(path, body, gen, signal, outcome) {
     // Checked again here, not only when queued: a long turn ahead of this
     // request can run past the deadline while it waits.
     if (closed()) return;
@@ -115,6 +117,9 @@ export function createChat({ endpoint = "/hai", registry }) {
       if (closed()) return;
       res = await post(path, body, signal); // rejects at once if reset() aborted it meanwhile
     }
+    // Anything but a second 409 means the server took the request up itself —
+    // even an error. A 409 means it turned the message away unread.
+    outcome.sent = res.status !== 409;
 
     // A non-SSE response carries no `data:` frames, so parsing it as a stream
     // would fail silently and the UI would just sit there.
@@ -308,14 +313,17 @@ export function createChat({ endpoint = "/hai", registry }) {
     return surface.instance;
   }
 
-  // A message is queued, never dropped — busy is not a reason to refuse one.
-  // The only refusal is an out-of-date conversation, which the server would
-  // refuse too, and it happens before the first await: a caller that clears
-  // its input can check `state.expired` straight after calling and keep the
-  // text instead.
+  // A message is queued, never refused for being busy. It resolves to whether
+  // the server took it: false if the conversation went out of date first —
+  // at the call, or while it waited behind a long turn — if reset() started
+  // a new one before its turn, or if the server was still busy after the
+  // retry. A caller that cleared its input can then give the text back. The
+  // out-of-date refusal at the call happens before the first await, so such a
+  // caller can also check `state.expired` straight after calling and never
+  // clear the input at all.
   async function send(text) {
-    if (!text.trim() || closed()) return;
-    await enqueue("/chat", { message: text });
+    if (!text.trim() || closed()) return false;
+    return enqueue("/chat", { message: text });
   }
 
   // A click carries nothing the user authored, and stacking them is worse than

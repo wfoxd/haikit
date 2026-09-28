@@ -103,7 +103,14 @@ export interface ChatState {
 export interface Chat {
   /** Mutable — read it in a subscriber, do not hold references across events. */
   state: ChatState;
-  send(text: string): Promise<void>;
+  /**
+   * Queue a message. Resolves `true` once the server has taken it, `false` if
+   * it never did: the conversation went out of date first (at the call, or
+   * while it waited behind a long turn), `reset()` started a new conversation
+   * before its turn, or the server was still busy after one retry. A UI that
+   * cleared its input can then put the text back.
+   */
+  send(text: string): Promise<boolean>;
   interact(handle: string, action: string, value: unknown): Promise<void>;
   /** Mounts the surface for `handle` into `element`. Null if props have not arrived. */
   mount(handle: string, element: HTMLElement): SurfaceInstance | null;

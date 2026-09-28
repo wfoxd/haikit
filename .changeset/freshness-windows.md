@@ -40,8 +40,10 @@ hit.
   counted from when the request was sent, so a tab left open closes on time.
   `send` and `interact` stop sending, and surfaces become `inert`. The new
   `chat.reset()` starts a new conversation and aborts anything still open for
-  the old one. The default transcript shows the notice with a *Start a new
-  conversation* button.
+  the old one. `send()` now resolves to whether the server took the message,
+  so a UI that cleared its input can give the text back when a queued message
+  is turned away. The default composer does this. The default transcript shows
+  the notice with a *Start a new conversation* button.
 - **postgres:** `haikit_payloads` gains a nullable `stale_after_ms` column,
   which `migrate()` adds to an existing table. Calling `migrate()` at startup,
   as the README shows, handles this. With your own migration tool, apply the
