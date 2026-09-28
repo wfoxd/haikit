@@ -369,6 +369,7 @@ export async function integration(label, make) {
   await strandChecks(make);
   await turnAbortChecks(make);
   await expiryChecks(make);
+  await initChecks(make);
   return failures;
 }
 
@@ -1300,6 +1301,240 @@ async function expiryChecks(make) {
     } finally {
       server.close();
     }
+  }
+}
+
+// ── the init tool runs first, once, and cannot be skipped ───────────────
+// The runtime makes the call itself, before the model's first turn, and
+// records it as if the model had: the user's message, the call, its result.
+async function initChecks(make) {
+  console.log("\ninit tool");
+  const { createHai } = await import("../packages/server/dist/index.js");
+  const { defineSurface, defineTool, resolve, isStaleLease } = await import("../packages/core/dist/index.js");
+  const any = { parse: (v) => v };
+  const store = make({ leaseMs: 40 });
+
+  let runs = 0;
+  let behaviour = "ok"; // what the init tool does next: ok | throw | pick | card | slow
+  const picker = defineSurface({ name: "account", version: 1, props: any, actions: { choose: resolve(any) }, queries: {} })
+    .implement({ digest: () => "2 accounts: personal, work", actions: { choose: (v) => `Chose ${v}.` }, queries: {} });
+  const card = defineSurface({ name: "welcome", version: 1, props: any, actions: {}, queries: {} })
+    .implement({ digest: () => "welcome card", actions: {}, queries: {} });
+  let takeover = null; // set by the "slow" behaviour to the conversation it overtakes
+  const init = defineTool({
+    name: "load_profile",
+    description: "Load the user's profile.",
+    input: any,
+    inputJsonSchema: { type: "object", properties: {} },
+    async run(_input, ctx) {
+      runs++;
+      if (behaviour === "throw") throw new Error("profile service unavailable");
+      if (behaviour === "show-then-throw") {
+        await ctx.render(card, {}); // a surface is already out when it fails
+        throw new Error("profile service unavailable");
+      }
+      if (behaviour === "pick") return ctx.render(picker, {}, { mode: "elicit" });
+      if (behaviour === "card") return ctx.render(card, {});
+      if (behaviour === "slow") {
+        await new Promise((r) => setTimeout(r, 70)); // outlives the 40ms lease
+        const winner = await store.loadConversation(takeover);
+        winner.leaseUntil = null;
+        await store.saveConversation(winner);
+        return ctx.render(card, {}); // fenced write: must trip
+      }
+      return ctx.text("Profile: Ada, home airport SFO.");
+    },
+  });
+
+  // the model records every request it gets; on request it calls a tool once
+  const seen = [];
+  let callNext = null;
+  const model = {
+    id: "stub",
+    async generate(req) {
+      seen.push(JSON.parse(JSON.stringify({ messages: req.messages, tools: req.tools })));
+      if (callNext) {
+        const name = callNext;
+        callNext = null;
+        return { content: [{ type: "tool_use", id: `tu_${seen.length}`, name, input: {} }], stop_reason: "tool_use" };
+      }
+      return { content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" };
+    },
+  };
+  const hai = createHai({ model, store, tools: [], surfaces: [picker, card], system: "x", init });
+
+  async function request(id, act) {
+    const c = await store.loadConversation(id);
+    const events = [];
+    let error = null;
+    try {
+      await act(c, (e) => events.push(e));
+    } catch (err) {
+      error = err;
+    }
+    c.leaseUntil = null;
+    if (!isStaleLease(error)) await store.saveConversation(c);
+    return { c, events, error };
+  }
+  const say = (text) => (c, emit) => hai.send(c, text, emit);
+
+  // ── it runs first, and the model sees it as its own call
+  let id;
+  {
+    runs = 0;
+    seen.length = 0;
+    const r = await request(undefined, say("hi"));
+    id = r.c.id;
+    const [first] = seen;
+    const m = first?.messages ?? [];
+    const call = m[1]?.content?.[0];
+    check(
+      "init runs once, before the model's first turn",
+      runs === 1 && seen.length === 1 && !r.error,
+    );
+    check(
+      "the model's first request is: the user's message, then init's call, then its result",
+      m.length === 3 && m[0].role === "user" && m[0].content === "hi" &&
+        m[1].role === "assistant" && call?.type === "tool_use" && call.name === "load_profile" &&
+        m[2].role === "user" && m[2].content?.[0]?.type === "tool_result" &&
+        m[2].content[0].tool_use_id === call.id && m[2].content[0].content.includes("home airport SFO"),
+    );
+    const listed = first?.tools.find((t) => t.name === "load_profile");
+    check(
+      "init stays in the model's tool list, saying it has already run",
+      !!listed && /ran automatically at the start/.test(listed.description),
+    );
+    check(
+      "the transcript shows init as a tool, after the user's message",
+      r.events.findIndex((e) => e.type === "block_start" && e.block.kind === "user") <
+        r.events.findIndex((e) => e.type === "block_start" && e.block.kind === "tool" && e.block.name === "load_profile"),
+    );
+  }
+
+  // ── once per conversation
+  {
+    seen.length = 0;
+    await request(id, say("and again"));
+    check("a later message does not run init again", runs === 1 && seen.length === 1);
+  }
+
+  // ── the model asking for it again gets "already ran", and it does not run
+  {
+    seen.length = 0;
+    callNext = "load_profile";
+    await request(id, say("reload my profile"));
+    const result = seen[1]?.messages.at(-1)?.content?.[0];
+    check(
+      "a repeat call from the model is refused without running",
+      runs === 1 && result?.type === "tool_result" && /already ran at the start/.test(result.content),
+    );
+  }
+
+  // ── failure refuses the request and records nothing; the next message retries
+  {
+    runs = 0;
+    seen.length = 0;
+    behaviour = "throw";
+    const r = await request(undefined, say("hi"));
+    const saved = await store.loadConversation(r.c.id);
+    saved.leaseUntil = null;
+    await store.saveConversation(saved);
+    check(
+      "an init that throws refuses the request before the model runs",
+      /initialisation failed: profile service unavailable/.test(r.error?.message ?? "") && seen.length === 0,
+    );
+    check("…and records nothing, not even the user's message", saved.messages.length === 0);
+
+    // failing after a surface is already out: that surface is not recorded
+    // either, and the conversation is left as the route found it
+    behaviour = "show-then-throw";
+    const shown = await request(undefined, say("hi"));
+    const left = await store.loadConversation(shown.c.id);
+    left.leaseUntil = null;
+    await store.saveConversation(left);
+    check(
+      "a start refused after init showed a surface leaves the conversation as it found it",
+      /initialisation failed/.test(shown.error?.message ?? "") &&
+        left.messages.length === 0 && left.handles.length === 0 && left.status === "idle" && left.pending === null,
+    );
+    behaviour = "ok";
+    runs = 0;
+    seen.length = 0;
+    await request(r.c.id, say("hi again"));
+    check("the next message runs init again, and the conversation starts", runs === 1 && seen.length === 1);
+  }
+
+  // ── an elicit surface from init parks the conversation before the model
+  {
+    runs = 0;
+    seen.length = 0;
+    behaviour = "pick";
+    const r = await request(undefined, say("hi"));
+    const parked = r.c;
+    check(
+      "an init that asks the user something parks before the model runs",
+      seen.length === 0 && parked.status === "awaiting" && parked.pending?.handle === parked.handles[0],
+    );
+    behaviour = "ok";
+    await request(parked.id, (c, emit) => hai.interact(c, { handle: parked.handles[0], action: "choose", value: "work" }, emit));
+    const answer = seen[0]?.messages.at(-1)?.content?.[0];
+    check(
+      "…and the answer becomes init's result, then the model starts",
+      seen.length === 1 && answer?.type === "tool_result" && answer.tool_use_id === parked.pending?.toolUseId &&
+        /2 accounts/.test(answer.content) && /Chose work/.test(answer.content),
+    );
+  }
+
+  // ── a surface from init reaches the browser before the model says anything
+  {
+    behaviour = "card";
+    const r = await request(undefined, say("hi"));
+    const opened = r.events.findIndex((e) => e.type === "ui_open" && e.component === "welcome");
+    const status = r.events.findIndex((e) => e.type === "status" && e.status === "idle");
+    check("a surface init renders is shown before the turn completes", opened >= 0 && opened < status);
+    behaviour = "ok";
+  }
+
+  // ── overtaken while initialising: the fence stops it, and nothing is saved
+  {
+    runs = 0;
+    seen.length = 0;
+    const fresh = await store.loadConversation(undefined);
+    fresh.leaseUntil = null;
+    await store.saveConversation(fresh);
+    takeover = fresh.id;
+    behaviour = "slow";
+    const r = await request(fresh.id, say("hi"));
+    behaviour = "ok";
+    const after = await store.loadConversation(fresh.id);
+    after.leaseUntil = null;
+    await store.saveConversation(after);
+    check(
+      "an init overtaken mid-flight stops at the fence and records nothing",
+      isStaleLease(r.error) && seen.length === 0 && after.messages.length === 0,
+    );
+  }
+
+  // ── a name the model could confuse is refused up front
+  {
+    const clash = (tools) => {
+      try {
+        createHai({ model, store, tools, surfaces: [], system: "x", init });
+        return false;
+      } catch (err) {
+        return /same name as another tool/.test(err.message);
+      }
+    };
+    const twin = defineTool({ name: "load_profile", description: "d", input: any, inputJsonSchema: { type: "object" }, run: () => ({ model: "" }) });
+    const queryUi = defineTool({ ...init, name: "query_ui" });
+    check("an init named like another tool, or query_ui, is refused", clash([twin]) && (() => {
+      try {
+        createHai({ model, store, tools: [], surfaces: [], system: "x", init: queryUi });
+        return false;
+      } catch (err) {
+        return /same name as another tool/.test(err.message);
+      }
+    })());
   }
 }
 

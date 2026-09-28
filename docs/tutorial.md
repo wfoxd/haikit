@@ -1058,6 +1058,76 @@ You now have every concept in the framework, in about 150 lines. The next app di
 - **Set real freshness windows.** Step 9 showed what one does. `"never"` is the default and right for greetings; prices and availability need the window their data actually holds for, such as `staleAfterMs: 15 * 60_000` for fares. With your own UI instead of `mountChat`, show `chat.state.expired` and call `chat.reset()` to start over.
 - **Gate the destructive tools.** An approval card is structurally identical to what you built in steps 2–6: a two-button surface with a `resolve` action. Same machinery, no new concepts.
 
+### Start every conversation the same way
+
+Some context the model should never go without: who the user is, their account, their home airport. Asking the model to fetch it is asking it to remember, and it won't every time. Give `createHai` an `init` tool instead, and the runtime runs it itself at the start of every conversation, before the model's first turn.
+
+It's an ordinary tool. This app has one user and no sign-in, so the profile is a constant; a real app would look up the signed-in user here, which needs the request's identity, and tools don't receive that yet.
+
+**`src/server/tools.ts`** — *append*
+
+```ts
+// One user and no sign-in in this app, so the profile is a constant.
+const PROFILE = { name: "Ada", city: "London", speaks: ["English", "French"] };
+
+export const loadProfile = defineTool({
+  name: "load_profile",
+  description: "Load the user's profile: their name and the languages they already speak.",
+  input: z.object({}),                                   // init always receives {}
+  inputJsonSchema: { type: "object", properties: {}, additionalProperties: false },
+
+  async run(_input, ctx) {
+    return ctx.text(
+      `User: ${PROFILE.name}, from ${PROFILE.city}. Already speaks: ${PROFILE.speaks.join(", ")}.`,
+    );
+  },
+});
+```
+
+Leave it out of the `tools` array. `init` registers it itself, and `createHai` refuses the same name twice. It still appears in the model's tool list, with a note that it has already run, and a second call from the model gets "already ran" back instead of running it.
+
+**`src/server/main.ts`** — *edit*
+
+```ts
+import { loadProfile, tools } from "./tools.ts";
+
+const hai = createHai({
+  init: loadProfile,
+  // ...unchanged
+});
+```
+
+If you're running the scripted model from step 6, it needs two changes. It answers the last message in the history, and at the model's first turn that is now `load_profile`'s result, so without the first change it replies "Done." to *“greet me”*. The second greets you by the name the profile returned, which is the point of loading it.
+
+**`src/server/scripted.ts`** — *edit, if you're using it*
+
+```ts
+// in generate(): init's result is last at the model's first turn, so answer
+// the user's message behind the call it belongs to
+const before = messages.at(-2)?.content;
+const afterInit = Array.isArray(before) &&
+  before.some((b: any) => b?.type === "tool_use" && b.name === "load_profile");
+const last = afterInit ? messages.at(-3) : messages.at(-1);
+
+// ...and in the greeting branch, use the name the profile returned
+if (/greet|hello|hi\b|hey|language|world|start/.test(text)) {
+  const name = JSON.stringify(messages).match(/User: (\w+)/)?.[1];
+  const line = name ? `Hi ${name}! Pick a language.` : "Pick a language.";
+  onTextDelta(line);
+  return {
+    content: [{ type: "text", text: line }, toolUse("list_greetings", {})],
+    stop_reason: "tool_use",
+  };
+}
+```
+
+> [!TIP]
+> **Checkpoint**
+>
+> Restart and say *“greet me”*. A **load_profile** row appears under your message before the model says anything, and the reply opens with *“Hi Ada!”*. The inspector shows the order the model saw it in: your message, the call, then its result. Send another message and it doesn't run again.
+
+The model sees the call and its result as if it had made them. `init` can render surfaces too, and an elicit one ("which account?") parks the conversation before the model runs at all. If it throws, the first message is refused and the next one tries again, so the model never starts without it.
+
 ### Things that will tempt you
 
 **A `render_ui(component, props)` tool** so the model can compose interface freely. It feels flexible and it dissolves every guarantee in step 10 — the registry stops being typed, reviewable, or bounded. Tools owning their rendering contract is the constraint that makes the rest work.
