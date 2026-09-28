@@ -236,7 +236,9 @@ export class Hai {
    *
    * A payload whose age cannot be computed counts as expired. A store returning
    * a bad `createdAt` has to fail closed, not quietly make every surface fresh
-   * forever.
+   * forever. So does one whose row is gone: nothing deletes a payload the
+   * history still references, so a missing one is lost data, and lost data
+   * proves nothing is fresh.
    */
   private async refuseIfExpired(conversation: Conversation, emit: Emit): Promise<boolean> {
     if (!conversation.handles.length) return false;
@@ -245,6 +247,14 @@ export class Hai {
 
     // the surface that went out of date first is the one that closed it
     let first: { expiredAt: number; age: number; window: number | undefined } | null = null;
+
+    // getPayloads omits handles it cannot find, and the loop below only sees
+    // what came back — so a missing row has to be caught here
+    const found = new Set(records.map((r) => r.handle));
+    if (conversation.handles.some((h) => !found.has(h))) {
+      first = { expiredAt: Number.NaN, age: Number.NaN, window: undefined };
+    }
+
     for (const record of records) {
       const window = strictest(record.staleAfterMs, this.surfaces.get(record.component)?.impl.staleAfterMs);
       if (window === "never") continue;

@@ -730,8 +730,10 @@ async function clientChecks() {
     const asleep = createChat({ endpoint, registry: {} });
     await asleep.send("show me"); // a picker good for 120ms; its timer is still pending
     mode = "hang";
+    received.length = 0;
     void asleep.send("another turn"); // stays open, so the client is busy
-    for (let i = 0; i < 100 && asleep.state.status !== "idle"; i++) await sleep(2);
+    // wait until it has really gone out, so only the click can notice the clock
+    for (let i = 0; i < 100 && !received.some((r) => r.body.message === "another turn"); i++) await sleep(2);
     const realNow = Date.now;
     Date.now = () => realNow() + 60_000; // the wall clock jumped; the timer did not fire
     try {
@@ -741,6 +743,36 @@ async function clientChecks() {
     }
     check("a click while busy still closes a conversation past its deadline", asleep.state.expired !== null);
     asleep.reset();
+
+    // send() refuses before its first await, so a caller that clears its input
+    // (mountChat does) can see the refusal straight away and keep the text
+    mode = "expiring";
+    const typing = createChat({ endpoint, registry: {} });
+    await typing.send("show me");
+    Date.now = () => realNow() + 60_000; // past the deadline; the timer has not fired
+    let refusedAtOnce = false;
+    try {
+      const pending = typing.send("typed after the deadline");
+      refusedAtOnce = typing.state.expired !== null; // before anything is awaited
+      await pending;
+    } finally {
+      Date.now = realNow;
+    }
+    check("send() refuses an out-of-date conversation at once, not later", refusedAtOnce);
+    typing.reset();
+
+    // a message queued behind a long turn is not sent once the deadline passes
+    // while it waits — the conversation closed before its turn came
+    mode = "expiring";
+    const queuedPast = createChat({ endpoint, registry: {} });
+    await queuedPast.send("show me"); // a picker good for 120ms, arriving ~40ms in
+    mode = "late-refusal"; // the turn ahead takes 250ms
+    received.length = 0;
+    await Promise.all([queuedPast.send("ahead"), queuedPast.send("queued behind it")]);
+    check(
+      "a message queued past the deadline is never sent",
+      received.some((r) => r.body.message === "ahead") && !received.some((r) => r.body.message === "queued behind it"),
+    );
 
     // the local deadline passes while a request is open, and the server's
     // refusal arrives after it — the order that needs de-duplicating
@@ -1140,6 +1172,22 @@ async function expiryChecks(make) {
     const r = await request(c.id, say("hi"), deploy(forever));
     check(
       "a payload whose window is known nowhere counts as out of date",
+      /can no longer be checked/.test(r.expired?.message ?? "") && r.modelCalls === 0,
+    );
+  }
+
+  // Nothing deletes a payload the history references, so a missing one is lost
+  // data. getPayloads omits it silently; the conversation must not look fresh
+  // because the one surface that could have closed it is no longer there.
+  {
+    const c = await conversation([forever]);
+    const loaded = await store.loadConversation(c.id);
+    loaded.handles.push("ui_77"); // referenced, but no row behind it
+    loaded.leaseUntil = null;
+    await store.saveConversation(loaded);
+    const r = await request(c.id, say("hi"));
+    check(
+      "a referenced payload that is missing counts as out of date",
       /can no longer be checked/.test(r.expired?.message ?? "") && r.modelCalls === 0,
     );
   }

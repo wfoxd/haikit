@@ -99,6 +99,9 @@ export function createChat({ endpoint = "/hai", registry }) {
     });
 
   async function pump(path, body, gen, signal) {
+    // Checked again here, not only when queued: a long turn ahead of this
+    // request can run past the deadline while it waits.
+    if (closed()) return;
     sentAt = Date.now();
     let res = await post(path, body, signal);
 
