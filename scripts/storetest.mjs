@@ -638,7 +638,7 @@ async function clientChecks() {
 
       // "split" answers at once and sends the rest of its stream 40ms later;
       // "slow-render" is a turn whose surface arrives 150ms after the request
-      if (mode !== "split") await wait({ "late-refusal": 250, "slow-render": 150 }[mode] ?? 40);
+      if (mode !== "split") await wait({ "late-refusal": 250, "slow-turn": 250, "slow-render": 150 }[mode] ?? 40);
       const frame = (event) => res.write(sse(event));
       res.writeHead(200, { "content-type": "text/event-stream" });
       frame(hello);
@@ -766,7 +766,7 @@ async function clientChecks() {
     mode = "expiring";
     const queuedPast = createChat({ endpoint, registry: {} });
     await queuedPast.send("show me"); // a picker good for 120ms, arriving ~40ms in
-    mode = "late-refusal"; // the turn ahead takes 250ms
+    mode = "slow-turn"; // the turn ahead is accepted, and takes 250ms
     received.length = 0;
     const outcomes = await Promise.all([queuedPast.send("ahead"), queuedPast.send("queued behind it")]);
     check(
@@ -810,11 +810,14 @@ async function clientChecks() {
     const slow = createChat({ endpoint, registry: {} });
     await slow.send("show me"); // a picker good for 120ms, arriving ~40ms in
     mode = "late-refusal"; // the next answer takes 250ms, and is a refusal
-    await slow.send("again");
+    const againTaken = await slow.send("again");
     check(
       "a refusal arriving after the local deadline adds no second notice",
       slow.state.blocks.filter((b) => b.kind === "expired").length === 1,
     );
+    // the server answered 200 but refused inside the stream: it recorded
+    // nothing, so the message was not taken and the text can come back
+    check("a message the server refuses as expired reports that it did not go out", againTaken === false);
 
     // the other order: the server says it first
     mode = "server-refuses";

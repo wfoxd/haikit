@@ -118,7 +118,8 @@ export function createChat({ endpoint = "/hai", registry }) {
       res = await post(path, body, signal); // rejects at once if reset() aborted it meanwhile
     }
     // Anything but a second 409 means the server took the request up itself —
-    // even an error. A 409 means it turned the message away unread.
+    // even an error — unless the stream says `expired` below. A 409 means it
+    // turned the message away unread.
     outcome.sent = res.status !== 409;
 
     // A non-SSE response carries no `data:` frames, so parsing it as a stream
@@ -151,7 +152,12 @@ export function createChat({ endpoint = "/hai", registry }) {
         const frame = buffer.slice(0, i);
         buffer = buffer.slice(i + 2);
         const line = frame.split("\n").find((l) => l.startsWith("data: "));
-        if (line) apply(JSON.parse(line.slice(6)));
+        if (!line) continue;
+        const event = JSON.parse(line.slice(6));
+        // refused inside a 200: the server recorded nothing, so it did not
+        // take the message, whatever the status said
+        if (event.type === "expired") outcome.sent = false;
+        apply(event);
       }
     }
   }
