@@ -774,6 +774,20 @@ async function clientChecks() {
       received.some((r) => r.body.message === "ahead") && !received.some((r) => r.body.message === "queued behind it"),
     );
 
+    // a 409 waits 150ms and retries once; a deadline passing in that wait
+    // stops the retry like it stops any other send
+    mode = "expiring";
+    const retrying = createChat({ endpoint, registry: {} });
+    await retrying.send("show me"); // a picker good for 120ms, arriving ~40ms in
+    mode = "409-once";
+    calls = 0; // so this next call is the refused one
+    received.length = 0;
+    await retrying.send("refused, then retried past the deadline");
+    check(
+      "a 409 retry is not sent once the deadline passes during its wait",
+      calls === 1 && received.length === 0 && retrying.state.expired !== null,
+    );
+
     // the local deadline passes while a request is open, and the server's
     // refusal arrives after it — the order that needs de-duplicating
     mode = "expiring";
@@ -1291,8 +1305,8 @@ async function windowChecks() {
     }
   };
   check(
-    "a zero, negative, NaN, infinite or misspelled window is refused",
-    [0, -1, NaN, Infinity, "15m", "Never"].every(refused),
+    "a zero, negative, NaN, infinite, null or misspelled window is refused",
+    [0, -1, NaN, Infinity, null, "15m", "Never"].every(refused),
   );
   check(
     'a positive window, "never", and no window at all are accepted',

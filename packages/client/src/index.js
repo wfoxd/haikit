@@ -111,6 +111,8 @@ export function createChat({ endpoint = "/hai", registry }) {
     // retry covers the first and gives up honestly on the second.
     if (res.status === 409) {
       await new Promise((r) => setTimeout(r, 150));
+      // the deadline can pass during the wait, like any other queued request
+      if (closed()) return;
       res = await post(path, body, signal); // rejects at once if reset() aborted it meanwhile
     }
 

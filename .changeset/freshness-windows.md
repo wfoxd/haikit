@@ -34,8 +34,8 @@ hit.
   request. `PayloadRecord` gains the optional `staleAfterMs`, which stores
   should return exactly as given, including `"never"`.
 - **server:** `createHai` rejects a zero, negative, `NaN`, infinite or
-  misspelled window with a `RangeError`. A payload whose `createdAt` cannot be
-  read counts as expired.
+  misspelled window with a `RangeError`, `null` included. A payload held to a
+  window whose `createdAt` cannot be read counts as expired.
 - **client:** `state.expiresAt` and `state.expired` track the deadline,
   counted from when the request was sent, so a tab left open closes on time.
   `send` and `interact` stop sending, and surfaces become `inert`. The new

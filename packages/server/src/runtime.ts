@@ -234,11 +234,13 @@ export class Hai {
    * included: what the user picked from a surface is still in the model's
    * context at the price it was shown at.
    *
-   * A payload whose age cannot be computed counts as expired. A store returning
-   * a bad `createdAt` has to fail closed, not quietly make every surface fresh
-   * forever. So does one whose row is gone: nothing deletes a payload the
-   * history still references, so a missing one is lost data, and lost data
-   * proves nothing is fresh.
+   * A payload held to a window whose age cannot be computed counts as expired.
+   * A store returning a bad `createdAt` has to fail closed, not quietly make
+   * every surface fresh forever. A `"never"` window needs no age, so its
+   * timestamp is not consulted — the conformance suite is what holds a store
+   * to returning good ones. A payload whose row is gone counts as expired too:
+   * nothing deletes a payload the history still references, so a missing one
+   * is lost data, and lost data proves nothing is fresh.
    */
   private async refuseIfExpired(conversation: Conversation, emit: Emit): Promise<boolean> {
     if (!conversation.handles.length) return false;
@@ -447,8 +449,13 @@ export class Hai {
   }
 }
 
-/** A surface's declared window; one that declares none never goes stale. */
-const windowOf = (s: AnySurfaceImpl): number | "never" => s.impl.staleAfterMs ?? "never";
+/**
+ * A surface's declared window; one that declares none never goes stale. Only a
+ * missing field defaults — `null` is not "no window" but an invalid one, and
+ * has to reach checkWindow to be refused like any other.
+ */
+const windowOf = (s: AnySurfaceImpl): number | "never" =>
+  s.impl.staleAfterMs === undefined ? "never" : s.impl.staleAfterMs;
 
 /**
  * The type checked again at runtime, because JavaScript callers never see it.
