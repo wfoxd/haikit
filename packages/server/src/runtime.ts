@@ -10,6 +10,7 @@ import {
   type Tool,
   type ToolCtx,
   type ToolReturn,
+  type WireEvent,
 } from "@haikit/core";
 
 export interface HaiConfig {
@@ -20,7 +21,26 @@ export interface HaiConfig {
   surfaces: AnySurfaceImpl[];
   /** Guard against runaway tool loops. */
   maxHops?: number;
+  /**
+   * Runs at the start of every conversation, before the model's first turn.
+   * The runtime makes the call, not the model, so it cannot be skipped: the
+   * call and its result are recorded after the user's first message as if the
+   * model had made them. It receives `{}` as input and may render surfaces —
+   * an elicit surface parks the conversation before the model runs at all.
+   *
+   * If it throws, the request is refused and nothing is recorded, so the next
+   * message tries again. It stays in the model's tool list for the whole
+   * conversation — changing that list mid-conversation invalidates the
+   * model's earlier reasoning on newer models — but a later call from the
+   * model gets "already ran" back instead of running it again.
+   */
+  init?: Tool;
 }
+
+/** Appended to the init tool's description in what the model sees. */
+const INIT_NOTE =
+  "This ran automatically at the start of the conversation, and its result is already above. " +
+  "Calling it again does not run it.";
 
 export class Hai {
   readonly config: HaiConfig;
@@ -39,6 +59,13 @@ export class Hai {
     // that actually exist, and it always exists.
     const queryUi = this.buildQueryUiTool();
     this.tools.set(queryUi.name, queryUi);
+
+    if (config.init) {
+      if (this.tools.has(config.init.name)) {
+        throw new Error(`init tool "${config.init.name}" has the same name as another tool`);
+      }
+      this.tools.set(config.init.name, config.init);
+    }
   }
 
   private nid(prefix: string) {
@@ -132,6 +159,9 @@ export class Hai {
   async send(conversation: Conversation, text: string, emit: Emit): Promise<void> {
     if (await this.refuseIfExpired(conversation, emit)) return;
 
+    // The first message is the one that starts the conversation.
+    const starting = conversation.messages.length === 0;
+
     // The user typed while a tool was parked. Every tool_use in a turn must
     // receive a tool_result, so close the pending one out honestly first.
     if (conversation.status === "awaiting" && conversation.pending) {
@@ -155,8 +185,83 @@ export class Hai {
     }
 
     emit({ type: "block_start", block: { kind: "user", id: this.nid("b"), text } });
-    conversation.messages.push({ role: "user", content: text });
+    if (starting && this.config.init) {
+      if (await this.runInit(conversation, text, emit)) return; // parked on its surface
+    } else {
+      conversation.messages.push({ role: "user", content: text });
+    }
     await this.runTurn(conversation, emit);
+  }
+
+  /**
+   * Run the init tool as the conversation's first tool call. Returns true when
+   * it parked the conversation on an elicit surface.
+   *
+   * Nothing reaches the history until the tool has succeeded — not even the
+   * user's message — so a refused start leaves the conversation exactly as
+   * the route found it, and the next message starts it again.
+   */
+  private async runInit(conversation: Conversation, text: string, emit: Emit): Promise<boolean> {
+    const init = this.config.init!;
+    const call = { type: "tool_use", id: `toolu_init_${newId()}`, name: init.name, input: {} };
+    const toolBlockId = this.nid("b");
+    const before = { handles: conversation.handles.length, status: conversation.status };
+
+    conversation.status = "streaming";
+    emit({ type: "status", status: "streaming" });
+    emit({ type: "block_start", block: { kind: "tool", id: toolBlockId, name: init.name, input: {}, status: "running" } });
+
+    // Surfaces are held until init succeeds. One shown by a start that is then
+    // refused would look live in the browser, and every click on it would be
+    // rejected: its handle never reaches the history.
+    const held: WireEvent[] = [];
+    const hold: Emit = (e) => {
+      if (e.type === "ui_open" || e.type === "ui_props") held.push(e);
+      else emit(e);
+    };
+
+    const started = Date.now();
+    let outcome: { ret: ToolReturn; mode: "display" | "elicit" | null };
+    try {
+      outcome = await this.invokeTool(conversation, call, hold, toolBlockId, { init: true });
+    } catch (err) {
+      // undo what the tool's renders recorded; their payload rows are orphans
+      conversation.handles.length = before.handles;
+      conversation.status = before.status;
+      if (isStaleLease(err)) throw err;
+      const message = `initialisation failed: ${(err as Error).message}`;
+      emit({ type: "block_update", id: toolBlockId, status: "error", ms: Date.now() - started, result: message });
+      throw new Error(message);
+    }
+    const { ret, mode } = outcome;
+    const ms = Date.now() - started;
+    for (const e of held) emit(e);
+
+    conversation.messages.push({ role: "user", content: text });
+    conversation.messages.push({ role: "assistant", content: [call] });
+
+    if (mode === "elicit" && ret.handle) {
+      emit({ type: "block_update", id: toolBlockId, status: "awaiting", ms, result: ret.model });
+      conversation.status = "awaiting";
+      conversation.pending = { toolUseId: call.id, handle: ret.handle, digest: ret.model, results: [] };
+      emit({ type: "status", status: "awaiting" });
+      await this.emitContext(conversation, emit);
+      return true;
+    }
+
+    emit({ type: "block_update", id: toolBlockId, status: "ok", ms, result: ret.model });
+    conversation.messages.push({
+      role: "user",
+      content: [{ type: "tool_result", tool_use_id: call.id, content: ret.model }],
+    });
+
+    // Commit before the model runs. An init that only returns text makes no
+    // fenced write of its own, so a request that outlived its lease while init
+    // ran would otherwise go on to call the model for a history its final save
+    // will lose. This save is fenced: it throws StaleLease if another request
+    // has taken the conversation over, and the model never runs here.
+    await this.config.store.saveConversation(conversation);
+    return false;
   }
 
   async interact(
@@ -292,7 +397,7 @@ export class Hai {
 
     const toolDefs = [...this.tools.values()].map((t) => ({
       name: t.name,
-      description: t.description,
+      description: t === this.config.init ? `${t.description}\n\n${INIT_NOTE}` : t.description,
       input_schema: t.inputJsonSchema,
       strict: t.strict,
     }));
@@ -362,9 +467,20 @@ export class Hai {
     call: any,
     emit: Emit,
     toolBlockId: string,
+    // the runtime's own start-of-conversation call: failures throw instead of
+    // becoming a result for the model, because there is no model turn yet
+    options: { init?: boolean } = {},
   ): Promise<{ ret: ToolReturn; mode: "display" | "elicit" | null }> {
     const tool = this.tools.get(call.name);
     if (!tool) return { ret: { model: `Unknown tool: ${call.name}` }, mode: null };
+
+    // the model calling init again: it ran at the start, and does not run twice
+    if (tool === this.config.init && !options.init) {
+      return {
+        ret: { model: `${tool.name} already ran at the start of this conversation; its result is above.` },
+        mode: null,
+      };
+    }
 
     let mode: "display" | "elicit" | null = null;
 
@@ -418,6 +534,7 @@ export class Hai {
     try {
       input = tool.input.parse(call.input);
     } catch (err) {
+      if (options.init) throw err;
       return { ret: { model: `Invalid input for ${call.name}: ${(err as Error).message}` }, mode: null };
     }
 
@@ -425,6 +542,7 @@ export class Hai {
       const ret = await tool.run(input, ctx);
       return { ret, mode };
     } catch (err) {
+      if (options.init) throw err;
       // A tool error is information for the model; a lost lease is not. Fencing
       // exists so a superseded turn stops — converting StaleLease into "tool
       // failed" would hand it back to the model and keep paying for hops whose
@@ -489,6 +607,8 @@ function strictest(recorded: unknown, current: unknown): number | "never" | unde
   const finite = known.filter((w): w is number => w !== "never");
   return finite.length ? Math.min(...finite) : "never";
 }
+
+const newId = () => globalThis.crypto.randomUUID().replaceAll("-", "").slice(0, 16);
 
 /** "2 hours", "15 minutes" — for a sentence a person reads. */
 function duration(ms: number): string {
