@@ -256,7 +256,10 @@ export class Hai {
     }
 
     for (const record of records) {
-      const window = strictest(record.staleAfterMs, this.surfaces.get(record.component)?.impl.staleAfterMs);
+      // a surface the code no longer registers has no current window at all,
+      // which is not the same as one registered without a window ("never")
+      const impl = this.surfaces.get(record.component);
+      const window = strictest(record.staleAfterMs, impl ? windowOf(impl) : undefined);
       if (window === "never") continue;
       // A timestamp that is not a finite number cannot prove anything is fresh:
       // Infinity would compare fresh forever, and a bigint would throw on the
@@ -372,6 +375,7 @@ export class Hai {
 
         // Validate before storing: props may originate outside this process.
         const parsed = impl.surface.props.parse(props);
+        const window = windowOf(impl);
 
         const handle = await this.config.store.putPayload(
           {
@@ -382,7 +386,7 @@ export class Hai {
             mode: surfaceMode,
             // recorded now, so no later deploy can relax the window this data
             // was shown under — see the stricter-of in refuseIfExpired
-            staleAfterMs: impl.impl.staleAfterMs,
+            staleAfterMs: window,
           },
           conversation.leaseToken,
         );
@@ -400,7 +404,7 @@ export class Hai {
           mode: surfaceMode,
           // so a browser left open can close the conversation on time, rather
           // than only finding out when its next request is refused
-          ...(impl.impl.staleAfterMs === "never" ? {} : { staleAfterMs: impl.impl.staleAfterMs }),
+          ...(window === "never" ? {} : { staleAfterMs: window }),
         });
         emit({ type: "ui_props", handle, props: parsed });
 
@@ -443,14 +447,17 @@ export class Hai {
   }
 }
 
+/** A surface's declared window; one that declares none never goes stale. */
+const windowOf = (s: AnySurfaceImpl): number | "never" => s.impl.staleAfterMs ?? "never";
+
 /**
- * GUARANTEE 5 checked again at runtime, because JavaScript callers never see
- * the type. Zero or less would expire every surface the moment it rendered;
- * NaN never compares as expired, and Infinity means "never" without saying so —
- * both are the silent default this field exists to rule out.
+ * The type checked again at runtime, because JavaScript callers never see it.
+ * Zero or less would expire every surface the moment it rendered; NaN never
+ * compares as expired, and Infinity means "never" without saying so. Leaving
+ * the window out is fine: that is "never".
  */
 function checkWindow(s: AnySurfaceImpl) {
-  const window: unknown = s.impl.staleAfterMs;
+  const window: unknown = windowOf(s);
   if (window === "never" || (typeof window === "number" && Number.isFinite(window) && window > 0)) return;
   const got = typeof window === "string" ? JSON.stringify(window) : String(window);
   throw new RangeError(

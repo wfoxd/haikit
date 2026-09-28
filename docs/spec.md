@@ -182,9 +182,9 @@ Exported over MCP, tools degrade gracefully: a host without the registry gets th
 
 - Built Working prototype — dual channel, elicit park/resume, `query_ui` with caps, server-side binding table. Verified end to end in a browser.
 - Built Three security rejections confirmed: unbound element, forged handle, frozen component.
-- Built `defineSurface` / `defineTool` type machinery — required digest, `Capped`, elicit-requires-resolve, declared actions, required freshness window — each asserted as a compile error by `npm run typetest`.
+- Built `defineSurface` / `defineTool` type machinery — required digest, `Capped`, elicit-requires-resolve, declared actions — each asserted as a compile error by `npm run typetest`.
 - Built Postgres store (`@haikit/postgres`) and fenced turn leases, conformance-tested against a real server.
-- Built Payload staleness. Every surface declares `staleAfterMs`; once any surface passes it, the conversation closes — every request is refused before the model runs, and the user is offered a new conversation.
+- Built Payload staleness. A surface declares `staleAfterMs` (default `"never"`); once any surface passes its window, the conversation closes — every request is refused before the model runs, and the user is offered a new conversation.
 - Spec The append-only commit invariant, surface versioning.
 - Open `ui_patch` for in-place mutation — patching preserves scroll and sort state; re-rendering destroys it.
 - Open Consuming third-party MCP servers. Their results are single-channel, so a projection layer is needed or the context budget goes with it.

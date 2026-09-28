@@ -312,6 +312,13 @@ const impl = picker.implement({
   staleAfterMs: 15 * 60_000,
 });
 void impl;
+// the window is optional — code written before it existed still compiles
+const unchanged = picker.implement({
+  digest: (props) => String(props.rows.length),
+  actions: { pick: (v) => v },
+  queries: { filter: (_args, { props, cap }): Capped => cap(props.rows, String) },
+});
+void unchanged;
 
 // the client's hand-written types have to be real types, not implicit any
 const registry: Registry = {

@@ -20,7 +20,8 @@ become a button wired to it.
 **A conversation closes once any of its surfaces passes its `staleAfterMs`.**
 From then on both routes answer with an `expired` event and the model is not
 called, so a picker left open over a weekend cannot resolve against last week's
-data. The user starts a new conversation.
+data. The user starts a new conversation. A surface that declares no window
+never goes stale, so set one wherever the data can change.
 
 `memoryStore()` is for development. A parked elicit turn is durable state —
 lose `pending` and that conversation can never be sent again. Ship with

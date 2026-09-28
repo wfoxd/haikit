@@ -308,7 +308,7 @@ export const greetingPickerServer = greetingPicker.implement({  // 4
 
 **19** The only way to produce this function's return type. Forgetting it is the compile error you will trigger deliberately in step 9.
 
-**20** Required: how long this data may be acted on, in milliseconds, or `"never"`. Greetings don't go out of date. A flight table would say `15 * 60_000`, and 15 minutes after it rendered, the conversation would close: every further click or message is refused before the model runs, and the user is offered a new conversation. There is no default, because the one a framework would pick, never, is how a week-old picker ends up resolving against last week's prices.
+**20** How long this data may be acted on, in milliseconds, or `"never"`. `"never"` is the default, so this line only says it out loud: greetings don't go out of date. A flight table would say `15 * 60_000`, and 15 minutes after it rendered, the conversation would close: every further click or message is refused before the model runs, and the user is offered a new conversation.
 
 And the data. Six rows to start; add as many as you like.
 
@@ -994,15 +994,12 @@ error TS2345: Property '⚠ this surface declares no resolve action — an
 // 4 — add a handler you never declared
 actions: { choose: ..., deleteEverything: () => "boom" }
 error TS2353: Object literal may only specify known properties
-
-// 5 — delete staleAfterMs
-error TS2741: Property 'staleAfterMs' is missing in type ...
 ```
 
 > [!TIP]
 > **What you just proved**
 >
-> The first four are bugs that shipped in the prototype this framework was extracted from. A lazy digest produced a confidently invented fact. An uncapped filter put a whole payload into context permanently. The fifth is the one durable storage would have shipped next: a picker left open over a weekend, resolving against last week's data without a word. They're compile errors now, not review items — `npm run typetest` in the haikit repo asserts exactly this, so a guarantee that quietly stops working fails CI.
+> Each of those is a bug that shipped in the prototype this framework was extracted from. A lazy digest produced a confidently invented fact. An uncapped filter put a whole payload into context permanently. They're compile errors now, not review items — `npm run typetest` in the haikit repo asserts exactly this, so a guarantee that quietly stops working fails CI.
 
 ## Where to go next
 
@@ -1031,7 +1028,7 @@ You now have every concept in the framework, in about 150 lines. The next app di
   ```
 
   Several server instances can share one database safely: a conversation takes one turn at a time however many processes receive its requests. On another database, implement `StoreAdapter` from `@haikit/core`: five methods, each documented with what it has to guarantee, and `packages/postgres` in the haikit repo is a worked example.
-- **Set real freshness windows.** Greetings never go out of date, so this tutorial says `"never"`. Prices and availability do. Give those surfaces the window their data actually holds for, such as `staleAfterMs: 15 * 60_000` for fares. Once any surface in a conversation passes its window, the conversation closes: every request is refused before the model runs, and the default UI offers *Start a new conversation*. With your own UI, show `chat.state.expired` and call `chat.reset()`.
+- **Set real freshness windows.** A surface never goes out of date unless it says so: `"never"` is the default, which is right for greetings and wrong for prices and availability. Give those surfaces the window their data actually holds for, such as `staleAfterMs: 15 * 60_000` for fares. Once any surface in a conversation passes its window, the conversation closes: every request is refused before the model runs, and the default UI offers *Start a new conversation*. With your own UI, show `chat.state.expired` and call `chat.reset()`.
 - **Gate the destructive tools.** An approval card is structurally identical to what you built in steps 2–6: a two-button surface with a `resolve` action. Same machinery, no new concepts.
 
 ### Things that will tempt you

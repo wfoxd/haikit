@@ -18,7 +18,7 @@ export const picker = defineSurface({
 Schemas are accepted **structurally** — anything with a `.parse()` method works,
 so zod is your choice rather than this package's dependency.
 
-## The five guarantees
+## The four guarantees
 
 Enforced in the type system, and asserted by `test/types/guarantees.ts`:
 
@@ -28,7 +28,10 @@ Enforced in the type system, and asserted by `test/types/guarantees.ts`:
 | a query's result can only be produced by `cap()` | `Capped` has no other constructor |
 | `mode: "elicit"` needs a `resolve` action | otherwise the call does not typecheck |
 | an undeclared action does not exist | the contract *is* the allowlist |
-| a surface cannot exist without deciding when its data goes out of date | `staleAfterMs` is a required field: milliseconds, or `"never"` |
+
+A surface can also declare `staleAfterMs`, how long its data may be acted on:
+milliseconds, or `"never"`, which is the default. Once any surface in a
+conversation is past its window, the conversation closes.
 
 `npm run typetest` at the repo root compiles those tests twice — once with their
 `@ts-expect-error` directives (must be clean) and once stripped (every marked

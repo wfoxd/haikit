@@ -59,16 +59,7 @@ picker.implement({
   staleAfterMs: "never",
 });
 
-// ── GUARANTEE 5: a surface must decide when its data goes out of date ──
-// There is no default: the one a framework would pick, never, is the silent
-// version of the bug — a week-old picker resolving against last week's data.
-// @ts-expect-error  Property 'staleAfterMs' is missing
-picker.implement({
-  digest: () => "x",
-  actions: { choose: () => "x" },
-  queries: { filter: (_a, { props: p, cap }) => cap(p.rows, String) },
-});
-
+// ── a freshness window is milliseconds or "never" ──────────────────────
 picker.implement({
   digest: () => "x",
   actions: { choose: () => "x" },
@@ -82,6 +73,13 @@ picker.implement({
 await ctx.render(pickerImpl, { wrong: true }, { mode: "elicit" });
 
 // ── correct calls, for contrast — these must NOT error ─────────────────
+// no window declared: it defaults to "never", so code written before
+// freshness windows existed still compiles
+picker.implement({
+  digest: () => "x",
+  actions: { choose: () => "x" },
+  queries: { filter: (_a, { props: p, cap }) => cap(p.rows, String) },
+});
 await ctx.render(pickerImpl, props, { mode: "elicit" });
 await ctx.render(cardImpl, props);
 await ctx.render(cardImpl, props, { mode: "display" });

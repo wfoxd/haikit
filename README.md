@@ -78,7 +78,7 @@ Each row is a bug the prototype this was extracted from actually produced.
 ```bash
 npm run build       # compile packages
 npm run typecheck   # packages + examples, server code and browser components
-npm run typetest    # the five guarantees, as real compile errors
+npm run typetest    # the four guarantees, as real compile errors
 npm run smoke       # boots both examples, drives the elicit loop end to end
 npm test            # all three
 ```

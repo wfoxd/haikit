@@ -5,12 +5,11 @@
  * by app code on both sides of the wire. Zero runtime dependencies: schemas are
  * accepted structurally, so zod works but is not required.
  *
- * Five guarantees are enforced here, in the type system:
+ * Four guarantees are enforced here, in the type system:
  *   1. a surface cannot exist without a `digest`
  *   2. a query's return value can only be produced by `cap()`
  *   3. `mode: "elicit"` only accepts a surface declaring a `resolve` action
  *   4. declaring an action is the only way to make it round-trip
- *   5. a surface cannot exist without deciding when its data goes out of date
  */
 
 // ───────────────────────────────────────────────────────── schemas
@@ -157,9 +156,10 @@ export interface SurfaceImplDef<P, A extends ActionMap, Q extends QueryMap> {
   queries: { [K in keyof Q]: (args: Infer<Q[K]["input"]>, ctx: QueryCtx<P>) => Capped };
 
   /**
-   * GUARANTEE 5 — required. How long this surface's data may be acted on, in
-   * milliseconds from when it was rendered, or `"never"` for data that does not
-   * go out of date.
+   * How long this surface's data may be acted on, in milliseconds from when it
+   * was rendered, or `"never"` — the default — for data that does not go out of
+   * date. Set it on any surface showing prices, availability or anything else
+   * that changes: the default is right for greetings and wrong for fares.
    *
    * Once any surface in a conversation is past its window, the conversation is
    * closed: every further request — a click or a typed message — is refused
@@ -167,16 +167,12 @@ export interface SurfaceImplDef<P, A extends ActionMap, Q extends QueryMap> {
    * Answered surfaces count too, because what the user picked from one is still
    * sitting in the model's context at the price it was shown at.
    *
-   * There is deliberately no default. The one a framework would pick, never, is
-   * the silent version of the bug this exists for: a picker left open over a
-   * weekend resolves against last week's prices, and nothing says so.
-   *
    * The window is recorded with each payload as it renders, and a request is
    * held to the stricter of that and whatever the code declares by then. A
    * later deploy can tighten a window; renaming a surface, removing it or
    * relaxing its window never lets data already shown last longer.
    */
-  staleAfterMs: number | "never";
+  staleAfterMs?: number | "never";
 }
 
 export interface Surface<P, A extends ActionMap, Q extends QueryMap> {
@@ -370,10 +366,12 @@ export interface PayloadRecord {
   /**
    * The surface's freshness window when this payload rendered — recorded, not
    * looked up later, because a later deploy may rename or remove the surface or
-   * relax its window. `null` only on payloads written before windows existed.
-   * A store must return exactly what it was given, `"never"` included.
+   * relax its window. `null` or absent only on payloads written before windows
+   * existed, or by a store that does not keep it — both are held to the window
+   * the code declares. A store should return exactly what it was given,
+   * `"never"` included.
    */
-  staleAfterMs: number | "never" | null;
+  staleAfterMs?: number | "never" | null;
 }
 
 // ─────────────────────────────────────────────────── wire protocol

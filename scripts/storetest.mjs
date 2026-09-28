@@ -969,6 +969,12 @@ async function expiryChecks(make) {
       });
   const quick = surface("quick", 40);
   const forever = surface("forever", "never");
+  // declares no window at all, as every surface written before 0.4 does
+  const unset = defineSurface({ name: "unset", version: 1, props: any, actions: {}, queries: {} }).implement({
+    digest: () => "unset",
+    actions: {},
+    queries: {},
+  });
 
   let generations = 0;
   const model = {
@@ -979,7 +985,7 @@ async function expiryChecks(make) {
     },
   };
   const store = make();
-  const hai = createHai({ model, store, tools: [], surfaces: [quick, forever], system: "x" });
+  const hai = createHai({ model, store, tools: [], surfaces: [quick, forever, unset], system: "x" });
 
   /** A saved conversation that rendered these surfaces, each recording its
    *  window as the runtime does. `parked` leaves the first awaiting an answer;
@@ -1090,14 +1096,14 @@ async function expiryChecks(make) {
   // It may tighten a window; it may not relax one for data already shown.
   const deploy = (...surfaces) => createHai({ model, store, tools: [], surfaces, system: "x" });
 
-  {
-    // the runtime records the window as it renders
+  /** Render `impl` through a real tool call; what was stored and sent. */
+  async function render(impl) {
     const show = defineTool({
       name: "show",
-      description: "render quick",
+      description: "render it",
       input: any,
       inputJsonSchema: { type: "object", properties: {} },
-      run: (_input, ctx) => ctx.render(quick, {}),
+      run: (_input, ctx) => ctx.render(impl, {}),
     });
     let step = 0;
     const rendering = createHai({
@@ -1111,17 +1117,33 @@ async function expiryChecks(make) {
       },
       store,
       tools: [show],
-      surfaces: [quick, forever],
+      surfaces: [quick, forever, unset],
       system: "x",
     });
     const c = await store.loadConversation(undefined);
-    await rendering.send(c, "show me", () => {});
+    const events = [];
+    await rendering.send(c, "show me", (e) => events.push(e));
     c.leaseUntil = null;
     await store.saveConversation(c);
+    const open = events.find((e) => e.type === "ui_open");
+    return { id: c.id, stored: (await store.getPayload(c.handles[0], c.id))?.staleAfterMs, sent: open && "staleAfterMs" in open ? open.staleAfterMs : "absent" };
+  }
+
+  {
+    const r = await render(quick);
+    check("a render records the window it was shown under, and sends it", r.stored === 40 && r.sent === 40);
+  }
+
+  // no window declared means "never": nothing breaks for code written before
+  {
+    const r = await render(unset);
+    await later();
+    const after = await request(r.id, say("still there?"));
     check(
-      "a render records the window it was shown under",
-      (await store.getPayload(c.handles[0], c.id))?.staleAfterMs === 40,
+      'a surface with no window records "never" and sends none',
+      r.stored === "never" && r.sent === "absent",
     );
+    check("…and never closes its conversation", !after.expired && after.modelCalls === 1);
   }
 
   {
@@ -1269,10 +1291,13 @@ async function windowChecks() {
     }
   };
   check(
-    "a missing, zero, negative, NaN, infinite or misspelled window is refused",
-    [undefined, 0, -1, NaN, Infinity, "15m", "Never"].every(refused),
+    "a zero, negative, NaN, infinite or misspelled window is refused",
+    [0, -1, NaN, Infinity, "15m", "Never"].every(refused),
   );
-  check('a positive window and "never" are accepted', !refused(1) && !refused("never"));
+  check(
+    'a positive window, "never", and no window at all are accepted',
+    !refused(1) && !refused("never") && !refused(undefined),
+  );
 }
 
 // Only when invoked directly. A Postgres adapter imports `conform` to run this
