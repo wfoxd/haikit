@@ -110,7 +110,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): StoreAdapter {
     async putPayload(record, leaseToken) {
       fence(record.conversationId, leaseToken);
       const handle = `ui_${String(++handleSeq).padStart(2, "0")}`;
-      payloads.set(handle, copy({ ...record, handle, createdAt: Date.now() }));
+      payloads.set(handle, copy({ ...record, handle, createdAt: Date.now(), staleAfterMs: record.staleAfterMs ?? null }));
       return handle;
     },
 

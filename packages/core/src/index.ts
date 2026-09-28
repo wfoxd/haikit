@@ -154,6 +154,25 @@ export interface SurfaceImplDef<P, A extends ActionMap, Q extends QueryMap> {
 
   /** GUARANTEE 2 — must return `Capped`, i.e. must call `ctx.cap`. */
   queries: { [K in keyof Q]: (args: Infer<Q[K]["input"]>, ctx: QueryCtx<P>) => Capped };
+
+  /**
+   * How long this surface's data may be acted on, in milliseconds from when it
+   * was rendered, or `"never"` — the default — for data that does not go out of
+   * date. Set it on any surface showing prices, availability or anything else
+   * that changes: the default is right for greetings and wrong for fares.
+   *
+   * Once any surface in a conversation is past its window, the conversation is
+   * closed: every further request — a click or a typed message — is refused
+   * before the model runs, and the user is asked to start a new conversation.
+   * Answered surfaces count too, because what the user picked from one is still
+   * sitting in the model's context at the price it was shown at.
+   *
+   * The window is recorded with each payload as it renders, and a request is
+   * held to the stricter of that and whatever the code declares by then. A
+   * later deploy can tighten a window; renaming a surface, removing it or
+   * relaxing its window never lets data already shown last longer.
+   */
+  staleAfterMs?: number | "never";
 }
 
 export interface Surface<P, A extends ActionMap, Q extends QueryMap> {
@@ -344,6 +363,15 @@ export interface PayloadRecord {
   props: unknown;
   mode: "display" | "elicit";
   createdAt: number;
+  /**
+   * The surface's freshness window when this payload rendered — recorded, not
+   * looked up later, because a later deploy may rename or remove the surface or
+   * relax its window. `null` or absent only on payloads written before windows
+   * existed, or by a store that does not keep it — both are held to the window
+   * the code declares. A store should return exactly what it was given,
+   * `"never"` included.
+   */
+  staleAfterMs?: number | "never" | null;
 }
 
 // ─────────────────────────────────────────────────── wire protocol
@@ -359,12 +387,27 @@ export type WireEvent =
   | { type: "block_start"; block: Block }
   | { type: "text_delta"; id: string; text: string }
   | { type: "block_update"; id: string; status: string; ms: number; result: string }
-  | { type: "ui_open"; handle: string; toolId: string; component: string; version: number; mode: string }
+  | {
+      type: "ui_open";
+      handle: string;
+      toolId: string;
+      component: string;
+      version: number;
+      mode: string;
+      /** The surface's freshness window. Absent when it never goes out of date. */
+      staleAfterMs?: number;
+    }
   | { type: "ui_props"; handle: string; props: unknown }
   | { type: "ui_state"; handle: string; state: "frozen"; selection?: unknown }
   | { type: "status"; status: ConversationStatus }
   | { type: "context"; messages: Message[]; modelTokens: number; uiTokens: number }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  /**
+   * The conversation is past a surface's freshness window, so this request was
+   * refused before the model ran and nothing was recorded. Final: every later
+   * request on this conversation gets the same answer.
+   */
+  | { type: "expired"; message: string };
 
 export type Emit = (event: WireEvent) => void;
 
@@ -506,6 +549,10 @@ export interface StoreAdapter {
    * That shape rejects an unknown conversation and a null token for free, and a
    * store must too — otherwise a caller holding no lease at all can create rows
    * that no conversation owns.
+   *
+   * Every field comes back exactly as given — `staleAfterMs` included, as a
+   * number or the string `"never"`. It is what holds data to the window it was
+   * shown under after a deploy changes the surface.
    *
    * A row written *before* the lease was lost still outlives its turn — the
    * conversation save is rejected but the row is not, so the winning history

@@ -19,9 +19,18 @@ export function createChat({ endpoint = "/hai", registry }) {
     model: "",
     status: "idle",
     blocks: [],
-    /** handle -> { component, version, mode, props, state, instance } */
+    /** handle -> { component, version, mode, props, state, instance, element } */
     surfaces: new Map(),
     context: { messages: [], modelTokens: 0, uiTokens: 0 },
+    /**
+     * When this conversation goes out of date, by this browser's clock: the
+     * earliest freshness window among its surfaces, each counted from when the
+     * request that rendered it was sent — so never later than the server's own
+     * deadline. Null while nothing it shows can go stale.
+     */
+    expiresAt: null,
+    /** The notice, once the conversation is out of date. Final until `reset()`. */
+    expired: null,
   };
 
   const notify = (event) => listeners.forEach((fn) => fn(state, event));
@@ -43,25 +52,60 @@ export function createChat({ endpoint = "/hai", registry }) {
   let busy = 0;
   let chain = Promise.resolve();
 
+  /**
+   * Bumped by `reset()`. A request belongs to the conversation that was current
+   * when it was made, and carries that conversation's abort signal: reset()
+   * aborts it, so one still queued is refused by fetch before anything is sent,
+   * and one already open stops. Waiting instead would queue the new
+   * conversation's first request behind a stream that can stay open for a whole
+   * model turn. Events already read are dropped too, so a stray `hello` cannot
+   * pull this client back into the conversation it just left.
+   */
+  let generation = 0;
+  let aborter = new AbortController();
+
+  /**
+   * When the request now streaming was sent. The server stamps every surface
+   * it renders after that request arrived, so a freshness deadline counted from
+   * here is never later than the server's — however long the model takes, or
+   * a buffering proxy holds the stream back.
+   */
+  let sentAt = 0;
+
   // ── transport: SSE over POST (EventSource cannot POST) ──────────────
   function enqueue(path, body) {
+    const gen = generation;
+    const { signal } = aborter;
+    // set by pump once the server has answered this request itself
+    const outcome = { sent: false };
     busy++;
-    const run = chain.then(() => pump(path, body)).finally(() => {
-      busy--;
-    });
+    const run = chain
+      .then(() => pump(path, body, gen, signal, outcome))
+      .catch((err) => {
+        // aborted by reset(): it belonged to a conversation the user has left
+        if (gen === generation) throw err;
+      })
+      .finally(() => {
+        busy--;
+      });
     chain = run.catch(() => {});
-    return run;
+    return run.then(() => outcome.sent);
   }
 
-  const post = (path, body) =>
+  const post = (path, body, signal) =>
     fetch(endpoint + path, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ conversationId: state.conversationId, ...body }),
+      signal,
     });
 
-  async function pump(path, body) {
-    let res = await post(path, body);
+  async function pump(path, body, gen, signal, outcome) {
+    // Checked again here, not only when queued: a long turn ahead of this
+    // request can run past the deadline while it waits.
+    if (closed()) return;
+    sentAt = Date.now();
+    let res = await post(path, body, signal);
 
     // 409 means someone else holds this conversation's turn. Almost always that
     // is the previous request's own tail, milliseconds from finishing — but it
@@ -69,13 +113,21 @@ export function createChat({ endpoint = "/hai", registry }) {
     // retry covers the first and gives up honestly on the second.
     if (res.status === 409) {
       await new Promise((r) => setTimeout(r, 150));
-      res = await post(path, body);
+      // the deadline can pass during the wait, like any other queued request
+      if (closed()) return;
+      res = await post(path, body, signal); // rejects at once if reset() aborted it meanwhile
     }
+    // Anything but a second 409 means the server took the request up itself —
+    // even an error — unless the stream says `expired` below. A 409 means it
+    // turned the message away unread.
+    outcome.sent = res.status !== 409;
 
     // A non-SSE response carries no `data:` frames, so parsing it as a stream
     // would fail silently and the UI would just sit there.
     if (!res.ok) {
       const detail = await res.json().catch(() => ({}));
+      // an abort during that read is swallowed by the catch, so check here
+      if (gen !== generation) return;
       apply({
         type: "error",
         message:
@@ -93,10 +145,19 @@ export function createChat({ endpoint = "/hai", registry }) {
       buffer += value;
       let i;
       while ((i = buffer.indexOf("\n\n")) >= 0) {
+        // Per frame, not per chunk: a subscriber may call reset() from inside
+        // apply(), and the rest of this chunk belongs to the old conversation.
+        // The abort stops later reads; it cannot recall what is already here.
+        if (gen !== generation) return;
         const frame = buffer.slice(0, i);
         buffer = buffer.slice(i + 2);
         const line = frame.split("\n").find((l) => l.startsWith("data: "));
-        if (line) apply(JSON.parse(line.slice(6)));
+        if (!line) continue;
+        const event = JSON.parse(line.slice(6));
+        // refused inside a 200: the server recorded nothing, so it did not
+        // take the message, whatever the status said
+        if (event.type === "expired") outcome.sent = false;
+        apply(event);
       }
     }
   }
@@ -133,8 +194,17 @@ export function createChat({ endpoint = "/hai", registry }) {
           state: "live",
           props: null,
           instance: null,
+          element: null,
         });
         state.blocks.push({ kind: "ui", id: `ui:${event.handle}`, handle: event.handle, toolId: event.toolId });
+        if (typeof event.staleAfterMs === "number") {
+          const at = sentAt + event.staleAfterMs;
+          if (state.expiresAt === null || at < state.expiresAt) {
+            state.expiresAt = at;
+            closingWindow = event.staleAfterMs;
+            schedule();
+          }
+        }
         break;
 
       case "ui_props": {
@@ -164,8 +234,60 @@ export function createChat({ endpoint = "/hai", registry }) {
         state.blocks.push({ kind: "error", id: `e${state.blocks.length}`, message: event.message });
         state.status = "idle";
         break;
+
+      // The local timer and the server can both report this; once is enough.
+      case "expired":
+        if (state.expired) return;
+        state.expired = event.message;
+        state.status = "idle";
+        clearTimeout(timer);
+        state.blocks.push({ kind: "expired", id: `x${state.blocks.length}`, message: event.message });
+        for (const surface of state.surfaces.values()) seal(surface);
+        break;
     }
     notify(event);
+  }
+
+  // ── expiry ─────────────────────────────────────────────────────────
+  // The server refuses every request on an out-of-date conversation. Knowing
+  // the deadline here too means a tab left open greys out on time, rather than
+  // looking live until a click comes back refused.
+
+  let timer = null;
+  let closingWindow = 0;
+
+  const outOfDate = () => state.expiresAt !== null && Date.now() >= state.expiresAt;
+
+  const expireHere = () =>
+    apply({
+      type: "expired",
+      message:
+        `This conversation is out of date — results shown here were only valid for ` +
+        `${duration(closingWindow)}. Start a new conversation for current results.`,
+    });
+
+  // One timer, for the earliest deadline. setTimeout fires at once for delays
+  // past about 24.8 days, so a long wait is taken in steps.
+  function schedule() {
+    clearTimeout(timer);
+    if (state.expiresAt === null || state.expired) return;
+    const wait = Math.min(Math.max(state.expiresAt - Date.now(), 0), 2_147_483_647);
+    timer = setTimeout(() => (outOfDate() ? expireHere() : schedule()), wait);
+  }
+
+  /** Checked against the clock as well as the flag: a laptop that slept
+   *  through the deadline may not have run the timer yet. */
+  function closed() {
+    if (!state.expired && outOfDate()) expireHere();
+    return state.expired !== null;
+  }
+
+  /** Nothing inside an out-of-date surface may reach the server again. */
+  function seal(surface) {
+    if (!surface.element) return;
+    surface.element.inert = true;
+    surface.element.dataset.expired = "";
+    surface.instance?.expire?.();
   }
 
   /**
@@ -184,6 +306,7 @@ export function createChat({ endpoint = "/hai", registry }) {
     }
 
     element.replaceChildren();
+    surface.element = element;
     surface.instance = definition.mount(element, surface.props, {
       handle,
       mode: surface.mode,
@@ -192,25 +315,52 @@ export function createChat({ endpoint = "/hai", registry }) {
       // name declared in the contract — never a tool, never a handler.
       send: (action, value) => interact(handle, action, value),
     });
+    if (state.expired) seal(surface);
     return surface.instance;
   }
 
-  // A message is queued, never dropped. mountChat has already cleared the
-  // textarea by the time this runs, so refusing a send here does not decline
-  // it — it deletes what the user typed. That was true under the old
-  // `status === "streaming"` gate too, via the Enter key, which ignores the
-  // disabled send button.
+  // A message is queued, never refused for being busy. It resolves to whether
+  // the server took it: false if the conversation went out of date first —
+  // at the call, or while it waited behind a long turn — if reset() started
+  // a new one before its turn, or if the server was still busy after the
+  // retry. A caller that cleared its input can then give the text back. The
+  // out-of-date refusal at the call happens before the first await, so such a
+  // caller can also check `state.expired` straight after calling and never
+  // clear the input at all.
   async function send(text) {
-    if (!text.trim()) return;
-    await enqueue("/chat", { message: text });
+    if (!text.trim() || closed()) return false;
+    return enqueue("/chat", { message: text });
   }
 
   // A click carries nothing the user authored, and stacking them is worse than
   // dropping them: a double-click on a picker row would resolve it and then
-  // queue a second resolution into "component is frozen".
+  // queue a second resolution into "component is frozen". The deadline is
+  // checked first, so a click that cannot be sent still closes a conversation
+  // whose timer slept through its deadline.
   async function interact(handle, action, value) {
-    if (busy) return;
+    if (closed() || busy) return;
     await enqueue("/interact", { handle, action, value });
+  }
+
+  /**
+   * Start over. The next send begins a new conversation. Anything queued for
+   * the old one is never sent, and anything still open is aborted.
+   */
+  function reset() {
+    generation++;
+    aborter.abort();
+    aborter = new AbortController();
+    clearTimeout(timer);
+    Object.assign(state, {
+      conversationId: null,
+      status: "idle",
+      blocks: [],
+      context: { messages: [], modelTokens: 0, uiTokens: 0 },
+      expiresAt: null,
+      expired: null,
+    });
+    state.surfaces.clear();
+    notify({ type: "reset" });
   }
 
   return {
@@ -218,9 +368,27 @@ export function createChat({ endpoint = "/hai", registry }) {
     send,
     interact,
     mount,
+    reset,
     subscribe(fn) {
       listeners.add(fn);
       return () => listeners.delete(fn);
     },
   };
+}
+
+/** "2 hours", "15 minutes" — for a sentence a person reads. */
+function duration(ms) {
+  const units = [
+    [86_400_000, "day"],
+    [3_600_000, "hour"],
+    [60_000, "minute"],
+    [1_000, "second"],
+  ];
+  for (const [size, name] of units) {
+    if (ms >= size) {
+      const n = Math.floor(ms / size);
+      return `${n} ${name}${n === 1 ? "" : "s"}`;
+    }
+  }
+  return "under a second";
 }

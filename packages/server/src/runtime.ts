@@ -30,7 +30,10 @@ export class Hai {
 
   constructor(config: HaiConfig) {
     this.config = config;
-    for (const s of config.surfaces) this.surfaces.set(s.surface.name, s);
+    for (const s of config.surfaces) {
+      checkWindow(s);
+      this.surfaces.set(s.surface.name, s);
+    }
     for (const t of config.tools) this.tools.set(t.name, t);
     // query_ui is DERIVED, never authored. It cannot drift from the surfaces
     // that actually exist, and it always exists.
@@ -127,6 +130,8 @@ export class Hai {
   // ─────────────────────────────────────────────────── public API
 
   async send(conversation: Conversation, text: string, emit: Emit): Promise<void> {
+    if (await this.refuseIfExpired(conversation, emit)) return;
+
     // The user typed while a tool was parked. Every tool_use in a turn must
     // receive a tool_result, so close the pending one out honestly first.
     if (conversation.status === "awaiting" && conversation.pending) {
@@ -159,6 +164,8 @@ export class Hai {
     input: { handle: string; action: string; value: unknown },
     emit: Emit,
   ): Promise<void> {
+    if (await this.refuseIfExpired(conversation, emit)) return;
+
     // The payload row carries a conversation id, but that alone is not enough.
     // A turn that rendered a surface and was then overtaken leaves a row behind:
     // its conversation save is rejected, so the winning history never records
@@ -216,6 +223,65 @@ export class Hai {
     emit({ type: "block_start", block: { kind: "interaction", id: this.nid("b"), handle: input.handle, label } });
     conversation.messages.push({ role: "user", content: `[UI interaction] ${label}` });
     return this.runTurn(conversation, emit);
+  }
+
+  /**
+   * Refuse any request on a conversation that has outlived one of its surfaces.
+   *
+   * Runs first, before anything is changed, so a refused request records
+   * nothing and costs no model call — the save that follows only releases the
+   * lease. Every handle in the surviving history counts, answered ones
+   * included: what the user picked from a surface is still in the model's
+   * context at the price it was shown at.
+   *
+   * A payload held to a window whose age cannot be computed counts as expired.
+   * A store returning a bad `createdAt` has to fail closed, not quietly make
+   * every surface fresh forever. A `"never"` window needs no age, so its
+   * timestamp is not consulted — the conformance suite is what holds a store
+   * to returning good ones. A payload whose row is gone counts as expired too:
+   * nothing deletes a payload the history still references, so a missing one
+   * is lost data, and lost data proves nothing is fresh.
+   */
+  private async refuseIfExpired(conversation: Conversation, emit: Emit): Promise<boolean> {
+    if (!conversation.handles.length) return false;
+    const now = Date.now();
+    const records = await this.config.store.getPayloads(conversation.handles, conversation.id);
+
+    // the surface that went out of date first is the one that closed it
+    let first: { expiredAt: number; age: number; window: number | undefined } | null = null;
+
+    // getPayloads omits handles it cannot find, and the loop below only sees
+    // what came back — so a missing row has to be caught here
+    const found = new Set(records.map((r) => r.handle));
+    if (conversation.handles.some((h) => !found.has(h))) {
+      first = { expiredAt: Number.NaN, age: Number.NaN, window: undefined };
+    }
+
+    for (const record of records) {
+      // a surface the code no longer registers has no current window at all,
+      // which is not the same as one registered without a window ("never")
+      const impl = this.surfaces.get(record.component);
+      const window = strictest(record.staleAfterMs, impl ? windowOf(impl) : undefined);
+      if (window === "never") continue;
+      // A timestamp that is not a finite number cannot prove anything is fresh:
+      // Infinity would compare fresh forever, and a bigint would throw on the
+      // arithmetic. Replace it before doing any, so each counts as expired —
+      // and so does a payload whose window is known nowhere.
+      const createdAt = Number.isFinite(record.createdAt) ? record.createdAt : Number.NaN;
+      const expiredAt = createdAt + (window ?? Number.NaN);
+      if (expiredAt > now) continue;
+      if (!first || expiredAt < first.expiredAt) first = { expiredAt, age: now - createdAt, window };
+    }
+    if (!first) return false;
+
+    const shown = Number.isFinite(first.age) ? `results shown ${duration(first.age)} ago` : "results shown here";
+    const verdict =
+      first.window === undefined ? "can no longer be checked" : `were only valid for ${duration(first.window)}`;
+    emit({
+      type: "expired",
+      message: `This conversation is out of date — ${shown} ${verdict}. Start a new conversation for current results.`,
+    });
+    return true;
   }
 
   // ──────────────────────────────────────────────── the agent loop
@@ -311,6 +377,7 @@ export class Hai {
 
         // Validate before storing: props may originate outside this process.
         const parsed = impl.surface.props.parse(props);
+        const window = windowOf(impl);
 
         const handle = await this.config.store.putPayload(
           {
@@ -319,6 +386,9 @@ export class Hai {
             version: impl.surface.version,
             props: parsed,
             mode: surfaceMode,
+            // recorded now, so no later deploy can relax the window this data
+            // was shown under — see the stricter-of in refuseIfExpired
+            staleAfterMs: window,
           },
           conversation.leaseToken,
         );
@@ -334,6 +404,9 @@ export class Hai {
           component: impl.surface.name,
           version: impl.surface.version,
           mode: surfaceMode,
+          // so a browser left open can close the conversation on time, rather
+          // than only finding out when its next request is refused
+          ...(window === "never" ? {} : { staleAfterMs: window }),
         });
         emit({ type: "ui_props", handle, props: parsed });
 
@@ -374,6 +447,64 @@ export class Hai {
       uiTokens,
     });
   }
+}
+
+/**
+ * A surface's declared window; one that declares none never goes stale. Only a
+ * missing field defaults — `null` is not "no window" but an invalid one, and
+ * has to reach checkWindow to be refused like any other.
+ */
+const windowOf = (s: AnySurfaceImpl): number | "never" =>
+  s.impl.staleAfterMs === undefined ? "never" : s.impl.staleAfterMs;
+
+/**
+ * The type checked again at runtime, because JavaScript callers never see it.
+ * Zero or less would expire every surface the moment it rendered; NaN never
+ * compares as expired, and Infinity means "never" without saying so. Leaving
+ * the window out is fine: that is "never".
+ */
+function checkWindow(s: AnySurfaceImpl) {
+  const window: unknown = windowOf(s);
+  if (window === "never" || (typeof window === "number" && Number.isFinite(window) && window > 0)) return;
+  const got = typeof window === "string" ? JSON.stringify(window) : String(window);
+  throw new RangeError(
+    `surface ${s.surface.name}: staleAfterMs must be a positive, finite number of milliseconds, ` +
+      `or "never" (got ${got})`,
+  );
+}
+
+/**
+ * The window a payload is held to: the stricter of the one recorded when it
+ * rendered and the one the code declares now. Recorded is what the data was
+ * shown under, and survives the surface being renamed or removed; current
+ * catches a window tightened since. Neither may relax the other. Undefined
+ * when neither is known — an old payload whose surface is gone — which the
+ * caller counts as expired.
+ */
+function strictest(recorded: unknown, current: unknown): number | "never" | undefined {
+  const valid = (w: unknown): w is number | "never" =>
+    w === "never" || (typeof w === "number" && Number.isFinite(w) && w > 0);
+  const known = [recorded, current].filter(valid);
+  if (!known.length) return undefined;
+  const finite = known.filter((w): w is number => w !== "never");
+  return finite.length ? Math.min(...finite) : "never";
+}
+
+/** "2 hours", "15 minutes" — for a sentence a person reads. */
+function duration(ms: number): string {
+  const units: [number, string][] = [
+    [86_400_000, "day"],
+    [3_600_000, "hour"],
+    [60_000, "minute"],
+    [1_000, "second"],
+  ];
+  for (const [size, name] of units) {
+    if (ms >= size) {
+      const n = Math.floor(ms / size);
+      return `${n} ${name}${n === 1 ? "" : "s"}`;
+    }
+  }
+  return "under a second";
 }
 
 /** Find the array prop a surface's queries operate over (for cap totals). */

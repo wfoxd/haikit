@@ -22,6 +22,7 @@ const str: Schema<string> = { parse: (v) => v as string };
 picker.implement({
   actions: { choose: () => "x" },
   queries: { filter: (_a, { props: p, cap }) => cap(p.rows, String) },
+  staleAfterMs: "never",
 });
 
 // ── GUARANTEE 2: a query must return Capped, i.e. must call cap() ──────
@@ -32,6 +33,7 @@ picker.implement({
     // @ts-expect-error  a raw array is not assignable to Capped
     filter: (_args, { props: p }) => p.rows,
   },
+  staleAfterMs: "never",
 });
 
 picker.implement({
@@ -41,6 +43,7 @@ picker.implement({
     // @ts-expect-error  a hand-built object literal cannot satisfy Capped
     filter: () => ({ text: "3 of 47", shown: 3, total: 47 }),
   },
+  staleAfterMs: "never",
 });
 
 // ── GUARANTEE 3: elicit requires a declared resolve action ─────────────
@@ -53,6 +56,16 @@ picker.implement({
   // @ts-expect-error  'deleteEverything' is not declared in the contract
   actions: { choose: () => "x", deleteEverything: () => "boom" },
   queries: { filter: (_a, { props: p, cap }) => cap(p.rows, String) },
+  staleAfterMs: "never",
+});
+
+// ── a freshness window is milliseconds or "never" ──────────────────────
+picker.implement({
+  digest: () => "x",
+  actions: { choose: () => "x" },
+  queries: { filter: (_a, { props: p, cap }) => cap(p.rows, String) },
+  // @ts-expect-error  a window is milliseconds or "never" — not a duration string
+  staleAfterMs: "15m",
 });
 
 // ── props are typed from the contract ──────────────────────────────────
@@ -60,6 +73,13 @@ picker.implement({
 await ctx.render(pickerImpl, { wrong: true }, { mode: "elicit" });
 
 // ── correct calls, for contrast — these must NOT error ─────────────────
+// no window declared: it defaults to "never", so code written before
+// freshness windows existed still compiles
+picker.implement({
+  digest: () => "x",
+  actions: { choose: () => "x" },
+  queries: { filter: (_a, { props: p, cap }) => cap(p.rows, String) },
+});
 await ctx.render(pickerImpl, props, { mode: "elicit" });
 await ctx.render(cardImpl, props);
 await ctx.render(cardImpl, props, { mode: "display" });

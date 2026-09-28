@@ -29,6 +29,10 @@ Enforced in the type system, and asserted by `test/types/guarantees.ts`:
 | `mode: "elicit"` needs a `resolve` action | otherwise the call does not typecheck |
 | an undeclared action does not exist | the contract *is* the allowlist |
 
+A surface can also declare `staleAfterMs`, how long its data may be acted on:
+milliseconds, or `"never"`, which is the default. Once any surface in a
+conversation is past its window, the conversation closes.
+
 `npm run typetest` at the repo root compiles those tests twice — once with their
 `@ts-expect-error` directives (must be clean) and once stripped (every marked
 line must error). A guarantee that silently stops working fails CI.

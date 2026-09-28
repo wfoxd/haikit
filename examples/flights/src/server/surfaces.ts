@@ -82,6 +82,11 @@ export const flightTableServer = flightTable.implement({
       return cap(rows.slice(0, 1), fmt);
     },
   },
+
+  // Fares are typically held for about this long. Past it, the prices in this
+  // table — and the one the user picked from it — may no longer exist, so the
+  // conversation closes rather than book against them.
+  staleAfterMs: 15 * 60_000,
 });
 
 export const seatMapServer = seatMap.implement({
@@ -106,4 +111,7 @@ export const seatMapServer = seatMap.implement({
   },
 
   queries: {},
+
+  // Seats go faster than fares.
+  staleAfterMs: 5 * 60_000,
 });

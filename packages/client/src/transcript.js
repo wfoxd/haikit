@@ -46,6 +46,15 @@ function renderBlock(block, chat) {
     case "error":
       return h("div", "hai-block hai-error", `error: ${block.message}`);
 
+    // The conversation is closed, so the notice carries the only way forward.
+    case "expired": {
+      const el = h("div", "hai-block hai-expired");
+      const again = h("button", "hai-new", "Start a new conversation");
+      again.onclick = () => chat.reset();
+      el.append(h("div", "hai-body", block.message), again);
+      return el;
+    }
+
     // Provenance chrome. The tool row and its surface are one visual unit:
     // what produced this, with what arguments, and what the model got back.
     case "tool": {

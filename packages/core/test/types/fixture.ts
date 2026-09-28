@@ -39,10 +39,12 @@ export const cardImpl = card.implement({
   digest: () => "card",
   actions: { note: () => "noted" },
   queries: {},
+  staleAfterMs: "never",
 });
 
 export const pickerImpl = picker.implement({
   digest: () => "picker",
   actions: { choose: (id) => `chose ${id}` },
   queries: { filter: (_args, { props, cap }) => cap(props.rows, (r) => r.label) },
+  staleAfterMs: 60_000,
 });

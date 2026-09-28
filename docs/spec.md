@@ -142,9 +142,9 @@ Every item below is a bug the prototype actually produced. A framework earns its
 | A deploy mid-turn strands the conversation forever | Heartbeated turn leases; expiry triggers rollback to the last committed boundary. |
 | Shipping a component bricks week-old conversations | Surfaces carry a `version`; mismatches render a placeholder, not a crash. |
 
-## Six packages
+## Five packages
 
-Core is isomorphic and depends only on Zod, because both halves import it. Adapters implement interfaces declared in core and never import the runtime, which is what keeps them swappable.
+Core is isomorphic and has no runtime dependencies, because both halves import it — schemas are accepted structurally, so Zod is the app's choice. Adapters implement interfaces declared in core and never import the runtime, which is what keeps them swappable.
 
 ```
                   @haikit/core
@@ -155,7 +155,7 @@ Core is isomorphic and depends only on Zod, because both halves import it. Adapt
         │            │              │
 @haikit/server  @haikit/client   adapters
 agent loop      createChat()     @haikit/anthropic
-state machine   mountChat()      @haikit/store-pg
+state machine   mountChat()      @haikit/postgres
 turn leases     renderTranscript
 routes + SSE
 handle store
@@ -182,10 +182,11 @@ Exported over MCP, tools degrade gracefully: a host without the registry gets th
 
 - Built Working prototype — dual channel, elicit park/resume, `query_ui` with caps, server-side binding table. Verified end to end in a browser.
 - Built Three security rejections confirmed: unbound element, forged handle, frozen component.
-- Spec `defineSurface` / `defineTool` with the `Capped` and elicit-requires-resolve type machinery.
-- Spec Postgres store, turn leases, the append-only commit invariant, surface versioning.
+- Built `defineSurface` / `defineTool` type machinery — required digest, `Capped`, elicit-requires-resolve, declared actions — each asserted as a compile error by `npm run typetest`.
+- Built Postgres store (`@haikit/postgres`) and fenced turn leases, conformance-tested against a real server.
+- Built Payload staleness. A surface declares `staleAfterMs` (default `"never"`); once any surface passes its window, the conversation closes — every request is refused before the model runs, and the user is offered a new conversation.
+- Spec The append-only commit invariant, surface versioning.
 - Open `ui_patch` for in-place mutation — patching preserves scroll and sort state; re-rendering destroys it.
-- Open Payload staleness. A picker parked for a week shows sold-out flights at last week's prices.
 - Open Consuming third-party MCP servers. Their results are single-channel, so a projection layer is needed or the context budget goes with it.
 
 > **Deliberately refused:** a `render_ui(component, props)` tool letting the model compose interface freely. Tools owning their rendering contract is the constraint that makes the registry typed, reviewable and safe. The moment the model picks components, every guarantee on this page evaporates.

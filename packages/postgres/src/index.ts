@@ -73,12 +73,18 @@ export const schema: readonly string[] = [
      -- never save again, which is what makes an unreferenced row an orphan.
      lease_token     text NOT NULL,
      created_at      timestamptz NOT NULL DEFAULT now(),
+     -- the surface's freshness window when this rendered, in ms; 'Infinity' is
+     -- "never", NULL a payload written before windows existed
+     stale_after_ms  double precision,
      PRIMARY KEY (conversation_id, handle)
    )`,
+  // a table created before freshness windows existed gains the column; its
+  // rows read as unknown and are held to whatever the code declares
+  `ALTER TABLE haikit_payloads ADD COLUMN IF NOT EXISTS stale_after_ms double precision`,
   `CREATE INDEX IF NOT EXISTS haikit_payloads_created_at ON haikit_payloads (created_at)`,
 ];
 
-/** Create the tables if they do not exist. Idempotent. */
+/** Create the tables if they do not exist, and bring existing ones up to date. Idempotent. */
 export async function migrate(db: Queryable): Promise<void> {
   // One statement per call: some drivers (PGlite among them) reject several
   // statements in a single parameterised query.
@@ -94,9 +100,12 @@ const CONVERSATION_COLUMNS = `
   frozen::text AS frozen, pending::text AS pending, lease_token,
   (extract(epoch FROM lease_until) * 1000)::float8 AS lease_until_ms`;
 
+// The window is read as text too: 'Infinity' is how "never" is stored, and
+// drivers need not agree on turning it into a number.
 const PAYLOAD_COLUMNS = `
   handle, conversation_id, component, version, props::text AS props, mode,
-  (extract(epoch FROM created_at) * 1000)::float8 AS created_at_ms`;
+  (extract(epoch FROM created_at) * 1000)::float8 AS created_at_ms,
+  stale_after_ms::text AS stale_after_ms`;
 
 const json = (text: string) => JSON.parse(text);
 
@@ -119,6 +128,8 @@ const toPayload = (row: any): PayloadRecord => ({
   props: json(row.props),
   mode: row.mode,
   createdAt: Number(row.created_at_ms),
+  staleAfterMs:
+    row.stale_after_ms == null ? null : row.stale_after_ms === "Infinity" ? "never" : Number(row.stale_after_ms),
 });
 
 const newToken = () => globalThis.crypto.randomUUID();
@@ -218,11 +229,12 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
             WHERE id = $1::text AND lease_token = $2::text
             RETURNING handle_seq
          )
-         INSERT INTO haikit_payloads (conversation_id, handle, component, version, props, mode, lease_token)
+         INSERT INTO haikit_payloads
+                (conversation_id, handle, component, version, props, mode, lease_token, stale_after_ms)
          SELECT $1::text,
                 -- ui_01 … ui_09, ui_10 … ui_99, ui_100: pad, never truncate
                 'ui_' || CASE WHEN handle_seq < 10 THEN '0' ELSE '' END || handle_seq,
-                $3::text, $4::integer, $5::jsonb, $6::text, $2::text
+                $3::text, $4::integer, $5::jsonb, $6::text, $2::text, $7::float8
            FROM owner
          RETURNING handle`,
         [
@@ -232,6 +244,7 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
           record.version,
           JSON.stringify(record.props),
           record.mode,
+          record.staleAfterMs === "never" ? "Infinity" : (record.staleAfterMs ?? null),
         ],
       );
       if (!rows.length) await stale(record.conversationId);

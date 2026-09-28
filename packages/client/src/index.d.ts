@@ -12,7 +12,7 @@ export type ConversationStatus = "idle" | "streaming" | "awaiting";
 export type SurfaceMode = "display" | "elicit";
 export type SurfaceState = "live" | "frozen";
 
-/** Blocks the server emits, plus the two the client synthesises locally. */
+/** Blocks the server emits, plus the three the client synthesises locally. */
 export type Block =
   | { kind: "user"; id: string; text: string }
   | { kind: "assistant"; id: string; text: string }
@@ -21,7 +21,9 @@ export type Block =
   /** synthesised from `ui_open` — the slot a surface mounts into */
   | { kind: "ui"; id: string; handle: string; toolId: string }
   /** synthesised from `error` */
-  | { kind: "error"; id: string; message: string };
+  | { kind: "error"; id: string; message: string }
+  /** synthesised from `expired` — the conversation is closed; offer `reset()` */
+  | { kind: "expired"; id: string; message: string };
 
 /** The SSE frame shape. Narrow on `type` to get the specific payload. */
 export type WireEvent = { type: string } & Record<string, any>;
@@ -42,9 +44,14 @@ export interface MountCtx {
  * Returned by `mount`. `freeze` is called when the server marks the surface
  * frozen — a resolved elicit turn cannot be replayed, and the component should
  * reflect that.
+ *
+ * `expire` is called when the conversation goes out of date. By then the
+ * runtime has already made the element `inert` and set `data-expired` on it,
+ * so nothing inside can reach the server; this hook is only for looks.
  */
 export interface SurfaceInstance {
   freeze?(selection?: unknown): void;
+  expire?(): void;
 }
 
 /** Your component. `props` is whatever the surface's `props` schema produces. */
@@ -66,6 +73,8 @@ export interface SurfaceRecord {
   state: SurfaceState;
   props: unknown | null;
   instance: SurfaceInstance | null;
+  /** The element it was last mounted into. */
+  element: HTMLElement | null;
 }
 
 export interface ChatState {
@@ -76,15 +85,41 @@ export interface ChatState {
   /** handle → surface record */
   surfaces: Map<string, SurfaceRecord>;
   context: { messages: any[]; modelTokens: number; uiTokens: number };
+  /**
+   * When this conversation goes out of date, in this browser's clock (epoch
+   * ms): the earliest freshness window among its surfaces, each counted from
+   * when the request that rendered it was sent — so never later than the
+   * server's own deadline. Null while nothing it shows can go stale.
+   */
+  expiresAt: number | null;
+  /**
+   * The notice to show once the conversation is out of date, else null. From
+   * then on `send` and `interact` do nothing — the server would refuse them —
+   * until `reset()` starts a new conversation.
+   */
+  expired: string | null;
 }
 
 export interface Chat {
   /** Mutable — read it in a subscriber, do not hold references across events. */
   state: ChatState;
-  send(text: string): Promise<void>;
+  /**
+   * Queue a message. Resolves `true` once the server has taken it, `false` if
+   * it never did: the conversation went out of date first (at the call, or
+   * while it waited behind a long turn), `reset()` started a new conversation
+   * before its turn, or the server was still busy after one retry. A UI that
+   * cleared its input can then put the text back.
+   */
+  send(text: string): Promise<boolean>;
   interact(handle: string, action: string, value: unknown): Promise<void>;
   /** Mounts the surface for `handle` into `element`. Null if props have not arrived. */
   mount(handle: string, element: HTMLElement): SurfaceInstance | null;
+  /**
+   * Start a new conversation on the next send. Anything queued for the old one
+   * is never sent, and a request still open is aborted — the new conversation
+   * never waits behind it. Subscribers are notified with `{ type: "reset" }`.
+   */
+  reset(): void;
   /** Returns an unsubscribe function. */
   subscribe(fn: (state: ChatState, event: WireEvent) => void): () => void;
 }

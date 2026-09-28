@@ -72,6 +72,20 @@ async function adapterChecks(label, db) {
     );
   }
 
+  // a table created before freshness windows existed is upgraded in place
+  {
+    const a = await store.loadConversation(undefined);
+    const h = await store.putPayload({ ...payload(a.id), staleAfterMs: 60_000 }, a.leaseToken);
+    await db.query(`ALTER TABLE haikit_payloads DROP COLUMN stale_after_ms`); // as 0.3 created it
+    await migrate(db);
+    const row = await store.getPayload(h, a.id);
+    const again = await store.putPayload({ ...payload(a.id), staleAfterMs: "never" }, a.leaseToken);
+    check(
+      "migrate() adds the window column to an existing table; its old rows read as unknown",
+      row !== null && row.staleAfterMs === null && (await store.getPayload(again, a.id))?.staleAfterMs === "never",
+    );
+  }
+
   // "no pending turn" is SQL NULL, not the JSON value null
   {
     const a = await store.loadConversation(undefined);
