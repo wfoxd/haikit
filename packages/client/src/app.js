@@ -123,8 +123,11 @@ export function mountChat({
     else {
       renderTranscript(transcript, chat);
       // what the conversation opened with (an init tool's row, a welcome
-      // surface) doesn't replace the suggestions; the user's first message does
-      if (!state.blocks.some((b) => b.kind === "user")) transcript.append(emptyState());
+      // surface) doesn't replace the suggestions; the user engaging does —
+      // a first message, or an answer to something init showed
+      if (!state.blocks.some((b) => b.kind === "user" || b.kind === "interaction")) {
+        transcript.append(emptyState());
+      }
     }
 
     modelEl.textContent = state.model;
