@@ -196,14 +196,18 @@ One wrinkle for `elicit` surfaces: the digest does *not* reach the model at rend
 ### `actions`
 
 ```ts
-actions(value, { props, handle }) => string
+actions(value, { props, handle, conversationId }) => string | Promise<string>
 ```
 
 **→** the `tool_result` that unparks the turn (`resolve`), or a new user message (`inform`)
 
 Runs once per interaction, after `value` is validated against the schema you declared in the contract. The return string has **two audiences**: the model receives it as the answer it was waiting for, and the browser renders it verbatim as the `↳` line in the transcript. It has to read well to a person and be precise for a model at the same time.
 
-Return a string even on failure. `undefined` leaves the parked `tool_use` unanswered, and a conversation in that state can never be sent again.
+It runs only for a click that will be recorded: a `resolve` on the surface the turn is waiting for, or an `inform` while nothing waits. Every other click is refused before your handler sees it, so a handler can write (book the seat, save the choice) and can be `async` to do it. The click is saved before the model runs, so once recorded it can't be answered again.
+
+Return a string even on failure, when it's an outcome the model should hear about, such as `Seat 4A was taken a moment ago.` The click counts and the model can respond. Throw only when the click shouldn't count at all, such as when the database is down. Nothing is recorded, the surface stays live for another try, and the browser shows `action failed: …`. `undefined` leaves the parked `tool_use` unanswered, and a conversation in that state can never be sent again.
+
+One gap remains: a crash between your write and that save. Key what you write on `handle`, which is unique per render (`ON CONFLICT (handle) DO NOTHING`, say), and a retried click can't write twice.
 
 ### `queries`
 
@@ -1056,7 +1060,7 @@ You now have every concept in the framework, in about 150 lines. The next app di
 
   Several server instances can share one database safely: a conversation takes one turn at a time however many processes receive its requests. On another database, implement `StoreAdapter` from `@haikit/core`: five methods, each documented with what it has to guarantee, and `packages/postgres` in the haikit repo is a worked example.
 - **Set real freshness windows.** Step 9 showed what one does. `"never"` is the default and right for greetings; prices and availability need the window their data actually holds for, such as `staleAfterMs: 15 * 60_000` for fares. With your own UI instead of `mountChat`, show `chat.state.expired` and call `chat.reset()` to start over.
-- **Gate the destructive tools.** An approval card is structurally identical to what you built in steps 2–6: a two-button surface with a `resolve` action. Same machinery, no new concepts.
+- **Gate the destructive tools.** An approval card is structurally identical to what you built in steps 2–6: a two-button surface with a `resolve` action. Same machinery, no new concepts, and its handler can do the destructive thing itself: it runs only for the click the turn is waiting for.
 
 ### Start every conversation the same way
 

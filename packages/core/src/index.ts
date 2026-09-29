@@ -134,6 +134,7 @@ export interface DigestCtx {
 export interface ActionCtx<P> {
   props: P;
   handle: string;
+  readonly conversationId: string;
 }
 export interface QueryCtx<P> {
   props: P;
@@ -150,7 +151,18 @@ export interface SurfaceImplDef<P, A extends ActionMap, Q extends QueryMap> {
    */
   digest: (props: P, ctx: DigestCtx) => string;
 
-  actions: { [K in keyof A]: (value: Infer<A[K]["input"]>, ctx: ActionCtx<P>) => string };
+  /**
+   * One handler per declared action. It runs only for a click the runtime
+   * will record: a `resolve` click on the surface the turn is waiting for, or
+   * an `inform` click while nothing is waiting — so it may write, and may be
+   * async. If it throws, the click is refused: nothing is recorded and the
+   * surface stays live, so a handler that writes should undo its own partial
+   * work. Key what it writes on `handle`, unique per render, so a retried
+   * click cannot write twice.
+   */
+  actions: {
+    [K in keyof A]: (value: Infer<A[K]["input"]>, ctx: ActionCtx<P>) => string | Promise<string>;
+  };
 
   /** GUARANTEE 2 — must return `Capped`, i.e. must call `ctx.cap`. */
   queries: { [K in keyof Q]: (args: Infer<Q[K]["input"]>, ctx: QueryCtx<P>) => Capped };
