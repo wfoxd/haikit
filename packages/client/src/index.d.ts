@@ -114,8 +114,9 @@ export interface Chat {
   /**
    * Start the conversation before the user types, so a server with an init
    * tool runs it now and anything it shows is already there. Does nothing once
-   * this chat has a conversation, and a server without an init tool creates
-   * nothing. `mountChat` calls it when it opens and after `reset()`.
+   * the conversation has begun, and a server without an init tool creates
+   * nothing. If init throws, nothing is recorded, so calling it again tries
+   * again. `mountChat` calls it when it opens and after `reset()`.
    */
   start(): Promise<boolean>;
   interact(handle: string, action: string, value: unknown): Promise<void>;
