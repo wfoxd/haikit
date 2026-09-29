@@ -1,5 +1,12 @@
 # @haikit/postgres
 
+## 0.6.0
+
+### Patch Changes
+
+- Updated dependencies [801813d]
+  - @haikit/core@0.6.0
+
 ## 0.5.0
 
 ### Patch Changes
