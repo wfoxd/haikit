@@ -17,6 +17,24 @@ action *means* is resolved server-side from the surface's declared contract. If
 the client could name a tool, a prompt injection inside any tool result would
 become a button wired to it.
 
+**An action's handler runs only for a click the turn can accept**: a
+`resolve` on the surface the turn is waiting for, or an `inform` while nothing
+waits. Any other click is refused before the handler sees it, so a handler can
+write, and can be async to do it. It gets `{ props, handle, conversationId }`.
+If it throws, nothing is recorded and the user can click again. Once it
+succeeds, the click is saved before the model runs, so it can't be answered
+twice.
+
+That makes a handler run at least once per recorded click, not exactly once.
+If saving the click fails after the handler has written (a crash, a newer
+request taking the conversation over, a failed write), nothing is recorded, and
+clicking again runs the handler again, perhaps with a different value. A
+`resolve` is recorded at most once per surface, so a `resolve` handler that
+writes should upsert on `(conversationId, handle)`. Handles are unique only
+within a conversation, and the last attempt is the one recorded. An `inform`
+surface takes any number of clicks, so an `inform` handler that writes needs a
+write that's safe to repeat, or a key of its own.
+
 **`init` runs a tool at the start of every conversation**, before the user
 types anything. The runtime makes the call, not the model, so it can't be
 skipped: the call and its result go into the history as if the model had made

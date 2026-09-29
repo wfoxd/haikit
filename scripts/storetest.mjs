@@ -370,6 +370,7 @@ export async function integration(label, make) {
   await turnAbortChecks(make);
   await expiryChecks(make);
   await initChecks(make);
+  await actionChecks(make);
   return failures;
 }
 
@@ -476,8 +477,10 @@ async function orphanChecks(make) {
 // first half lived on the payload and the second on the conversation, a turn
 // could freeze the payload while it still legitimately held the lease, lose the
 // lease during the model call, and have its save rejected — leaving the winning
-// history awaiting a surface nobody can click again. Checked in both orders:
-// the takeover landing before the freeze, and after it.
+// history awaiting a surface nobody can click again. Both halves now live on
+// the conversation, and a click is saved before the model runs, so a takeover
+// during the model call starts from the answered surface. Checked in both
+// orders: the takeover landing before the freeze, and after it.
 async function strandChecks(make) {
   console.log("\nstranding");
   const { createHai } = await import("../packages/server/dist/index.js");
@@ -514,16 +517,16 @@ async function strandChecks(make) {
     return { id: c.id, handle };
   }
 
-  // ── takeover AFTER the freeze: the freeze was legitimate when it happened
+  // ── takeover AFTER the freeze: the click was saved before the model ran
   {
     const store = make({ leaseMs: 40 });
     const hai = createHai({ model: slowModel, store, tools: [], surfaces: [pickerImpl], system: "x" });
     const { id, handle } = await parked(store);
 
     const a = await store.loadConversation(id);
-    const aTurn = hai.interact(a, { handle, action: "choose", value: "he" }, () => {}); // freezes, then waits on the model
+    const aTurn = hai.interact(a, { handle, action: "choose", value: "he" }, () => {}); // freezes, saves, then waits on the model
     await new Promise((r) => setTimeout(r, 60)); // A's lease has expired mid-call
-    const b = await store.loadConversation(id); // B takes over from pre-A history
+    const b = await store.loadConversation(id); // B takes over from A's saved click
     await aTurn;
 
     let aRejected = false;
@@ -533,8 +536,12 @@ async function strandChecks(make) {
     } catch (err) {
       aRejected = isStaleLease(err);
     }
-    check("the superseded resolution is rejected", aRejected);
-    check("the winning history does not see the lost freeze", !b.frozen.includes(handle));
+    check("the superseded turn's final save is rejected", aRejected);
+    check(
+      "the winning history starts from the click, saved before the model ran",
+      b.frozen.includes(handle) && b.pending === null && b.status === "idle" &&
+        b.messages.at(-1)?.content?.[0]?.type === "tool_result",
+    );
 
     let clicked = "";
     try {
@@ -543,7 +550,7 @@ async function strandChecks(make) {
     } catch (err) {
       clicked = err.message;
     }
-    check("the surviving conversation can still resolve what it awaits", clicked === "resolved");
+    check("…so the surface cannot be answered, and its handler run, twice", clicked === "component is frozen");
   }
 
   // ── takeover BEFORE the write: a superseded holder cannot write at all
@@ -1748,6 +1755,226 @@ async function initChecks(make) {
         return /same name as another tool/.test(err.message);
       }
     })());
+  }
+}
+
+// ── action handlers may be async, and may write ──────────────────────────
+// So a click the runtime refuses up front — not the one the turn is waiting
+// for — never reaches its handler, and an accepted click is saved before the
+// model runs. That makes a handler run at least once per recorded click, not
+// exactly once: if the click's save is refused or fails after the handler has
+// run, nothing is recorded, and clicking again runs it again.
+async function actionChecks(make) {
+  console.log("\naction handlers");
+  const { createHai } = await import("../packages/server/dist/index.js");
+  const { defineSurface, defineTool, resolve, inform, isStaleLease } = await import("../packages/core/dist/index.js");
+  const any = { parse: (v) => v };
+  const store = make({ leaseMs: 40 });
+  const tick = () => new Promise((r) => setTimeout(r, 5));
+
+  let behaviour = "ok"; // what the picker's handler does next: ok | throw | slow
+  const calls = []; // every handler run: { action, value, handle, conversationId }
+  const picker = defineSurface({ name: "seats", version: 1, props: any, actions: { choose: resolve(any) }, queries: {} })
+    .implement({
+      digest: () => "3 seats",
+      actions: {
+        async choose(v, ctx) {
+          calls.push({ action: "choose", value: v, handle: ctx.handle, conversationId: ctx.conversationId });
+          await tick();
+          if (behaviour === "throw") throw new Error("seat taken");
+          if (behaviour === "slow") {
+            await new Promise((r) => setTimeout(r, 70)); // outlives the 40ms lease
+            const winner = await store.loadConversation(ctx.conversationId);
+            winner.leaseUntil = null;
+            await store.saveConversation(winner);
+          }
+          return `Booked seat ${v}.`;
+        },
+      },
+      queries: {},
+    });
+  // shown for display, but it declares a resolve too: nothing ever waits on it
+  const card = defineSurface({ name: "trip", version: 1, props: any, actions: { hold: resolve(any), note: inform(any) }, queries: {} })
+    .implement({
+      digest: () => "trip card",
+      actions: {
+        async hold(v) {
+          calls.push({ action: "hold", value: v });
+          return `Held ${v}.`;
+        },
+        async note(v) {
+          calls.push({ action: "note", value: v });
+          await tick();
+          return `Noted ${v}.`;
+        },
+      },
+      queries: {},
+    });
+  const show = defineTool({
+    name: "show",
+    description: "d",
+    input: any,
+    inputJsonSchema: { type: "object" },
+    run: (i, ctx) => (i.kind === "seats" ? ctx.render(picker, {}, { mode: "elicit" }) : ctx.render(card, {})),
+  });
+
+  // the model shows whatever is queued next, one per request, then answers
+  const seen = [];
+  const next = [];
+  const model = {
+    id: "stub",
+    async generate(req) {
+      seen.push(JSON.parse(JSON.stringify(req.messages)));
+      const kind = next.shift();
+      if (kind) return { content: [{ type: "tool_use", id: `tu_${seen.length}`, name: "show", input: { kind } }], stop_reason: "tool_use" };
+      return { content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" };
+    },
+  };
+  const hai = createHai({ model, store, tools: [show], surfaces: [picker, card], system: "x" });
+
+  async function request(id, act) {
+    const c = await store.loadConversation(id);
+    const events = [];
+    let error = null;
+    try {
+      await act(c, (e) => events.push(e));
+    } catch (err) {
+      error = err;
+    }
+    c.leaseUntil = null;
+    // like the route: a save that finds the turn overtaken is its outcome
+    if (!isStaleLease(error)) {
+      try {
+        await store.saveConversation(c);
+      } catch (err) {
+        if (!isStaleLease(err)) throw err;
+        error = err;
+      }
+    }
+    return { c, events, error };
+  }
+  const say = (text) => (c, emit) => hai.send(c, text, emit);
+  const click = (handle, action, value) => (c, emit) => hai.interact(c, { handle, action, value }, emit);
+
+  next.push("trip");
+  const opened = await request(undefined, say("plan my trip"));
+  const id = opened.c.id;
+  const cardHandle = opened.c.handles[0];
+  next.push("seats");
+  const parked = await request(id, say("pick a seat"));
+  const seatHandle = parked.c.handles[1];
+  const before = { messages: parked.c.messages.length, models: seen.length };
+
+  // ── only the click the turn is waiting for reaches a handler
+  {
+    calls.length = 0;
+    const hold = await request(id, click(cardHandle, "hold", "4A"));
+    const note = await request(id, click(cardHandle, "note", "window please"));
+    check(
+      "a resolve on a surface nobody is waiting on is refused before its handler runs",
+      hold.error?.message === "nothing awaiting this handle" && !calls.some((c) => c.action === "hold"),
+    );
+    check(
+      "an inform click while a question waits is refused before its handler runs",
+      note.error?.message === "a question is waiting to be answered first" && !calls.some((c) => c.action === "note"),
+    );
+    check(
+      "…and neither touches the history or the model",
+      note.c.messages.length === before.messages && note.c.pending?.handle === seatHandle && seen.length === before.models,
+    );
+  }
+
+  // ── a handler that throws refuses the click
+  {
+    calls.length = 0;
+    behaviour = "throw";
+    const r = await request(id, click(seatHandle, "choose", "4A"));
+    behaviour = "ok";
+    check(
+      "a handler that throws refuses the click: nothing recorded, the surface still live",
+      r.error?.message === "action failed: seat taken" && calls.length === 1 &&
+        r.c.pending?.handle === seatHandle && !r.c.frozen.includes(seatHandle) &&
+        r.c.messages.length === before.messages && seen.length === before.models &&
+        !r.events.some((e) => e.type === "ui_state" || (e.type === "block_start" && e.block.kind === "interaction")),
+    );
+  }
+
+  // ── an async handler is awaited, and knows where it is
+  {
+    calls.length = 0;
+    const r = await request(id, click(seatHandle, "choose", "4A"));
+    const answer = seen.at(-1)?.at(-1)?.content?.[0];
+    check(
+      "an async handler is awaited: its label answers the question and reaches the transcript",
+      !r.error && answer?.type === "tool_result" && answer.content === "3 seats\nBooked seat 4A." &&
+        r.events.some((e) => e.type === "block_start" && e.block.kind === "interaction" && e.block.label === "Booked seat 4A."),
+    );
+    check(
+      "the handler is told the conversation and the handle",
+      calls.length === 1 && calls[0].conversationId === id && calls[0].handle === seatHandle,
+    );
+  }
+
+  // ── with nothing waiting, an inform click runs its async handler
+  {
+    calls.length = 0;
+    const r = await request(id, click(cardHandle, "note", "window please"));
+    check(
+      "an inform click with nothing waiting runs its handler and tells the model",
+      !r.error && calls.length === 1 && r.c.messages.some((m) => m.content === "[UI interaction] Noted window please."),
+    );
+  }
+
+  // ── the handler can still run twice for one click: once for a click whose
+  // save is refused, and again when the user clicks again
+  next.push("seats");
+  const again = await request(id, say("and the way back"));
+  const back = again.c.handles.at(-1);
+  const models = seen.length;
+
+  // a newer request takes over while the handler runs: the click's save trips,
+  // and the model never runs
+  {
+    calls.length = 0;
+    behaviour = "slow";
+    const r = await request(id, click(back, "choose", "9C"));
+    behaviour = "ok";
+    check(
+      "a click whose request was taken over while its handler ran is refused at its save, before the model runs",
+      isStaleLease(r.error) && calls.length === 1 && seen.length === models,
+    );
+  }
+
+  // a save that simply fails: the route saves again on the way out, to release
+  // the lease, and that save must not record the click the browser saw fail
+  {
+    let failSave = false;
+    const flaky = {
+      ...store,
+      saveConversation(c) {
+        if (!failSave) return store.saveConversation(c);
+        failSave = false;
+        return Promise.reject(new Error("connection reset"));
+      },
+    };
+    const flakyHai = createHai({ model, store: flaky, tools: [show], surfaces: [picker, card], system: "x" });
+    calls.length = 0;
+    failSave = true;
+    const r = await request(id, (c, emit) => flakyHai.interact(c, { handle: back, action: "choose", value: "9C" }, emit));
+    const kept = await store.loadConversation(id);
+    kept.leaseUntil = null;
+    await store.saveConversation(kept);
+    check(
+      "a click whose save fails is undone, so the route's own save cannot record it",
+      r.error?.message === "connection reset" && calls.length === 1 && seen.length === models &&
+        kept.pending?.handle === back && kept.status === "awaiting" && !kept.frozen.includes(back) &&
+        kept.messages.length === again.c.messages.length,
+    );
+    const retry = await request(id, click(back, "choose", "9C"));
+    check(
+      "…and clicking again runs the handler again, and counts",
+      !retry.error && calls.length === 2 && retry.c.frozen.includes(back) && seen.length === models + 1,
+    );
   }
 }
 

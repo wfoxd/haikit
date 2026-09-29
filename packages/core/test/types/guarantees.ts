@@ -68,6 +68,14 @@ picker.implement({
   staleAfterMs: "15m",
 });
 
+// ── an action handler answers with a label, now or later ──────────────
+picker.implement({
+  digest: () => "x",
+  // @ts-expect-error  a handler resolving to a number is not a label
+  actions: { choose: async () => 42 },
+  queries: { filter: (_a, { props: p, cap }) => cap(p.rows, String) },
+});
+
 // ── props are typed from the contract ──────────────────────────────────
 // @ts-expect-error  'rows' is missing
 await ctx.render(pickerImpl, { wrong: true }, { mode: "elicit" });
@@ -78,6 +86,18 @@ await ctx.render(pickerImpl, { wrong: true }, { mode: "elicit" });
 picker.implement({
   digest: () => "x",
   actions: { choose: () => "x" },
+  queries: { filter: (_a, { props: p, cap }) => cap(p.rows, String) },
+});
+// an async handler, which can write before it answers
+picker.implement({
+  digest: () => "x",
+  actions: {
+    choose: async (id, { handle, conversationId }) => {
+      const key: string = `${conversationId}/${handle}`;
+      await Promise.resolve(key);
+      return `chose ${id}`;
+    },
+  },
   queries: { filter: (_a, { props: p, cap }) => cap(p.rows, String) },
 });
 await ctx.render(pickerImpl, props, { mode: "elicit" });

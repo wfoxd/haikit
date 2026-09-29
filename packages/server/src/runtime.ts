@@ -323,34 +323,79 @@ export class Hai {
       throw new Error(`invalid action payload: ${(err as Error).message}`);
     }
 
-    const label = handler(value, { props: record.props, handle: record.handle });
+    // Gated before the handler runs, because a handler may write: only a click
+    // this request is going to record can reach it. A resolve answers the
+    // question the turn is waiting on and nothing else. An inform adds a user
+    // message, and while a turn waits that would land after a tool_use with no
+    // tool_result yet — a history the API refuses.
+    const pending = conversation.pending;
+    if (spec.kind === "resolve" && pending?.handle !== input.handle) {
+      throw new Error("nothing awaiting this handle");
+    }
+    if (spec.kind === "inform" && pending) throw new Error("a question is waiting to be answered first");
 
-    if (spec.kind === "resolve") {
-      if (conversation.pending?.handle !== input.handle) throw new Error("nothing awaiting this handle");
+    // Nothing is recorded until the handler has succeeded, so one that throws
+    // refuses the click and leaves the surface live to be clicked again.
+    let label: string;
+    try {
+      label = await handler(value, { props: record.props, handle: record.handle, conversationId: conversation.id });
+    } catch (err) {
+      throw new Error(`action failed: ${(err as Error).message}`);
+    }
+
+    // what recording the click changes, so a failed save below can undo it
+    const before = {
+      messages: conversation.messages.length,
+      frozen: conversation.frozen.length,
+      status: conversation.status,
+    };
+    if (pending) {
+      // resolve: the gate above let it through only for the waiting surface
       conversation.frozen.push(input.handle);
-      emit({ type: "ui_state", handle: input.handle, state: "frozen", selection: value });
-      emit({ type: "block_start", block: { kind: "interaction", id: this.nid("b"), handle: input.handle, label } });
-
       conversation.messages.push({
         role: "user",
         content: [
-          ...conversation.pending.results,
+          ...pending.results,
           {
             type: "tool_result",
-            tool_use_id: conversation.pending.toolUseId,
+            tool_use_id: pending.toolUseId,
             // The digest rides along: this elicit tool never got a tool_result,
             // so nothing about the search has reached the model yet.
-            content: `${conversation.pending.digest}\n${label}`,
+            content: `${pending.digest}\n${label}`,
           },
         ],
       });
       conversation.pending = null;
-      return this.runTurn(conversation, emit);
+      conversation.status = "idle"; // answered; the save below records that
+    } else {
+      // inform: enriches the conversation without having blocked it
+      conversation.messages.push({ role: "user", content: `[UI interaction] ${label}` });
     }
 
-    // inform: enriches the conversation without having blocked it
+    // Commit the click before the model runs. The handler may have written,
+    // and a model turn can outlast the lease; saved now, the click stays on
+    // record however the turn ends, so it cannot be answered — and its handler
+    // run — a second time. The save is fenced: if a newer request took the
+    // conversation over while the handler ran, this stops here, and the model
+    // never runs.
+    //
+    // If the save fails, the click is undone here too, because the route still
+    // saves on the way out, to release the lease. Left in place, a click the
+    // browser was told had failed could be recorded by that save anyway, with
+    // no model turn and a surface nobody can click again. Undone, the record
+    // matches what the browser shows, and the user can simply click again.
+    try {
+      await this.config.store.saveConversation(conversation);
+    } catch (err) {
+      conversation.messages.length = before.messages;
+      conversation.frozen.length = before.frozen;
+      conversation.pending = pending;
+      conversation.status = before.status;
+      throw err;
+    }
+
+    if (pending) emit({ type: "ui_state", handle: input.handle, state: "frozen", selection: value });
     emit({ type: "block_start", block: { kind: "interaction", id: this.nid("b"), handle: input.handle, label } });
-    conversation.messages.push({ role: "user", content: `[UI interaction] ${label}` });
     return this.runTurn(conversation, emit);
   }
 
