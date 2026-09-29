@@ -333,14 +333,24 @@ export function createChat({ endpoint = "/hai", registry }) {
   }
 
   /**
+   * Whether the server has recorded this conversation's opening — init's call,
+   * or a first message — as its last `context` shows. Having a conversation id
+   * is not enough: `hello` arrives before init runs, and an init that throws
+   * leaves the id behind with an empty history.
+   */
+  const begun = () => state.context.messages.length > 0;
+
+  /**
    * Start the conversation before the user types, so a server with an init
    * tool runs it now and whatever it shows is there first. Does nothing once
-   * this chat has a conversation. A server without an init tool answers with
-   * an empty stream and creates nothing; the first message starts the
-   * conversation, as it always has. Resolves like send().
+   * the conversation has begun. If init throws, the server records nothing,
+   * so calling this again tries again — as the first message would. A server
+   * without an init tool answers with an empty stream and creates nothing;
+   * the first message starts the conversation, as it always has. Resolves
+   * like send().
    */
   async function start() {
-    if (state.conversationId || closed()) return false;
+    if (begun() || closed()) return false;
     return enqueue("/start", {});
   }
 

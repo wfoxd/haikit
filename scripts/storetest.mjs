@@ -610,6 +610,8 @@ async function clientChecks() {
         { type: "ui_props", handle: "ui_01", props: {} },
       ];
       const idle = { type: "status", status: "idle" };
+      // what the server has recorded, sent at the end of every turn it keeps
+      const context = { type: "context", messages: [{ role: "user", content: "x" }], modelTokens: 1, uiTokens: 0 };
 
       if (mode === "fail-slow") {
         // the failure's headers arrive at once, its body 40ms later
@@ -647,8 +649,10 @@ async function clientChecks() {
       if (["expiring", "server-refuses", "split", "slow-render"].includes(mode)) {
         picker(mode === "slow-render" ? 200 : 120).forEach(frame);
       }
-      if (mode === "server-refuses" || mode === "late-refusal") frame({ type: "expired", message: "server says" });
+      const refused = mode === "server-refuses" || mode === "late-refusal";
+      if (refused) frame({ type: "expired", message: "server says" });
       frame(idle);
+      if (!refused) frame(context);
       open--;
       res.end();
     });
@@ -702,7 +706,7 @@ async function clientChecks() {
     );
     received.length = 0;
     const again = await opening.start();
-    check("start() does nothing once there is a conversation", again === false && received.length === 0);
+    check("start() does nothing once the conversation has begun", again === false && received.length === 0);
 
     // ── a tab left open closes the conversation on time, by itself
     const endpoint = "http://127.0.0.1:5378/hai";
@@ -1692,6 +1696,36 @@ async function initChecks(make) {
       "POST /start without an init tool creates no conversation",
       b.status === 200 && b.text === "" && loads === 0,
     );
+
+    // ── the client's start() tries again after init threw, and stops once it ran.
+    // `hello` has already given it a conversation id by then, so the id alone
+    // cannot be what stops it.
+    const { createChat } = await import("../packages/client/src/index.js");
+    const handler = nodeHandler(withInit, "/hai");
+    const server = http.createServer(async (req, res) => {
+      if (!(await handler(req, res))) res.writeHead(404).end();
+    });
+    await new Promise((r) => server.listen(0, "127.0.0.1", r));
+    try {
+      const chat = createChat({ endpoint: `http://127.0.0.1:${server.address().port}/hai`, registry: {} });
+      runs = 0;
+      behaviour = "throw";
+      await chat.start();
+      const opened = chat.state.conversationId;
+      const refused = chat.state.blocks.some((b) => b.kind === "error" && /initialisation failed/.test(b.message));
+      behaviour = "ok";
+      await chat.start();
+      check(
+        "start() after an init that threw tries again, in the same conversation",
+        refused && opened && runs === 2 && chat.state.conversationId === opened &&
+          chat.state.context.messages[0]?.content === "[conversation started]",
+      );
+      loads = 0;
+      const again = await chat.start();
+      check("…and once init has run, start() sends nothing", again === false && loads === 0 && runs === 2);
+    } finally {
+      server.close();
+    }
   }
 
   // ── a name the model could confuse is refused up front
