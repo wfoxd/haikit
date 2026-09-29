@@ -332,6 +332,18 @@ export function createChat({ endpoint = "/hai", registry }) {
     return enqueue("/chat", { message: text });
   }
 
+  /**
+   * Start the conversation before the user types, so a server with an init
+   * tool runs it now and whatever it shows is there first. Does nothing once
+   * this chat has a conversation. A server without an init tool answers with
+   * an empty stream and creates nothing; the first message starts the
+   * conversation, as it always has. Resolves like send().
+   */
+  async function start() {
+    if (state.conversationId || closed()) return false;
+    return enqueue("/start", {});
+  }
+
   // A click carries nothing the user authored, and stacking them is worse than
   // dropping them: a double-click on a picker row would resolve it and then
   // queue a second resolution into "component is frozen". The deadline is
@@ -365,6 +377,7 @@ export function createChat({ endpoint = "/hai", registry }) {
 
   return {
     state,
+    start,
     send,
     interact,
     mount,

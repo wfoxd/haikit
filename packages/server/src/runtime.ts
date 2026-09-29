@@ -22,11 +22,13 @@ export interface HaiConfig {
   /** Guard against runaway tool loops. */
   maxHops?: number;
   /**
-   * Runs at the start of every conversation, before the model's first turn.
+   * Runs at the start of every conversation, before the user's first message
+   * when the client calls `start()` (the default UI does, on open), otherwise
+   * with that first message. Either way it runs before the model's first turn.
    * The runtime makes the call, not the model, so it cannot be skipped: the
-   * call and its result are recorded after the user's first message as if the
-   * model had made them. It receives `{}` as input and may render surfaces —
-   * an elicit surface parks the conversation before the model runs at all.
+   * call and its result are recorded as if the model had made them. It
+   * receives `{}` as input and may render surfaces — an elicit surface parks
+   * the conversation before the model runs at all.
    *
    * If it throws, the request is refused and nothing is recorded, so the next
    * message tries again. It stays in the model's tool list for the whole
@@ -36,6 +38,13 @@ export interface HaiConfig {
    */
   init?: Tool;
 }
+
+/**
+ * Opens the history when init runs before the user has said anything: the
+ * Messages API requires the first message to be the user's. Bracketed like
+ * `[UI interaction]` — framework text, not something the user typed.
+ */
+const STARTED = "[conversation started]";
 
 /** Appended to the init tool's description in what the model sees. */
 const INIT_NOTE =
@@ -194,8 +203,23 @@ export class Hai {
   }
 
   /**
-   * Run the init tool as the conversation's first tool call. Returns true when
-   * it parked the conversation on an elicit surface.
+   * Start a conversation before the user has typed anything, so init's result
+   * — and any surface it shows — is already there when the first message
+   * arrives. The model does not run. Does nothing without an init tool, or
+   * once the conversation has begun.
+   */
+  async start(conversation: Conversation, emit: Emit): Promise<void> {
+    if (!this.config.init || conversation.messages.length > 0) return;
+    if (await this.runInit(conversation, STARTED, emit)) return; // parked on its surface
+    conversation.status = "idle";
+    emit({ type: "status", status: "idle" });
+    await this.emitContext(conversation, emit);
+  }
+
+  /**
+   * Run the init tool as the conversation's first tool call, after `text` —
+   * the user's first message, or STARTED when it runs before one. Returns
+   * true when it parked the conversation on an elicit surface.
    *
    * Nothing reaches the history until the tool has succeeded — not even the
    * user's message — so a refused start leaves the conversation exactly as

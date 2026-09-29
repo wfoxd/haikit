@@ -1060,7 +1060,7 @@ You now have every concept in the framework, in about 150 lines. The next app di
 
 ### Start every conversation the same way
 
-Some context the model should never go without: who the user is, their account, their home airport. Asking the model to fetch it is asking it to remember, and it won't every time. Give `createHai` an `init` tool instead, and the runtime runs it itself at the start of every conversation, before the model's first turn.
+Some context the model should never go without: who the user is, their account, their home airport. Asking the model to fetch it is asking it to remember, and it won't every time. Give `createHai` an `init` tool instead, and the runtime runs it itself at the start of every conversation, as soon as the chat opens and before anything is typed.
 
 It's an ordinary tool. This app has one user and no sign-in, so the profile is a constant; a real app would look up the signed-in user here, which needs the request's identity, and tools don't receive that yet.
 
@@ -1097,19 +1097,12 @@ const hai = createHai({
 });
 ```
 
-If you're running the scripted model from step 6, it needs two changes. It answers the last message in the history, and at the model's first turn that is now `load_profile`'s result, so without the first change it replies "Done." to *“greet me”*. The second greets you by the name the profile returned, which is the point of loading it.
+If you're running the scripted model from step 6, one change lets it greet you by the name the profile returned, which is the point of loading it:
 
 **`src/server/scripted.ts`** — *edit, if you're using it*
 
 ```ts
-// in generate(): init's result is last at the model's first turn, so answer
-// the user's message behind the call it belongs to
-const before = messages.at(-2)?.content;
-const afterInit = Array.isArray(before) &&
-  before.some((b: any) => b?.type === "tool_use" && b.name === "load_profile");
-const last = afterInit ? messages.at(-3) : messages.at(-1);
-
-// ...and in the greeting branch, use the name the profile returned
+// in the greeting branch, use the name the profile returned
 if (/greet|hello|hi\b|hey|language|world|start/.test(text)) {
   const name = JSON.stringify(messages).match(/User: (\w+)/)?.[1];
   const line = name ? `Hi ${name}! Pick a language.` : "Pick a language.";
@@ -1124,9 +1117,9 @@ if (/greet|hello|hi\b|hey|language|world|start/.test(text)) {
 > [!TIP]
 > **Checkpoint**
 >
-> Restart and say *“greet me”*. A **load_profile** row appears under your message before the model says anything, and the reply opens with *“Hi Ada!”*. The inspector shows the order the model saw it in: your message, the call, then its result. Send another message and it doesn't run again.
+> Restart and reload the page. Before you type anything, a **load_profile** row appears, and the inspector shows what the model will see: `[conversation started]`, the call, then its result. The Messages API needs a user message first, and that marker is it. Now say *“greet me”*: the reply opens with *“Hi Ada!”*, and `load_profile` doesn't run again.
 
-The model sees the call and its result as if it had made them. `init` can render surfaces too, and an elicit one ("which account?") parks the conversation before the model runs at all. If it throws, the first message is refused and the next one tries again, so the model never starts without it.
+`mountChat` starts each conversation this way, both when it opens and after *Start a new conversation*. With your own UI, call `chat.start()`. A client that never calls it still gets `init`, run with its first message instead. `init` can render surfaces too, and an elicit one ("which account?") parks the conversation before anyone has typed. If it throws, the start is refused and the next start or message tries again, so the model never begins without it.
 
 ### Things that will tempt you
 

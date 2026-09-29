@@ -17,19 +17,27 @@ action *means* is resolved server-side from the surface's declared contract. If
 the client could name a tool, a prompt injection inside any tool result would
 become a button wired to it.
 
-**`init` runs a tool at the start of every conversation**, before the model's
-first turn. The runtime makes the call, not the model, so it can't be skipped:
-the call and its result go into the history after the user's first message, as
-if the model had made them.
+**`init` runs a tool at the start of every conversation**, before the user
+types anything. The runtime makes the call, not the model, so it can't be
+skipped: the call and its result go into the history as if the model had made
+them.
 
 ```ts
 const hai = createHai({ model, store, tools, surfaces, system, init: loadProfile });
 ```
 
+A third route, `POST /hai/start`, opens the conversation and runs `init`
+without calling the model. The client's `start()` calls it, and `mountChat`
+does so when it opens and after *Start a new conversation*. The Messages API
+requires the history to begin with a user message, so it opens with
+`[conversation started]`, followed by init's call and result. Without an
+`init`, `/start` returns an empty stream and creates no conversation. A client
+that never calls `start()` still gets `init`, run with the first message.
+
 It gets `{}` as input and can render surfaces. An elicit surface ("which
-account?") parks the conversation before the model runs at all. If it throws,
-the request is refused and nothing is recorded, so the next message tries
-again. It stays in the model's tool list, because changing that list
+account?") parks the conversation before anyone has typed; the answer becomes
+init's result, and the model replies. If it throws, the request is refused and
+nothing is recorded, so the next start or message tries again. It stays in the model's tool list, because changing that list
 mid-conversation invalidates newer models' earlier reasoning. But a later call
 from the model gets "already ran" instead of running it twice. Its result stays
 in context for every turn, so keep it digest-sized.

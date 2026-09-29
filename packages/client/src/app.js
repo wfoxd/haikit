@@ -96,7 +96,7 @@ export function mountChat({
     });
   };
 
-  function renderEmpty() {
+  function emptyState() {
     const empty = h("div", "hai-empty");
     if (emptyText) empty.append(h("p", null, emptyText));
     if (suggestions.length) {
@@ -108,13 +108,27 @@ export function mountChat({
       }
       empty.append(row);
     }
-    transcript.replaceChildren(empty);
+    return empty;
   }
 
+  const renderEmpty = () => transcript.replaceChildren(emptyState());
+
   // ── wiring ─────────────────────────────────────────────────────────
-  chat.subscribe((state) => {
+  chat.subscribe((state, event) => {
+    // A new conversation starts at once, so the server's init tool — if it
+    // has one — runs before anything is typed.
+    if (event.type === "reset") chat.start();
+
     if (state.blocks.length === 0) renderEmpty();
-    else renderTranscript(transcript, chat);
+    else {
+      renderTranscript(transcript, chat);
+      // what the conversation opened with (an init tool's row, a welcome
+      // surface) doesn't replace the suggestions; the user engaging does —
+      // a first message, or an answer to something init showed
+      if (!state.blocks.some((b) => b.kind === "user" || b.kind === "interaction")) {
+        transcript.append(emptyState());
+      }
+    }
 
     modelEl.textContent = state.model;
     input.disabled = state.expired !== null;
@@ -141,6 +155,7 @@ export function mountChat({
   };
 
   renderEmpty();
+  chat.start();
   return chat;
 }
 
