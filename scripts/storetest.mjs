@@ -1932,14 +1932,15 @@ async function actionChecks(make) {
   const back = again.c.handles.at(-1);
   const models = seen.length;
 
-  // a handler that outlives the lease: the click's save trips, the model never runs
+  // a newer request takes over while the handler runs: the click's save trips,
+  // and the model never runs
   {
     calls.length = 0;
     behaviour = "slow";
     const r = await request(id, click(back, "choose", "9C"));
     behaviour = "ok";
     check(
-      "a click whose handler outlived the lease is refused at its save, before the model runs",
+      "a click whose request was taken over while its handler ran is refused at its save, before the model runs",
       isStaleLease(r.error) && calls.length === 1 && seen.length === models,
     );
   }

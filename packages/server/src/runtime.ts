@@ -375,8 +375,9 @@ export class Hai {
     // Commit the click before the model runs. The handler may have written,
     // and a model turn can outlast the lease; saved now, the click stays on
     // record however the turn ends, so it cannot be answered — and its handler
-    // run — a second time. The save is fenced: a handler that outlived the
-    // lease stops here, and the model never runs.
+    // run — a second time. The save is fenced: if a newer request took the
+    // conversation over while the handler ran, this stops here, and the model
+    // never runs.
     //
     // If the save fails, the click is undone here too, because the route still
     // saves on the way out, to release the lease. Left in place, a click the

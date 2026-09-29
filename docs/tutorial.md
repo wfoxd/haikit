@@ -207,7 +207,7 @@ It runs only for a click the turn can accept: a `resolve` on the surface the tur
 
 Return a string even on failure, when it's an outcome the model should hear about, such as `Seat 4A was taken a moment ago.` The click counts and the model can respond. Throw only when the click shouldn't count at all, such as when the database is down. Nothing is recorded, the surface stays live for another try, and the browser shows `action failed: …`.
 
-It can still run twice for one click. If saving the click fails after your handler has written (the server crashes, or the request loses its lease to a newer one), nothing is recorded, and the user's next click runs your handler again. Key what you write on `handle`, which is unique per render (`ON CONFLICT (handle) DO NOTHING`, say), and the second run writes nothing.
+It can still run twice for one click. If saving the click fails after your handler has written (the server crashes, or a newer request takes the conversation over), nothing is recorded, and the user's next click runs your handler again, perhaps with a different value. A `resolve` is recorded at most once per surface, so upsert on `(conversationId, handle)`, such as `ON CONFLICT (conversation_id, handle) DO UPDATE`. Handles are unique only within a conversation, and the last attempt is the one recorded, so it should win. An `inform` surface takes any number of clicks, so that key would drop real ones. An `inform` handler that writes needs a write that's safe to repeat, or a key of its own.
 
 ### `queries`
 

@@ -160,10 +160,15 @@ export interface SurfaceImplDef<P, A extends ActionMap, Q extends QueryMap> {
    * partial work.
    *
    * It runs at least once per recorded click, not exactly once. If saving the
-   * click fails after the handler has run — the process crashes, or the
-   * request loses its lease to a newer one — nothing is recorded, and clicking
-   * again runs it again. Key what it writes on `handle`, unique per render, so
-   * that second run writes nothing.
+   * click fails after the handler has run — the process crashes, or a newer
+   * request takes the conversation over — nothing is recorded, and clicking
+   * again runs it again, perhaps with a different value. A `resolve` is
+   * recorded at most once per surface, so a `resolve` handler that writes
+   * should upsert on `(conversationId, handle)`: handles are unique only
+   * within a conversation, and the last attempt is the one recorded. An
+   * `inform` surface takes any number of clicks, so that pair identifies none
+   * of them; an `inform` handler that writes needs a write that is safe to
+   * repeat, or a key of its own.
    */
   actions: {
     [K in keyof A]: (value: Infer<A[K]["input"]>, ctx: ActionCtx<P>) => string | Promise<string>;
