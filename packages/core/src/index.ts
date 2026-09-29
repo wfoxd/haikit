@@ -152,13 +152,18 @@ export interface SurfaceImplDef<P, A extends ActionMap, Q extends QueryMap> {
   digest: (props: P, ctx: DigestCtx) => string;
 
   /**
-   * One handler per declared action. It runs only for a click the runtime
-   * will record: a `resolve` click on the surface the turn is waiting for, or
-   * an `inform` click while nothing is waiting — so it may write, and may be
-   * async. If it throws, the click is refused: nothing is recorded and the
-   * surface stays live, so a handler that writes should undo its own partial
-   * work. Key what it writes on `handle`, unique per render, so a retried
-   * click cannot write twice.
+   * One handler per declared action. A click the turn cannot accept — a
+   * `resolve` on a surface it isn't waiting for, or an `inform` while it waits
+   * on one — is refused before its handler runs, so a handler may write, and
+   * may be async. If it throws, the click is refused: nothing is recorded and
+   * the surface stays live, so a handler that writes should undo its own
+   * partial work.
+   *
+   * It runs at least once per recorded click, not exactly once. If saving the
+   * click fails after the handler has run — the process crashes, or the
+   * request loses its lease to a newer one — nothing is recorded, and clicking
+   * again runs it again. Key what it writes on `handle`, unique per render, so
+   * that second run writes nothing.
    */
   actions: {
     [K in keyof A]: (value: Infer<A[K]["input"]>, ctx: ActionCtx<P>) => string | Promise<string>;

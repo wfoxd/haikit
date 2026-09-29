@@ -1759,9 +1759,11 @@ async function initChecks(make) {
 }
 
 // ── action handlers may be async, and may write ──────────────────────────
-// So a handler runs only for a click the runtime will record, and the click is
-// saved before the model runs: one that writes must not run for a click that
-// is then refused, nor run twice for one click.
+// So a click the runtime refuses up front — not the one the turn is waiting
+// for — never reaches its handler, and an accepted click is saved before the
+// model runs. That makes a handler run at least once per recorded click, not
+// exactly once: if the click's save is refused or fails after the handler has
+// run, nothing is recorded, and clicking again runs it again.
 async function actionChecks(make) {
   console.log("\naction handlers");
   const { createHai } = await import("../packages/server/dist/index.js");
@@ -1923,18 +1925,54 @@ async function actionChecks(make) {
     );
   }
 
-  // ── a handler that outlives the lease: the click's save trips, the model never runs
+  // ── the handler can still run twice for one click: once for a click whose
+  // save is refused, and again when the user clicks again
+  next.push("seats");
+  const again = await request(id, say("and the way back"));
+  const back = again.c.handles.at(-1);
+  const models = seen.length;
+
+  // a handler that outlives the lease: the click's save trips, the model never runs
   {
-    next.push("seats");
-    const again = await request(id, say("and the way back"));
-    const back = again.c.handles.at(-1);
-    const models = seen.length;
+    calls.length = 0;
     behaviour = "slow";
     const r = await request(id, click(back, "choose", "9C"));
     behaviour = "ok";
     check(
       "a click whose handler outlived the lease is refused at its save, before the model runs",
-      isStaleLease(r.error) && seen.length === models,
+      isStaleLease(r.error) && calls.length === 1 && seen.length === models,
+    );
+  }
+
+  // a save that simply fails: the route saves again on the way out, to release
+  // the lease, and that save must not record the click the browser saw fail
+  {
+    let failSave = false;
+    const flaky = {
+      ...store,
+      saveConversation(c) {
+        if (!failSave) return store.saveConversation(c);
+        failSave = false;
+        return Promise.reject(new Error("connection reset"));
+      },
+    };
+    const flakyHai = createHai({ model, store: flaky, tools: [show], surfaces: [picker, card], system: "x" });
+    calls.length = 0;
+    failSave = true;
+    const r = await request(id, (c, emit) => flakyHai.interact(c, { handle: back, action: "choose", value: "9C" }, emit));
+    const kept = await store.loadConversation(id);
+    kept.leaseUntil = null;
+    await store.saveConversation(kept);
+    check(
+      "a click whose save fails is undone, so the route's own save cannot record it",
+      r.error?.message === "connection reset" && calls.length === 1 && seen.length === models &&
+        kept.pending?.handle === back && kept.status === "awaiting" && !kept.frozen.includes(back) &&
+        kept.messages.length === again.c.messages.length,
+    );
+    const retry = await request(id, click(back, "choose", "9C"));
+    check(
+      "…and clicking again runs the handler again, and counts",
+      !retry.error && calls.length === 2 && retry.c.frozen.includes(back) && seen.length === models + 1,
     );
   }
 }

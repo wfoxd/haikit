@@ -343,6 +343,12 @@ export class Hai {
       throw new Error(`action failed: ${(err as Error).message}`);
     }
 
+    // what recording the click changes, so a failed save below can undo it
+    const before = {
+      messages: conversation.messages.length,
+      frozen: conversation.frozen.length,
+      status: conversation.status,
+    };
     if (pending) {
       // resolve: the gate above let it through only for the waiting surface
       conversation.frozen.push(input.handle);
@@ -371,7 +377,21 @@ export class Hai {
     // record however the turn ends, so it cannot be answered — and its handler
     // run — a second time. The save is fenced: a handler that outlived the
     // lease stops here, and the model never runs.
-    await this.config.store.saveConversation(conversation);
+    //
+    // If the save fails, the click is undone here too, because the route still
+    // saves on the way out, to release the lease. Left in place, a click the
+    // browser was told had failed could be recorded by that save anyway, with
+    // no model turn and a surface nobody can click again. Undone, the record
+    // matches what the browser shows, and the user can simply click again.
+    try {
+      await this.config.store.saveConversation(conversation);
+    } catch (err) {
+      conversation.messages.length = before.messages;
+      conversation.frozen.length = before.frozen;
+      conversation.pending = pending;
+      conversation.status = before.status;
+      throw err;
+    }
 
     if (pending) emit({ type: "ui_state", handle: input.handle, state: "frozen", selection: value });
     emit({ type: "block_start", block: { kind: "interaction", id: this.nid("b"), handle: input.handle, label } });
