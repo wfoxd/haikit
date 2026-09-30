@@ -51,6 +51,22 @@ const INIT_NOTE =
   "This ran automatically at the start of the conversation, and its result is already above. " +
   "Calling it again does not run it.";
 
+/** What the tool calls in one model reply share. */
+interface Hop {
+  /**
+   * The question this reply has asked. Claimed before its surface is stored,
+   * so two renders at once cannot both ask; the handle is known once it shows,
+   * and `settled` resolves when its render has shown it or failed.
+   */
+  asking: { handle: string | null; settled: Promise<void> } | null;
+}
+
+/** An elicit surface a tool call showed, and the digest its answer goes out under. */
+interface Question {
+  handle: string;
+  digest: string;
+}
+
 export class Hai {
   readonly config: HaiConfig;
   private readonly surfaces = new Map<string, AnySurfaceImpl>();
@@ -245,7 +261,7 @@ export class Hai {
     };
 
     const started = Date.now();
-    let outcome: { ret: ToolReturn; mode: "display" | "elicit" | null };
+    let outcome: { ret: ToolReturn; asked: Question | null };
     try {
       outcome = await this.invokeTool(conversation, call, hold, toolBlockId, { init: true });
     } catch (err) {
@@ -257,17 +273,17 @@ export class Hai {
       emit({ type: "block_update", id: toolBlockId, status: "error", ms: Date.now() - started, result: message });
       throw new Error(message);
     }
-    const { ret, mode } = outcome;
+    const { ret, asked } = outcome;
     const ms = Date.now() - started;
     for (const e of held) emit(e);
 
     conversation.messages.push({ role: "user", content: text });
     conversation.messages.push({ role: "assistant", content: [call] });
 
-    if (mode === "elicit" && ret.handle) {
-      emit({ type: "block_update", id: toolBlockId, status: "awaiting", ms, result: ret.model });
+    if (asked) {
+      emit({ type: "block_update", id: toolBlockId, status: "awaiting", ms, result: asked.digest });
       conversation.status = "awaiting";
-      conversation.pending = { toolUseId: call.id, handle: ret.handle, digest: ret.model, results: [] };
+      conversation.pending = { toolUseId: call.id, handle: asked.handle, digest: asked.digest, results: [] };
       emit({ type: "status", status: "awaiting" });
       await this.emitContext(conversation, emit);
       return true;
@@ -493,6 +509,9 @@ export class Hai {
 
       const results: unknown[] = [];
       let parked: { toolUseId: string; handle: string; digest: string } | null = null;
+      // One question per reply: the turn parks on one surface, so the first
+      // elicit render is the one it waits on, and any later one is refused.
+      const hop: Hop = { asking: null };
 
       for (const call of final.content.filter((b: any) => b?.type === "tool_use")) {
         const toolBlockId = this.nid("b");
@@ -502,12 +521,12 @@ export class Hai {
         });
 
         const started = Date.now();
-        const { ret, mode } = await this.invokeTool(conversation, call, emit, toolBlockId);
+        const { ret, asked } = await this.invokeTool(conversation, call, emit, toolBlockId, { hop });
         const ms = Date.now() - started;
 
-        if (mode === "elicit" && ret.handle) {
-          emit({ type: "block_update", id: toolBlockId, status: "awaiting", ms, result: ret.model });
-          parked = { toolUseId: call.id, handle: ret.handle, digest: ret.model };
+        if (asked) {
+          emit({ type: "block_update", id: toolBlockId, status: "awaiting", ms, result: asked.digest });
+          parked = { toolUseId: call.id, handle: asked.handle, digest: asked.digest };
         } else {
           emit({ type: "block_update", id: toolBlockId, status: "ok", ms, result: ret.model });
           results.push({ type: "tool_result", tool_use_id: call.id, content: ret.model });
@@ -536,66 +555,143 @@ export class Hai {
     call: any,
     emit: Emit,
     toolBlockId: string,
-    // the runtime's own start-of-conversation call: failures throw instead of
-    // becoming a result for the model, because there is no model turn yet
-    options: { init?: boolean } = {},
-  ): Promise<{ ret: ToolReturn; mode: "display" | "elicit" | null }> {
+    // init: the runtime's own start-of-conversation call. Failures throw instead
+    // of becoming a result for the model, because there is no model turn yet.
+    // hop: shared by every call in one model reply.
+    options: { init?: boolean; hop?: Hop } = {},
+  ): Promise<{ ret: ToolReturn; asked: Question | null }> {
+    const hop = options.hop ?? { asking: null };
     const tool = this.tools.get(call.name);
-    if (!tool) return { ret: { model: `Unknown tool: ${call.name}` }, mode: null };
+    if (!tool) return { ret: { model: `Unknown tool: ${call.name}` }, asked: null };
 
     // the model calling init again: it ran at the start, and does not run twice
     if (tool === this.config.init && !options.init) {
       return {
         ret: { model: `${tool.name} already ran at the start of this conversation; its result is above.` },
-        mode: null,
+        asked: null,
       };
     }
 
-    let mode: "display" | "elicit" | null = null;
+    // the elicit surface this call showed, which the turn will wait on — not
+    // necessarily what the tool returns. Cast so TypeScript doesn't narrow it
+    // to null: it is set inside render, which runs inside tool.run.
+    let asked = null as Question | null;
+
+    // Store a surface and send it out: the payload to the browser, the digest
+    // back to the tool for the model.
+    const show = async (impl: AnySurfaceImpl, props: unknown, surfaceMode: "display" | "elicit") => {
+      // Validate before storing: props may originate outside this process.
+      const parsed = impl.surface.props.parse(props);
+      const window = windowOf(impl);
+
+      const handle = await this.config.store.putPayload(
+        {
+          conversationId: conversation.id,
+          component: impl.surface.name,
+          version: impl.surface.version,
+          props: parsed,
+          mode: surfaceMode,
+          // recorded now, so no later deploy can relax the window this data
+          // was shown under — see the stricter-of in refuseIfExpired
+          staleAfterMs: window,
+        },
+        conversation.leaseToken,
+      );
+
+      // The split, in two lines. Digest -> model. Payload -> browser.
+      const digest = impl.impl.digest(parsed, { handle });
+      // Recorded only once the digest is in hand. A surface that fails here is
+      // never shown, and a handle in the history counts toward its freshness,
+      // so it could otherwise close the conversation over something unseen.
+      conversation.handles.push(handle);
+      emit({
+        type: "ui_open",
+        handle,
+        toolId: toolBlockId,
+        component: impl.surface.name,
+        version: impl.surface.version,
+        mode: surfaceMode,
+        // so a browser left open can close the conversation on time, rather
+        // than only finding out when its next request is refused
+        ...(window === "never" ? {} : { staleAfterMs: window }),
+      });
+      emit({ type: "ui_props", handle, props: parsed });
+
+      return { model: digest, handle };
+    };
+
+    const render = async (
+      impl: AnySurfaceImpl,
+      props: unknown,
+      options?: { mode?: "display" | "elicit" },
+    ): Promise<ToolReturn> => {
+      if ((options?.mode ?? "display") === "display") return show(impl, props, "display");
+
+      // A second question in one reply would be shown live with no way to
+      // answer it, and its tool_use would never get a result. Refused here,
+      // before anything is stored or sent, so the tool learns in time to skip
+      // what it would have done next, and the call is answered like any other.
+      //
+      // A question still being stored may yet fail and be given back, so wait
+      // for it instead of refusing: this could turn out to be the only one.
+      // One that settled without being shown has failed, and is released here
+      // too, so this can never spin on a promise that has already resolved.
+      while (hop.asking?.handle === null) {
+        const other = hop.asking;
+        await other.settled;
+        if (hop.asking === other && other.handle === null) hop.asking = null;
+      }
+      if (hop.asking) {
+        return {
+          model: `Not shown: ${hop.asking.handle} is already waiting for the user. Ask this again after it is answered.`,
+        };
+      }
+
+      // Claimed before the first await, so two renders started at once cannot
+      // both get past the check above. One that fails before it is shown gives
+      // the claim back, so a later question can still ask.
+      let settle!: () => void;
+      const claim: NonNullable<Hop["asking"]> = { handle: null, settled: new Promise((r) => (settle = r)) };
+      hop.asking = claim;
+      try {
+        const ret = await show(impl, props, "elicit");
+        claim.handle = ret.handle;
+        asked = { handle: ret.handle, digest: ret.model };
+        return ret;
+      } catch (err) {
+        if (hop.asking === claim) hop.asking = null;
+        throw err;
+      } finally {
+        settle();
+      }
+    };
+
+    // Renders the tool has started. One can still be storing when the tool
+    // returns or throws: a render it didn't await, or one a rejection in a
+    // Promise.all overtook. They all finish before this call is decided. Each is
+    // tracked through a handler of its own, so one the tool never awaits can't
+    // fail as an unhandled rejection and take the process down; a lost lease is
+    // kept, though, because it has to stop the turn whether awaited or not.
+    const rendering: Promise<void>[] = [];
+    let lost: unknown = null;
+    // set once the tool has returned or thrown: a render after that shows nothing
+    let done = false;
 
     const ctx: ToolCtx = {
       conversationId: conversation.id,
       text: (model) => ({ model }),
-      render: (async (impl: AnySurfaceImpl, props: unknown, options?: { mode?: "display" | "elicit" }) => {
-        const surfaceMode = options?.mode ?? "display";
-        mode = surfaceMode;
-
-        // Validate before storing: props may originate outside this process.
-        const parsed = impl.surface.props.parse(props);
-        const window = windowOf(impl);
-
-        const handle = await this.config.store.putPayload(
-          {
-            conversationId: conversation.id,
-            component: impl.surface.name,
-            version: impl.surface.version,
-            props: parsed,
-            mode: surfaceMode,
-            // recorded now, so no later deploy can relax the window this data
-            // was shown under — see the stricter-of in refuseIfExpired
-            staleAfterMs: window,
-          },
-          conversation.leaseToken,
+      render: ((impl: AnySurfaceImpl, props: unknown, options?: { mode?: "display" | "elicit" }) => {
+        if (done) return Promise.resolve({ model: "Not shown: the tool had already finished." });
+        const shown = render(impl, props, options);
+        rendering.push(
+          shown.then(
+            () => {},
+            (err) => {
+              if (isStaleLease(err)) lost ??= err;
+            },
+          ),
         );
-
-        conversation.handles.push(handle);
-
-        // The split, in two lines. Digest -> model. Payload -> browser.
-        const digest = impl.impl.digest(parsed, { handle });
-        emit({
-          type: "ui_open",
-          handle,
-          toolId: toolBlockId,
-          component: impl.surface.name,
-          version: impl.surface.version,
-          mode: surfaceMode,
-          // so a browser left open can close the conversation on time, rather
-          // than only finding out when its next request is refused
-          ...(window === "never" ? {} : { staleAfterMs: window }),
-        });
-        emit({ type: "ui_props", handle, props: parsed });
-
-        return { model: digest, handle };
+        return shown;
       }) as ToolCtx["render"],
     };
 
@@ -604,21 +700,47 @@ export class Hai {
       input = tool.input.parse(call.input);
     } catch (err) {
       if (options.init) throw err;
-      return { ret: { model: `Invalid input for ${call.name}: ${(err as Error).message}` }, mode: null };
+      return { ret: { model: `Invalid input for ${call.name}: ${(err as Error).message}` }, asked: null };
     }
 
+    let outcome: { ok: true; ret: ToolReturn } | { ok: false; err: unknown };
     try {
-      const ret = await tool.run(input, ctx);
-      return { ret, mode };
+      outcome = { ok: true, ret: await tool.run(input, ctx) };
     } catch (err) {
-      if (options.init) throw err;
-      // A tool error is information for the model; a lost lease is not. Fencing
-      // exists so a superseded turn stops — converting StaleLease into "tool
-      // failed" would hand it back to the model and keep paying for hops whose
-      // output the fenced save is going to discard anyway.
-      if (isStaleLease(err)) throw err;
-      return { ret: { model: `${call.name} failed: ${(err as Error).message}` }, mode: null };
+      outcome = { ok: false, err };
     }
+    // Done before waiting, so a render the tool schedules for later can't slip
+    // in while the others finish. They finish before anything is decided or
+    // undone, so none can open a question, or record a handle, afterwards.
+    done = true;
+    await Promise.all(rendering);
+    // A tool error is information for the model; a lost lease is not. Fencing
+    // exists so a superseded turn stops — converting StaleLease into "tool
+    // failed" would hand it back to the model and keep paying for hops whose
+    // output the fenced save is going to discard anyway.
+    if (lost) throw lost;
+
+    if (outcome.ok) {
+      const { ret } = outcome;
+      // The answer goes to the model under the digest of the question this call
+      // showed. Anything else the tool returned rides along after it, such as a
+      // render it was refused, so the model still hears it.
+      if (asked && ret.model !== asked.digest) asked = { ...asked, digest: `${asked.digest}\n${ret.model}` };
+      return { ret, asked };
+    }
+
+    const { err } = outcome;
+    if (options.init) throw err;
+    if (isStaleLease(err)) throw err;
+    // A question the tool showed before it failed is withdrawn with it: the
+    // model is told the call failed, so nothing will wait on the answer, and
+    // another call in this reply may ask instead.
+    if (asked) {
+      conversation.frozen.push(asked.handle);
+      emit({ type: "ui_state", handle: asked.handle, state: "frozen" });
+      hop.asking = null;
+    }
+    return { ret: { model: `${call.name} failed: ${(err as Error).message}` }, asked: null };
   }
 
   private async emitContext(conversation: Conversation, emit: Emit) {

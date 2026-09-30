@@ -35,6 +35,18 @@ within a conversation, and the last attempt is the one recorded. An `inform`
 surface takes any number of clicks, so an `inform` handler that writes needs a
 write that's safe to repeat, or a key of its own.
 
+**A model reply asks one question at a time.** Claude can make several tool
+calls in one reply, but the turn waits on one surface. The first elicit
+surface a reply renders is shown; a later one is neither stored nor shown, and
+its call gets `Not shown: ui_01 is already waiting for the user. Ask this again
+after it is answered.` So every `tool_use` still gets a result, and the model
+can ask again once the first is answered. Display surfaces are not limited.
+The turn waits on the question a call showed, even if the tool returns
+something else; that return follows the question's digest in the answer. A
+call that asks and then throws has its question withdrawn, so another call in
+the same reply can ask instead. Every render a tool starts finishes before its
+call is decided, and a render after the tool has returned shows nothing.
+
 **`init` runs a tool at the start of every conversation**, before the user
 types anything. The runtime makes the call, not the model, so it can't be
 skipped: the call and its result go into the history as if the model had made
