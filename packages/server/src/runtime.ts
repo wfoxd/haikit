@@ -55,9 +55,10 @@ const INIT_NOTE =
 interface Hop {
   /**
    * The question this reply has asked. Claimed before its surface is stored,
-   * so two renders at once cannot both ask; the handle is known once it shows.
+   * so two renders at once cannot both ask; the handle is known once it shows,
+   * and `settled` resolves when its render has shown it or failed.
    */
-  asking: { handle: string | null } | null;
+  asking: { handle: string | null; settled: Promise<void> } | null;
 }
 
 /** An elicit surface a tool call showed, and the digest its answer goes out under. */
@@ -597,10 +598,12 @@ export class Hai {
         conversation.leaseToken,
       );
 
-      conversation.handles.push(handle);
-
       // The split, in two lines. Digest -> model. Payload -> browser.
       const digest = impl.impl.digest(parsed, { handle });
+      // Recorded only once the digest is in hand. A surface that fails here is
+      // never shown, and a handle in the history counts toward its freshness,
+      // so it could otherwise close the conversation over something unseen.
+      conversation.handles.push(handle);
       emit({
         type: "ui_open",
         handle,
@@ -627,15 +630,27 @@ export class Hai {
         // answer it, and its tool_use would never get a result. Refused here,
         // before anything is stored or sent, so the tool learns in time to skip
         // what it would have done next, and the call is answered like any other.
+        //
+        // A question still being stored may yet fail and be given back, so wait
+        // for it instead of refusing: this could turn out to be the only one.
+        // One that settled without being shown has failed, and is released here
+        // too, so this can never spin on a promise that has already resolved.
+        while (hop.asking?.handle === null) {
+          const other = hop.asking;
+          await other.settled;
+          if (hop.asking === other && other.handle === null) hop.asking = null;
+        }
         if (hop.asking) {
-          const waiting = hop.asking.handle ?? "another question";
-          return { model: `Not shown: ${waiting} is already waiting for the user. Ask this again after it is answered.` };
+          return {
+            model: `Not shown: ${hop.asking.handle} is already waiting for the user. Ask this again after it is answered.`,
+          };
         }
 
         // Claimed before the first await, so two renders started at once cannot
         // both get past the check above. One that fails before it is shown gives
         // the claim back, so a later question can still ask.
-        const claim: NonNullable<Hop["asking"]> = { handle: null };
+        let settle!: () => void;
+        const claim: NonNullable<Hop["asking"]> = { handle: null, settled: new Promise((r) => (settle = r)) };
         hop.asking = claim;
         try {
           const ret = await show(impl, props, "elicit");
@@ -645,6 +660,8 @@ export class Hai {
         } catch (err) {
           if (hop.asking === claim) hop.asking = null;
           throw err;
+        } finally {
+          settle();
         }
       }) as ToolCtx["render"],
     };
