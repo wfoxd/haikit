@@ -44,7 +44,8 @@ can ask again once the first is answered. Display surfaces are not limited.
 The turn waits on the question a call showed, even if the tool returns
 something else; that return follows the question's digest in the answer. A
 call that asks and then throws has its question withdrawn, so another call in
-the same reply can ask instead.
+the same reply can ask instead. Every render a tool starts finishes before its
+call is decided, and a render after the tool has returned shows nothing.
 
 **`init` runs a tool at the start of every conversation**, before the user
 types anything. The runtime makes the call, not the model, so it can't be

@@ -620,49 +620,73 @@ export class Hai {
       return { model: digest, handle };
     };
 
+    const render = async (
+      impl: AnySurfaceImpl,
+      props: unknown,
+      options?: { mode?: "display" | "elicit" },
+    ): Promise<ToolReturn> => {
+      if ((options?.mode ?? "display") === "display") return show(impl, props, "display");
+
+      // A second question in one reply would be shown live with no way to
+      // answer it, and its tool_use would never get a result. Refused here,
+      // before anything is stored or sent, so the tool learns in time to skip
+      // what it would have done next, and the call is answered like any other.
+      //
+      // A question still being stored may yet fail and be given back, so wait
+      // for it instead of refusing: this could turn out to be the only one.
+      // One that settled without being shown has failed, and is released here
+      // too, so this can never spin on a promise that has already resolved.
+      while (hop.asking?.handle === null) {
+        const other = hop.asking;
+        await other.settled;
+        if (hop.asking === other && other.handle === null) hop.asking = null;
+      }
+      if (hop.asking) {
+        return {
+          model: `Not shown: ${hop.asking.handle} is already waiting for the user. Ask this again after it is answered.`,
+        };
+      }
+
+      // Claimed before the first await, so two renders started at once cannot
+      // both get past the check above. One that fails before it is shown gives
+      // the claim back, so a later question can still ask.
+      let settle!: () => void;
+      const claim: NonNullable<Hop["asking"]> = { handle: null, settled: new Promise((r) => (settle = r)) };
+      hop.asking = claim;
+      try {
+        const ret = await show(impl, props, "elicit");
+        claim.handle = ret.handle;
+        asked = { handle: ret.handle, digest: ret.model };
+        return ret;
+      } catch (err) {
+        if (hop.asking === claim) hop.asking = null;
+        throw err;
+      } finally {
+        settle();
+      }
+    };
+
+    // Renders the tool has started. One can still be storing when the tool
+    // returns or throws: a render it didn't await, or one a rejection in a
+    // Promise.all overtook. They all finish before this call is decided, and
+    // once it is, the tool is done: a render after that shows nothing. Each is
+    // tracked through a handler of its own, so one the tool never awaits can't
+    // fail as an unhandled rejection and take the process down.
+    const rendering: Promise<void>[] = [];
+    let done = false;
+    const drain = async () => {
+      while (rendering.length) await Promise.all(rendering.splice(0));
+      done = true;
+    };
+
     const ctx: ToolCtx = {
       conversationId: conversation.id,
       text: (model) => ({ model }),
-      render: (async (impl: AnySurfaceImpl, props: unknown, options?: { mode?: "display" | "elicit" }) => {
-        if ((options?.mode ?? "display") === "display") return show(impl, props, "display");
-
-        // A second question in one reply would be shown live with no way to
-        // answer it, and its tool_use would never get a result. Refused here,
-        // before anything is stored or sent, so the tool learns in time to skip
-        // what it would have done next, and the call is answered like any other.
-        //
-        // A question still being stored may yet fail and be given back, so wait
-        // for it instead of refusing: this could turn out to be the only one.
-        // One that settled without being shown has failed, and is released here
-        // too, so this can never spin on a promise that has already resolved.
-        while (hop.asking?.handle === null) {
-          const other = hop.asking;
-          await other.settled;
-          if (hop.asking === other && other.handle === null) hop.asking = null;
-        }
-        if (hop.asking) {
-          return {
-            model: `Not shown: ${hop.asking.handle} is already waiting for the user. Ask this again after it is answered.`,
-          };
-        }
-
-        // Claimed before the first await, so two renders started at once cannot
-        // both get past the check above. One that fails before it is shown gives
-        // the claim back, so a later question can still ask.
-        let settle!: () => void;
-        const claim: NonNullable<Hop["asking"]> = { handle: null, settled: new Promise((r) => (settle = r)) };
-        hop.asking = claim;
-        try {
-          const ret = await show(impl, props, "elicit");
-          claim.handle = ret.handle;
-          asked = { handle: ret.handle, digest: ret.model };
-          return ret;
-        } catch (err) {
-          if (hop.asking === claim) hop.asking = null;
-          throw err;
-        } finally {
-          settle();
-        }
+      render: ((impl: AnySurfaceImpl, props: unknown, options?: { mode?: "display" | "elicit" }) => {
+        if (done) return Promise.resolve({ model: "Not shown: the tool had already finished." });
+        const shown = render(impl, props, options);
+        rendering.push(shown.then(() => {}, () => {}));
+        return shown;
       }) as ToolCtx["render"],
     };
 
@@ -676,12 +700,15 @@ export class Hai {
 
     try {
       const ret = await tool.run(input, ctx);
+      await drain();
       // The answer goes to the model under the digest of the question this call
       // showed. Anything else the tool returned rides along after it, such as a
       // render it was refused, so the model still hears it.
       if (asked && ret.model !== asked.digest) asked = { ...asked, digest: `${asked.digest}\n${ret.model}` };
       return { ret, asked };
     } catch (err) {
+      // Before anything is undone, so no render can record a handle afterwards.
+      await drain();
       if (options.init) throw err;
       // A tool error is information for the model; a lost lease is not. Fencing
       // exists so a superseded turn stops — converting StaleLease into "tool

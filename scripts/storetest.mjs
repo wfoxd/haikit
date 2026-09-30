@@ -2057,7 +2057,22 @@ async function oneQuestionChecks(make) {
       await ctx.render(broken, {}, { mode: "elicit" }).catch(() => {});
       return ask(ctx, "T");
     }),
+    // fails while its question is still being stored
+    tool("ask_and_fail_at_once", async (_i, ctx) => {
+      await Promise.all([ask(ctx, "U"), Promise.reject(new Error("quote failed"))]);
+    }),
+    // asks without waiting for it, and returns
+    tool("ask_unawaited", (_i, ctx) => {
+      ask(ctx, "W");
+      return ctx.text("Asked.");
+    }),
+    // asks after it has returned
+    tool("ask_late", (_i, ctx) => {
+      setTimeout(() => ask(ctx, "L").then((r) => (toldLate = r.model)), 5);
+      return ctx.text("Will ask.");
+    }),
   ];
+  let toldLate = "";
   let toldAtOnce = "";
 
   // the model makes whatever calls are queued next, all in one reply
@@ -2077,6 +2092,15 @@ async function oneQuestionChecks(make) {
     },
   };
   const hai = createHai({ model, store, tools, surfaces: [confirm, note, broken], system: "x" });
+  // the same, with a payload write slow enough for a tool to fail during it
+  const slowStore = {
+    ...store,
+    async putPayload(...args) {
+      await new Promise((r) => setTimeout(r, 20));
+      return store.putPayload(...args);
+    },
+  };
+  const slowHai = createHai({ model, store: slowStore, tools, surfaces: [confirm, note, broken], system: "x" });
 
   async function request(id, act) {
     const c = await store.loadConversation(id);
@@ -2218,6 +2242,44 @@ async function oneQuestionChecks(make) {
     check(
       "a question that fails validation doesn't stop the next one being asked",
       opened(r.events).length === 1 && r.c.pending?.handle === shown?.handle && /^Confirm R on /.test(r.c.pending.digest),
+    );
+  }
+
+  // ── a tool that fails while its question is still being stored
+  {
+    next.push([["ask_and_fail_at_once"], ["ask", { what: "V" }]]);
+    const r = await request(undefined, (c, emit) => slowHai.send(c, "fail mid-store", emit));
+    const [withdrawn, asked] = opened(r.events);
+    check(
+      "a tool that fails while its question is being stored has it withdrawn once stored",
+      withdrawn?.mode === "elicit" && r.c.frozen.includes(withdrawn.handle) &&
+        r.events.some((e) => e.type === "ui_state" && e.handle === withdrawn.handle && e.state === "frozen"),
+    );
+    check(
+      "…and a later call in that reply asks instead",
+      asked?.mode === "elicit" && r.c.pending?.handle === asked.handle && /^Confirm V on /.test(r.c.pending.digest),
+    );
+  }
+
+  // ── a render the tool didn't wait for is still the question
+  {
+    next.push([["ask_unawaited"]]);
+    const r = await request(undefined, (c, emit) => slowHai.send(c, "don't wait", emit));
+    const [shown] = opened(r.events);
+    check(
+      "a question the tool didn't wait for is waited on, under its digest",
+      shown && r.c.pending?.handle === shown.handle && r.c.pending.digest === `Confirm W on ${shown.handle}.\nAsked.`,
+    );
+  }
+
+  // ── once the tool is done, it can't ask
+  {
+    next.push([["ask_late"]]);
+    const r = await request(undefined, say("ask later"));
+    await new Promise((res) => setTimeout(res, 30));
+    check(
+      "a render after the tool has returned shows nothing",
+      opened(r.events).length === 0 && r.c.pending === null && toldLate === "Not shown: the tool had already finished.",
     );
   }
 
