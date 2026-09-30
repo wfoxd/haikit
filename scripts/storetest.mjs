@@ -2401,8 +2401,34 @@ async function transcriptChecks() {
       return this.scrollHeight - this.scrollTop - this.clientHeight;
     }
   }
+  // Resize observations are delivered when a test says a frame has laid out,
+  // for the observed elements whose box changed: the root's is its viewport,
+  // which content growing inside it doesn't change.
+  const size = (el) => el.clientHeight ?? el.height;
+  const observers = [];
+  class ResizeObserver {
+    constructor(callback) {
+      Object.assign(this, { callback, targets: new Map() });
+      observers.push(this);
+    }
+    observe(el) {
+      this.targets.set(el, size(el));
+    }
+    disconnect() {
+      this.targets.clear();
+    }
+  }
+  const laidOut = () => {
+    for (const o of observers) {
+      const changed = [...o.targets].filter(([el, seen]) => size(el) !== seen);
+      for (const [el] of changed) o.targets.set(el, size(el));
+      if (changed.length) o.callback(changed.map(([target]) => ({ target })));
+    }
+  };
   const hadDocument = "document" in globalThis;
+  const hadObserver = "ResizeObserver" in globalThis;
   globalThis.document ??= { createElement: (tag) => new El(tag) };
+  globalThis.ResizeObserver ??= ResizeObserver;
 
   try {
     const { renderTranscript } = await import("../packages/client/src/transcript.js");
@@ -2456,13 +2482,37 @@ async function transcriptChecks() {
     await settled();
     check("content growing before its own scroll is reported doesn't stop it following", root.fromBottom === 0);
 
+    // a surface grows after it has mounted, with no render to follow it
+    const grow = (by) => {
+      const last = chat.state.blocks.at(-1).handle;
+      heights.set(last, (heights.get(last) ?? 800) + by);
+      root.children.at(-1).own += by;
+      laidOut();
+    };
+    grow(200);
+    check("a surface that grows after mounting stays in view without another render", root.fromBottom === 0);
     root.scrollByReader(100);
-    chat.state.blocks = [message(), surface(), message(), surface()];
+    grow(200);
+    check("…but a reader who scrolled up isn't pulled back down by it", root.scrollTop === 100);
+
+    // the reader scrolls back down and then up again, and a render comes
+    // before the browser has reported that last scroll
+    root.scrollByReader(root.scrollHeight);
+    root.scrollTop = 100;
+    chat.state.blocks.push(message(), surface());
+    render();
+    await settled();
+    root.frame();
+    check("a scroll not yet reported when a render comes isn't overwritten by it", root.scrollTop === 100);
+
+    // a new conversation, its first render as long as the last one's
+    chat.state.blocks = chat.state.blocks.map((b) => (b.kind === "ui" ? surface() : message()));
     render();
     await settled();
     check("a new conversation starts out following", root.fromBottom === 0);
   } finally {
     if (!hadDocument) delete globalThis.document;
+    if (!hadObserver) delete globalThis.ResizeObserver;
   }
 }
 

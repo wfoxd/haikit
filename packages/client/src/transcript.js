@@ -16,10 +16,15 @@ export const h = (tag, className, text) => {
 export function renderTranscript(root, chat) {
   const { state } = chat;
   const follow = follower(root);
-  // A transcript only loses blocks when a new conversation starts, and that
-  // one starts at the bottom, wherever the reader was in the last.
-  if (state.blocks.length < follow.blocks) Object.assign(follow, { stick: true, top: 0 });
-  follow.blocks = state.blocks.length;
+
+  // reset() gives a new conversation a new blocks array, and a new
+  // conversation starts at the bottom, wherever the reader was in the last.
+  if (state.blocks !== follow.blocks) Object.assign(follow, { blocks: state.blocks, stick: true, top: 0 });
+  // A scroll the reader made since the last render, whose event hasn't arrived
+  // yet: taken now, or the pin below would overwrite it. Not while an earlier
+  // render in this task is still mounting: the reader can't scroll within a
+  // task, and the position read then is one clamped to a shorter transcript.
+  else if (!follow.mounting) follow.noticeScroll();
 
   root.replaceChildren();
   for (const block of state.blocks) root.append(renderBlock(block, chat));
@@ -27,7 +32,11 @@ export function renderTranscript(root, chat) {
   // Surfaces mount in microtasks queued by renderBlock, in block order. This
   // one is queued after them, so it runs once they have content and height:
   // scrolling any earlier aims at a bottom that is about to move.
-  queueMicrotask(() => (follow.stick ? follow.pin() : follow.hold()));
+  follow.mounting = true;
+  queueMicrotask(() => {
+    follow.mounting = false;
+    follow.stick ? follow.pin() : follow.hold();
+  });
 
   // Surfaces can grow after they mount, as a table expands or content loads.
   // While following, the observer keeps the newest content in view as they do.
@@ -68,8 +77,18 @@ function follower(root) {
     stick: true,
     // where the reader last scrolled to
     top: 0,
-    // how many blocks the last render showed
-    blocks: 0,
+    // the blocks array of the conversation shown
+    blocks: null,
+    // a render's surfaces are still to mount
+    mounting: false,
+    // the reader has scrolled, unless this is where the transcript's own
+    // last scroll landed
+    noticeScroll() {
+      if (landed !== null && Math.abs(root.scrollTop - landed) < 1) return;
+      landed = null;
+      follow.top = root.scrollTop;
+      follow.stick = root.scrollHeight - root.scrollTop - root.clientHeight < NEAR_BOTTOM;
+    },
     pin() {
       root.scrollTop = root.scrollHeight;
       land();
@@ -82,16 +101,7 @@ function follower(root) {
     observer: typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => follow.stick && follow.pin()),
   };
 
-  root.addEventListener(
-    "scroll",
-    () => {
-      if (landed !== null && Math.abs(root.scrollTop - landed) < 1) return;
-      landed = null;
-      follow.top = root.scrollTop;
-      follow.stick = root.scrollHeight - root.scrollTop - root.clientHeight < NEAR_BOTTOM;
-    },
-    { passive: true },
-  );
+  root.addEventListener("scroll", () => follow.noticeScroll(), { passive: true });
 
   followers.set(root, follow);
   return follow;
