@@ -2342,6 +2342,130 @@ async function oneQuestionChecks(make) {
   }
 }
 
+// ── the transcript follows new content, and keeps a reader's place ──────
+// Surfaces mount a microtask after the render that creates them, and only then
+// have height. A transcript that scrolls before that, or decides whether to
+// follow from the geometry it sees, stops following at its first tall surface.
+async function transcriptChecks() {
+  console.log("\ntranscript");
+
+  // Just enough DOM for the renderer: every element has a height, and the root
+  // scrolls. Reading scrollTop clamps it to the content, as a layout does, and
+  // a move is reported by a scroll event at the next frame, as a browser does.
+  class El {
+    constructor(tag) {
+      Object.assign(this, { tagName: tag, children: [], dataset: {}, className: "", textContent: "", own: 20 });
+    }
+    append(...nodes) {
+      this.children.push(...nodes);
+    }
+    replaceChildren(...nodes) {
+      this.children = [...nodes];
+    }
+    get height() {
+      return this.own + this.children.reduce((sum, c) => sum + c.height, 0);
+    }
+  }
+  class Root extends El {
+    constructor() {
+      super("div");
+      Object.assign(this, { own: 0, clientHeight: 600, top: 0, listeners: [] });
+    }
+    get scrollHeight() {
+      return Math.max(this.clientHeight, this.height);
+    }
+    get scrollTop() {
+      const top = Math.max(0, Math.min(this.top, this.scrollHeight - this.clientHeight));
+      if (top !== this.top) Object.assign(this, { top, moved: true });
+      return top;
+    }
+    set scrollTop(y) {
+      if (y !== this.top) Object.assign(this, { top: y, moved: true });
+      void this.scrollTop;
+    }
+    addEventListener(type, fn) {
+      if (type === "scroll") this.listeners.push(fn);
+    }
+    // a rendering step: one scroll event for whatever moved since the last
+    frame() {
+      if (!this.moved) return;
+      this.moved = false;
+      for (const fn of this.listeners) fn();
+    }
+    // the reader scrolling: the position moves, then the browser says so
+    scrollByReader(y) {
+      this.scrollTop = y;
+      this.frame();
+    }
+    get fromBottom() {
+      return this.scrollHeight - this.scrollTop - this.clientHeight;
+    }
+  }
+  const hadDocument = "document" in globalThis;
+  globalThis.document ??= { createElement: (tag) => new El(tag) };
+
+  try {
+    const { renderTranscript } = await import("../packages/client/src/transcript.js");
+    let n = 0;
+    const heights = new Map();
+    const chat = {
+      state: { blocks: [], surfaces: new Map() },
+      // a tall surface, with its height only once it has mounted
+      mount: (handle, el) => (el.own = heights.get(handle) ?? 800),
+    };
+    const message = () => ({ kind: "user", id: `b${++n}`, text: "hi" });
+    const surface = () => {
+      const handle = `ui_${++n}`;
+      chat.state.surfaces.set(handle, { props: {} });
+      return { kind: "ui", id: `ui:${handle}`, handle };
+    };
+    const root = new Root();
+    const render = () => renderTranscript(root, chat);
+    const settled = () => new Promise((r) => setTimeout(r, 0));
+
+    chat.state.blocks.push(message(), surface());
+    render();
+    await settled();
+    check("a tall surface is in view once it has mounted", root.scrollTop > 0 && root.fromBottom === 0);
+
+    chat.state.blocks.push(message(), surface());
+    render();
+    await settled();
+    check("…and the transcript goes on following after it", root.fromBottom === 0);
+
+    // one chunk of the stream renders twice before anything in it mounts
+    root.scrollByReader(100);
+    chat.state.blocks.push(message(), surface());
+    render();
+    render();
+    await settled();
+    check("a reader who scrolled up keeps their place through a turn", root.scrollTop === 100 && root.fromBottom > 0);
+
+    root.scrollByReader(root.scrollHeight);
+    chat.state.blocks.push(message(), surface());
+    render();
+    await settled();
+    check("scrolling back to the bottom follows again", root.fromBottom === 0);
+
+    // content grows between the transcript's own scroll and the frame that
+    // reports it, as an image loading in a surface would
+    heights.set(chat.state.blocks.at(-1).handle, 1100);
+    root.children.at(-1).own = 1100;
+    root.frame();
+    render();
+    await settled();
+    check("content growing before its own scroll is reported doesn't stop it following", root.fromBottom === 0);
+
+    root.scrollByReader(100);
+    chat.state.blocks = [message(), surface(), message(), surface()];
+    render();
+    await settled();
+    check("a new conversation starts out following", root.fromBottom === 0);
+  } finally {
+    if (!hadDocument) delete globalThis.document;
+  }
+}
+
 // ── a window, when given, has to be a real one ──────────────────────────
 // Leaving it out means "never". The type rules out invalid values, but
 // JavaScript callers never see the type.
@@ -2384,6 +2508,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   await routeChecks();
   await windowChecks();
   await clientChecks();
+  await transcriptChecks();
 
   // Said plainly because a suite that looks exhaustive is worse than one that
   // admits its edges: nothing here can prove lease acquisition is atomic. This

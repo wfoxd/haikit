@@ -15,12 +15,86 @@ export const h = (tag, className, text) => {
 
 export function renderTranscript(root, chat) {
   const { state } = chat;
-  const atBottom = root.scrollHeight - root.scrollTop - root.clientHeight < 160;
+  const follow = follower(root);
+  // A transcript only loses blocks when a new conversation starts, and that
+  // one starts at the bottom, wherever the reader was in the last.
+  if (state.blocks.length < follow.blocks) Object.assign(follow, { stick: true, top: 0 });
+  follow.blocks = state.blocks.length;
 
   root.replaceChildren();
   for (const block of state.blocks) root.append(renderBlock(block, chat));
 
-  if (atBottom) root.scrollTop = root.scrollHeight;
+  // Surfaces mount in microtasks queued by renderBlock, in block order. This
+  // one is queued after them, so it runs once they have content and height:
+  // scrolling any earlier aims at a bottom that is about to move.
+  queueMicrotask(() => (follow.stick ? follow.pin() : follow.hold()));
+
+  // Surfaces can grow after they mount, as a table expands or content loads.
+  // While following, the observer keeps the newest content in view as they do.
+  if (follow.observer) {
+    follow.observer.disconnect();
+    follow.observer.observe(root);
+    for (const child of root.children) follow.observer.observe(child);
+  }
+}
+
+/** Within this many pixels of the bottom, the reader is following new content. */
+const NEAR_BOTTOM = 40;
+
+const followers = new WeakMap();
+
+/**
+ * Whether a transcript follows new content, and where its reader is when it
+ * doesn't, kept per element across renders.
+ *
+ * Only the reader's own scrolling changes either. Read from the geometry on
+ * each render instead, both go wrong. Following breaks for good the first time
+ * content grows after the scroll, which a surface mounting does every time: the
+ * bottom is then too far away to count, and nothing scrolls there again. And
+ * one chunk of the stream can render several times before any surface mounts,
+ * so a later render reads a position the browser has already clamped to the
+ * shorter transcript.
+ */
+function follower(root) {
+  let follow = followers.get(root);
+  if (follow) return follow;
+
+  // where the transcript's own last scroll landed, so the scroll event that
+  // follows is not taken for the reader's
+  let landed = null;
+  const land = () => (landed = root.scrollTop);
+
+  follow = {
+    stick: true,
+    // where the reader last scrolled to
+    top: 0,
+    // how many blocks the last render showed
+    blocks: 0,
+    pin() {
+      root.scrollTop = root.scrollHeight;
+      land();
+    },
+    // keep a reader who has scrolled up where they were, through a rebuild
+    hold() {
+      root.scrollTop = follow.top;
+      land();
+    },
+    observer: typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => follow.stick && follow.pin()),
+  };
+
+  root.addEventListener(
+    "scroll",
+    () => {
+      if (landed !== null && Math.abs(root.scrollTop - landed) < 1) return;
+      landed = null;
+      follow.top = root.scrollTop;
+      follow.stick = root.scrollHeight - root.scrollTop - root.clientHeight < NEAR_BOTTOM;
+    },
+    { passive: true },
+  );
+
+  followers.set(root, follow);
+  return follow;
 }
 
 function renderBlock(block, chat) {
