@@ -668,16 +668,14 @@ export class Hai {
 
     // Renders the tool has started. One can still be storing when the tool
     // returns or throws: a render it didn't await, or one a rejection in a
-    // Promise.all overtook. They all finish before this call is decided, and
-    // once it is, the tool is done: a render after that shows nothing. Each is
+    // Promise.all overtook. They all finish before this call is decided. Each is
     // tracked through a handler of its own, so one the tool never awaits can't
-    // fail as an unhandled rejection and take the process down.
+    // fail as an unhandled rejection and take the process down; a lost lease is
+    // kept, though, because it has to stop the turn whether awaited or not.
     const rendering: Promise<void>[] = [];
+    let lost: unknown = null;
+    // set once the tool has returned or thrown: a render after that shows nothing
     let done = false;
-    const drain = async () => {
-      while (rendering.length) await Promise.all(rendering.splice(0));
-      done = true;
-    };
 
     const ctx: ToolCtx = {
       conversationId: conversation.id,
@@ -685,7 +683,14 @@ export class Hai {
       render: ((impl: AnySurfaceImpl, props: unknown, options?: { mode?: "display" | "elicit" }) => {
         if (done) return Promise.resolve({ model: "Not shown: the tool had already finished." });
         const shown = render(impl, props, options);
-        rendering.push(shown.then(() => {}, () => {}));
+        rendering.push(
+          shown.then(
+            () => {},
+            (err) => {
+              if (isStaleLease(err)) lost ??= err;
+            },
+          ),
+        );
         return shown;
       }) as ToolCtx["render"],
     };
@@ -698,33 +703,44 @@ export class Hai {
       return { ret: { model: `Invalid input for ${call.name}: ${(err as Error).message}` }, asked: null };
     }
 
+    let outcome: { ok: true; ret: ToolReturn } | { ok: false; err: unknown };
     try {
-      const ret = await tool.run(input, ctx);
-      await drain();
+      outcome = { ok: true, ret: await tool.run(input, ctx) };
+    } catch (err) {
+      outcome = { ok: false, err };
+    }
+    // Done before waiting, so a render the tool schedules for later can't slip
+    // in while the others finish. They finish before anything is decided or
+    // undone, so none can open a question, or record a handle, afterwards.
+    done = true;
+    await Promise.all(rendering);
+    // A tool error is information for the model; a lost lease is not. Fencing
+    // exists so a superseded turn stops — converting StaleLease into "tool
+    // failed" would hand it back to the model and keep paying for hops whose
+    // output the fenced save is going to discard anyway.
+    if (lost) throw lost;
+
+    if (outcome.ok) {
+      const { ret } = outcome;
       // The answer goes to the model under the digest of the question this call
       // showed. Anything else the tool returned rides along after it, such as a
       // render it was refused, so the model still hears it.
       if (asked && ret.model !== asked.digest) asked = { ...asked, digest: `${asked.digest}\n${ret.model}` };
       return { ret, asked };
-    } catch (err) {
-      // Before anything is undone, so no render can record a handle afterwards.
-      await drain();
-      if (options.init) throw err;
-      // A tool error is information for the model; a lost lease is not. Fencing
-      // exists so a superseded turn stops — converting StaleLease into "tool
-      // failed" would hand it back to the model and keep paying for hops whose
-      // output the fenced save is going to discard anyway.
-      if (isStaleLease(err)) throw err;
-      // A question the tool showed before it failed is withdrawn with it: the
-      // model is told the call failed, so nothing will wait on the answer, and
-      // another call in this reply may ask instead.
-      if (asked) {
-        conversation.frozen.push(asked.handle);
-        emit({ type: "ui_state", handle: asked.handle, state: "frozen" });
-        hop.asking = null;
-      }
-      return { ret: { model: `${call.name} failed: ${(err as Error).message}` }, asked: null };
     }
+
+    const { err } = outcome;
+    if (options.init) throw err;
+    if (isStaleLease(err)) throw err;
+    // A question the tool showed before it failed is withdrawn with it: the
+    // model is told the call failed, so nothing will wait on the answer, and
+    // another call in this reply may ask instead.
+    if (asked) {
+      conversation.frozen.push(asked.handle);
+      emit({ type: "ui_state", handle: asked.handle, state: "frozen" });
+      hop.asking = null;
+    }
+    return { ret: { model: `${call.name} failed: ${(err as Error).message}` }, asked: null };
   }
 
   private async emitContext(conversation: Conversation, emit: Emit) {

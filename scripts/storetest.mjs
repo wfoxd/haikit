@@ -2003,7 +2003,7 @@ async function actionChecks(make) {
 async function oneQuestionChecks(make) {
   console.log("\none question per reply");
   const { createHai } = await import("../packages/server/dist/index.js");
-  const { defineSurface, defineTool, resolve, isStaleLease } = await import("../packages/core/dist/index.js");
+  const { defineSurface, defineTool, resolve, isStaleLease, StaleLease } = await import("../packages/core/dist/index.js");
   const any = { parse: (v) => v };
   const store = make({ leaseMs: 40 });
 
@@ -2071,8 +2071,20 @@ async function oneQuestionChecks(make) {
       setTimeout(() => ask(ctx, "L").then((r) => (toldLate = r.model)), 5);
       return ctx.text("Will ask.");
     }),
+    // returns with a slow render still storing, and asks while it does
+    tool("ask_while_storing", (_i, ctx) => {
+      ctx.render(note, {});
+      setTimeout(() => ask(ctx, "D").then((r) => (toldWhileStoring = r.model)), 5);
+      return ctx.text("Will ask.");
+    }),
+    // shows something without waiting for it
+    tool("show_unawaited", (_i, ctx) => {
+      ctx.render(note, {});
+      return ctx.text("Shown.");
+    }),
   ];
   let toldLate = "";
+  let toldWhileStoring = "";
   let toldAtOnce = "";
 
   // the model makes whatever calls are queued next, all in one reply
@@ -2101,6 +2113,14 @@ async function oneQuestionChecks(make) {
     },
   };
   const slowHai = createHai({ model, store: slowStore, tools, surfaces: [confirm, note, broken], system: "x" });
+  // …and one whose payload writes find the conversation taken over
+  const lostStore = {
+    ...store,
+    async putPayload(record) {
+      throw new StaleLease(record.conversationId);
+    },
+  };
+  const lostHai = createHai({ model, store: lostStore, tools, surfaces: [confirm, note, broken], system: "x" });
 
   async function request(id, act) {
     const c = await store.loadConversation(id);
@@ -2280,6 +2300,28 @@ async function oneQuestionChecks(make) {
     check(
       "a render after the tool has returned shows nothing",
       opened(r.events).length === 0 && r.c.pending === null && toldLate === "Not shown: the tool had already finished.",
+    );
+  }
+
+  // ── …nor while the renders it already started are still storing
+  {
+    next.push([["ask_while_storing"]]);
+    const r = await request(undefined, (c, emit) => slowHai.send(c, "ask while storing", emit));
+    check(
+      "a render the tool schedules while its others finish storing shows nothing",
+      !opened(r.events).some((e) => e.mode === "elicit") && r.c.pending === null &&
+        toldWhileStoring === "Not shown: the tool had already finished.",
+    );
+  }
+
+  // ── a render the tool didn't wait for that lost the lease still stops the turn
+  {
+    next.push([["show_unawaited"]]);
+    const models = seen.length;
+    const r = await request(undefined, (c, emit) => lostHai.send(c, "show it", emit));
+    check(
+      "a lost lease in a render the tool didn't wait for stops the turn",
+      isStaleLease(r.error) && seen.length === models + 1,
     );
   }
 
