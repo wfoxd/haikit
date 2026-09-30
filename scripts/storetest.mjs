@@ -1361,6 +1361,10 @@ async function initChecks(make) {
         throw new Error("profile service unavailable");
       }
       if (behaviour === "pick") return ctx.render(picker, {}, { mode: "elicit" });
+      if (behaviour === "pick-then-note") {
+        await ctx.render(picker, {}, { mode: "elicit" });
+        return ctx.text("Profile loaded.");
+      }
       if (behaviour === "card") return ctx.render(card, {});
       if (behaviour === "slow-text") {
         await new Promise((r) => setTimeout(r, 70)); // outlives the 40ms lease
@@ -1624,6 +1628,18 @@ async function initChecks(make) {
     check(
       "…and answering it lets the model reply",
       seen.length === 1 && answered?.type === "tool_result" && /Chose work/.test(answered.content),
+    );
+  }
+
+  // ── an init that asks and returns something else still waits on the question
+  {
+    behaviour = "pick-then-note";
+    const r = await request(undefined, (c, emit) => hai.start(c, emit));
+    behaviour = "ok";
+    check(
+      "an init that asks, then returns text, waits under the question's digest with its text after",
+      r.c.status === "awaiting" && r.c.pending?.handle === r.c.handles[0] &&
+        r.c.pending.digest === "2 accounts: personal, work\nProfile loaded.",
     );
   }
 
@@ -1991,7 +2007,14 @@ async function oneQuestionChecks(make) {
   const any = { parse: (v) => v };
   const store = make({ leaseMs: 40 });
 
-  const confirm = defineSurface({ name: "confirm", version: 1, props: any, actions: { ok: resolve(any) }, queries: {} })
+  // props without `what` fail validation, so a render can fail before it shows
+  const what = {
+    parse(v) {
+      if (!v?.what) throw new Error("what is required");
+      return v;
+    },
+  };
+  const confirm = defineSurface({ name: "confirm", version: 1, props: what, actions: { ok: resolve(any) }, queries: {} })
     .implement({ digest: (p, { handle }) => `Confirm ${p.what} on ${handle}.`, actions: { ok: (_v, { props }) => `Confirmed ${props.what}.` }, queries: {} });
   const note = defineSurface({ name: "note", version: 1, props: any, actions: {}, queries: {} })
     .implement({ digest: () => "a note", actions: {}, queries: {} });
@@ -2010,7 +2033,19 @@ async function oneQuestionChecks(make) {
       await ask(ctx, "F");
       throw new Error("rate service down");
     }),
+    // two renders started at once, before either is stored
+    tool("ask_at_once", async (_i, ctx) => {
+      const [p, q] = await Promise.all([ask(ctx, "P"), ask(ctx, "Q")]);
+      toldAtOnce = q.model;
+      return p;
+    }),
+    // a render that fails validation, then one that doesn't
+    tool("ask_bad_then_ask", async (_i, ctx) => {
+      await ask(ctx, undefined).catch(() => {});
+      return ask(ctx, "R");
+    }),
   ];
+  let toldAtOnce = "";
 
   // the model makes whatever calls are queued next, all in one reply
   const seen = [];
@@ -2115,7 +2150,38 @@ async function oneQuestionChecks(make) {
     const [shown] = opened(r.events);
     check(
       "a call that asks twice shows the first, and the turn waits on it",
-      opened(r.events).length === 1 && r.c.pending?.handle === shown?.handle && /^Not shown: /.test(r.c.pending.digest),
+      opened(r.events).length === 1 && r.c.pending?.handle === shown?.handle,
+    );
+    const answered = await request(r.c.id, click(shown.handle));
+    check(
+      "…and its answer goes out under the first's digest, with the refusal after it",
+      !answered.error &&
+        resultOf(seen.at(-1), r.c.pending.toolUseId) ===
+          `Confirm A on ${shown.handle}.\nNot shown: ${shown.handle} is already waiting for the user. ` +
+            `Ask this again after it is answered.\nConfirmed A.`,
+    );
+  }
+
+  // ── two renders at once: the first claims the question before either is stored
+  {
+    next.push([["ask_at_once"]]);
+    const r = await request(undefined, say("both at once"));
+    const [shown] = opened(r.events);
+    check(
+      "two questions rendered at once show one, and the turn waits on it",
+      opened(r.events).length === 1 && r.c.handles.length === 1 && r.c.pending?.handle === shown?.handle &&
+        toldAtOnce === "Not shown: another question is already waiting for the user. Ask this again after it is answered.",
+    );
+  }
+
+  // ── a render that fails before it shows gives the question back
+  {
+    next.push([["ask_bad_then_ask"]]);
+    const r = await request(undefined, say("try twice"));
+    const [shown] = opened(r.events);
+    check(
+      "a question that fails validation doesn't stop the next one being asked",
+      opened(r.events).length === 1 && r.c.pending?.handle === shown?.handle && /^Confirm R on /.test(r.c.pending.digest),
     );
   }
 

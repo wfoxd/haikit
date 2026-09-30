@@ -40,7 +40,9 @@ calls in one reply, but the turn waits on one surface. The first elicit
 surface a reply renders is shown; a later one is neither stored nor shown, and
 its call gets `Not shown: ui_01 is already waiting for the user. Ask this again
 after it is answered.` So every `tool_use` still gets a result, and the model
-can ask again once the first is answered. Display surfaces are not limited. A
+can ask again once the first is answered. Display surfaces are not limited.
+The turn waits on the question a call showed, even if the tool returns
+something else; that return follows the question's digest in the answer. A
 call that asks and then throws has its question withdrawn, so another call in
 the same reply can ask instead.
 

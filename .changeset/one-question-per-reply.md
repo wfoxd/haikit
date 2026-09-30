@@ -6,4 +6,4 @@ A model reply can ask only one question. When Claude made two or more blocking t
 
 The first elicit surface a reply renders is now the one the turn waits on. A later one is neither stored nor shown, and its call gets `Not shown: ui_01 is already waiting for the user. Ask this again after it is answered.`, which is sent along with the answer. Display surfaces are not limited.
 
-The turn now waits on the question a call showed, even when the tool returns something else. A call that asks and then throws has its question withdrawn, so a later call in the same reply can ask instead.
+The turn now waits on the question a call showed, even when the tool returns something else. Its answer goes out under that question's digest, followed by anything else the tool returned. Two renders started at once can't both ask. A render that fails before it is shown, or a call that asks and then throws, gives the question back, so a later one in the same reply can ask instead.
