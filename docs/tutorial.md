@@ -382,7 +382,7 @@ export const tools = [listGreetings];                      // 10
 
 **8** Validated against the contract's prop schema before it is stored, so a bad payload fails here rather than in the browser.
 
-**9** Compiles only because the surface declares a `resolve` action. A blocking tool with no way to unblock is a compile error, not a deadlocked conversation.
+**9** Compiles only because the surface declares a `resolve` action. A blocking tool with no way to unblock is a compile error, not a deadlocked conversation. It is also one question per reply: if the model calls two blocking tools at once, the second isn't shown, and its call is told to ask again once the first is answered.
 
 **10** Registered in `main.ts`. Note there is no `query_ui` in this array — the framework derives that one.
 

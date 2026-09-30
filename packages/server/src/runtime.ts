@@ -51,6 +51,11 @@ const INIT_NOTE =
   "This ran automatically at the start of the conversation, and its result is already above. " +
   "Calling it again does not run it.";
 
+/** What the tool calls in one model reply share: the question it has asked, if any. */
+interface Hop {
+  asking: string | null;
+}
+
 export class Hai {
   readonly config: HaiConfig;
   private readonly surfaces = new Map<string, AnySurfaceImpl>();
@@ -245,7 +250,7 @@ export class Hai {
     };
 
     const started = Date.now();
-    let outcome: { ret: ToolReturn; mode: "display" | "elicit" | null };
+    let outcome: { ret: ToolReturn; asked: string | null };
     try {
       outcome = await this.invokeTool(conversation, call, hold, toolBlockId, { init: true });
     } catch (err) {
@@ -257,17 +262,17 @@ export class Hai {
       emit({ type: "block_update", id: toolBlockId, status: "error", ms: Date.now() - started, result: message });
       throw new Error(message);
     }
-    const { ret, mode } = outcome;
+    const { ret, asked } = outcome;
     const ms = Date.now() - started;
     for (const e of held) emit(e);
 
     conversation.messages.push({ role: "user", content: text });
     conversation.messages.push({ role: "assistant", content: [call] });
 
-    if (mode === "elicit" && ret.handle) {
+    if (asked) {
       emit({ type: "block_update", id: toolBlockId, status: "awaiting", ms, result: ret.model });
       conversation.status = "awaiting";
-      conversation.pending = { toolUseId: call.id, handle: ret.handle, digest: ret.model, results: [] };
+      conversation.pending = { toolUseId: call.id, handle: asked, digest: ret.model, results: [] };
       emit({ type: "status", status: "awaiting" });
       await this.emitContext(conversation, emit);
       return true;
@@ -493,6 +498,9 @@ export class Hai {
 
       const results: unknown[] = [];
       let parked: { toolUseId: string; handle: string; digest: string } | null = null;
+      // One question per reply: the turn parks on one surface, so the first
+      // elicit render is the one it waits on, and any later one is refused.
+      const hop: Hop = { asking: null };
 
       for (const call of final.content.filter((b: any) => b?.type === "tool_use")) {
         const toolBlockId = this.nid("b");
@@ -502,12 +510,12 @@ export class Hai {
         });
 
         const started = Date.now();
-        const { ret, mode } = await this.invokeTool(conversation, call, emit, toolBlockId);
+        const { ret, asked } = await this.invokeTool(conversation, call, emit, toolBlockId, { hop });
         const ms = Date.now() - started;
 
-        if (mode === "elicit" && ret.handle) {
+        if (asked) {
           emit({ type: "block_update", id: toolBlockId, status: "awaiting", ms, result: ret.model });
-          parked = { toolUseId: call.id, handle: ret.handle, digest: ret.model };
+          parked = { toolUseId: call.id, handle: asked, digest: ret.model };
         } else {
           emit({ type: "block_update", id: toolBlockId, status: "ok", ms, result: ret.model });
           results.push({ type: "tool_result", tool_use_id: call.id, content: ret.model });
@@ -536,29 +544,42 @@ export class Hai {
     call: any,
     emit: Emit,
     toolBlockId: string,
-    // the runtime's own start-of-conversation call: failures throw instead of
-    // becoming a result for the model, because there is no model turn yet
-    options: { init?: boolean } = {},
-  ): Promise<{ ret: ToolReturn; mode: "display" | "elicit" | null }> {
+    // init: the runtime's own start-of-conversation call. Failures throw instead
+    // of becoming a result for the model, because there is no model turn yet.
+    // hop: shared by every call in one model reply.
+    options: { init?: boolean; hop?: Hop } = {},
+  ): Promise<{ ret: ToolReturn; asked: string | null }> {
+    const hop = options.hop ?? { asking: null };
     const tool = this.tools.get(call.name);
-    if (!tool) return { ret: { model: `Unknown tool: ${call.name}` }, mode: null };
+    if (!tool) return { ret: { model: `Unknown tool: ${call.name}` }, asked: null };
 
     // the model calling init again: it ran at the start, and does not run twice
     if (tool === this.config.init && !options.init) {
       return {
         ret: { model: `${tool.name} already ran at the start of this conversation; its result is above.` },
-        mode: null,
+        asked: null,
       };
     }
 
-    let mode: "display" | "elicit" | null = null;
+    // the elicit surface this call showed, which the turn will wait on — not
+    // necessarily what the tool returns
+    let asked: string | null = null;
 
     const ctx: ToolCtx = {
       conversationId: conversation.id,
       text: (model) => ({ model }),
       render: (async (impl: AnySurfaceImpl, props: unknown, options?: { mode?: "display" | "elicit" }) => {
         const surfaceMode = options?.mode ?? "display";
-        mode = surfaceMode;
+
+        // A second question in one reply would be shown live with no way to
+        // answer it, and its tool_use would never get a result. Refused here,
+        // before anything is stored or sent, so the tool learns in time to skip
+        // what it would have done next, and the call is answered like any other.
+        if (surfaceMode === "elicit" && hop.asking) {
+          return {
+            model: `Not shown: ${hop.asking} is already waiting for the user. Ask this again after it is answered.`,
+          };
+        }
 
         // Validate before storing: props may originate outside this process.
         const parsed = impl.surface.props.parse(props);
@@ -579,6 +600,7 @@ export class Hai {
         );
 
         conversation.handles.push(handle);
+        if (surfaceMode === "elicit") asked = hop.asking = handle;
 
         // The split, in two lines. Digest -> model. Payload -> browser.
         const digest = impl.impl.digest(parsed, { handle });
@@ -604,12 +626,12 @@ export class Hai {
       input = tool.input.parse(call.input);
     } catch (err) {
       if (options.init) throw err;
-      return { ret: { model: `Invalid input for ${call.name}: ${(err as Error).message}` }, mode: null };
+      return { ret: { model: `Invalid input for ${call.name}: ${(err as Error).message}` }, asked: null };
     }
 
     try {
       const ret = await tool.run(input, ctx);
-      return { ret, mode };
+      return { ret, asked };
     } catch (err) {
       if (options.init) throw err;
       // A tool error is information for the model; a lost lease is not. Fencing
@@ -617,7 +639,15 @@ export class Hai {
       // failed" would hand it back to the model and keep paying for hops whose
       // output the fenced save is going to discard anyway.
       if (isStaleLease(err)) throw err;
-      return { ret: { model: `${call.name} failed: ${(err as Error).message}` }, mode: null };
+      // A question the tool showed before it failed is withdrawn with it: the
+      // model is told the call failed, so nothing will wait on the answer, and
+      // another call in this reply may ask instead.
+      if (asked) {
+        conversation.frozen.push(asked);
+        emit({ type: "ui_state", handle: asked, state: "frozen" });
+        hop.asking = null;
+      }
+      return { ret: { model: `${call.name} failed: ${(err as Error).message}` }, asked: null };
     }
   }
 

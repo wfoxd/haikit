@@ -213,5 +213,70 @@ for (const c of CASES) {
   }
 }
 
+// ── two questions in one reply ──────────────────────────────────────────
+// Neither example's scripted model asks two questions at once, but Claude does,
+// with parallel tool use. Same wire, a model that asks twice in one reply: one
+// question is shown, and every tool_use is answered once it is.
+{
+  console.log("\ntwo questions in one reply");
+  const http = await import("node:http");
+  const { defineSurface, defineTool, resolve } = await import("../packages/core/dist/index.js");
+  const { createHai, memoryStore, nodeHandler } = await import("../packages/server/dist/index.js");
+
+  const schema = { parse: (v) => v };
+  const confirm = defineSurface({ name: "confirm", version: 1, props: schema, actions: { ok: resolve(schema) } })
+    .implement({ digest: (p, { handle }) => `Confirm ${p.what} on ${handle}.`, actions: { ok: (_v, { props }) => `Confirmed ${props.what}.` }, queries: {} });
+  const ask = defineTool({
+    name: "ask",
+    description: "Ask the user to confirm something. Blocks.",
+    input: schema,
+    inputJsonSchema: { type: "object", properties: { what: { type: "string" } }, required: ["what"] },
+    run: (input, ctx) => ctx.render(confirm, { what: input.what }, { mode: "elicit" }),
+  });
+  const model = {
+    id: "two-at-once",
+    async generate({ messages }) {
+      return typeof messages.at(-1).content === "string"
+        ? {
+            stop_reason: "tool_use",
+            content: [
+              { type: "tool_use", id: "t1", name: "ask", input: { what: "A" } },
+              { type: "tool_use", id: "t2", name: "ask", input: { what: "B" } },
+            ],
+          }
+        : { stop_reason: "end_turn", content: [{ type: "text", text: "done" }] };
+    },
+  };
+  const handler = nodeHandler(createHai({ model, store: memoryStore(), tools: [ask], surfaces: [confirm], system: "" }), "/hai");
+  const server = http.createServer(async (req, res) => {
+    if (!(await handler(req, res))) res.writeHead(404).end();
+  });
+  await new Promise((r) => server.listen(5277, "127.0.0.1", r));
+
+  try {
+    const base = "http://127.0.0.1:5277";
+    const turn = await sse(`${base}/hai/chat`, { message: "confirm A and B" });
+    const conversationId = turn.find((e) => e.type === "hello")?.conversationId;
+    const opens = turn.filter((e) => e.type === "ui_open");
+    opens.length === 1 ? ok("one question is shown") : bad(`${opens.length} questions shown`);
+    turn.some((e) => e.type === "block_update" && /^Not shown: ui_\d+ is already waiting/.test(e.result ?? ""))
+      ? ok("the second call is told it wasn't shown")
+      : bad("no refusal for the second call");
+    turn.filter((e) => e.type === "status").at(-1)?.status === "awaiting" ? ok("turn parks") : bad("turn did not park");
+
+    const answered = await sse(`${base}/hai/interact`, { conversationId, handle: opens[0]?.handle, action: "ok", value: {} });
+    const history = answered.filter((e) => e.type === "context").at(-1)?.messages ?? [];
+    const blocks = history.flatMap((m) => (Array.isArray(m.content) ? m.content : []));
+    const results = new Set(blocks.filter((b) => b.type === "tool_result").map((b) => b.tool_use_id));
+    const open = blocks.filter((b) => b.type === "tool_use" && !results.has(b.id)).map((b) => b.id);
+    history.length && open.length === 0
+      ? ok("every tool_use has a tool_result once it is answered")
+      : bad(`tool_use without tool_result: ${open.join(", ") || "no history"}`);
+    answered.filter((e) => e.type === "status").at(-1)?.status === "idle" ? ok("turn resumes and completes") : bad("turn did not complete");
+  } finally {
+    server.close();
+  }
+}
+
 console.log(failures ? `\n${failures} check(s) failed\n` : "\nsmoke: all checks passed\n");
 process.exit(failures ? 1 : 0);

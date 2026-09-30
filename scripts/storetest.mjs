@@ -371,6 +371,7 @@ export async function integration(label, make) {
   await expiryChecks(make);
   await initChecks(make);
   await actionChecks(make);
+  await oneQuestionChecks(make);
   return failures;
 }
 
@@ -1974,6 +1975,163 @@ async function actionChecks(make) {
     check(
       "…and clicking again runs the handler again, and counts",
       !retry.error && calls.length === 2 && retry.c.frozen.includes(back) && seen.length === models + 1,
+    );
+  }
+}
+
+// ── one question per reply ───────────────────────────────────────────────
+// A model reply can make several tool calls, and Claude makes parallel ones on
+// its own. The turn parks on one surface, so a second elicit surface in the
+// same reply would be shown live with no way to answer it, and its tool_use
+// would never get a tool_result — which the Messages API refuses from then on.
+async function oneQuestionChecks(make) {
+  console.log("\none question per reply");
+  const { createHai } = await import("../packages/server/dist/index.js");
+  const { defineSurface, defineTool, resolve, isStaleLease } = await import("../packages/core/dist/index.js");
+  const any = { parse: (v) => v };
+  const store = make({ leaseMs: 40 });
+
+  const confirm = defineSurface({ name: "confirm", version: 1, props: any, actions: { ok: resolve(any) }, queries: {} })
+    .implement({ digest: (p, { handle }) => `Confirm ${p.what} on ${handle}.`, actions: { ok: (_v, { props }) => `Confirmed ${props.what}.` }, queries: {} });
+  const note = defineSurface({ name: "note", version: 1, props: any, actions: {}, queries: {} })
+    .implement({ digest: () => "a note", actions: {}, queries: {} });
+  const tool = (name, run) => defineTool({ name, description: "d", input: any, inputJsonSchema: { type: "object" }, run });
+  const ask = (ctx, what) => ctx.render(confirm, { what }, { mode: "elicit" });
+  const tools = [
+    tool("ask", (i, ctx) => ask(ctx, i.what)),
+    tool("show", (_i, ctx) => ctx.render(note, {})),
+    // one call asking twice, and returning what the second render gave back
+    tool("ask_twice", async (_i, ctx) => {
+      await ask(ctx, "A");
+      return ask(ctx, "B");
+    }),
+    // asks, then fails
+    tool("ask_then_fail", async (_i, ctx) => {
+      await ask(ctx, "F");
+      throw new Error("rate service down");
+    }),
+  ];
+
+  // the model makes whatever calls are queued next, all in one reply
+  const seen = [];
+  const next = [];
+  let n = 0;
+  const model = {
+    id: "stub",
+    async generate(req) {
+      seen.push(JSON.parse(JSON.stringify(req.messages)));
+      const calls = next.shift();
+      if (!calls) return { content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" };
+      return {
+        content: calls.map(([name, input]) => ({ type: "tool_use", id: `tu_${++n}`, name, input: input ?? {} })),
+        stop_reason: "tool_use",
+      };
+    },
+  };
+  const hai = createHai({ model, store, tools, surfaces: [confirm, note], system: "x" });
+
+  async function request(id, act) {
+    const c = await store.loadConversation(id);
+    const events = [];
+    let error = null;
+    try {
+      await act(c, (e) => events.push(e));
+    } catch (err) {
+      error = err;
+    }
+    c.leaseUntil = null;
+    if (!isStaleLease(error)) await store.saveConversation(c);
+    return { c, events, error };
+  }
+  const say = (text) => (c, emit) => hai.send(c, text, emit);
+  const click = (handle) => (c, emit) => hai.interact(c, { handle, action: "ok", value: {} }, emit);
+  // every tool_use in the history the model was last sent, less those answered
+  const unanswered = (messages) => {
+    const blocks = messages.flatMap((m) => (Array.isArray(m.content) ? m.content : []));
+    const answered = new Set(blocks.filter((b) => b.type === "tool_result").map((b) => b.tool_use_id));
+    return blocks.filter((b) => b.type === "tool_use" && !answered.has(b.id)).map((b) => b.id);
+  };
+  const resultOf = (messages, id) =>
+    messages.flatMap((m) => (Array.isArray(m.content) ? m.content : [])).find((b) => b.tool_use_id === id)?.content;
+  const opened = (events) => events.filter((e) => e.type === "ui_open");
+  // the result the transcript shows for a response's i-th tool call
+  const shownResult = (events, i) => {
+    const id = events.filter((e) => e.type === "block_start" && e.block.kind === "tool")[i]?.block.id;
+    return events.find((e) => e.type === "block_update" && e.id === id)?.result;
+  };
+
+  // ── two questions and a display surface in one reply
+  {
+    next.push([["ask", { what: "A" }], ["show"], ["ask", { what: "B" }]]);
+    const r = await request(undefined, say("set it every weekend"));
+    const [first, card] = opened(r.events);
+    const refusal = shownResult(r.events, 2);
+    check(
+      "only the first question is shown; a display surface in the same reply still is",
+      opened(r.events).length === 2 && first?.mode === "elicit" && card?.mode === "display" &&
+        r.c.handles.length === 2 && r.c.pending?.handle === first.handle && r.c.pending.toolUseId === "tu_1",
+    );
+    check(
+      "the second question's call is told it wasn't shown, and why",
+      refusal === `Not shown: ${first.handle} is already waiting for the user. Ask this again after it is answered.`,
+    );
+    const answered = await request(r.c.id, click(first.handle));
+    const sent = seen.at(-1);
+    check(
+      "answering the first sends a result for every call in that reply",
+      !answered.error && unanswered(sent).length === 0 && /^Not shown: /.test(resultOf(sent, "tu_3")) &&
+        /Confirmed A\./.test(resultOf(sent, "tu_1")),
+    );
+  }
+
+  // ── typing instead of answering also answers every call
+  {
+    next.push([["ask", { what: "C" }], ["ask", { what: "D" }]]);
+    const r = await request(undefined, say("two more"));
+    await request(r.c.id, say("never mind"));
+    check(
+      "typing over the question answers every call in that reply too",
+      opened(r.events).length === 1 && unanswered(seen.at(-1)).length === 0,
+    );
+  }
+
+  // ── the next reply may ask again
+  {
+    next.push([["ask", { what: "E" }], ["ask", { what: "G" }]]);
+    const r = await request(undefined, say("E and G"));
+    next.push([["ask", { what: "G" }]]);
+    const again = await request(r.c.id, click(opened(r.events)[0].handle));
+    const g = opened(again.events)[0];
+    check(
+      "after the answer, the model's next reply can ask the refused question",
+      g?.mode === "elicit" && again.c.pending?.handle === g.handle,
+    );
+  }
+
+  // ── one call asking twice: the turn waits on what it showed, not what it returned
+  {
+    next.push([["ask_twice"]]);
+    const r = await request(undefined, say("ask twice"));
+    const [shown] = opened(r.events);
+    check(
+      "a call that asks twice shows the first, and the turn waits on it",
+      opened(r.events).length === 1 && r.c.pending?.handle === shown?.handle && /^Not shown: /.test(r.c.pending.digest),
+    );
+  }
+
+  // ── a call that asks and then fails withdraws its question
+  {
+    next.push([["ask_then_fail"], ["ask", { what: "H" }]]);
+    const r = await request(undefined, say("try it"));
+    const [withdrawn, asked] = opened(r.events);
+    check(
+      "a call that asks and then fails has its question withdrawn",
+      r.c.frozen.includes(withdrawn?.handle) &&
+        r.events.some((e) => e.type === "ui_state" && e.handle === withdrawn?.handle && e.state === "frozen"),
+    );
+    check(
+      "…so a later call in that reply can ask instead",
+      asked?.mode === "elicit" && r.c.pending?.handle === asked.handle && r.c.pending.toolUseId === `tu_${n}`,
     );
   }
 }

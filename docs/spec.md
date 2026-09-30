@@ -138,6 +138,7 @@ Every item below is a bug the prototype actually produced. A framework earns its
 | Injected content renders a button wired to `delete_account` | The browser sends `{surface, action, value}`. It cannot name a target. |
 | An undeclared element quietly round-trips | Undeclared means local, by construction. The declaration list *is* the allowlist. |
 | A blocking tool with no way to unblock | `mode: "elicit"` only compiles on a surface declaring a `resolve` action. |
+| Two questions in one reply: one can never be answered, and its `tool_use` never gets a result | The turn waits on the first elicit surface a reply renders. A later one is refused before it is stored or shown, and its call is told to ask again. |
 | Binding closures can't be persisted | Handlers live in the surface impl; the store holds only descriptors. |
 | A deploy mid-turn strands the conversation forever | Heartbeated turn leases; expiry triggers rollback to the last committed boundary. |
 | Shipping a component bricks week-old conversations | Surfaces carry a `version`; mismatches render a placeholder, not a crash. |

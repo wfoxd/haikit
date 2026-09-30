@@ -276,7 +276,13 @@ export interface ToolCtx {
   /** A tool with no UI. */
   text(model: string): ToolReturn;
 
-  /** Render a surface as a blocking question. Requires a `resolve` action. */
+  /**
+   * Render a surface as a blocking question. Requires a `resolve` action.
+   *
+   * One per model reply, because the turn waits on one surface. Once a call
+   * in the reply has asked, a second question is neither stored nor shown:
+   * this resolves to a note telling the model so, with no `handle`.
+   */
   render<P, A extends ActionMap, Q extends QueryMap>(
     surface: SurfaceImpl<P, A, Q>,
     props: P,
