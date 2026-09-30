@@ -2534,6 +2534,18 @@ async function transcriptChecks() {
     loaded();
     check("…unless they have scrolled somewhere else meanwhile", root.scrollTop === 200);
 
+    // the content shrinks under a reader who scrolled up, the browser pulls
+    // them up to the new bottom and reports it before any resize, and then the
+    // content grows back
+    root.scrollByReader(root.scrollHeight - root.clientHeight - 300);
+    const before = root.scrollTop;
+    for (const el of root.children) if (el.dataset.handle) el.own = 10;
+    void root.scrollTop;
+    root.frame();
+    laidOut();
+    loaded();
+    check("content that shrinks and grows back returns the reader to their place", root.scrollTop === before);
+
     // a new conversation, its first render as long as the last one's
     chat.state.blocks = chat.state.blocks.map((b) => (b.kind === "ui" ? surface() : message()));
     render();

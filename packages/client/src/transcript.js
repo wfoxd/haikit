@@ -89,6 +89,12 @@ function follower(root) {
     // last scroll landed
     noticeScroll() {
       if (landed !== null && Math.abs(root.scrollTop - landed) < 1) return;
+      // Content shrinking under a reader who scrolled up pulls them up to the
+      // new bottom. That is the layout moving them, not the reader, whose own
+      // scroll up always leaves the bottom: keep their place for when the
+      // content grows back.
+      const bottom = root.scrollHeight - root.clientHeight;
+      if (!follow.stick && root.scrollTop < follow.top && root.scrollTop >= bottom - 1) return;
       landed = null;
       follow.top = root.scrollTop;
       follow.stick = root.scrollHeight - root.scrollTop - root.clientHeight < NEAR_BOTTOM;
