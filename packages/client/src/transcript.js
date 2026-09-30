@@ -38,8 +38,12 @@ export function renderTranscript(root, chat) {
     follow.stick ? follow.pin() : follow.hold();
   });
 
-  // Surfaces can grow after they mount, as a table expands or content loads.
+  // Surfaces can grow after they mount, as a table expands or an image loads.
   // While following, the observer keeps the newest content in view as they do.
+  // Otherwise it returns the reader to their place, which a rebuild may have
+  // had to clamp while the surfaces above it were still short. The browser
+  // reports scrolls before resizes in a frame, so a scroll the reader has just
+  // made is already their place by then.
   if (follow.observer) {
     follow.observer.disconnect();
     follow.observer.observe(root);
@@ -98,7 +102,10 @@ function follower(root) {
       root.scrollTop = follow.top;
       land();
     },
-    observer: typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => follow.stick && follow.pin()),
+    observer:
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(() => (follow.stick ? follow.pin() : follow.hold())),
   };
 
   root.addEventListener("scroll", () => follow.noticeScroll(), { passive: true });

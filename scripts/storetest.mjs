@@ -2434,10 +2434,13 @@ async function transcriptChecks() {
     const { renderTranscript } = await import("../packages/client/src/transcript.js");
     let n = 0;
     const heights = new Map();
+    // while set, surfaces mount short and get their height later, as one
+    // waiting on an image does
+    let loading = false;
     const chat = {
       state: { blocks: [], surfaces: new Map() },
       // a tall surface, with its height only once it has mounted
-      mount: (handle, el) => (el.own = heights.get(handle) ?? 800),
+      mount: (handle, el) => (el.own = loading ? 200 : (heights.get(handle) ?? 800)),
     };
     const message = () => ({ kind: "user", id: `b${++n}`, text: "hi" });
     const surface = () => {
@@ -2504,6 +2507,32 @@ async function transcriptChecks() {
     await settled();
     root.frame();
     check("a scroll not yet reported when a render comes isn't overwritten by it", root.scrollTop === 100);
+
+    // a reader part way up, then a render whose surfaces mount short and only
+    // later get their height: the rebuild can only hold them lower down
+    root.scrollByReader(root.scrollHeight - root.clientHeight - 300);
+    const place = root.scrollTop;
+    loading = true;
+    chat.state.blocks.push(message());
+    render();
+    await settled();
+    const clamped = root.scrollTop;
+    const loaded = () => {
+      for (const el of root.children) if (el.dataset.handle) el.own = heights.get(el.dataset.handle) ?? 800;
+      laidOut();
+    };
+    loading = false;
+    loaded();
+    check("a reader held lower down by short surfaces is returned to their place as they grow", clamped < place && root.scrollTop === place);
+
+    // the same, but the reader scrolls before the surfaces grow
+    loading = true;
+    render();
+    await settled();
+    root.scrollByReader(200);
+    loading = false;
+    loaded();
+    check("…unless they have scrolled somewhere else meanwhile", root.scrollTop === 200);
 
     // a new conversation, its first render as long as the last one's
     chat.state.blocks = chat.state.blocks.map((b) => (b.kind === "ui" ? surface() : message()));
