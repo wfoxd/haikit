@@ -32,19 +32,27 @@ function GreetingPicker({ props, send, mode, state, selection }: SurfaceProps<ty
         ))}
       </div>
       <div className="rows">
-        {rows.map((g) => (
-          <div
-            key={g.code}
-            className={live ? "row selectable" : g.code === selection ? "row picked" : "row"}
-            onClick={live ? () => void send("choose", g.code) : undefined}
-          >
-            {/* text, never HTML: tool payloads are untrusted input, and React escapes it */}
-            <span className="greeting" dir={g.rtl ? "rtl" : undefined}>
-              {g.text}
-            </span>
-            <span className="lang">{g.language}</span>
-          </div>
-        ))}
+        {rows.map((g) => {
+          const row = (
+            <>
+              {/* text, never HTML: tool payloads are untrusted input, and React escapes it */}
+              <span className="greeting" dir={g.rtl ? "rtl" : undefined}>
+                {g.text}
+              </span>
+              <span className="lang">{g.language}</span>
+            </>
+          );
+          // a row that can be chosen is a button, so a keyboard can choose it too
+          return live ? (
+            <button key={g.code} type="button" className="row selectable" onClick={() => void send("choose", g.code)}>
+              {row}
+            </button>
+          ) : (
+            <div key={g.code} className={g.code === selection ? "row picked" : "row"}>
+              {row}
+            </div>
+          );
+        })}
       </div>
     </>
   );

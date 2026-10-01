@@ -76,6 +76,18 @@ check("expire() re-renders it as out of date", el.firstElementChild.dataset.expi
 await act(async () => instance.unmount());
 check("unmount() runs its effects' cleanups and empties the element", cleanups === 1 && el.childNodes.length === 0);
 
+// mounted again once it is answered, as reset() or a remount would leave it
+const frozenEl = document.createElement("div");
+let frozenInstance;
+await act(async () => {
+  frozenInstance = def.mount(frozenEl, { items: ["a", "b"] }, { ...ctx, state: "frozen", selection: "b" });
+});
+check(
+  "mounted already answered, it renders frozen with what was picked",
+  frozenEl.firstElementChild.dataset.state === "frozen" && frozenEl.querySelector(".picked")?.textContent === "picked b",
+);
+await act(async () => frozenInstance.unmount());
+
 // the first render is synchronous: the surface has height when the
 // transcript scrolls to it. Mounted as a browser would, with no act()
 globalThis.IS_REACT_ACT_ENVIRONMENT = false;

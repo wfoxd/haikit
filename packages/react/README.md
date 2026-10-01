@@ -18,11 +18,17 @@ function GreetingPicker({ props, send, mode, state, selection }: SurfaceProps<ty
     <div className="rows">
       {props.greetings
         .filter((g) => !script || g.script === script)
-        .map((g) => (
-          <div key={g.code} className={g.code === selection ? "row picked" : "row"} onClick={live ? () => send("choose", g.code) : undefined}>
-            {g.text}
-          </div>
-        ))}
+        .map((g) =>
+          live ? (
+            <button key={g.code} type="button" onClick={() => send("choose", g.code)}>
+              {g.text}
+            </button>
+          ) : (
+            <div key={g.code} className={g.code === selection ? "picked" : undefined}>
+              {g.text}
+            </div>
+          ),
+        )}
     </div>
   );
 }

@@ -23,9 +23,13 @@ The server side is hello's, file for file. What differs is the browser half:
   middleware, so the page, hot reload and `/hai` share one port with no proxy.
   With `NODE_ENV=production` it serves `dist/` instead.
 
-For the production path:
+For the production path, from the repo root:
 
 ```bash
-npm run build    # vite build → dist/
-npm start        # NODE_ENV=production
+npm run build                       # the local packages
+npm run build -w hello-react        # vite build → examples/hello-react/dist/
+HAI_SCRIPTED=1 npm start -w hello-react
 ```
+
+`npm start` sets `NODE_ENV=production`, so the server serves `dist/` instead of
+running Vite.

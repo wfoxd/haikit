@@ -52,7 +52,8 @@ export function reactSurface<S extends AnySurface>(Component: ComponentType<Surf
     mount(element, props, ctx) {
       const root = createRoot(element);
       let state = ctx.state;
-      let selection: unknown;
+      // set when it is mounted already frozen
+      let selection = ctx.selection;
       let expired = false;
       const draw = () =>
         root.render(

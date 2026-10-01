@@ -377,6 +377,116 @@ void createChat; void mountChat; void createHai; void memoryStore; void nodeHand
     run("node", ["--input-type=module", "-e", 'import("@haikit/client/app.js")'], consumer);
     return true;
   });
+
+  // ── 7. @haikit/react on React 18, the low end of its peer range ────────
+  // Every other check resolves React 19, so this is the only place the
+  // promise of 18 is kept: installed with 18, typed against 18's types, and
+  // run against 18's renderer.
+  console.log("\nReact 18 (the low end of @haikit/react's peer range)");
+  const react18 = join(work, "react18");
+  run("mkdir", ["-p", react18], ROOT);
+  writeFileSync(
+    join(react18, "package.json"),
+    JSON.stringify(
+      {
+        name: "haikit-packtest-react18",
+        private: true,
+        type: "module",
+        dependencies: {
+          "@haikit/react": fileDep("react"),
+          "@haikit/core": fileDep("core"),
+          "@haikit/client": fileDep("client"),
+          react: "^18.3.0",
+          "react-dom": "^18.3.0",
+          "@types/react": "^18.3.0",
+          "@types/react-dom": "^18.3.0",
+          jsdom: "^30.0.0",
+        },
+        overrides: { "@haikit/core": fileDep("core"), "@haikit/client": fileDep("client") },
+      },
+      null,
+      2,
+    ),
+  );
+  check("@haikit/react installs with React 18", () => {
+    run("npm", ["install", "--no-audit", "--no-fund", "--loglevel", "error"], react18);
+    return true;
+  });
+
+  writeFileSync(
+    join(react18, "use.mjs"),
+    `
+import { JSDOM } from "jsdom";
+const dom = new JSDOM("<!doctype html><body></body>");
+Object.assign(globalThis, { window: dom.window, document: dom.window.document });
+for (const name of ["Node", "HTMLElement", "Event", "MouseEvent"]) globalThis[name] = dom.window[name];
+
+const React = (await import("react")).default;
+const { reactSurface } = await import("@haikit/react");
+const tick = () => new Promise((r) => setTimeout(r, 20));
+
+let cleanups = 0;
+function Picker({ props, state, selection }) {
+  React.useEffect(() => () => void cleanups++, []);
+  return React.createElement("p", { "data-state": state }, selection ?? props.rows.join(","));
+}
+const el = document.createElement("div");
+const instance = reactSurface(Picker).mount(el, { rows: ["a", "b"] }, { handle: "ui_01", mode: "elicit", state: "live", send: async () => {} });
+const out = { version: React.version, firstRender: el.textContent === "a,b" };
+instance.freeze("b");
+await tick();
+out.frozen = el.firstElementChild?.dataset.state === "frozen" && el.textContent === "b";
+instance.unmount();
+await tick();
+out.unmounted = cleanups === 1 && el.childNodes.length === 0;
+console.log(JSON.stringify(out));
+`,
+  );
+  let on18 = {};
+  check("a React surface runs on React 18", () => {
+    on18 = JSON.parse(run("node", ["use.mjs"], react18).trim().split("\n").at(-1));
+    return on18.version.startsWith("18.");
+  });
+  check("…renders on mount, re-renders frozen, and cleans up on unmount", () => on18.firstRender && on18.frozen && on18.unmounted);
+
+  writeFileSync(
+    join(react18, "tsconfig.json"),
+    JSON.stringify({
+      compilerOptions: {
+        target: "es2023",
+        lib: ["es2023", "dom"],
+        module: "nodenext",
+        moduleResolution: "nodenext",
+        strict: true,
+        noEmit: true,
+        skipLibCheck: false,
+      },
+      files: ["use.ts"],
+    }),
+  );
+  writeFileSync(
+    join(react18, "use.ts"),
+    `
+import { defineSurface, resolve, type Schema } from "@haikit/core";
+import { reactSurface, type SurfaceProps } from "@haikit/react";
+
+const rows: Schema<{ rows: string[] }> = { parse: (v) => v as { rows: string[] } };
+const str: Schema<string> = { parse: (v) => v as string };
+const picker = defineSurface({ name: "p", version: 1, props: rows, actions: { pick: resolve(str) } });
+
+const def = reactSurface(({ props, send }: SurfaceProps<typeof picker>) => {
+  void send("pick", props.rows[0] ?? "");
+  // @ts-expect-error  an action the contract does not declare
+  void send("drop", "x");
+  return null;
+});
+void def;
+`,
+  );
+  check("@haikit/react's types compile against React 18's", () => {
+    run("node", [join(ROOT, "node_modules", "typescript", "bin", "tsc"), "-p", react18], react18);
+    return true;
+  });
 } catch (err) {
   fail("harness", err.stack ?? err.message ?? err);
 } finally {
