@@ -49,8 +49,8 @@ contract the server implements:
 |---|---|
 | `props` | the surface's props, as its `props` schema produced them |
 | `send(action, value)` | the only channel to the server: an action the contract declares, with a value of its input type. Anything else is a compile error |
-| `mode` | `elicit` while the turn waits on this surface, `display` otherwise |
-| `state` | `frozen` once answered: a resolved question can't be answered again |
+| `mode` | how the surface was opened: `elicit` as a question the turn waits on, `display` as something shown. It stays `elicit` once answered |
+| `state` | `live`, or `frozen` once answered: a resolved question can't be answered again |
 | `selection` | what the user picked, once frozen |
 | `expired` | the conversation is out of date; nothing here can reach the server again |
 

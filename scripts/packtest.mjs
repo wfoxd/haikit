@@ -439,6 +439,24 @@ out.frozen = el.firstElementChild?.dataset.state === "frozen" && el.textContent 
 instance.unmount();
 await tick();
 out.unmounted = cleanups === 1 && el.childNodes.length === 0;
+
+// React 18 rethrows a first-render error from flushSync: mount() throws, and
+// mounting into the same element again must not find a root still there
+const errors = [];
+const logged = console.error;
+console.error = (...args) => errors.push(args.join(" "));
+const broken = document.createElement("div");
+let failed = false;
+try {
+  reactSurface(() => { throw new Error("render broke"); }).mount(broken, {}, { handle: "ui_02", mode: "display", state: "live", send: async () => {} });
+} catch {
+  failed = true;
+}
+const again = reactSurface(Picker).mount(broken, { rows: ["c"] }, { handle: "ui_02", mode: "display", state: "live", send: async () => {} });
+await tick();
+console.error = logged;
+out.failedCleanly = failed && broken.textContent === "c" && !errors.some((e) => /already been passed to createRoot/.test(e));
+again.unmount();
 console.log(JSON.stringify(out));
 `,
   );
@@ -448,6 +466,7 @@ console.log(JSON.stringify(out));
     return on18.version.startsWith("18.");
   });
   check("…renders on mount, re-renders frozen, and cleans up on unmount", () => on18.firstRender && on18.frozen && on18.unmounted);
+  check("…and a first render that throws leaves no root behind", () => on18.failedCleanly);
 
   writeFileSync(
     join(react18, "tsconfig.json"),

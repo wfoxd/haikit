@@ -24,7 +24,11 @@ type ActionsOf<S> = S extends Surface<any, infer A, any> ? A : never;
 export interface SurfaceProps<S extends AnySurface> {
   /** The surface's props, as its `props` schema produced them. */
   props: PropsOf<S>;
-  /** `elicit` while the turn waits on this surface; `display` otherwise. */
+  /**
+   * How the surface was opened: `elicit` as a question the turn waits on,
+   * `display` as something shown. It doesn't change once the question is
+   * answered; `state` does.
+   */
   mode: SurfaceMode;
   /** `frozen` once answered: a resolved question cannot be answered again. */
   state: SurfaceState;
@@ -66,7 +70,15 @@ export function reactSurface<S extends AnySurface>(Component: ComponentType<Surf
             send: ctx.send as SurfaceProps<S>["send"],
           }),
         );
-      flushSync(draw);
+      // A component that throws on its first render leaves no instance behind
+      // to unmount later, so its root is let go of here, before the error goes
+      // on; otherwise a remount would stack a second root on this element.
+      try {
+        flushSync(draw);
+      } catch (err) {
+        root.unmount();
+        throw err;
+      }
       return {
         freeze(picked) {
           state = "frozen";
