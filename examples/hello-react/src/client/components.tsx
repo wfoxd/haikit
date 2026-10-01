@@ -26,7 +26,13 @@ function GreetingPicker({ props, send, mode, state, selection }: SurfaceProps<ty
     <>
       <div className="chips">
         {[null, ...scripts].map((sc) => (
-          <button key={sc ?? "all"} className={script === sc ? "chip on" : "chip"} onClick={() => setScript(sc)}>
+          <button
+            key={sc ?? "all"}
+            type="button"
+            className={script === sc ? "chip on" : "chip"}
+            aria-pressed={script === sc}
+            onClick={() => setScript(sc)}
+          >
             {sc ?? "all"}
           </button>
         ))}
