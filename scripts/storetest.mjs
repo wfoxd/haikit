@@ -2342,6 +2342,221 @@ async function oneQuestionChecks(make) {
   }
 }
 
+// ── the transcript follows new content, and keeps a reader's place ──────
+// Surfaces mount a microtask after the render that creates them, and only then
+// have height. A transcript that scrolls before that, or decides whether to
+// follow from the geometry it sees, stops following at its first tall surface.
+async function transcriptChecks() {
+  console.log("\ntranscript");
+
+  // Just enough DOM for the renderer: every element has a height, and the root
+  // scrolls. Reading scrollTop clamps it to the content, as a layout does, and
+  // a move is reported by a scroll event at the next frame, as a browser does.
+  class El {
+    constructor(tag) {
+      Object.assign(this, { tagName: tag, children: [], dataset: {}, className: "", textContent: "", own: 20 });
+    }
+    append(...nodes) {
+      this.children.push(...nodes);
+    }
+    replaceChildren(...nodes) {
+      this.children = [...nodes];
+    }
+    get height() {
+      return this.own + this.children.reduce((sum, c) => sum + c.height, 0);
+    }
+  }
+  class Root extends El {
+    constructor() {
+      super("div");
+      Object.assign(this, { own: 0, clientHeight: 600, top: 0, listeners: [] });
+    }
+    get scrollHeight() {
+      return Math.max(this.clientHeight, this.height);
+    }
+    get scrollTop() {
+      const top = Math.max(0, Math.min(this.top, this.scrollHeight - this.clientHeight));
+      if (top !== this.top) Object.assign(this, { top, moved: true });
+      return top;
+    }
+    set scrollTop(y) {
+      if (y !== this.top) Object.assign(this, { top: y, moved: true });
+      void this.scrollTop;
+    }
+    addEventListener(type, fn) {
+      if (type === "scroll") this.listeners.push(fn);
+    }
+    // a rendering step: one scroll event for whatever moved since the last
+    frame() {
+      if (!this.moved) return;
+      this.moved = false;
+      for (const fn of this.listeners) fn();
+    }
+    // the reader scrolling: the position moves, then the browser says so
+    scrollByReader(y) {
+      this.scrollTop = y;
+      this.frame();
+    }
+    get fromBottom() {
+      return this.scrollHeight - this.scrollTop - this.clientHeight;
+    }
+  }
+  // Resize observations are delivered when a test says a frame has laid out,
+  // for the observed elements whose box changed: the root's is its viewport,
+  // which content growing inside it doesn't change.
+  const size = (el) => el.clientHeight ?? el.height;
+  const observers = [];
+  class ResizeObserver {
+    constructor(callback) {
+      Object.assign(this, { callback, targets: new Map() });
+      observers.push(this);
+    }
+    observe(el) {
+      this.targets.set(el, size(el));
+    }
+    disconnect() {
+      this.targets.clear();
+    }
+  }
+  const laidOut = () => {
+    for (const o of observers) {
+      const changed = [...o.targets].filter(([el, seen]) => size(el) !== seen);
+      for (const [el] of changed) o.targets.set(el, size(el));
+      if (changed.length) o.callback(changed.map(([target]) => ({ target })));
+    }
+  };
+  const hadDocument = "document" in globalThis;
+  const hadObserver = "ResizeObserver" in globalThis;
+  globalThis.document ??= { createElement: (tag) => new El(tag) };
+  globalThis.ResizeObserver ??= ResizeObserver;
+
+  try {
+    const { renderTranscript } = await import("../packages/client/src/transcript.js");
+    let n = 0;
+    const heights = new Map();
+    // while set, surfaces mount short and get their height later, as one
+    // waiting on an image does
+    let loading = false;
+    const chat = {
+      state: { blocks: [], surfaces: new Map() },
+      // a tall surface, with its height only once it has mounted
+      mount: (handle, el) => (el.own = loading ? 200 : (heights.get(handle) ?? 800)),
+    };
+    const message = () => ({ kind: "user", id: `b${++n}`, text: "hi" });
+    const surface = () => {
+      const handle = `ui_${++n}`;
+      chat.state.surfaces.set(handle, { props: {} });
+      return { kind: "ui", id: `ui:${handle}`, handle };
+    };
+    const root = new Root();
+    const render = () => renderTranscript(root, chat);
+    const settled = () => new Promise((r) => setTimeout(r, 0));
+
+    chat.state.blocks.push(message(), surface());
+    render();
+    await settled();
+    check("a tall surface is in view once it has mounted", root.scrollTop > 0 && root.fromBottom === 0);
+
+    chat.state.blocks.push(message(), surface());
+    render();
+    await settled();
+    check("…and the transcript goes on following after it", root.fromBottom === 0);
+
+    // one chunk of the stream renders twice before anything in it mounts
+    root.scrollByReader(100);
+    chat.state.blocks.push(message(), surface());
+    render();
+    render();
+    await settled();
+    check("a reader who scrolled up keeps their place through a turn", root.scrollTop === 100 && root.fromBottom > 0);
+
+    root.scrollByReader(root.scrollHeight);
+    chat.state.blocks.push(message(), surface());
+    render();
+    await settled();
+    check("scrolling back to the bottom follows again", root.fromBottom === 0);
+
+    // content grows between the transcript's own scroll and the frame that
+    // reports it, as an image loading in a surface would
+    heights.set(chat.state.blocks.at(-1).handle, 1100);
+    root.children.at(-1).own = 1100;
+    root.frame();
+    render();
+    await settled();
+    check("content growing before its own scroll is reported doesn't stop it following", root.fromBottom === 0);
+
+    // a surface grows after it has mounted, with no render to follow it
+    const grow = (by) => {
+      const last = chat.state.blocks.at(-1).handle;
+      heights.set(last, (heights.get(last) ?? 800) + by);
+      root.children.at(-1).own += by;
+      laidOut();
+    };
+    grow(200);
+    check("a surface that grows after mounting stays in view without another render", root.fromBottom === 0);
+    root.scrollByReader(100);
+    grow(200);
+    check("…but a reader who scrolled up isn't pulled back down by it", root.scrollTop === 100);
+
+    // the reader scrolls back down and then up again, and a render comes
+    // before the browser has reported that last scroll
+    root.scrollByReader(root.scrollHeight);
+    root.scrollTop = 100;
+    chat.state.blocks.push(message(), surface());
+    render();
+    await settled();
+    root.frame();
+    check("a scroll not yet reported when a render comes isn't overwritten by it", root.scrollTop === 100);
+
+    // a reader part way up, then a render whose surfaces mount short and only
+    // later get their height: the rebuild can only hold them lower down
+    root.scrollByReader(root.scrollHeight - root.clientHeight - 300);
+    const place = root.scrollTop;
+    loading = true;
+    chat.state.blocks.push(message());
+    render();
+    await settled();
+    const clamped = root.scrollTop;
+    const loaded = () => {
+      for (const el of root.children) if (el.dataset.handle) el.own = heights.get(el.dataset.handle) ?? 800;
+      laidOut();
+    };
+    loading = false;
+    loaded();
+    check("a reader held lower down by short surfaces is returned to their place as they grow", clamped < place && root.scrollTop === place);
+
+    // the same, but the reader scrolls before the surfaces grow
+    loading = true;
+    render();
+    await settled();
+    root.scrollByReader(200);
+    loading = false;
+    loaded();
+    check("…unless they have scrolled somewhere else meanwhile", root.scrollTop === 200);
+
+    // the content shrinks under a reader who scrolled up, the browser pulls
+    // them up to the new bottom and reports it before any resize, and then the
+    // content grows back
+    root.scrollByReader(root.scrollHeight - root.clientHeight - 300);
+    const before = root.scrollTop;
+    for (const el of root.children) if (el.dataset.handle) el.own = 10;
+    void root.scrollTop;
+    root.frame();
+    laidOut();
+    loaded();
+    check("content that shrinks and grows back returns the reader to their place", root.scrollTop === before);
+
+    // a new conversation, its first render as long as the last one's
+    chat.state.blocks = chat.state.blocks.map((b) => (b.kind === "ui" ? surface() : message()));
+    render();
+    await settled();
+    check("a new conversation starts out following", root.fromBottom === 0);
+  } finally {
+    if (!hadDocument) delete globalThis.document;
+    if (!hadObserver) delete globalThis.ResizeObserver;
+  }
+}
+
 // ── a window, when given, has to be a real one ──────────────────────────
 // Leaving it out means "never". The type rules out invalid values, but
 // JavaScript callers never see the type.
@@ -2384,6 +2599,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   await routeChecks();
   await windowChecks();
   await clientChecks();
+  await transcriptChecks();
 
   // Said plainly because a suite that looks exhaustive is worse than one that
   // admits its edges: nothing here can prove lease acquisition is atomic. This
