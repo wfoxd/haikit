@@ -335,13 +335,7 @@ export function createChat({ endpoint = "/hai", registry }) {
     const { instance } = surface;
     surface.instance = null;
     surface.element = null;
-    try {
-      instance?.unmount?.();
-    } catch (err) {
-      queueMicrotask(() => {
-        throw err;
-      });
-    }
+    attempt(() => instance?.unmount?.());
   }
 
   // A message is queued, never refused for being busy. It resolves to whether
@@ -426,8 +420,11 @@ export function createChat({ endpoint = "/hai", registry }) {
     aborter.abort();
     clearTimeout(timer);
     for (const surface of state.surfaces.values()) unmount(surface);
-    notify({ type: "closed" });
+    // Every subscriber hears it, even after one that throws, and none is held
+    // on to: they are let go of before they are told.
+    const subscribers = [...listeners];
     listeners.clear();
+    for (const fn of subscribers) attempt(() => fn(state, { type: "closed" }));
   }
 
   return {
@@ -443,6 +440,20 @@ export function createChat({ endpoint = "/hai", registry }) {
       return () => listeners.delete(fn);
     },
   };
+}
+
+/**
+ * Run `fn`, reporting what it throws without letting it stop the caller: the
+ * error surfaces as an uncaught one would, after the caller has finished.
+ */
+function attempt(fn) {
+  try {
+    fn();
+  } catch (err) {
+    queueMicrotask(() => {
+      throw err;
+    });
+  }
 }
 
 /** "2 hours", "15 minutes" — for a sentence a person reads. */

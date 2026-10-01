@@ -993,6 +993,52 @@ async function clientChecks() {
       "after close() nothing is sent, mounted or heard",
       after.join() === "false,false," && received.length === 0 && heard.length === heardBefore && log.at(-1) === "unmount 3",
     );
+
+    // a component that throws on its way out doesn't stop the reset
+    mode = "surface";
+    const breaking = createChat({
+      endpoint,
+      registry: {
+        c: {
+          mount: () => ({
+            unmount() {
+              throw new Error("unmount broke");
+            },
+          }),
+        },
+      },
+    });
+    await breaking.send("show it");
+    breaking.mount("ui_01", element());
+    const brokeWith = [];
+    const onBreak = (err) => brokeWith.push(err.message);
+    process.on("uncaughtException", onBreak);
+    breaking.reset();
+    await sleep(10);
+    process.off("uncaughtException", onBreak);
+    mode = "ok";
+    check(
+      "a component that throws in unmount() doesn't stop the reset, and its error is reported",
+      breaking.state.conversationId === null && breaking.state.surfaces.size === 0 && brokeWith.join() === "unmount broke",
+    );
+
+    // a subscriber that throws when told doesn't stop the others being told
+    const closing = createChat({ endpoint, registry: {} });
+    const toldOfClose = [];
+    const reported = [];
+    const report = (err) => reported.push(err.message);
+    process.on("uncaughtException", report);
+    closing.subscribe(() => {
+      throw new Error("subscriber broke");
+    });
+    closing.subscribe((_s, event) => toldOfClose.push(event.type));
+    closing.close();
+    await sleep(10);
+    process.off("uncaughtException", report);
+    check(
+      "a subscriber that throws on close() doesn't stop the others hearing it, and its error is reported",
+      toldOfClose.join() === "closed" && reported.join() === "subscriber broke",
+    );
   } finally {
     for (const res of hanging) res.end();
     server.close();
@@ -2402,7 +2448,7 @@ async function transcriptChecks() {
   class El {
     constructor(tag) {
       Object.assign(this, { tagName: tag, children: [], dataset: {}, className: "", textContent: "", own: 20 });
-      Object.assign(this, { parentNode: null, moves: 0 });
+      Object.assign(this, { nodeType: 1, parentNode: null, moves: 0 });
     }
     // take a node from wherever it is; one that was already placed has moved
     adopt(node) {
@@ -2445,6 +2491,13 @@ async function transcriptChecks() {
     }
     get height() {
       return this.own + this.children.reduce((sum, c) => sum + c.height, 0);
+    }
+  }
+  // whitespace in the page's markup, say
+  class Text extends El {
+    constructor() {
+      super("#text");
+      Object.assign(this, { nodeType: 3, own: 0 });
     }
   }
   class Root extends El {
@@ -2495,10 +2548,13 @@ async function transcriptChecks() {
       Object.assign(this, { callback, targets: new Map() });
       observers.push(this);
     }
+    // as in a browser, only elements can be observed
     observe(el) {
+      if (el.nodeType !== 1) throw new TypeError("parameter 1 is not of type 'Element'");
       this.targets.set(el, size(el));
     }
     unobserve(el) {
+      if (el.nodeType !== 1) throw new TypeError("parameter 1 is not of type 'Element'");
       this.targets.delete(el);
     }
     disconnect() {
@@ -2627,8 +2683,9 @@ async function transcriptChecks() {
         !observers.some((o) => o.targets.has(row)),
     );
 
-    // something the page put after the transcript, as mountChat's starters
-    root.append(new El("div"));
+    // something the page put after the transcript, as mountChat's starters,
+    // and whitespace, as markup leaves inside an element
+    root.append(new El("div"), new Text());
     render();
     await settled();
     check("what the page added after the transcript goes at its next render", root.children.length === chat.state.blocks.length);

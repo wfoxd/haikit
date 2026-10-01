@@ -89,7 +89,8 @@ function place(root, elements, observer) {
   const drop = (node) => {
     const next = node.nextSibling;
     node.remove();
-    observer?.unobserve(node);
+    // text and comments are dropped too, but only elements were ever observed
+    if (node.nodeType === 1) observer?.unobserve(node);
     return next;
   };
   let at = root.firstChild;
