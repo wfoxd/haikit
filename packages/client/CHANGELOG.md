@@ -1,5 +1,11 @@
 # @haikit/client
 
+## 0.8.0
+
+### Minor Changes
+
+- 6c11020: A surface mounted again after it was answered now knows what was picked. The client keeps each frozen surface's selection, and passes it to `mount` as `ctx.selection`. Before, a remount got `state: "frozen"` with no selection.
+
 ## 0.7.0
 
 ### Minor Changes
