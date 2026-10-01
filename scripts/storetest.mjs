@@ -2657,6 +2657,17 @@ async function transcriptChecks() {
     await settled();
     check("a new conversation starts out following", root.fromBottom === 0);
 
+    // a page that clears the transcript itself on a reset, then renders again
+    const old = [...root.children];
+    root.replaceChildren();
+    chat.state.blocks = [];
+    render();
+    await settled();
+    check(
+      "a reset's elements stop being observed, even ones the page took out first",
+      old.length > 0 && old.every((el) => !observers.some((o) => o.targets.has(el))),
+    );
+
     closeTranscript(root);
     check(
       "a closed transcript lets go of its observer and its scroll listener",

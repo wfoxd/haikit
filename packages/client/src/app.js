@@ -111,7 +111,17 @@ export function mountChat({
     return empty;
   }
 
-  const renderEmpty = () => transcript.replaceChildren(emptyState());
+  // Every render goes through the transcript, an empty one included, so the
+  // elements a reset leaves behind are taken out and stop being observed.
+  // The suggestions follow it until the user engages — a first message, or an
+  // answer to something init showed. What the conversation opened with (an
+  // init tool's row, a welcome surface) doesn't replace them.
+  const render = () => {
+    renderTranscript(transcript, chat);
+    if (!chat.state.blocks.some((b) => b.kind === "user" || b.kind === "interaction")) {
+      transcript.append(emptyState());
+    }
+  };
 
   // ── wiring ─────────────────────────────────────────────────────────
   chat.subscribe((state, event) => {
@@ -127,16 +137,7 @@ export function mountChat({
     // has one — runs before anything is typed.
     if (event.type === "reset") chat.start();
 
-    if (state.blocks.length === 0) renderEmpty();
-    else {
-      renderTranscript(transcript, chat);
-      // what the conversation opened with (an init tool's row, a welcome
-      // surface) doesn't replace the suggestions; the user engaging does —
-      // a first message, or an answer to something init showed
-      if (!state.blocks.some((b) => b.kind === "user" || b.kind === "interaction")) {
-        transcript.append(emptyState());
-      }
-    }
+    render();
 
     modelEl.textContent = state.model;
     input.disabled = state.expired !== null;
@@ -162,7 +163,7 @@ export function mountChat({
     }
   };
 
-  renderEmpty();
+  render();
   chat.start();
   return chat;
 }

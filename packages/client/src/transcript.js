@@ -21,6 +21,9 @@ export function renderTranscript(root, chat) {
   // conversation starts at the bottom, wherever the reader was in the last.
   // Its elements are all new too: the old surfaces are already unmounted.
   if (state.blocks !== follow.blocks) {
+    // the last conversation's elements may already be gone from the page; they
+    // stop being observed either way
+    for (const { el } of follow.shown.values()) follow.observer?.unobserve(el);
     Object.assign(follow, { blocks: state.blocks, shown: new Map(), stick: true, top: 0 });
   }
   // A scroll the reader made since the last render, whose event hasn't arrived
