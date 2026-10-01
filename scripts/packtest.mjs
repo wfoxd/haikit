@@ -19,7 +19,7 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const PACKAGES = ["core", "server", "client", "anthropic", "postgres"];
+const PACKAGES = ["core", "server", "client", "anthropic", "postgres", "react"];
 
 let pass = 0;
 const failures = [];
@@ -154,9 +154,15 @@ try {
           "@haikit/client": fileDep("client"),
           "@haikit/anthropic": fileDep("anthropic"),
           "@haikit/postgres": fileDep("postgres"),
+          "@haikit/react": fileDep("react"),
+          // @haikit/react's peers, and the types its .d.ts is checked against
+          react: "^19.0.0",
+          "react-dom": "^19.0.0",
+          "@types/react": "^19.0.0",
+          "@types/react-dom": "^19.0.0",
           zod: "^4.0.0",
         },
-        overrides: { "@haikit/core": fileDep("core") },
+        overrides: { "@haikit/core": fileDep("core"), "@haikit/client": fileDep("client") },
       },
       null,
       2,
@@ -180,6 +186,7 @@ import { pgStore, migrate, schema, sweepOrphans } from "@haikit/postgres";
 import { createChat } from "@haikit/client";
 import { mountChat } from "@haikit/client/app.js";
 import { renderTranscript, h } from "@haikit/client/transcript.js";
+import { reactSurface } from "@haikit/react";
 import { z } from "zod";
 
 const out = {};
@@ -191,6 +198,7 @@ out.postgresExports = [pgStore, migrate, sweepOrphans].every((f) => typeof f ===
 const pgShaped = pgStore({ query: async () => ({ rows: [] }) });
 out.postgresIsStore = ["loadConversation", "saveConversation", "putPayload", "getPayload", "getPayloads"].every((m) => typeof pgShaped[m] === "function");
 out.clientExports = [createChat, mountChat, renderTranscript, h].every(f => typeof f === "function");
+out.reactExport = typeof reactSurface === "function" && typeof reactSurface(() => null).mount === "function";
 
 // the contract layer does real work, not just re-export shapes
 const surface = defineSurface({
@@ -249,6 +257,7 @@ console.log(JSON.stringify(out));
   check("@haikit/postgres named exports", () => runtime.postgresExports === true);
   check("@haikit/postgres builds a StoreAdapter", () => runtime.postgresIsStore === true);
   check("@haikit/client named exports (incl. subpaths)", () => runtime.clientExports === true);
+  check("@haikit/react builds a registry entry", () => runtime.reactExport === true);
   check("defineSurface builds a surface", () => runtime.surfaceName === "packtest_picker");
   check("cap() caps (3 of 47)", () => runtime.capShown === 3 && runtime.capTotal === 47);
   check("cap() reports the omission", () => runtime.capReportsOmission === true);
@@ -295,6 +304,7 @@ import { pgStore } from "@haikit/postgres";
 import { createChat, type Registry, type MountCtx } from "@haikit/client";
 import { mountChat } from "@haikit/client/app.js";
 import { h } from "@haikit/client/transcript.js";
+import { reactSurface, type SurfaceProps } from "@haikit/react";
 import { z } from "zod";
 
 const picker = defineSurface({
@@ -330,15 +340,23 @@ const registry: Registry = {
     return {
       freeze: () => { btn.disabled = true; },
       expire: () => { btn.textContent = "out of date"; },
+      unmount: () => btn.remove(),
     };
   } },
+  // a React component typed from the same contract: props from its schema,
+  // send() against the actions it declares
+  r: reactSurface(({ props, send }: SurfaceProps<typeof picker>) => {
+    void send("pick", props.rows[0] ?? "");
+    return null;
+  }),
 };
 void registry;
-// the expiry state and reset() are part of the published client types
+// the expiry state, reset() and close() are part of the published client types
 declare const chat: ReturnType<typeof createChat>;
 const notice: string | null = chat.state.expired;
 const deadline: number | null = chat.state.expiresAt;
 chat.reset();
+chat.close();
 void notice; void deadline;
 // the store type-checks as a StoreAdapter, with a structurally-typed driver
 const durable: StoreAdapter = pgStore({ query: async (_text: string, _params?: unknown[]) => ({ rows: [] }) });
