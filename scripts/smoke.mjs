@@ -7,7 +7,7 @@
  * a state machine that stops parking, a binding table that stops rejecting.
  */
 
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import path from "node:path";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
@@ -24,6 +24,29 @@ const CASES = [
     value: "he",
     expectInResolution: /Chose Hebrew/,
     staleAfterMs: undefined, // greetings never go out of date
+    display: {
+      message: "show the hebrew one",
+      component: "greeting_card",
+      action: "copy",
+      value: { code: "he" },
+      expectInLabel: /Copied the Hebrew greeting/,
+    },
+  },
+  {
+    // hello's surfaces as React components, built with Vite and served from
+    // dist/ — the production path, not the dev server
+    name: "hello-react",
+    entry: "examples/hello-react/src/server/main.ts",
+    build: "examples/hello-react",
+    env: { NODE_ENV: "production" },
+    port: 5276,
+    message: "greet me",
+    tool: "list_greetings",
+    component: "greeting_picker",
+    action: "choose",
+    value: "he",
+    expectInResolution: /Chose Hebrew/,
+    staleAfterMs: undefined,
     display: {
       message: "show the hebrew one",
       component: "greeting_card",
@@ -87,11 +110,29 @@ async function waitFor(url, tries = 40) {
   return false;
 }
 
+// The page's own module graph: components.js as served, or for a built
+// example, the bundle its index.html loads.
+async function clientCode(base, built) {
+  if (!built) return fetch(`${base}/components.js`).then((r) => r.text());
+  const page = await fetch(`${base}/`).then((r) => r.text());
+  const src = page.match(/<script[^>]+src="([^"]+\.js)"/)?.[1];
+  return src ? fetch(new URL(src, base)).then((r) => r.text()) : "";
+}
+
 for (const c of CASES) {
   console.log(`\n${c.name}`);
+  if (c.build) {
+    try {
+      execFileSync("npx", ["vite", "build", "--logLevel", "error"], { cwd: path.join(ROOT, c.build), stdio: "pipe" });
+      ok("builds with vite");
+    } catch (err) {
+      bad(`vite build failed\n${err.stderr ?? err.message}`);
+      continue;
+    }
+  }
   const child = spawn("node", [c.entry], {
     cwd: ROOT,
-    env: { ...process.env, HAI_SCRIPTED: "1", PORT: String(c.port) },
+    env: { ...process.env, HAI_SCRIPTED: "1", PORT: String(c.port), ...c.env },
     stdio: "ignore",
   });
 
@@ -190,9 +231,9 @@ for (const c of CASES) {
 
       // the component must exist in the browser registry, or the client mounts
       // an error card instead — invisible to every server-side assertion
-      const registry = await fetch(`${base}/components.js`).then((r) => r.text());
+      const registry = await clientCode(base, Boolean(c.build));
       new RegExp(`\\b${c.display.component}\\s*:`).test(registry)
-        ? ok(`${c.display.component} is registered in components.js`)
+        ? ok(`${c.display.component} is registered in ${c.build ? "the built bundle" : "components.js"}`)
         : bad(`${c.display.component} missing from the client registry → "unknown component"`);
 
       const informed = await sse(`${base}/hai/interact`, {

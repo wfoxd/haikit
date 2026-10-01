@@ -22,11 +22,13 @@ context.**
 
 ```bash
 npm install
-npm run example:hello      # or example:flights — no API key needed
+npm run example:hello      # http://localhost:5175 — no API key needed
 ```
 
-Then http://localhost:5175. Watch the right-hand pane: it shows everything the
-model actually receives.
+Or `npm run example:flights` (http://localhost:5173), or
+`npm run example:hello-react` (http://localhost:5176) for hello with React
+components. Watch the right-hand pane: it shows everything the model actually
+receives.
 
 To build your own, follow the tutorial, or read `examples/hello` — it is about
 150 lines.
@@ -40,6 +42,7 @@ To build your own, follow the tutorial, or read `examples/hello` — it is about
 | [`@haikit/client`](packages/client) | browser runtime + default UI. Plain ESM, no build step |
 | [`@haikit/anthropic`](packages/anthropic) | Claude model adapter |
 | [`@haikit/postgres`](packages/postgres) | durable store adapter. Bring your own driver |
+| [`@haikit/react`](packages/react) | write surface components in React, typed from the surface contract |
 
 Adapters depend on `@haikit/core` only — never on the runtime. That is what keeps
 the model and store seams swappable.
@@ -79,8 +82,9 @@ Each row is a bug the prototype this was extracted from actually produced.
 npm run build       # compile packages
 npm run typecheck   # packages + examples, server code and browser components
 npm run typetest    # the four guarantees, as real compile errors
-npm run smoke       # boots both examples, drives the elicit loop end to end
-npm test            # all three
+npm run reacttest   # @haikit/react against React and a DOM
+npm run smoke       # boots every example, drives the elicit loop end to end
+npm test            # all of the above, and the store suite
 ```
 
 `typetest` compiles `packages/core/test/types/guarantees.ts` twice — once with

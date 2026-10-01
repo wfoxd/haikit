@@ -222,6 +222,8 @@ export function createChat({ endpoint = "/hai", registry }) {
         const surface = state.surfaces.get(event.handle);
         if (surface) {
           surface.state = event.state;
+          // kept, so a surface mounted again once frozen still knows the answer
+          surface.selection = event.selection;
           surface.instance?.freeze?.(event.selection);
         }
         break;
@@ -320,6 +322,7 @@ export function createChat({ endpoint = "/hai", registry }) {
       handle,
       mode: surface.mode,
       state: surface.state,
+      selection: surface.selection,
       // The ONLY channel a component has to the server. It passes an action
       // name declared in the contract — never a tool, never a handler.
       send: (action, value) => interact(handle, action, value),

@@ -657,6 +657,10 @@ async function clientChecks() {
       if (["expiring", "server-refuses", "split", "slow-render", "surface"].includes(mode)) {
         picker(mode === "slow-render" ? 200 : mode === "surface" ? undefined : 120).forEach(frame);
       }
+      if (mode === "answered") {
+        picker(undefined).forEach(frame);
+        frame({ type: "ui_state", handle: "ui_01", state: "frozen", selection: "he" });
+      }
       const refused = mode === "server-refuses" || mode === "late-refusal";
       if (refused) frame({ type: "expired", message: "server says" });
       frame(idle);
@@ -968,6 +972,17 @@ async function clientChecks() {
     check("mounting a surface again unmounts the instance it had first", log.join() === "mount 1,unmount 1,mount 2");
     lifecycle.reset();
     check("reset() unmounts every surface", log.at(-1) === "unmount 2" && lifecycle.state.surfaces.size === 0);
+
+    // a surface mounted again once answered still knows what was picked
+    mode = "answered";
+    const remembered = [];
+    const remembering = createChat({
+      endpoint,
+      registry: { c: { mount: (_el, _props, ctx) => void remembered.push([ctx.state, ctx.selection]) } },
+    });
+    await remembering.send("pick he");
+    remembering.mount("ui_01", element());
+    check("a surface mounted once it is answered is told what was picked", JSON.stringify(remembered) === '[["frozen","he"]]');
 
     // ── close(): done for good, even with a turn still open
     await lifecycle.send("show it again");

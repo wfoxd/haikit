@@ -47,6 +47,11 @@ jobs:
       # networked one cannot: handle scoping, batch reads, turn leasing
       - run: npm run storetest
 
+      # @haikit/react against a real React and a DOM: renders on mount, sends
+      # only declared actions, keeps its own state through a freeze, cleans up
+      # on unmount, and under the default transcript mounts once
+      - run: npm run reacttest
+
       # the same contract against @haikit/postgres: PGlite in-process, then a
       # real server with twenty connections racing for one lease
       - run: npm run pgtest

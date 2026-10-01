@@ -1125,6 +1125,26 @@ if (/greet|hello|hi\b|hey|language|world|start/.test(text)) {
 
 `mountChat` starts each conversation this way, both when it opens and after *Start a new conversation*. With your own UI, call `chat.start()`. A client that never calls it still gets `init`, run with its first message instead. `init` can render surfaces too, and an elicit one ("which account?") parks the conversation before anyone has typed. If it throws, the start is refused and the next start or message tries again, so the model never begins without it.
 
+### Write a surface in React
+
+A component is anything with `mount(element, props, ctx)`, so any framework fits. `@haikit/react` makes React a first-class one: `reactSurface()` wraps a component, and `SurfaceProps<typeof greetingPicker>` types its props from the contract you wrote in step 2.
+
+```tsx
+import { useState } from "react";
+import { reactSurface, type SurfaceProps } from "@haikit/react";
+import type { greetingPicker } from "../shared/surfaces.ts";
+
+function GreetingPicker({ props, send, mode, state }: SurfaceProps<typeof greetingPicker>) {
+  const [script, setScript] = useState<string | null>(null);
+  const live = state === "live" && mode === "elicit";
+  // …the same chips and rows as step 5, as JSX
+}
+
+export const registry = { greeting_picker: reactSurface(GreetingPicker) };
+```
+
+`send("choose", g.code)` compiles. `send("delete", …)` doesn't, because the contract never declared it, and neither does a value of the wrong type. The transcript mounts each surface once, so `useState` survives the conversation streaming on. React needs a bundler: `examples/hello-react` is this tutorial's app with Vite, running inside the same node server.
+
 ### Things that will tempt you
 
 **A `render_ui(component, props)` tool** so the model can compose interface freely. It feels flexible and it dissolves every guarantee in step 10 — the registry stops being typed, reviewable, or bounded. Tools owning their rendering contract is the constraint that makes the rest work.

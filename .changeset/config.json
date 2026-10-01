@@ -7,7 +7,8 @@
   "updateInternalDependencies": "patch",
   "ignore": [
     "hello",
-    "flights"
+    "flights",
+    "hello-react"
   ],
   "fixed": [
     [
@@ -15,7 +16,8 @@
       "@haikit/server",
       "@haikit/client",
       "@haikit/anthropic",
-      "@haikit/postgres"
+      "@haikit/postgres",
+      "@haikit/react"
     ]
   ]
 }

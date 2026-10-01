@@ -37,6 +37,8 @@ export interface MountCtx {
   handle: string;
   mode: SurfaceMode;
   state: SurfaceState;
+  /** What the user picked, when the surface is mounted already frozen. */
+  selection?: unknown;
   send(action: string, value: unknown): Promise<void>;
 }
 
@@ -78,6 +80,8 @@ export interface SurfaceRecord {
   mode: SurfaceMode;
   state: SurfaceState;
   props: unknown | null;
+  /** What the user picked, once frozen. */
+  selection?: unknown;
   instance: SurfaceInstance | null;
   /** The element it was last mounted into. */
   element: HTMLElement | null;
