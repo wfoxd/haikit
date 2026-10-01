@@ -229,12 +229,14 @@ for (const c of CASES) {
         continue;
       }
 
-      // the component must exist in the browser registry, or the client mounts
-      // an error card instead — invisible to every server-side assertion
+      // each component must exist in the browser registry, or the client
+      // mounts an error card instead — invisible to every server-side assertion
       const registry = await clientCode(base, Boolean(c.build));
-      new RegExp(`\\b${c.display.component}\\s*:`).test(registry)
-        ? ok(`${c.display.component} is registered in ${c.build ? "the built bundle" : "components.js"}`)
-        : bad(`${c.display.component} missing from the client registry → "unknown component"`);
+      for (const component of [c.component, c.display.component]) {
+        new RegExp(`\\b${component}\\s*:`).test(registry)
+          ? ok(`${component} is registered in ${c.build ? "the built bundle" : "components.js"}`)
+          : bad(`${component} missing from the client registry → "unknown component"`);
+      }
 
       const informed = await sse(`${base}/hai/interact`, {
         conversationId,

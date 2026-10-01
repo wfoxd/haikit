@@ -12,7 +12,11 @@ npm run example:hello-react
 ```
 
 Then http://localhost:5176. It uses the scripted model, so it needs no API key.
-Drop `HAI_SCRIPTED=1` and set `ANTHROPIC_API_KEY` to run it against Claude.
+To run it against Claude instead:
+
+```bash
+ANTHROPIC_API_KEY=… npm run dev -w hello-react
+```
 
 The server side is hello's, file for file. What differs is the browser half:
 
