@@ -64,6 +64,9 @@ export function createChat({ endpoint = "/hai", registry }) {
   let generation = 0;
   let aborter = new AbortController();
 
+  /** Set by close(): this chat is done for good, and does nothing more. */
+  let shutDown = false;
+
   /**
    * When the request now streaming was sent. The server stamps every surface
    * it renders after that request arrived, so a freshness deadline counted from
@@ -293,10 +296,14 @@ export function createChat({ endpoint = "/hai", registry }) {
   /**
    * Mount a surface into an element. Strict allowlist: an unregistered
    * component renders an error card, never an improvised UI.
+   *
+   * One instance per surface. Mounting it again, into this element or another,
+   * unmounts the one before, so nothing that instance set up outlives it.
    */
   function mount(handle, element) {
     const surface = state.surfaces.get(handle);
-    if (!surface || !surface.props) return null;
+    if (shutDown || !surface || !surface.props) return null;
+    unmount(surface);
 
     const definition = registry[surface.component];
     if (!definition) {
@@ -319,6 +326,24 @@ export function createChat({ endpoint = "/hai", registry }) {
     return surface.instance;
   }
 
+  /**
+   * Let a surface's instance go. A component that throws on its way out still
+   * goes: the error is reported, not allowed to stop a reset or a close part
+   * way through.
+   */
+  function unmount(surface) {
+    const { instance } = surface;
+    surface.instance = null;
+    surface.element = null;
+    try {
+      instance?.unmount?.();
+    } catch (err) {
+      queueMicrotask(() => {
+        throw err;
+      });
+    }
+  }
+
   // A message is queued, never refused for being busy. It resolves to whether
   // the server took it: false if the conversation went out of date first —
   // at the call, or while it waited behind a long turn — if reset() started
@@ -328,7 +353,7 @@ export function createChat({ endpoint = "/hai", registry }) {
   // caller can also check `state.expired` straight after calling and never
   // clear the input at all.
   async function send(text) {
-    if (!text.trim() || closed()) return false;
+    if (shutDown || !text.trim() || closed()) return false;
     return enqueue("/chat", { message: text });
   }
 
@@ -350,7 +375,7 @@ export function createChat({ endpoint = "/hai", registry }) {
    * like send().
    */
   async function start() {
-    if (begun() || closed()) return false;
+    if (shutDown || begun() || closed()) return false;
     return enqueue("/start", {});
   }
 
@@ -360,19 +385,22 @@ export function createChat({ endpoint = "/hai", registry }) {
   // checked first, so a click that cannot be sent still closes a conversation
   // whose timer slept through its deadline.
   async function interact(handle, action, value) {
-    if (closed() || busy) return;
+    if (shutDown || closed() || busy) return;
     await enqueue("/interact", { handle, action, value });
   }
 
   /**
    * Start over. The next send begins a new conversation. Anything queued for
-   * the old one is never sent, and anything still open is aborted.
+   * the old one is never sent, anything still open is aborted, and every
+   * surface it showed is unmounted.
    */
   function reset() {
+    if (shutDown) return;
     generation++;
     aborter.abort();
     aborter = new AbortController();
     clearTimeout(timer);
+    for (const surface of state.surfaces.values()) unmount(surface);
     Object.assign(state, {
       conversationId: null,
       status: "idle",
@@ -385,6 +413,23 @@ export function createChat({ endpoint = "/hai", registry }) {
     notify({ type: "reset" });
   }
 
+  /**
+   * Done with this chat for good, as when the page that showed it goes away.
+   * Anything queued is never sent, anything open is aborted, every surface is
+   * unmounted, and subscribers hear `{ type: "closed" }` so they can let go of
+   * what they hold. From then on the chat does nothing.
+   */
+  function close() {
+    if (shutDown) return;
+    shutDown = true;
+    generation++;
+    aborter.abort();
+    clearTimeout(timer);
+    for (const surface of state.surfaces.values()) unmount(surface);
+    notify({ type: "closed" });
+    listeners.clear();
+  }
+
   return {
     state,
     start,
@@ -392,6 +437,7 @@ export function createChat({ endpoint = "/hai", registry }) {
     interact,
     mount,
     reset,
+    close,
     subscribe(fn) {
       listeners.add(fn);
       return () => listeners.delete(fn);

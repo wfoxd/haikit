@@ -15,7 +15,7 @@
  */
 
 import { createChat } from "./index.js";
-import { renderTranscript, h } from "./transcript.js";
+import { renderTranscript, closeTranscript, h } from "./transcript.js";
 
 /**
  * @param {{
@@ -115,6 +115,14 @@ export function mountChat({
 
   // ── wiring ─────────────────────────────────────────────────────────
   chat.subscribe((state, event) => {
+    // chat.close(): the surfaces are unmounted and the chat lets go of this
+    // listener; the shell goes too, and nothing of it stays observed.
+    if (event.type === "closed") {
+      closeTranscript(transcript);
+      shell.remove();
+      return;
+    }
+
     // A new conversation starts at once, so the server's init tool — if it
     // has one — runs before anything is typed.
     if (event.type === "reset") chat.start();

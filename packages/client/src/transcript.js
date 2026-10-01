@@ -19,15 +19,34 @@ export function renderTranscript(root, chat) {
 
   // reset() gives a new conversation a new blocks array, and a new
   // conversation starts at the bottom, wherever the reader was in the last.
-  if (state.blocks !== follow.blocks) Object.assign(follow, { blocks: state.blocks, stick: true, top: 0 });
+  // Its elements are all new too: the old surfaces are already unmounted.
+  if (state.blocks !== follow.blocks) {
+    Object.assign(follow, { blocks: state.blocks, shown: new Map(), stick: true, top: 0 });
+  }
   // A scroll the reader made since the last render, whose event hasn't arrived
   // yet: taken now, or the pin below would overwrite it. Not while an earlier
   // render in this task is still mounting: the reader can't scroll within a
   // task, and the position read then is one clamped to a shorter transcript.
   else if (!follow.mounting) follow.noticeScroll();
 
-  root.replaceChildren();
-  for (const block of state.blocks) root.append(renderBlock(block, chat));
+  // A block keeps its element for as long as what it shows is unchanged, so a
+  // surface mounts once rather than on every event, and whatever its component
+  // holds — a filter, an expanded row, a React tree — lives as long as it does.
+  const shown = new Map();
+  const elements = state.blocks.map((block) => {
+    const look = appearance(block, chat);
+    const before = follow.shown.get(block.id);
+    let el = before?.el;
+    if (before?.look !== look) {
+      el = renderBlock(block, chat);
+      // an expanded tool row stays expanded when its status changes
+      if (before?.el.open) el.open = true;
+    }
+    shown.set(block.id, { el, look });
+    return el;
+  });
+  follow.shown = shown;
+  place(root, elements, follow.observer);
 
   // Surfaces mount in microtasks queued by renderBlock, in block order. This
   // one is queued after them, so it runs once they have content and height:
@@ -37,18 +56,56 @@ export function renderTranscript(root, chat) {
     follow.mounting = false;
     follow.stick ? follow.pin() : follow.hold();
   });
+}
 
-  // Surfaces can grow after they mount, as a table expands or an image loads.
-  // While following, the observer keeps the newest content in view as they do.
-  // Otherwise it returns the reader to their place, which a rebuild may have
-  // had to clamp while the surfaces above it were still short. The browser
-  // reports scrolls before resizes in a frame, so a scroll the reader has just
-  // made is already their place by then.
-  if (follow.observer) {
-    follow.observer.disconnect();
-    follow.observer.observe(root);
-    for (const child of root.children) follow.observer.observe(child);
+/**
+ * Stop following a transcript that is going away: its resize observer and
+ * scroll listener let go of it. `mountChat` does this when its chat closes; a
+ * page rendering a transcript itself does it when it removes one.
+ */
+export function closeTranscript(root) {
+  followers.get(root)?.close();
+  followers.delete(root);
+}
+
+/** What a block's element shows. While this is unchanged, the element is kept. */
+function appearance(block, chat) {
+  // a surface shows a skeleton until its props arrive, and then itself for good
+  if (block.kind === "ui") return chat.state.surfaces.get(block.handle)?.props ? "mounted" : "loading";
+  return JSON.stringify(block);
+}
+
+/**
+ * Put `elements` in order under `root`, moving none that is already there:
+ * one taken out and put back loses its scroll position and focus, and any
+ * iframe or video in it starts over. Whatever else is there goes — a block's
+ * old element, or something the page added after the last render.
+ */
+function place(root, elements, observer) {
+  const wanted = new Set(elements);
+  const drop = (node) => {
+    const next = node.nextSibling;
+    node.remove();
+    observer?.unobserve(node);
+    return next;
+  };
+  let at = root.firstChild;
+  for (const el of elements) {
+    while (at && !wanted.has(at)) at = drop(at);
+    if (at === el) {
+      at = at.nextSibling;
+      continue;
+    }
+    root.insertBefore(el, at);
+    // Surfaces can grow after they mount, as a table expands or an image
+    // loads. While following, the observer keeps the newest content in view
+    // as they do. Otherwise it returns the reader to their place, should a
+    // surface above it have been short for a moment. The browser reports
+    // scrolls before resizes in a frame, so a scroll the reader has just made
+    // is already their place by then.
+    observer?.observe(el);
   }
+  while (at) at = drop(at);
 }
 
 /** Within this many pixels of the bottom, the reader is following new content. */
@@ -83,6 +140,8 @@ function follower(root) {
     top: 0,
     // the blocks array of the conversation shown
     blocks: null,
+    // block id → { el, look }: the element showing each block, and what it shows
+    shown: new Map(),
     // a render's surfaces are still to mount
     mounting: false,
     // the reader has scrolled, unless this is where the transcript's own
@@ -112,9 +171,16 @@ function follower(root) {
       typeof ResizeObserver === "undefined"
         ? null
         : new ResizeObserver(() => (follow.stick ? follow.pin() : follow.hold())),
+    close() {
+      follow.observer?.disconnect();
+      root.removeEventListener("scroll", onScroll);
+    },
   };
 
-  root.addEventListener("scroll", () => follow.noticeScroll(), { passive: true });
+  const onScroll = () => follow.noticeScroll();
+  root.addEventListener("scroll", onScroll, { passive: true });
+  // the viewport itself: a window resized while following stays at the bottom
+  follow.observer?.observe(root);
 
   followers.set(root, follow);
   return follow;

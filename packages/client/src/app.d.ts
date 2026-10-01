@@ -21,6 +21,9 @@ export interface MountChatOptions {
  * soon as it opens, and again after `reset()`, so a server with an init tool
  * runs it before the user types.
  *
+ * Returns the chat. `chat.close()` ends it for good and removes the shell, so a
+ * page that takes the chat away again leaves nothing of it behind.
+ *
  * It is a convenience, not the API — everything it does is built on `createChat`
  * and `renderTranscript`. Dropping to those when this shell stops fitting is the
  * expected path, not a failure mode.
