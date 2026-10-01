@@ -655,7 +655,7 @@ async function clientChecks() {
       frame(hello);
       if (mode === "split") await wait(40);
       if (["expiring", "server-refuses", "split", "slow-render", "surface"].includes(mode)) {
-        picker({ "slow-render": 200, surface: undefined }[mode] ?? 120).forEach(frame);
+        picker(mode === "slow-render" ? 200 : mode === "surface" ? undefined : 120).forEach(frame);
       }
       const refused = mode === "server-refuses" || mode === "late-refusal";
       if (refused) frame({ type: "expired", message: "server says" });
@@ -992,6 +992,20 @@ async function clientChecks() {
     check(
       "after close() nothing is sent, mounted or heard",
       after.join() === "false,false," && received.length === 0 && heard.length === heardBefore && log.at(-1) === "unmount 3",
+    );
+
+    // a request waiting out a 409 when the chat closes, past its deadline
+    mode = "expiring";
+    const waiting = createChat({ endpoint, registry: {} });
+    await waiting.send("show it"); // a surface good for 120ms
+    mode = "409-always";
+    const turnedAway = waiting.send("again"); // turned away, then waits 150ms to retry
+    await sleep(10);
+    waiting.close();
+    await turnedAway;
+    check(
+      "a request still waiting when the chat closes changes nothing after it",
+      waiting.state.expired === null && !waiting.state.blocks.some((b) => b.kind === "expired"),
     );
 
     // a component that throws on its way out doesn't stop the reset

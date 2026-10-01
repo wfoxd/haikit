@@ -104,9 +104,11 @@ export function createChat({ endpoint = "/hai", registry }) {
     });
 
   async function pump(path, body, gen, signal, outcome) {
-    // Checked again here, not only when queued: a long turn ahead of this
-    // request can run past the deadline while it waits.
-    if (closed()) return;
+    // A request left over from before reset() or close() does nothing at all:
+    // not even closing an out-of-date conversation that is no longer this one.
+    // The deadline is checked again here, not only when queued: a long turn
+    // ahead of this request can run past it while it waits.
+    if (gen !== generation || closed()) return;
     sentAt = Date.now();
     let res = await post(path, body, signal);
 
@@ -116,8 +118,8 @@ export function createChat({ endpoint = "/hai", registry }) {
     // retry covers the first and gives up honestly on the second.
     if (res.status === 409) {
       await new Promise((r) => setTimeout(r, 150));
-      // the deadline can pass during the wait, like any other queued request
-      if (closed()) return;
+      // the deadline can pass during the wait, and reset() or close() come
+      if (gen !== generation || closed()) return;
       res = await post(path, body, signal); // rejects at once if reset() aborted it meanwhile
     }
     // Anything but a second 409 means the server took the request up itself —
@@ -436,6 +438,8 @@ export function createChat({ endpoint = "/hai", registry }) {
     reset,
     close,
     subscribe(fn) {
+      // a closed chat tells no one anything again, so it keeps no one either
+      if (shutDown) return () => {};
       listeners.add(fn);
       return () => listeners.delete(fn);
     },
