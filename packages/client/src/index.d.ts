@@ -48,10 +48,16 @@ export interface MountCtx {
  * `expire` is called when the conversation goes out of date. By then the
  * runtime has already made the element `inert` and set `data-expired` on it,
  * so nothing inside can reach the server; this hook is only for looks.
+ *
+ * `unmount` is called when the surface goes away: `reset()` starts a new
+ * conversation, `close()` ends the chat, or the surface is mounted again.
+ * Release whatever `mount` set up there — timers, subscriptions, a React root.
+ * The default transcript mounts each surface once, not on every event.
  */
 export interface SurfaceInstance {
   freeze?(selection?: unknown): void;
   expire?(): void;
+  unmount?(): void;
 }
 
 /** Your component. `props` is whatever the surface's `props` schema produces. */
@@ -120,14 +126,27 @@ export interface Chat {
    */
   start(): Promise<boolean>;
   interact(handle: string, action: string, value: unknown): Promise<void>;
-  /** Mounts the surface for `handle` into `element`. Null if props have not arrived. */
+  /**
+   * Mounts the surface for `handle` into `element`. Null if props have not
+   * arrived, or the chat is closed. Mounting a surface again unmounts the
+   * instance it had before.
+   */
   mount(handle: string, element: HTMLElement): SurfaceInstance | null;
   /**
    * Start a new conversation on the next send. Anything queued for the old one
-   * is never sent, and a request still open is aborted — the new conversation
-   * never waits behind it. Subscribers are notified with `{ type: "reset" }`.
+   * is never sent, a request still open is aborted — the new conversation
+   * never waits behind it — and every surface is unmounted. Subscribers are
+   * notified with `{ type: "reset" }`.
    */
   reset(): void;
+  /**
+   * Done with this chat for good, as when the page showing it goes away.
+   * Anything queued is never sent, a request still open is aborted, and every
+   * surface is unmounted. Subscribers are notified with `{ type: "closed" }`
+   * and then dropped. From then on `send` and `start` resolve `false`, and
+   * `interact`, `mount` and `reset` do nothing. `mountChat` removes its shell.
+   */
+  close(): void;
   /** Returns an unsubscribe function. */
   subscribe(fn: (state: ChatState, event: WireEvent) => void): () => void;
 }

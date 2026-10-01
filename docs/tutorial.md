@@ -476,7 +476,7 @@ export const registry = {
 
 **12** The single declared channel to the server. `"choose"` must match the contract exactly — a typo surfaces as `unbound action` at runtime.
 
-**13** The mount return value is the component's handle back to the framework.
+**13** The mount return value is the component's handle back to the framework. If `mount` sets up anything that outlives its element, such as a timer, a subscription or a React root, return an `unmount()` that releases it. It is called when the surface goes away: on *Start a new conversation*, or when the chat is closed.
 
 **14** Called when the turn resolves, with the value the user picked. Re-rendering here is what flips the badge to “resolved” and stops accepting clicks.
 

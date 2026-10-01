@@ -64,6 +64,9 @@ export function createChat({ endpoint = "/hai", registry }) {
   let generation = 0;
   let aborter = new AbortController();
 
+  /** Set by close(): this chat is done for good, and does nothing more. */
+  let shutDown = false;
+
   /**
    * When the request now streaming was sent. The server stamps every surface
    * it renders after that request arrived, so a freshness deadline counted from
@@ -101,9 +104,11 @@ export function createChat({ endpoint = "/hai", registry }) {
     });
 
   async function pump(path, body, gen, signal, outcome) {
-    // Checked again here, not only when queued: a long turn ahead of this
-    // request can run past the deadline while it waits.
-    if (closed()) return;
+    // A request left over from before reset() or close() does nothing at all:
+    // not even closing an out-of-date conversation that is no longer this one.
+    // The deadline is checked again here, not only when queued: a long turn
+    // ahead of this request can run past it while it waits.
+    if (gen !== generation || closed()) return;
     sentAt = Date.now();
     let res = await post(path, body, signal);
 
@@ -113,8 +118,8 @@ export function createChat({ endpoint = "/hai", registry }) {
     // retry covers the first and gives up honestly on the second.
     if (res.status === 409) {
       await new Promise((r) => setTimeout(r, 150));
-      // the deadline can pass during the wait, like any other queued request
-      if (closed()) return;
+      // the deadline can pass during the wait, and reset() or close() come
+      if (gen !== generation || closed()) return;
       res = await post(path, body, signal); // rejects at once if reset() aborted it meanwhile
     }
     // Anything but a second 409 means the server took the request up itself —
@@ -293,10 +298,14 @@ export function createChat({ endpoint = "/hai", registry }) {
   /**
    * Mount a surface into an element. Strict allowlist: an unregistered
    * component renders an error card, never an improvised UI.
+   *
+   * One instance per surface. Mounting it again, into this element or another,
+   * unmounts the one before, so nothing that instance set up outlives it.
    */
   function mount(handle, element) {
     const surface = state.surfaces.get(handle);
-    if (!surface || !surface.props) return null;
+    if (shutDown || !surface || !surface.props) return null;
+    unmount(surface);
 
     const definition = registry[surface.component];
     if (!definition) {
@@ -319,6 +328,18 @@ export function createChat({ endpoint = "/hai", registry }) {
     return surface.instance;
   }
 
+  /**
+   * Let a surface's instance go. A component that throws on its way out still
+   * goes: the error is reported, not allowed to stop a reset or a close part
+   * way through.
+   */
+  function unmount(surface) {
+    const { instance } = surface;
+    surface.instance = null;
+    surface.element = null;
+    attempt(() => instance?.unmount?.());
+  }
+
   // A message is queued, never refused for being busy. It resolves to whether
   // the server took it: false if the conversation went out of date first —
   // at the call, or while it waited behind a long turn — if reset() started
@@ -328,7 +349,7 @@ export function createChat({ endpoint = "/hai", registry }) {
   // caller can also check `state.expired` straight after calling and never
   // clear the input at all.
   async function send(text) {
-    if (!text.trim() || closed()) return false;
+    if (shutDown || !text.trim() || closed()) return false;
     return enqueue("/chat", { message: text });
   }
 
@@ -350,7 +371,7 @@ export function createChat({ endpoint = "/hai", registry }) {
    * like send().
    */
   async function start() {
-    if (begun() || closed()) return false;
+    if (shutDown || begun() || closed()) return false;
     return enqueue("/start", {});
   }
 
@@ -360,19 +381,22 @@ export function createChat({ endpoint = "/hai", registry }) {
   // checked first, so a click that cannot be sent still closes a conversation
   // whose timer slept through its deadline.
   async function interact(handle, action, value) {
-    if (closed() || busy) return;
+    if (shutDown || closed() || busy) return;
     await enqueue("/interact", { handle, action, value });
   }
 
   /**
    * Start over. The next send begins a new conversation. Anything queued for
-   * the old one is never sent, and anything still open is aborted.
+   * the old one is never sent, anything still open is aborted, and every
+   * surface it showed is unmounted.
    */
   function reset() {
+    if (shutDown) return;
     generation++;
     aborter.abort();
     aborter = new AbortController();
     clearTimeout(timer);
+    for (const surface of state.surfaces.values()) unmount(surface);
     Object.assign(state, {
       conversationId: null,
       status: "idle",
@@ -385,6 +409,26 @@ export function createChat({ endpoint = "/hai", registry }) {
     notify({ type: "reset" });
   }
 
+  /**
+   * Done with this chat for good, as when the page that showed it goes away.
+   * Anything queued is never sent, anything open is aborted, every surface is
+   * unmounted, and subscribers hear `{ type: "closed" }` so they can let go of
+   * what they hold. From then on the chat does nothing.
+   */
+  function close() {
+    if (shutDown) return;
+    shutDown = true;
+    generation++;
+    aborter.abort();
+    clearTimeout(timer);
+    for (const surface of state.surfaces.values()) unmount(surface);
+    // Every subscriber hears it, even after one that throws, and none is held
+    // on to: they are let go of before they are told.
+    const subscribers = [...listeners];
+    listeners.clear();
+    for (const fn of subscribers) attempt(() => fn(state, { type: "closed" }));
+  }
+
   return {
     state,
     start,
@@ -392,11 +436,28 @@ export function createChat({ endpoint = "/hai", registry }) {
     interact,
     mount,
     reset,
+    close,
     subscribe(fn) {
+      // a closed chat tells no one anything again, so it keeps no one either
+      if (shutDown) return () => {};
       listeners.add(fn);
       return () => listeners.delete(fn);
     },
   };
+}
+
+/**
+ * Run `fn`, reporting what it throws without letting it stop the caller: the
+ * error surfaces as an uncaught one would, after the caller has finished.
+ */
+function attempt(fn) {
+  try {
+    fn();
+  } catch (err) {
+    queueMicrotask(() => {
+      throw err;
+    });
+  }
 }
 
 /** "2 hours", "15 minutes" — for a sentence a person reads. */

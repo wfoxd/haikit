@@ -654,8 +654,8 @@ async function clientChecks() {
       res.writeHead(200, { "content-type": "text/event-stream" });
       frame(hello);
       if (mode === "split") await wait(40);
-      if (["expiring", "server-refuses", "split", "slow-render"].includes(mode)) {
-        picker(mode === "slow-render" ? 200 : 120).forEach(frame);
+      if (["expiring", "server-refuses", "split", "slow-render", "surface"].includes(mode)) {
+        picker(mode === "slow-render" ? 200 : mode === "surface" ? undefined : 120).forEach(frame);
       }
       const refused = mode === "server-refuses" || mode === "late-refusal";
       if (refused) frame({ type: "expired", message: "server says" });
@@ -945,6 +945,113 @@ async function clientChecks() {
     check(
       "sends queued before reset() are never sent, and say so",
       received.length === 0 && results.every((sent) => sent === false),
+    );
+
+    // ── a surface has one instance at a time, let go of when it goes
+    mode = "surface";
+    const log = [];
+    let instances = 0;
+    const lifecycleRegistry = {
+      c: {
+        mount() {
+          const id = ++instances;
+          log.push(`mount ${id}`);
+          return { unmount: () => log.push(`unmount ${id}`) };
+        },
+      },
+    };
+    const element = () => ({ replaceChildren() {}, dataset: {} });
+    const lifecycle = createChat({ endpoint, registry: lifecycleRegistry });
+    await lifecycle.send("show it");
+    lifecycle.mount("ui_01", element());
+    lifecycle.mount("ui_01", element());
+    check("mounting a surface again unmounts the instance it had first", log.join() === "mount 1,unmount 1,mount 2");
+    lifecycle.reset();
+    check("reset() unmounts every surface", log.at(-1) === "unmount 2" && lifecycle.state.surfaces.size === 0);
+
+    // ── close(): done for good, even with a turn still open
+    await lifecycle.send("show it again");
+    lifecycle.mount("ui_01", element());
+    mode = "hang";
+    const open = hanging.length;
+    const lastTurn = lifecycle.send("a long turn");
+    for (let i = 0; i < 100 && hanging.length === open; i++) await sleep(2);
+    const heard = [];
+    lifecycle.subscribe((_s, event) => heard.push(event.type));
+    lifecycle.close();
+    check(
+      "close() unmounts every surface, ends the turn still open, and says so",
+      log.at(-1) === "unmount 3" && heard.at(-1) === "closed" && (await within(lastTurn, 1000)),
+    );
+    mode = "ok";
+    received.length = 0;
+    const heardBefore = heard.length;
+    const after = [await lifecycle.send("hello?"), await lifecycle.start(), lifecycle.mount("ui_01", element())];
+    await lifecycle.interact("ui_01", "choose", "x");
+    lifecycle.reset();
+    check(
+      "after close() nothing is sent, mounted or heard",
+      after.join() === "false,false," && received.length === 0 && heard.length === heardBefore && log.at(-1) === "unmount 3",
+    );
+
+    // a request waiting out a 409 when the chat closes, past its deadline
+    mode = "expiring";
+    const waiting = createChat({ endpoint, registry: {} });
+    await waiting.send("show it"); // a surface good for 120ms
+    mode = "409-always";
+    const turnedAway = waiting.send("again"); // turned away, then waits 150ms to retry
+    await sleep(10);
+    waiting.close();
+    await turnedAway;
+    check(
+      "a request still waiting when the chat closes changes nothing after it",
+      waiting.state.expired === null && !waiting.state.blocks.some((b) => b.kind === "expired"),
+    );
+
+    // a component that throws on its way out doesn't stop the reset
+    mode = "surface";
+    const breaking = createChat({
+      endpoint,
+      registry: {
+        c: {
+          mount: () => ({
+            unmount() {
+              throw new Error("unmount broke");
+            },
+          }),
+        },
+      },
+    });
+    await breaking.send("show it");
+    breaking.mount("ui_01", element());
+    const brokeWith = [];
+    const onBreak = (err) => brokeWith.push(err.message);
+    process.on("uncaughtException", onBreak);
+    breaking.reset();
+    await sleep(10);
+    process.off("uncaughtException", onBreak);
+    mode = "ok";
+    check(
+      "a component that throws in unmount() doesn't stop the reset, and its error is reported",
+      breaking.state.conversationId === null && breaking.state.surfaces.size === 0 && brokeWith.join() === "unmount broke",
+    );
+
+    // a subscriber that throws when told doesn't stop the others being told
+    const closing = createChat({ endpoint, registry: {} });
+    const toldOfClose = [];
+    const reported = [];
+    const report = (err) => reported.push(err.message);
+    process.on("uncaughtException", report);
+    closing.subscribe(() => {
+      throw new Error("subscriber broke");
+    });
+    closing.subscribe((_s, event) => toldOfClose.push(event.type));
+    closing.close();
+    await sleep(10);
+    process.off("uncaughtException", report);
+    check(
+      "a subscriber that throws on close() doesn't stop the others hearing it, and its error is reported",
+      toldOfClose.join() === "closed" && reported.join() === "subscriber broke",
     );
   } finally {
     for (const res of hanging) res.end();
@@ -2355,15 +2462,56 @@ async function transcriptChecks() {
   class El {
     constructor(tag) {
       Object.assign(this, { tagName: tag, children: [], dataset: {}, className: "", textContent: "", own: 20 });
+      Object.assign(this, { nodeType: 1, parentNode: null, moves: 0 });
+    }
+    // take a node from wherever it is; one that was already placed has moved
+    adopt(node) {
+      if (node.parentNode) {
+        node.remove();
+        node.moves++;
+      }
+      node.parentNode = this;
     }
     append(...nodes) {
-      this.children.push(...nodes);
+      for (const node of nodes) {
+        this.adopt(node);
+        this.children.push(node);
+      }
+    }
+    insertBefore(node, ref) {
+      this.adopt(node);
+      const i = ref ? this.children.indexOf(ref) : -1;
+      if (i < 0) this.children.push(node);
+      else this.children.splice(i, 0, node);
     }
     replaceChildren(...nodes) {
-      this.children = [...nodes];
+      // every child comes out first, so one put straight back has moved too
+      for (const child of [...this.children]) child.remove();
+      for (const node of nodes) if (node.wasIn === this) node.moves++;
+      this.append(...nodes);
+    }
+    remove() {
+      const parent = this.parentNode;
+      if (!parent) return;
+      parent.children.splice(parent.children.indexOf(this), 1);
+      Object.assign(this, { parentNode: null, wasIn: parent });
+    }
+    get firstChild() {
+      return this.children[0] ?? null;
+    }
+    get nextSibling() {
+      const siblings = this.parentNode?.children ?? [];
+      return siblings[siblings.indexOf(this) + 1] ?? null;
     }
     get height() {
       return this.own + this.children.reduce((sum, c) => sum + c.height, 0);
+    }
+  }
+  // whitespace in the page's markup, say
+  class Text extends El {
+    constructor() {
+      super("#text");
+      Object.assign(this, { nodeType: 3, own: 0 });
     }
   }
   class Root extends El {
@@ -2385,6 +2533,9 @@ async function transcriptChecks() {
     }
     addEventListener(type, fn) {
       if (type === "scroll") this.listeners.push(fn);
+    }
+    removeEventListener(type, fn) {
+      if (type === "scroll") this.listeners = this.listeners.filter((f) => f !== fn);
     }
     // a rendering step: one scroll event for whatever moved since the last
     frame() {
@@ -2411,8 +2562,14 @@ async function transcriptChecks() {
       Object.assign(this, { callback, targets: new Map() });
       observers.push(this);
     }
+    // as in a browser, only elements can be observed
     observe(el) {
+      if (el.nodeType !== 1) throw new TypeError("parameter 1 is not of type 'Element'");
       this.targets.set(el, size(el));
+    }
+    unobserve(el) {
+      if (el.nodeType !== 1) throw new TypeError("parameter 1 is not of type 'Element'");
+      this.targets.delete(el);
     }
     disconnect() {
       this.targets.clear();
@@ -2431,16 +2588,17 @@ async function transcriptChecks() {
   globalThis.ResizeObserver ??= ResizeObserver;
 
   try {
-    const { renderTranscript } = await import("../packages/client/src/transcript.js");
+    const { renderTranscript, closeTranscript } = await import("../packages/client/src/transcript.js");
     let n = 0;
     const heights = new Map();
-    // while set, surfaces mount short and get their height later, as one
-    // waiting on an image does
-    let loading = false;
+    const mounts = new Map();
     const chat = {
       state: { blocks: [], surfaces: new Map() },
       // a tall surface, with its height only once it has mounted
-      mount: (handle, el) => (el.own = loading ? 200 : (heights.get(handle) ?? 800)),
+      mount(handle, el) {
+        mounts.set(handle, (mounts.get(handle) ?? 0) + 1);
+        el.own = heights.get(handle) ?? 800;
+      },
     };
     const message = () => ({ kind: "user", id: `b${++n}`, text: "hi" });
     const surface = () => {
@@ -2508,49 +2666,84 @@ async function transcriptChecks() {
     root.frame();
     check("a scroll not yet reported when a render comes isn't overwritten by it", root.scrollTop === 100);
 
-    // a reader part way up, then a render whose surfaces mount short and only
-    // later get their height: the rebuild can only hold them lower down
-    root.scrollByReader(root.scrollHeight - root.clientHeight - 300);
-    const place = root.scrollTop;
-    loading = true;
-    chat.state.blocks.push(message());
+    // the model streams a reply, one render per chunk
+    const before = [...root.children];
+    const reply = { kind: "assistant", id: `b${++n}`, text: "" };
+    chat.state.blocks.push(reply);
+    for (const chunk of ["One, ", "two, ", "three."]) {
+      reply.text += chunk;
+      render();
+      await settled();
+    }
+    check("each surface mounts once, however many renders follow", [...mounts.values()].every((count) => count === 1));
+    check(
+      "a block that hasn't changed keeps its element, never taken out and put back",
+      before.every((el, i) => root.children[i] === el && el.moves === 0),
+    );
+
+    // a tool row the reader expanded, then its status changes
+    const tool = { kind: "tool", id: `b${++n}`, name: "search", input: {}, status: "running" };
+    chat.state.blocks.push(tool);
     render();
     await settled();
-    const clamped = root.scrollTop;
+    const row = root.children.at(-1);
+    row.open = true;
+    Object.assign(tool, { status: "ok", ms: 12, result: "3 found" });
+    render();
+    await settled();
+    check(
+      "a changed block is redrawn in its place, and an expanded tool row stays expanded",
+      root.children.at(-1) !== row && root.children.at(-1).open === true && root.children.length === chat.state.blocks.length &&
+        !observers.some((o) => o.targets.has(row)),
+    );
+
+    // something the page put after the transcript, as mountChat's starters,
+    // and whitespace, as markup leaves inside an element
+    root.append(new El("div"), new Text());
+    render();
+    await settled();
+    check("what the page added after the transcript goes at its next render", root.children.length === chat.state.blocks.length);
+
+    // every surface at its own height again, as once its images have loaded
     const loaded = () => {
       for (const el of root.children) if (el.dataset.handle) el.own = heights.get(el.dataset.handle) ?? 800;
       laidOut();
     };
-    loading = false;
-    loaded();
-    check("a reader held lower down by short surfaces is returned to their place as they grow", clamped < place && root.scrollTop === place);
-
-    // the same, but the reader scrolls before the surfaces grow
-    loading = true;
-    render();
-    await settled();
-    root.scrollByReader(200);
-    loading = false;
-    loaded();
-    check("…unless they have scrolled somewhere else meanwhile", root.scrollTop === 200);
 
     // the content shrinks under a reader who scrolled up, the browser pulls
     // them up to the new bottom and reports it before any resize, and then the
     // content grows back
     root.scrollByReader(root.scrollHeight - root.clientHeight - 300);
-    const before = root.scrollTop;
+    const place = root.scrollTop;
     for (const el of root.children) if (el.dataset.handle) el.own = 10;
     void root.scrollTop;
     root.frame();
     laidOut();
     loaded();
-    check("content that shrinks and grows back returns the reader to their place", root.scrollTop === before);
+    check("content that shrinks and grows back returns the reader to their place", root.scrollTop === place);
 
     // a new conversation, its first render as long as the last one's
     chat.state.blocks = chat.state.blocks.map((b) => (b.kind === "ui" ? surface() : message()));
     render();
     await settled();
     check("a new conversation starts out following", root.fromBottom === 0);
+
+    // a page that clears the transcript itself on a reset, then renders again
+    const old = [...root.children];
+    root.replaceChildren();
+    chat.state.blocks = [];
+    render();
+    await settled();
+    check(
+      "a reset's elements stop being observed, even ones the page took out first",
+      old.length > 0 && old.every((el) => !observers.some((o) => o.targets.has(el))),
+    );
+
+    closeTranscript(root);
+    check(
+      "a closed transcript lets go of its observer and its scroll listener",
+      root.listeners.length === 0 && observers.every((o) => o.targets.size === 0),
+    );
   } finally {
     if (!hadDocument) delete globalThis.document;
     if (!hadObserver) delete globalThis.ResizeObserver;
