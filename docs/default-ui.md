@@ -306,8 +306,9 @@ value first, for browsers that don't support `light-dark()`:
 ```
 
 Without that fallback, those browsers would get no colour at all for the
-variable. They show the dark scheme whatever you do: `hai.css` falls back to
-it.
+variable. In them, `hai.css` uses its dark colours and a pinned scheme has no
+effect. Plain overrides like the one above still apply, so a page can still
+give those browsers light colours itself.
 
 ### The variables
 
@@ -409,10 +410,14 @@ chat.subscribe((state, event) => {
 });
 
 chat.start(); // run the server's init tool before anything is typed
-form.onsubmit = (e) => {
+form.onsubmit = async (e) => {
   e.preventDefault();
-  chat.send(input.value);
+  const text = input.value;
+  if (!text.trim()) return;
   input.value = "";
+  // false: it never reached the server, as when the conversation went out of
+  // date first. Give the text back, unless something new has been typed.
+  if (!(await chat.send(text)) && !input.value) input.value = text;
 };
 ```
 
@@ -421,6 +426,7 @@ surfaces still mount once. Things `mountChat` did for you that you now do
 yourself:
 - `chat.start()` when the page opens, and again after `chat.reset()`;
 - a message box, and disabling it once `state.expired` is set;
+- putting a message back in the box when `chat.send()` resolves `false`;
 - a status line from `state.status`;
 - `closeTranscript(element)` when you take a transcript off the page.
 
