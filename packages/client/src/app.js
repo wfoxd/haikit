@@ -175,6 +175,8 @@ export function mountChat({
     const set = (open) => {
       main.classList.toggle("inspector-open", open);
       toggle.setAttribute("aria-expanded", String(open));
+      // out of reach as soon as it starts to close, not once it has slid away
+      aside.inert = !open;
       sync();
     };
     const show = (open) => {
@@ -192,9 +194,10 @@ export function mountChat({
       show(false);
       toggle.focus();
     };
-    // a tap on the chat it covers closes it, as a tap outside a dialog does
+    // a tap on the chat it covers closes it, as a tap outside a dialog does,
+    // and focus goes back to Context, as it does from the close button
     main.addEventListener("click", (e) => {
-      if (e.target === main && chatPane.inert) show(false);
+      if (e.target === main && chatPane.inert) hide.onclick();
     });
     // Escape closes it from anywhere in the shell, unless something there
     // used the key first, such as a surface closing a menu of its own. Focus
