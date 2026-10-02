@@ -1,4 +1,9 @@
-# haikit
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/haikit-logo-dark.svg">
+    <img src="assets/haikit-logo-light.svg" alt="haikit" height="56">
+  </picture>
+</h1>
 
 A framework for LLM tools that return **interactive UI** alongside a token-cheap digest.
 
