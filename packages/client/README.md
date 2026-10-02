@@ -20,6 +20,10 @@ property, so override what you like.
 
 ## The default UI
 
+The [default UI guide](https://github.com/wfoxd/haikit/blob/main/docs/default-ui.md)
+covers it in full: every option, what each part of the screen does, theming,
+styling your surfaces, and building your own layout. In short:
+
 `mountChat` gives you a header with **New chat** and a **Context** button that
 shows how many tokens the model holds, a centred conversation, and a composer
 that grows as you type.

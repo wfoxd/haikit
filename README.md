@@ -31,7 +31,8 @@ components. Open **Context**, top right: the model context debug drawer shows
 everything the model actually receives.
 
 To build your own, follow the tutorial, or read `examples/hello` — it is about
-150 lines.
+150 lines. [The default UI guide](docs/default-ui.md) covers the chat UI every
+example uses: setting it up, theming it, and styling your surfaces to match.
 
 ## Packages
 
@@ -39,7 +40,7 @@ To build your own, follow the tutorial, or read `examples/hello` — it is about
 |---|---|
 | [`@haikit/core`](packages/core) | contracts, `Capped`, wire types, adapter interfaces. Isomorphic, zero deps |
 | [`@haikit/server`](packages/server) | agent loop, elicit state machine, derived `query_ui`, routes |
-| [`@haikit/client`](packages/client) | browser runtime + default UI. Plain ESM, no build step |
+| [`@haikit/client`](packages/client) | browser runtime + [default UI](docs/default-ui.md). Plain ESM, no build step |
 | [`@haikit/anthropic`](packages/anthropic) | Claude model adapter |
 | [`@haikit/postgres`](packages/postgres) | durable store adapter. Bring your own driver |
 | [`@haikit/react`](packages/react) | write surface components in React, typed from the surface contract |
