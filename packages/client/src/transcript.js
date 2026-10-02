@@ -91,12 +91,21 @@ function appearance(block, chat) {
 function toolStatus(block, chat) {
   if (block.status !== "awaiting") return block.status;
   if (chat.state.expired) return "expired";
-  const question = chat.state.blocks
-    .filter((b) => b.kind === "ui" && b.toolId === block.id)
-    .map((b) => chat.state.surfaces.get(b.handle))
-    .find((surface) => surface?.mode === "elicit");
-  return question?.state === "frozen" ? "resolved" : "awaiting";
+  const { blocks, surfaces } = chat.state;
+  // Found once per row and kept: every answered question keeps its row
+  // `awaiting`, and this runs for each of them on every streamed event.
+  let handle = questions.get(block);
+  if (handle === undefined) {
+    handle = blocks.find(
+      (b) => b.kind === "ui" && b.toolId === block.id && surfaces.get(b.handle)?.mode === "elicit",
+    )?.handle;
+    if (handle !== undefined) questions.set(block, handle);
+  }
+  return surfaces.get(handle)?.state === "frozen" ? "resolved" : "awaiting";
 }
+
+/** A tool row's block → the handle of the question it asked, once seen. */
+const questions = new WeakMap();
 
 const STATUS_TEXT = {
   running: () => "running…",

@@ -32,6 +32,35 @@ const REMEMBER = "hai:debug-drawer";
 let shells = 0;
 
 /**
+ * The page's scheme pin is one attribute shared by every chat on it. It
+ * follows the newest themed chat still open; when the last one closes, the
+ * page gets back the pin it had before the first. A pin the page set itself
+ * in the meantime is the page's, and closing a chat leaves it alone.
+ */
+const pinning = { chats: [], pageOwn: undefined, ours: undefined };
+
+function pin(chat) {
+  if (!pinning.chats.length) pinning.pageOwn = document.documentElement.dataset.haiTheme;
+  pinning.chats.push(chat);
+  setPin(chat.theme);
+}
+
+function unpin(chat) {
+  const i = pinning.chats.indexOf(chat);
+  if (i < 0) return;
+  pinning.chats.splice(i, 1);
+  if (document.documentElement.dataset.haiTheme !== pinning.ours) return;
+  setPin(pinning.chats.at(-1)?.theme ?? pinning.pageOwn);
+}
+
+function setPin(theme) {
+  const page = document.documentElement;
+  if (theme === undefined) delete page.dataset.haiTheme;
+  else page.dataset.haiTheme = theme;
+  pinning.ours = theme;
+}
+
+/**
  * @param {{
  *   root: HTMLElement,
  *   registry: Record<string, { mount: Function }>,
@@ -63,11 +92,8 @@ export function mountChat({
   // Unset, the page follows the system. A pin goes on the root, where hai.css
   // sets the tokens: a minifier that lowers light-dark() resolves them there,
   // so a pin on the shell alone would not reach them.
-  const page = document.documentElement;
-  const pinned = theme === "light" || theme === "dark";
-  // the page's own pin, if it had one, to give back when this chat closes
-  const pagePin = page.dataset.haiTheme;
-  if (pinned) page.dataset.haiTheme = theme;
+  const pinned = theme === "light" || theme === "dark" ? { theme } : null;
+  if (pinned) pin(pinned);
 
   // ── shell ──────────────────────────────────────────────────────────
   const shell = h("div", "hai-shell");
@@ -280,11 +306,7 @@ export function mountChat({
       closeTranscript(transcript);
       shell.remove();
       releaseDrawer();
-      // unless something has pinned the page again since
-      if (pinned && page.dataset.haiTheme === theme) {
-        if (pagePin === undefined) delete page.dataset.haiTheme;
-        else page.dataset.haiTheme = pagePin;
-      }
+      if (pinned) unpin(pinned);
       return;
     }
 
