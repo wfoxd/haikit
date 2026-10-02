@@ -41,6 +41,9 @@
   --hai-user-bg: light-dark(#e7eefb, #1e2835);
   --hai-code-bg: light-dark(#f3f5f8, #0a0d11);
   --hai-shadow: 0 1px 2px light-dark(rgb(15 23 42 / .06), rgb(0 0 0 / .35));
+  --hai-logo-ink: light-dark(#0f1115, #f3f2ee);
+  --hai-logo-paper: light-dark(#f3f2ee, #0f1115);
+  --hai-logo-hot: #ff5a1f;
 
   /* tints, derived — override the colour and these follow */
   --hai-line-soft: color-mix(in srgb, var(--hai-line) 60%, transparent);
@@ -79,6 +82,8 @@
     --hai-user-bg: #1e2835;
     --hai-code-bg: #0a0d11;
     --hai-shadow: 0 1px 2px rgb(0 0 0 / .35);
+    --hai-logo-ink: #f3f2ee;
+    --hai-logo-paper: #0f1115;
   }
 }
 
@@ -110,7 +115,12 @@
   background: var(--hai-panel);
 }
 .hai-brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.hai-mark { width: 22px; height: 22px; color: var(--hai-accent); }
+.hai-logo { flex: none; }
+.hai-logo-ink { fill: var(--hai-logo-ink); }
+.hai-logo-paper { fill: var(--hai-logo-paper); }
+.hai-logo-paper-dim { fill: var(--hai-logo-paper); opacity: .5; }
+.hai-logo-hot { fill: var(--hai-logo-hot); }
+.hai-mark { width: 20px; height: 20px; }
 .hai-title { font-size: 15px; font-weight: 650; letter-spacing: -.01em; white-space: nowrap; }
 .hai-subtitle {
   color: var(--hai-dim);
@@ -200,15 +210,7 @@
 /* ── empty state ────────────────────────────────────────────────────── */
 .hai-empty { color: var(--hai-dim); }
 .hai-empty p { margin: 0; max-width: 54ch; font-size: 15px; line-height: 1.6; }
-.hai-empty-mark {
-  width: 28px;
-  height: 28px;
-  padding: 12px;
-  margin-bottom: 18px;
-  border-radius: 16px;
-  background: var(--hai-accent-soft);
-  color: var(--hai-accent);
-}
+.hai-empty-mark { width: 44px; height: 44px; margin-bottom: 20px; }
 /* alone, it greets; after what init showed, it stays out of the way */
 .hai-empty:first-child {
   display: flex;
