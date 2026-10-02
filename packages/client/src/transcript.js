@@ -84,13 +84,18 @@ function appearance(block, chat) {
 /**
  * What a tool row says of its call. The server leaves an elicit tool's row
  * `awaiting` for good; the question has closed once its surface is frozen —
- * answered, or typed over — or the conversation is out of date.
+ * answered, or typed over — or the conversation is out of date. A tool can
+ * show a display surface before its question, and that one never freezes, so
+ * it is the elicit surface that says.
  */
 function toolStatus(block, chat) {
   if (block.status !== "awaiting") return block.status;
   if (chat.state.expired) return "expired";
-  const slot = chat.state.blocks.find((b) => b.kind === "ui" && b.toolId === block.id);
-  return chat.state.surfaces.get(slot?.handle)?.state === "frozen" ? "resolved" : "awaiting";
+  const question = chat.state.blocks
+    .filter((b) => b.kind === "ui" && b.toolId === block.id)
+    .map((b) => chat.state.surfaces.get(b.handle))
+    .find((surface) => surface?.mode === "elicit");
+  return question?.state === "frozen" ? "resolved" : "awaiting";
 }
 
 const STATUS_TEXT = {

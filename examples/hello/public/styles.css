@@ -2,8 +2,12 @@
    transcript, shell and debug drawer; everything here is inside our surfaces. */
 
 /* theme overrides — every --hai-* token is fair game; light-dark() gives one
-   value for a light page and one for a dark */
-:root { --hai-accent: light-dark(#1f6fc5, #7ab8f5); }
+   value for a light page and one for a dark. A browser without it keeps the
+   plain dark value, as hai.css's own tokens do. */
+:root { --hai-accent: #7ab8f5; }
+@supports (color: light-dark(#000, #fff)) {
+  :root { --hai-accent: light-dark(#1f6fc5, #7ab8f5); }
+}
 
 .c-head {
   display: flex; align-items: baseline; gap: 10px;

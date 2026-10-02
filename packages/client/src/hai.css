@@ -10,9 +10,14 @@
  * though: --hai-hover and --hai-selected are there for rows and pickers.
  *
  * Light and dark, following the system. Every colour is a custom property set
- * here at zero specificity, so a plain `:root` rule in your own sheet wins:
+ * here at zero specificity, so a plain `:root` rule in your own sheet wins.
+ * Give one value per scheme with light-dark(), behind a plain dark value for
+ * the browsers that fall back to dark below:
  *
- *   :root { --hai-accent: light-dark(#6d28d9, #b07cff); }   one per scheme
+ *   :root { --hai-accent: #b07cff; }
+ *   @supports (color: light-dark(#000, #fff)) {
+ *     :root { --hai-accent: light-dark(#6d28d9, #b07cff); }
+ *   }
  *
  * <html data-hai-theme="dark"> pins the page to one scheme, as does
  * `mountChat({ theme: "dark" })`. The pin is on the root because the tokens
@@ -176,8 +181,10 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  transition: margin-right .25s cubic-bezier(.2, .8, .2, 1);
+  transition: margin-right .25s cubic-bezier(.2, .8, .2, 1), opacity .25s;
 }
+/* behind the drawer on a narrow screen, out of reach until it closes */
+.hai-chat[inert] { opacity: .4; }
 /* on a wide screen the chat makes room for the open drawer */
 @media (min-width: 900px) {
   .hai-main.inspector-open > .hai-chat { margin-right: var(--hai-inspector-width); }

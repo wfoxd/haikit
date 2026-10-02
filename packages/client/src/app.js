@@ -65,6 +65,8 @@ export function mountChat({
   // so a pin on the shell alone would not reach them.
   const page = document.documentElement;
   const pinned = theme === "light" || theme === "dark";
+  // the page's own pin, if it had one, to give back when this chat closes
+  const pagePin = page.dataset.haiTheme;
   if (pinned) page.dataset.haiTheme = theme;
 
   // ── shell ──────────────────────────────────────────────────────────
@@ -108,6 +110,7 @@ export function mountChat({
 
   let inspectorBody = null;
   let ctxCount = null;
+  let releaseDrawer = () => {};
   if (inspector) {
     // The model context debug drawer: closed until asked for, it slides in
     // from the right, beside the chat on a wide screen and over it on a
@@ -135,15 +138,27 @@ export function mountChat({
     toggle.setAttribute("aria-controls", aside.id);
     actions.append(toggle);
 
-    const show = (open) => {
+    const wideQuery = typeof matchMedia === "function" ? matchMedia(WIDE) : null;
+    const wide = () => !wideQuery || wideQuery.matches;
+    const isOpen = () => main.classList.contains("inspector-open");
+    // Over the chat, on a narrow screen, the drawer is all there is to reach:
+    // the chat behind it is inert until it closes or the screen widens.
+    const sync = () => {
+      chatPane.inert = isOpen() && !wide();
+    };
+    const set = (open) => {
       main.classList.toggle("inspector-open", open);
       toggle.setAttribute("aria-expanded", String(open));
+      sync();
+    };
+    const show = (open) => {
+      set(open);
       try {
         localStorage.setItem(REMEMBER, open ? "open" : "closed");
       } catch {}
     };
     toggle.onclick = () => {
-      const open = !main.classList.contains("inspector-open");
+      const open = !isOpen();
       show(open);
       if (open) hide.focus();
     };
@@ -151,9 +166,22 @@ export function mountChat({
       show(false);
       toggle.focus();
     };
-    aside.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") hide.onclick();
+    // a tap on the chat it covers closes it, as a tap outside a dialog does
+    main.addEventListener("click", (e) => {
+      if (e.target === main && chatPane.inert) show(false);
     });
+    // Escape closes it from anywhere in the shell, unless something there
+    // used the key first, such as a surface closing a menu of its own. Focus
+    // goes back to Context from inside the drawer; a reader typing in the
+    // composer keeps their place.
+    shell.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape" || e.defaultPrevented || !isOpen()) return;
+      const inside = aside.contains(document.activeElement);
+      show(false);
+      if (inside) toggle.focus();
+    });
+    wideQuery?.addEventListener("change", sync);
+    releaseDrawer = () => wideQuery?.removeEventListener("change", sync);
 
     // Open again after a reload if it was open before, but only beside the
     // chat: over it, on a narrow screen, it would hide the page it debugs.
@@ -161,9 +189,7 @@ export function mountChat({
     try {
       remembered = localStorage.getItem(REMEMBER);
     } catch {}
-    const wide = typeof matchMedia !== "function" || matchMedia(WIDE).matches;
-    main.classList.toggle("inspector-open", remembered === "open" && wide);
-    toggle.setAttribute("aria-expanded", String(main.classList.contains("inspector-open")));
+    set(remembered === "open" && wide());
   }
 
   shell.append(top, main);
@@ -253,7 +279,12 @@ export function mountChat({
     if (event.type === "closed") {
       closeTranscript(transcript);
       shell.remove();
-      if (pinned && page.dataset.haiTheme === theme) delete page.dataset.haiTheme;
+      releaseDrawer();
+      // unless something has pinned the page again since
+      if (pinned && page.dataset.haiTheme === theme) {
+        if (pagePin === undefined) delete page.dataset.haiTheme;
+        else page.dataset.haiTheme = pagePin;
+      }
       return;
     }
 
@@ -265,7 +296,9 @@ export function mountChat({
 
     modelEl.textContent = state.model;
     modelEl.hidden = !state.model;
-    newBtn.disabled = !engaged() && !state.expired;
+    // There is something to start over from once the user has engaged, or
+    // once the server has a conversation: init may already be asking.
+    newBtn.disabled = !engaged() && !state.expired && !state.conversationId;
     input.disabled = state.expired !== null;
     sendBtn.disabled = state.status === "streaming" || state.expired !== null;
     showStatus(state.expired ? "idle" : state.status);
@@ -291,6 +324,8 @@ export function mountChat({
 
   newBtn.disabled = true;
   render();
+  // a server without an init tool sends nothing until the first message
+  if (inspectorBody) renderInspector(inspectorBody, chat.state.context);
   chat.start();
   return chat;
 }

@@ -45,8 +45,15 @@ Every token is set at zero specificity, so a plain `:root` rule in your own
 sheet wins. Give a colour one value per scheme with `light-dark()`:
 
 ```css
-:root { --hai-accent: light-dark(#6d28d9, #b07cff); }
+:root { --hai-accent: #b07cff; }
+@supports (color: light-dark(#000, #fff)) {
+  :root { --hai-accent: light-dark(#6d28d9, #b07cff); }
+}
 ```
+
+Keep the plain value first. A browser without `light-dark()` gets hai.css's
+dark scheme, and an override it can't read would leave that token with no
+colour at all.
 
 | | |
 |---|---|
