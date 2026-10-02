@@ -1,5 +1,5 @@
 /* This app's own styles. The framework ships /hai-client/hai.css for the
-   transcript, shell and inspector; everything here is inside our surfaces. */
+   transcript, shell and debug drawer; everything here is inside our surfaces. */
 
 /* theme overrides — every --hai-* token is fair game; light-dark() gives one
    value for a light page and one for a dark */

@@ -27,8 +27,8 @@ npm run example:hello      # http://localhost:5175 — no API key needed
 
 Or `npm run example:flights` (http://localhost:5173), or
 `npm run example:hello-react` (http://localhost:5176) for hello with React
-components. Watch the right-hand pane: it shows everything the model actually
-receives.
+components. Open **Context**, top right: the model context debug drawer shows
+everything the model actually receives.
 
 To build your own, follow the tutorial, or read `examples/hello` — it is about
 150 lines.

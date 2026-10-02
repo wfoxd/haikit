@@ -13,7 +13,7 @@ API — it is built from `createChat` + `renderTranscript`, and dropping to thos
 when the default shell stops fitting is the expected path.
 
 `hai.css` styles **only what the framework renders** — transcript blocks, tool
-rows, the surface container, shell, composer, inspector. It deliberately does
+rows, the surface container, shell, composer, debug drawer. It deliberately does
 not style the inside of your surfaces; your components emit their own class
 names and your stylesheet owns them. Every colour is a `--hai-*` custom
 property, so override what you like.
@@ -22,8 +22,14 @@ property, so override what you like.
 
 `mountChat` gives you a header with **New chat** and a **Context** button that
 shows how many tokens the model holds, a centred conversation, and a composer
-that grows as you type. The context inspector sits beside the chat on a wide
-screen and opens over it on a narrow one.
+that grows as you type.
+
+**Context** opens the *model context debug drawer*: every message, tool call
+and digest the model receives, and how much of the payload stayed out of
+context. It starts closed and slides in from the right. On a wide screen the
+chat makes room for it, and on a narrow one it opens over the chat. Escape or
+its close button shuts it. It opens again after a reload if it was open
+before. `inspector: false` leaves it out.
 
 Each tool row says where its call stands: running, `awaiting you` while the turn
 is parked on its surface, `resolved` once that surface has been answered or
@@ -52,7 +58,7 @@ sheet wins. Give a colour one value per scheme with `light-dark()`:
 | `--hai-hover` `--hai-selected` | row hover and picked-row backgrounds, for your surfaces |
 | `--hai-user-bg` `--hai-code-bg` `--hai-shadow` | user bubble, digest blocks, card shadow |
 | `--hai-radius` `--hai-sans` `--hai-mono` | shape and type |
-| `--hai-column` `--hai-inspector-width` | conversation width, inspector width |
+| `--hai-column` `--hai-inspector-width` | conversation width, debug drawer width |
 
 ## Surface lifecycle
 

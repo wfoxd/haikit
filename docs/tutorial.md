@@ -491,7 +491,7 @@ Your component emits its own class names, so it needs its own stylesheet. `hai.c
 
 ```css
 /* This app's own styles. The framework ships /hai-client/hai.css for the
-   transcript, shell and inspector; everything here is inside our surface. */
+   transcript, shell and debug drawer; everything here is inside our surface. */
 
 /* theme overrides — every --hai-* token is fair game; light-dark() gives one
    value for a light page and one for a dark */
@@ -611,7 +611,7 @@ http
 
 **10** Not decoration. Without this check and its twin below it, a request for `/../../.env` escapes the directory you meant to expose.
 
-And the page. `@haikit/client` ships the default UI — the shell, transcript, composer and context inspector — so this is the whole of it:
+And the page. `@haikit/client` ships the default UI — the shell, transcript, composer and model context debug drawer — so this is the whole of it:
 
 **`public/index.html`** — *new file*
 
@@ -790,7 +790,7 @@ const hai = createHai({
 > [!TIP]
 > **Checkpoint**
 >
-> Say *“greet me”*. You should see a tool row, a picker under it, the badge reading **awaiting selection**, and the status line saying the turn is parked. In the inspector, the model context holds your one-sentence digest — not the languages.
+> Say *“greet me”*. You should see a tool row, a picker under it, the badge reading **awaiting selection**, and the status line saying the turn is parked. Open **Context** in the header: in the model context debug drawer, the model context holds your one-sentence digest — not the languages.
 >
 > Click a row. The badge flips to **resolved**, an interaction line appears with the rank, and the model finishes the *same turn*: **¡Hola, mundo!**
 
@@ -1122,7 +1122,7 @@ if (/greet|hello|hi\b|hey|language|world|start/.test(text)) {
 > [!TIP]
 > **Checkpoint**
 >
-> Restart and reload the page. Before you type anything, a **load_profile** row appears, and the inspector shows what the model will see: `[conversation started]`, the call, then its result. The Messages API needs a user message first, and that marker is it. Now say *“greet me”*: the reply opens with *“Hi Ada!”*, and `load_profile` doesn't run again.
+> Restart and reload the page. Before you type anything, a **load_profile** row appears, and the debug drawer shows what the model will see: `[conversation started]`, the call, then its result. The Messages API needs a user message first, and that marker is it. Now say *“greet me”*: the reply opens with *“Hi Ada!”*, and `load_profile` doesn't run again.
 
 `mountChat` starts each conversation this way, both when it opens and after *Start a new conversation*. With your own UI, call `chat.start()`. A client that never calls it still gets `init`, run with its first message instead. `init` can render surfaces too, and an elicit one ("which account?") parks the conversation before anyone has typed. If it throws, the start is refused and the next start or message tries again, so the model never begins without it.
 

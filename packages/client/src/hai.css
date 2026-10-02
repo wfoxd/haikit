@@ -166,11 +166,8 @@
 }
 .hai-icon-btn:hover { background: var(--hai-hover); color: var(--hai-fg); }
 
-.hai-main { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr); min-height: 0; position: relative; }
-.hai-main:not(.inspector-open) .hai-inspector { display: none; }
-@media (min-width: 900px) {
-  .hai-main.has-inspector.inspector-open { grid-template-columns: minmax(0, 1fr) var(--hai-inspector-width); }
-}
+/* clips the drawer while it waits off the right edge */
+.hai-main { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr); min-height: 0; position: relative; overflow: hidden; }
 
 /* the conversation is a centred column; the scrollbar stays at the edge */
 .hai-chat {
@@ -179,6 +176,11 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  transition: margin-right .25s cubic-bezier(.2, .8, .2, 1);
+}
+/* on a wide screen the chat makes room for the open drawer */
+@media (min-width: 900px) {
+  .hai-main.inspector-open > .hai-chat { margin-right: var(--hai-inspector-width); }
 }
 .hai-transcript {
   flex: 1;
@@ -478,14 +480,28 @@
 .hai-send .hai-icon { width: 18px; height: 18px; }
 .hai-send:disabled { opacity: .35; cursor: default; }
 
-/* ── context inspector ──────────────────────────────────────────────── */
+/* ── model context debug drawer ─────────────────────────────────────── */
+/* Closed, it waits off the right edge, out of the tab order and the
+   accessibility tree; open, it slides in, over the chat on a narrow screen. */
 .hai-inspector {
+  position: absolute;
+  inset: 0 0 0 auto;
+  z-index: 10;
   display: flex;
   flex-direction: column;
-  min-width: 0;
+  width: min(100%, var(--hai-inspector-width));
   min-height: 0;
   border-left: 1px solid var(--hai-line);
   background: var(--hai-panel-2);
+  box-shadow: -16px 0 32px -12px rgb(0 0 0 / .25);
+  transform: translateX(100%);
+  visibility: hidden;
+  transition: transform .25s cubic-bezier(.2, .8, .2, 1), visibility 0s .25s;
+}
+.hai-main.inspector-open > .hai-inspector {
+  transform: none;
+  visibility: visible;
+  transition: transform .25s cubic-bezier(.2, .8, .2, 1), visibility 0s;
 }
 .hai-inspector-head { display: flex; align-items: center; gap: 8px; padding: 10px 10px 10px 16px; border-bottom: 1px solid var(--hai-line); }
 .hai-inspector-title { flex: 1; display: flex; flex-direction: column; font-size: 13px; font-weight: 600; }
@@ -540,14 +556,6 @@
     clip-path: inset(50%);
     white-space: nowrap;
   }
-  /* over the chat, not beside it */
-  .hai-inspector {
-    position: absolute;
-    inset: 0 0 0 auto;
-    z-index: 10;
-    width: min(100%, var(--hai-inspector-width));
-    box-shadow: -12px 0 32px rgb(0 0 0 / .25);
-  }
 }
 @media (max-width: 599.98px) {
   .hai-model { display: none; }
@@ -578,5 +586,8 @@
   .hai-shimmer { animation: none; }
   .hai-chevron,
   .hai-suggestion,
-  .hai-composer-box { transition: none; }
+  .hai-composer-box,
+  .hai-chat,
+  .hai-inspector,
+  .hai-main.inspector-open > .hai-inspector { transition: none; }
 }

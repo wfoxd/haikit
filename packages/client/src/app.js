@@ -2,7 +2,8 @@
  * hai-client — the default UI.
  *
  * `mountChat()` builds the shell, wires the composer, renders the transcript and
- * (optionally) the context inspector. It is the ten-line path to a running app.
+ * (optionally) the model context debug drawer. It is the ten-line path to a
+ * running app.
  *
  *   import { mountChat } from "/hai-client/app.js";
  *   import { registry } from "./components.js";
@@ -18,8 +19,14 @@ import { createChat } from "./index.js";
 import { renderTranscript, closeTranscript, h } from "./transcript.js";
 import { icon } from "./icons.js";
 
-/** Below this width the inspector opens over the chat rather than beside it. */
+/** Below this width the drawer opens over the chat rather than beside it. */
 const WIDE = "(min-width: 900px)";
+
+/** The drawer's name, as its heading shows it and assistive technology says it. */
+const DRAWER = "Model context debug drawer";
+
+/** Where the drawer remembers being open, so a reload while developing keeps it. */
+const REMEMBER = "hai:debug-drawer";
 
 /** Numbers the inspector's ids, so two shells on a page never share one. */
 let shells = 0;
@@ -102,48 +109,61 @@ export function mountChat({
   let inspectorBody = null;
   let ctxCount = null;
   if (inspector) {
+    // The model context debug drawer: closed until asked for, it slides in
+    // from the right, beside the chat on a wide screen and over it on a
+    // narrow one. The header button that opens it says how much the model
+    // holds, open or not.
     const aside = h("aside", "hai-inspector");
     aside.id = `${id}-inspector`;
-    aside.setAttribute("aria-label", "Model context");
+    aside.setAttribute("aria-label", DRAWER);
     const head = h("div", "hai-inspector-head");
-    const heading = h("div", "hai-inspector-title", "Model context");
+    const heading = h("div", "hai-inspector-title", DRAWER);
     heading.append(h("span", null, "everything the model sees"));
     const hide = h("button", "hai-icon-btn");
     hide.type = "button";
-    hide.setAttribute("aria-label", "Hide model context");
+    hide.setAttribute("aria-label", `Close ${DRAWER.toLowerCase()}`);
     hide.append(icon("close"));
     head.append(heading, hide);
     inspectorBody = h("div", "hai-inspector-body");
     aside.append(head, inspectorBody);
     main.append(aside);
 
-    // Beside the chat on a wide screen, over it on a narrow one: either way
-    // the header button says how much the model holds, open or not.
     const toggle = button("hai-btn hai-ctx-toggle", "panel", "Context");
     ctxCount = h("span", "hai-ctx-count");
     toggle.append(ctxCount);
+    toggle.title = DRAWER;
     toggle.setAttribute("aria-controls", aside.id);
     actions.append(toggle);
 
-    const wide = () => typeof matchMedia !== "function" || matchMedia(WIDE).matches;
     const show = (open) => {
       main.classList.toggle("inspector-open", open);
       toggle.setAttribute("aria-expanded", String(open));
+      try {
+        localStorage.setItem(REMEMBER, open ? "open" : "closed");
+      } catch {}
     };
     toggle.onclick = () => {
       const open = !main.classList.contains("inspector-open");
       show(open);
-      // over the chat, it is where the reader is now
-      if (open && !wide()) hide.focus();
+      if (open) hide.focus();
     };
     hide.onclick = () => {
       show(false);
       toggle.focus();
     };
     aside.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && !wide()) hide.onclick();
+      if (e.key === "Escape") hide.onclick();
     });
-    show(wide());
+
+    // Open again after a reload if it was open before, but only beside the
+    // chat: over it, on a narrow screen, it would hide the page it debugs.
+    let remembered = null;
+    try {
+      remembered = localStorage.getItem(REMEMBER);
+    } catch {}
+    const wide = typeof matchMedia !== "function" || matchMedia(WIDE).matches;
+    main.classList.toggle("inspector-open", remembered === "open" && wide);
+    toggle.setAttribute("aria-expanded", String(main.classList.contains("inspector-open")));
   }
 
   shell.append(top, main);
@@ -285,8 +305,8 @@ function button(className, iconName, label) {
 }
 
 /**
- * The context inspector. Makes the dual channel visible, which is the whole
- * argument — keep it on while developing.
+ * What the model context debug drawer shows. Makes the dual channel visible,
+ * which is the whole argument — keep it on while developing.
  */
 export function renderInspector(el, { messages = [], modelTokens = 0, uiTokens = 0 } = {}) {
   // following the newest context, as the transcript does, unless scrolled up

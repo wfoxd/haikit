@@ -1,5 +1,5 @@
 /* This app's own styles. The framework ships /hai-client/hai.css for the
-   transcript, shell and inspector; everything here is inside our surfaces. */
+   transcript, shell and debug drawer; everything here is inside our surfaces. */
 
 /* surfaces */
 .c-head { display: flex; align-items: baseline; gap: 10px; padding: 9px 12px; border-bottom: 1px solid var(--hai-line); }
