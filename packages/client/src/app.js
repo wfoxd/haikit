@@ -17,7 +17,7 @@
 
 import { createChat } from "./index.js";
 import { renderTranscript, closeTranscript, h } from "./transcript.js";
-import { icon } from "./icons.js";
+import { icon, mark, FAVICON } from "./icons.js";
 
 /** Below this width the drawer opens over the chat rather than beside it. */
 const WIDE = "(min-width: 900px)";
@@ -61,6 +61,28 @@ function setPin(theme) {
 }
 
 /**
+ * A page without an icon of its own gets the haikit favicon while a chat is
+ * open on it. Every chat shares the one link; the last to close takes it away.
+ */
+const favicon = { chats: 0, link: null };
+
+function addFavicon() {
+  if (favicon.chats++ || document.querySelector('link[rel~="icon"]')) return;
+  const link = document.createElement("link");
+  link.rel = "icon";
+  link.type = "image/svg+xml";
+  link.href = FAVICON;
+  document.head.append(link);
+  favicon.link = link;
+}
+
+function dropFavicon() {
+  if (--favicon.chats) return;
+  favicon.link?.remove();
+  favicon.link = null;
+}
+
+/**
  * @param {{
  *   root: HTMLElement,
  *   registry: Record<string, { mount: Function }>,
@@ -78,7 +100,7 @@ export function mountChat({
   root,
   registry,
   endpoint = "/hai",
-  title = "hai",
+  title = "HaiKIT",
   subtitle = "",
   suggestions = [],
   inspector = true,
@@ -94,13 +116,14 @@ export function mountChat({
   // so a pin on the shell alone would not reach them.
   const pinned = theme === "light" || theme === "dark" ? { theme } : null;
   if (pinned) pin(pinned);
+  addFavicon();
 
   // ── shell ──────────────────────────────────────────────────────────
   const shell = h("div", "hai-shell");
 
   const top = h("header", "hai-top");
   const brand = h("div", "hai-brand");
-  brand.append(icon("brand", "hai-icon hai-mark"), h("span", "hai-title", title));
+  brand.append(mark("small", "hai-logo hai-mark"), h("span", "hai-title", title));
   if (subtitle) brand.append(h("span", "hai-subtitle", subtitle));
 
   const modelEl = h("span", "hai-model");
@@ -256,7 +279,7 @@ export function mountChat({
   function emptyState() {
     const empty = h("div", "hai-empty");
     if (!emptyText && !suggestions.length) return empty;
-    empty.append(icon("brand", "hai-icon hai-empty-mark"));
+    empty.append(mark("full", "hai-logo hai-empty-mark"));
     if (emptyText) empty.append(h("p", null, emptyText));
     if (suggestions.length) {
       const row = h("div", "hai-suggestions");
@@ -310,6 +333,7 @@ export function mountChat({
       shell.remove();
       releaseDrawer();
       if (pinned) unpin(pinned);
+      dropFavicon();
       return;
     }
 

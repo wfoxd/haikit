@@ -135,7 +135,7 @@ called. To write components in React, see
 | `root` | (required) | The element the shell replaces the contents of. |
 | `registry` | (required) | Your surface components, by name. |
 | `endpoint` | `"/hai"` | Where the server's routes are mounted. |
-| `title` | `"hai"` | Shown in the header, beside the logo. |
+| `title` | `"HaiKIT"` | Shown in the header, beside the logo. |
 | `subtitle` | none | Shown after the title. Hidden on narrow screens. |
 | `emptyText` | none | A line of text for an empty conversation. |
 | `suggestions` | `[]` | Starter prompts for an empty conversation. Clicking one sends it. |
@@ -147,7 +147,9 @@ called. To write components in React, see
 `chat.reset()` or `chat.close()` yourself.
 
 The shell is built to be the page. It fills the viewport, and `hai.css` removes
-the body's margin while one is on the page.
+the body's margin while one is on the page. A page without a favicon of its own
+gets the haikit one while a chat is open; add a `<link rel="icon">` to use
+yours.
 
 ## What's on the screen
 
@@ -326,6 +328,7 @@ give those browsers light colours itself.
 | `--hai-user-bg` | your message bubbles |
 | `--hai-code-bg` | the input and result blocks in an expanded tool row |
 | `--hai-shadow` | the shadow under cards |
+| `--hai-logo-ink` `--hai-logo-paper` `--hai-logo-hot` | the haikit logo: its body, its inner bars, and its orange |
 | `--hai-radius` | corner radius |
 | `--hai-sans` `--hai-mono` | fonts |
 | `--hai-column` | the conversation's width |
