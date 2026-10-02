@@ -2521,6 +2521,8 @@ async function transcriptChecks() {
     get height() {
       return this.own + this.children.reduce((sum, c) => sum + c.height, 0);
     }
+    // icons and ARIA: attributes the renderer sets and nothing here reads
+    setAttribute() {}
   }
   // whitespace in the page's markup, say
   class Text extends El {
@@ -2599,7 +2601,7 @@ async function transcriptChecks() {
   };
   const hadDocument = "document" in globalThis;
   const hadObserver = "ResizeObserver" in globalThis;
-  globalThis.document ??= { createElement: (tag) => new El(tag) };
+  globalThis.document ??= { createElement: (tag) => new El(tag), createElementNS: (ns, tag) => new El(tag) };
   globalThis.ResizeObserver ??= ResizeObserver;
 
   try {
@@ -2759,6 +2761,67 @@ async function transcriptChecks() {
       "a closed transcript lets go of its observer and its scroll listener",
       root.listeners.length === 0 && observers.every((o) => o.targets.size === 0),
     );
+
+    // ── what a tool row says of its call ──────────────────────────────
+    // The server leaves an elicit tool's row `awaiting` for good. The row works
+    // out from its question's surface whether the question has closed.
+    const rows = new Root();
+    const asking = { state: { blocks: [], surfaces: new Map(), expired: null }, mount() {} };
+    const call = (id, status, extra) => {
+      const block = { kind: "tool", id, name: "ask", input: {}, status, ms: 12, result: "…", ...extra };
+      asking.state.blocks.push(block);
+      return block;
+    };
+    const shown = (handle, toolId, mode) => {
+      asking.state.surfaces.set(handle, { component: "x", mode, state: "live", props: {} });
+      asking.state.blocks.push({ kind: "ui", id: `ui:${handle}`, handle, toolId });
+    };
+    const freeze = (handle, selection) => Object.assign(asking.state.surfaces.get(handle), { state: "frozen", selection });
+    // the row's status class and the words it shows
+    const says = (block) => {
+      renderTranscript(rows, asking);
+      const row = rows.children[asking.state.blocks.indexOf(block)];
+      return `${row.className.match(/hai-status-\S+/)?.[0]} ${row.children[0].children[3].textContent}`;
+    };
+
+    const finished = call("t-ok", "ok");
+    const failed = call("t-failed", "error", { ms: 40 });
+    check("a finished call shows how long it took", says(finished) === "hai-status-ok 12 ms");
+    check("a failed call says so, and how long it took", says(failed) === "hai-status-error failed · 40 ms");
+
+    const answered = call("t-answered", "awaiting");
+    shown("q-answered", "t-answered", "elicit");
+    check("a live question is awaiting the user", says(answered) === "hai-status-awaiting awaiting you");
+    freeze("q-answered", "he");
+    check("an answered question is resolved", says(answered) === "hai-status-resolved resolved");
+
+    const typedOver = call("t-typed", "awaiting");
+    shown("q-typed", "t-typed", "elicit");
+    says(typedOver);
+    freeze("q-typed");
+    check("a question the user typed over is resolved", says(typedOver) === "hai-status-resolved resolved");
+
+    const both = call("t-both", "awaiting");
+    shown("d-both", "t-both", "display");
+    shown("q-both", "t-both", "elicit");
+    check("a display surface shown before the question doesn't stand in for it", says(both) === "hai-status-awaiting awaiting you");
+    freeze("q-both", "he");
+    check("…and answering the question resolves the row, though the display surface stays live", says(both) === "hai-status-resolved resolved");
+
+    const late = call("t-late", "awaiting");
+    check("a row whose question hasn't been seen yet is awaiting", says(late) === "hai-status-awaiting awaiting you");
+    shown("q-late", "t-late", "elicit");
+    says(late);
+    freeze("q-late", "he");
+    check("a question that arrives after a lookup found nothing is still found", says(late) === "hai-status-resolved resolved");
+
+    const unanswered = call("t-open", "awaiting");
+    shown("q-open", "t-open", "elicit");
+    says(unanswered);
+    asking.state.expired = "out of date";
+    check("an unanswered question is out of date once the conversation is", says(unanswered) === "hai-status-expired out of date");
+    check("an answered one stays resolved", says(answered) === "hai-status-resolved resolved");
+    closeTranscript(rows);
   } finally {
     if (!hadDocument) delete globalThis.document;
     if (!hadObserver) delete globalThis.ResizeObserver;

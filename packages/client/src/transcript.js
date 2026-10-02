@@ -6,6 +6,8 @@
  * Everything uses textContent. Tool payloads are untrusted input.
  */
 
+import { icon } from "./icons.js";
+
 export const h = (tag, className, text) => {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -75,7 +77,51 @@ export function closeTranscript(root) {
 function appearance(block, chat) {
   // a surface shows a skeleton until its props arrive, and then itself for good
   if (block.kind === "ui") return chat.state.surfaces.get(block.handle)?.props ? "mounted" : "loading";
+  if (block.kind === "tool") return JSON.stringify({ ...block, status: toolStatus(block, chat) });
   return JSON.stringify(block);
+}
+
+/**
+ * What a tool row says of its call. The server leaves an elicit tool's row
+ * `awaiting` for good; the question has closed once its surface is frozen —
+ * answered, or typed over — or the conversation is out of date. An answered
+ * question stays answered when the conversation goes out of date. A tool can
+ * show a display surface before its question, and that one never freezes, so
+ * it is the elicit surface that says.
+ */
+function toolStatus(block, chat) {
+  if (block.status !== "awaiting") return block.status;
+  const { blocks, surfaces, expired } = chat.state;
+  // Found once per row and kept: every answered question keeps its row
+  // `awaiting`, and this runs for each of them on every streamed event.
+  let handle = questions.get(block);
+  if (handle === undefined) {
+    handle = blocks.find(
+      (b) => b.kind === "ui" && b.toolId === block.id && surfaces.get(b.handle)?.mode === "elicit",
+    )?.handle;
+    if (handle !== undefined) questions.set(block, handle);
+  }
+  if (surfaces.get(handle)?.state === "frozen") return "resolved";
+  return expired ? "expired" : "awaiting";
+}
+
+/** A tool row's block → the handle of the question it asked, once seen. */
+const questions = new WeakMap();
+
+const STATUS_TEXT = {
+  running: () => "running…",
+  awaiting: () => "awaiting you",
+  resolved: () => "resolved",
+  expired: () => "out of date",
+  error: (ms) => `failed · ${ms} ms`,
+};
+
+function statusMark(status) {
+  const mark = h("span", "hai-ticon");
+  if (status === "running") mark.append(h("span", "hai-spinner"));
+  else if (status === "awaiting") mark.append(h("span", "hai-pulse"));
+  else mark.append(icon(status === "error" ? "alert" : status === "expired" ? "clock" : "check"));
+  return mark;
 }
 
 /**
@@ -204,43 +250,54 @@ function renderBlock(block, chat) {
       return el;
     }
 
+    // The user's answer, given in a surface rather than typed: it went back to
+    // the model as the tool's result.
     case "interaction": {
       const el = h("div", "hai-block hai-interaction");
-      el.append(h("span", "hai-arrow", "↳"), h("span", null, block.label));
+      const arrow = h("span", "hai-arrow");
+      arrow.append(icon("reply"));
+      el.append(arrow, h("span", "hai-body", block.label));
       return el;
     }
 
-    case "error":
-      return h("div", "hai-block hai-error", `error: ${block.message}`);
+    case "error": {
+      const el = h("div", "hai-block hai-error");
+      el.setAttribute("role", "alert");
+      el.append(icon("alert"), h("div", "hai-body", block.message));
+      return el;
+    }
 
     // The conversation is closed, so the notice carries the only way forward.
     case "expired": {
       const el = h("div", "hai-block hai-expired");
       const again = h("button", "hai-new", "Start a new conversation");
+      again.type = "button";
       again.onclick = () => chat.reset();
-      el.append(h("div", "hai-body", block.message), again);
+      el.append(icon("clock"), h("div", "hai-body", block.message), again);
       return el;
     }
 
     // Provenance chrome. The tool row and its surface are one visual unit:
     // what produced this, with what arguments, and what the model got back.
     case "tool": {
-      const el = h("details", `hai-block hai-tool hai-status-${block.status}`);
+      const status = toolStatus(block, chat);
+      const el = h("details", `hai-block hai-tool hai-status-${status}`);
       const summary = h("summary");
       summary.append(
-        h("span", "hai-gear", "⚙"),
+        statusMark(status),
         h("span", "hai-tname", block.name),
         h("span", "hai-targs", JSON.stringify(block.input)),
-        h(
-          "span",
-          "hai-tstatus",
-          block.status === "running" ? "…" : block.status === "awaiting" ? "awaiting user" : `${block.ms}ms`,
-        ),
+        h("span", "hai-tstatus", (STATUS_TEXT[status] ?? ((ms) => `${ms} ms`))(block.ms)),
+        icon("chevron", "hai-icon hai-chevron"),
       );
       el.append(summary);
       const detail = h("div", "hai-tool-detail");
-      detail.append(h("div", "hai-label", "→ tool_result — all the model receives"));
-      detail.append(h("pre", "hai-digest", block.result ?? "…"));
+      detail.append(
+        h("div", "hai-label", "input"),
+        h("pre", "hai-code", JSON.stringify(block.input ?? {}, null, 2)),
+        h("div", "hai-label", "→ tool_result — all the model receives"),
+        h("pre", "hai-digest", block.result ?? "…"),
+      );
       el.append(detail);
       return el;
     }
@@ -249,10 +306,15 @@ function renderBlock(block, chat) {
       const el = h("div", "hai-surface");
       el.dataset.handle = block.handle;
       const surface = chat.state.surfaces.get(block.handle);
+      if (surface) el.dataset.component = surface.component;
       if (surface?.props) {
         queueMicrotask(() => chat.mount(block.handle, el));
       } else {
-        el.append(h("div", "hai-skeleton", `${surface?.component ?? "surface"} · loading…`));
+        el.setAttribute("aria-busy", "true");
+        const skeleton = h("div", "hai-skeleton");
+        skeleton.append(h("div", "hai-skeleton-label", `${surface?.component ?? "surface"} · loading…`));
+        for (let i = 0; i < 3; i++) skeleton.append(h("div", "hai-shimmer"));
+        el.append(skeleton);
       }
       return el;
     }

@@ -9,10 +9,20 @@ export interface MountChatOptions {
   subtitle?: string;
   /** Clickable starter prompts shown on the empty transcript. */
   suggestions?: string[];
-  /** Show the context inspector. Default true — keep it on while developing. */
+  /**
+   * Include the model context debug drawer, opened from the header. Default
+   * true — keep it while developing. It starts closed, and opens again after a
+   * reload if it was open before.
+   */
   inspector?: boolean;
   placeholder?: string;
   emptyText?: string;
+  /**
+   * Pin the page to a colour scheme, by setting `data-hai-theme` on the root
+   * element until the chat closes. Unset, it follows the system's light or
+   * dark setting, or a `data-hai-theme` already in the page's markup.
+   */
+  theme?: "light" | "dark";
 }
 
 /**
@@ -30,7 +40,7 @@ export interface MountChatOptions {
  */
 export function mountChat(options: MountChatOptions): Chat;
 
-/** The context inspector: makes the dual channel visible. */
+/** What the model context debug drawer shows: makes the dual channel visible. */
 export function renderInspector(
   el: HTMLElement,
   context?: { messages?: any[]; modelTokens?: number; uiTokens?: number },

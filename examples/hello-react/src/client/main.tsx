@@ -9,6 +9,6 @@ mountChat({
   title: "hello, in React",
   subtitle: "the same surfaces as hello, written as React components",
   emptyText:
-    "One tool execution, two channels: a short digest for the model, the full payload for this browser. Watch the right pane.",
+    "One tool execution, two channels: a short digest for the model, the full payload for this browser. Open Context, top right, to see what the model gets.",
   suggestions: ["greet me", "which ones are right-to-left?"],
 });

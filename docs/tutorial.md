@@ -491,10 +491,15 @@ Your component emits its own class names, so it needs its own stylesheet. `hai.c
 
 ```css
 /* This app's own styles. The framework ships /hai-client/hai.css for the
-   transcript, shell and inspector; everything here is inside our surface. */
+   transcript, shell and debug drawer; everything here is inside our surface. */
 
-/* theme overrides — every --hai-* token is fair game */
+/* theme overrides — every --hai-* token is fair game; light-dark() gives one
+   value for a light page and one for a dark. A browser without it keeps the
+   plain dark value, as hai.css's own tokens do. */
 :root { --hai-accent: #7ab8f5; }
+@supports (color: light-dark(#000, #fff)) {
+  :root { --hai-accent: light-dark(#1f6fc5, #7ab8f5); }
+}
 
 .chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 9px 12px 4px; }
 .chip {
@@ -502,17 +507,17 @@ Your component emits its own class names, so it needs its own stylesheet. `hai.c
   border-radius: 999px; padding: 3px 10px; font: 11px var(--hai-mono); cursor: pointer;
 }
 .chip:hover { color: var(--hai-fg); border-color: var(--hai-accent); }
-.chip.on { color: var(--hai-bg); background: var(--hai-accent); border-color: var(--hai-accent); }
+.chip.on { color: var(--hai-on-accent); background: var(--hai-accent); border-color: var(--hai-accent); }
 
 .rows { padding: 4px 0 8px; }
 .row {
   display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
   gap: 12px; align-items: baseline; padding: 7px 12px;
-  border-bottom: 1px solid #1a2028;
+  border-bottom: 1px solid var(--hai-line-soft);
 }
 .row.selectable { cursor: pointer; }
-.row.selectable:hover { background: #1a222c; }
-.row.picked { background: #17301f; }
+.row.selectable:hover { background: var(--hai-hover); }
+.row.picked { background: var(--hai-selected); }
 .greeting { font-size: 15px; }
 .lang { color: var(--hai-dim); font: 12px var(--hai-mono); }
 ```
@@ -610,7 +615,7 @@ http
 
 **10** Not decoration. Without this check and its twin below it, a request for `/../../.env` escapes the directory you meant to expose.
 
-And the page. `@haikit/client` ships the default UI — the shell, transcript, composer and context inspector — so this is the whole of it:
+And the page. `@haikit/client` ships the default UI — the shell, transcript, composer and model context debug drawer — so this is the whole of it:
 
 **`public/index.html`** — *new file*
 
@@ -789,7 +794,7 @@ const hai = createHai({
 > [!TIP]
 > **Checkpoint**
 >
-> Say *“greet me”*. You should see a tool row, a picker under it, the badge reading **awaiting selection**, and the status line saying the turn is parked. In the inspector, the model context holds your one-sentence digest — not the languages.
+> Say *“greet me”*. You should see a tool row, a picker under it, the badge reading **awaiting selection**, and the status line saying the turn is parked. Open **Context** in the header: in the model context debug drawer, the model context holds your one-sentence digest — not the languages.
 >
 > Click a row. The badge flips to **resolved**, an interaction line appears with the rank, and the model finishes the *same turn*: **¡Hola, mundo!**
 
@@ -1121,7 +1126,7 @@ if (/greet|hello|hi\b|hey|language|world|start/.test(text)) {
 > [!TIP]
 > **Checkpoint**
 >
-> Restart and reload the page. Before you type anything, a **load_profile** row appears, and the inspector shows what the model will see: `[conversation started]`, the call, then its result. The Messages API needs a user message first, and that marker is it. Now say *“greet me”*: the reply opens with *“Hi Ada!”*, and `load_profile` doesn't run again.
+> Restart and reload the page. Before you type anything, a **load_profile** row appears, and the debug drawer shows what the model will see: `[conversation started]`, the call, then its result. The Messages API needs a user message first, and that marker is it. Now say *“greet me”*: the reply opens with *“Hi Ada!”*, and `load_profile` doesn't run again.
 
 `mountChat` starts each conversation this way, both when it opens and after *Start a new conversation*. With your own UI, call `chat.start()`. A client that never calls it still gets `init`, run with its first message instead. `init` can render surfaces too, and an elicit one ("which account?") parks the conversation before anyone has typed. If it throws, the start is refused and the next start or message tries again, so the model never begins without it.
 

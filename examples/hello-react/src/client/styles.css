@@ -1,8 +1,13 @@
 /* This app's own styles. The framework ships /hai-client/hai.css for the
-   transcript, shell and inspector; everything here is inside our surfaces. */
+   transcript, shell and debug drawer; everything here is inside our surfaces. */
 
-/* theme overrides — every hai-* token is fair game */
+/* theme overrides — every --hai-* token is fair game; light-dark() gives one
+   value for a light page and one for a dark. A browser without it keeps the
+   plain dark value, as hai.css's own tokens do. */
 :root { --hai-accent: #7ab8f5; }
+@supports (color: light-dark(#000, #fff)) {
+  :root { --hai-accent: light-dark(#1f6fc5, #7ab8f5); }
+}
 
 .c-head {
   display: flex; align-items: baseline; gap: 10px;
@@ -15,7 +20,7 @@
   letter-spacing: .06em; color: var(--hai-dim);
   border: 1px solid var(--hai-line); border-radius: 4px; padding: 2px 6px;
 }
-.badge-live { color: var(--hai-warn); border-color: #4a3c1d; background: #241d10; }
+.badge-live { color: var(--hai-warn); border-color: color-mix(in srgb, var(--hai-warn) 40%, transparent); background: var(--hai-warn-soft); }
 
 .chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 9px 12px 4px; }
 .chip {
@@ -23,23 +28,23 @@
   border-radius: 999px; padding: 3px 10px; font: 11px var(--hai-mono); cursor: pointer;
 }
 .chip:hover { color: var(--hai-fg); border-color: var(--hai-accent); }
-.chip.on { color: var(--hai-bg); background: var(--hai-accent); border-color: var(--hai-accent); }
+.chip.on { color: var(--hai-on-accent); background: var(--hai-accent); border-color: var(--hai-accent); }
 
 .rows { padding: 4px 0 8px; }
 .row {
   display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
   gap: 12px; align-items: baseline; padding: 7px 12px;
-  border-bottom: 1px solid #1a2028;
+  border-bottom: 1px solid var(--hai-line-soft);
 }
 /* a row that can be chosen is a native button, so it takes focus and Enter */
 button.row {
   width: 100%; text-align: left; font: inherit; color: inherit;
-  background: none; border: 0; border-bottom: 1px solid #1a2028;
+  background: none; border: 0; border-bottom: 1px solid var(--hai-line-soft);
 }
 .row.selectable { cursor: pointer; }
-.row.selectable:hover, .row.selectable:focus-visible { background: #1a222c; }
+.row.selectable:hover, .row.selectable:focus-visible { background: var(--hai-hover); }
 .row.selectable:focus-visible { outline: 1px solid var(--hai-accent); outline-offset: -1px; }
-.row.picked { background: #17301f; }
+.row.picked { background: var(--hai-selected); }
 .greeting { font-size: 15px; }
 .lang { color: var(--hai-dim); font: 12px var(--hai-mono); }
 
