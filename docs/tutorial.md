@@ -493,8 +493,9 @@ Your component emits its own class names, so it needs its own stylesheet. `hai.c
 /* This app's own styles. The framework ships /hai-client/hai.css for the
    transcript, shell and inspector; everything here is inside our surface. */
 
-/* theme overrides — every --hai-* token is fair game */
-:root { --hai-accent: #7ab8f5; }
+/* theme overrides — every --hai-* token is fair game; light-dark() gives one
+   value for a light page and one for a dark */
+:root { --hai-accent: light-dark(#1f6fc5, #7ab8f5); }
 
 .chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 9px 12px 4px; }
 .chip {
@@ -502,17 +503,17 @@ Your component emits its own class names, so it needs its own stylesheet. `hai.c
   border-radius: 999px; padding: 3px 10px; font: 11px var(--hai-mono); cursor: pointer;
 }
 .chip:hover { color: var(--hai-fg); border-color: var(--hai-accent); }
-.chip.on { color: var(--hai-bg); background: var(--hai-accent); border-color: var(--hai-accent); }
+.chip.on { color: var(--hai-on-accent); background: var(--hai-accent); border-color: var(--hai-accent); }
 
 .rows { padding: 4px 0 8px; }
 .row {
   display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
   gap: 12px; align-items: baseline; padding: 7px 12px;
-  border-bottom: 1px solid #1a2028;
+  border-bottom: 1px solid var(--hai-line-soft);
 }
 .row.selectable { cursor: pointer; }
-.row.selectable:hover { background: #1a222c; }
-.row.picked { background: #17301f; }
+.row.selectable:hover { background: var(--hai-hover); }
+.row.picked { background: var(--hai-selected); }
 .greeting { font-size: 15px; }
 .lang { color: var(--hai-dim); font: 12px var(--hai-mono); }
 ```

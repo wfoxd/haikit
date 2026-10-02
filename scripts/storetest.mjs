@@ -2521,6 +2521,8 @@ async function transcriptChecks() {
     get height() {
       return this.own + this.children.reduce((sum, c) => sum + c.height, 0);
     }
+    // icons and ARIA: attributes the renderer sets and nothing here reads
+    setAttribute() {}
   }
   // whitespace in the page's markup, say
   class Text extends El {
@@ -2599,7 +2601,7 @@ async function transcriptChecks() {
   };
   const hadDocument = "document" in globalThis;
   const hadObserver = "ResizeObserver" in globalThis;
-  globalThis.document ??= { createElement: (tag) => new El(tag) };
+  globalThis.document ??= { createElement: (tag) => new El(tag), createElementNS: (ns, tag) => new El(tag) };
   globalThis.ResizeObserver ??= ResizeObserver;
 
   try {

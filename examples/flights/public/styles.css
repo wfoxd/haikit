@@ -10,7 +10,7 @@
   letter-spacing: .06em; color: var(--hai-dim); border: 1px solid var(--hai-line);
   border-radius: 4px; padding: 2px 6px;
 }
-.badge-live { color: var(--hai-warn); border-color: #4a3c1d; background: #241d10; }
+.badge-live { color: var(--hai-warn); border-color: color-mix(in srgb, var(--hai-warn) 40%, transparent); background: var(--hai-warn-soft); }
 .c-foot { display: flex; align-items: center; gap: 12px; padding: 7px 12px; border-top: 1px solid var(--hai-line); }
 .hint { color: var(--hai-dim); font-size: 11px; margin-left: auto; }
 .link { background: none; border: none; color: var(--hai-accent); cursor: pointer; font-size: 12px; padding: 0; }
@@ -23,10 +23,10 @@ table.ft { width: 100%; border-collapse: collapse; font-size: 13px; }
 }
 .ft th:hover { color: var(--hai-fg); }
 .ft th.sorted { color: var(--hai-accent); }
-.ft td { padding: 6px 12px; border-bottom: 1px solid #1a2028; }
+.ft td { padding: 6px 12px; border-bottom: 1px solid var(--hai-line-soft); }
 .ft tr.selectable { cursor: pointer; }
-.ft tr.selectable:hover td { background: #1a222c; }
-.ft tr.selected td { background: #17301f; }
+.ft tr.selectable:hover td { background: var(--hai-hover); }
+.ft tr.selected td { background: var(--hai-selected); }
 .ft tr.nonstop td:first-child { box-shadow: inset 2px 0 0 var(--hai-good); }
 .mono { font-family: var(--hai-mono); font-size: 12px; }
 .price { font-weight: 600; }
@@ -37,9 +37,9 @@ table.ft { width: 100%; border-collapse: collapse; font-size: 13px; }
 .aisle { width: 14px; }
 .seat {
   width: 26px; height: 24px; border-radius: 4px; font: 10px var(--hai-mono);
-  border: 1px solid var(--hai-line); background: #1b222b; color: var(--hai-fg); cursor: pointer;
+  border: 1px solid var(--hai-line); background: var(--hai-hover); color: var(--hai-fg); cursor: pointer;
 }
-.seat.taken { background: #171b20; color: #3a444e; cursor: not-allowed; }
-.seat.legroom.free { border-color: #2f5f47; color: var(--hai-good); }
-.seat.picked { background: var(--hai-good); color: #06110c; border-color: var(--hai-good); }
+.seat.taken { background: none; color: color-mix(in srgb, var(--hai-dim) 45%, transparent); cursor: not-allowed; }
+.seat.legroom.free { border-color: color-mix(in srgb, var(--hai-good) 50%, transparent); color: var(--hai-good); }
+.seat.picked { background: var(--hai-good); color: var(--hai-on-accent); border-color: var(--hai-good); }
 .seat.free:hover:not(:disabled) { border-color: var(--hai-accent); }

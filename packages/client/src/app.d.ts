@@ -13,6 +13,12 @@ export interface MountChatOptions {
   inspector?: boolean;
   placeholder?: string;
   emptyText?: string;
+  /**
+   * Pin the page to a colour scheme, by setting `data-hai-theme` on the root
+   * element until the chat closes. Unset, it follows the system's light or
+   * dark setting, or a `data-hai-theme` already in the page's markup.
+   */
+  theme?: "light" | "dark";
 }
 
 /**
