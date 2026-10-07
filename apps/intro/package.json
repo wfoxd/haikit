@@ -1,0 +1,32 @@
+{
+  "name": "haikit-intro",
+  "private": true,
+  "description": "Introducing HaiKIT: what an elicitation app is and how HaiKIT builds one, built with HaiKIT. Self-contained: copy this folder anywhere, npm install, npm start.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "start": "node src/server/main.ts",
+    "dev": "node --watch src/server/main.ts",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.browser.json",
+    "smoke": "node test/smoke.mjs",
+    "test": "npm run typecheck && npm run smoke",
+    "haikit:update": "npm install @haikit/core@latest @haikit/server@latest @haikit/client@latest @haikit/anthropic@latest @haikit/postgres@latest && npm test",
+    "tutorial:update": "node scripts/update-tutorial.mjs && npm test"
+  },
+  "dependencies": {
+    "@haikit/anthropic": "^0.9.2",
+    "@haikit/client": "^0.9.2",
+    "@haikit/core": "^0.9.2",
+    "@haikit/postgres": "^0.9.2",
+    "@haikit/server": "^0.9.2",
+    "pg": "^8.23.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/pg": "^8.15.0",
+    "typescript": "^5.9.0"
+  }
+}
