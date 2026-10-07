@@ -181,8 +181,11 @@
 }
 .hai-icon-btn:hover { background: var(--hai-hover); color: var(--hai-fg); }
 
-/* clips the drawer while it waits off the right edge */
-.hai-main { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr); min-height: 0; position: relative; overflow: hidden; }
+/* Clips the drawer while it waits off the right edge. `clip`, not just
+   `hidden`: a hidden box still scrolls, so bringing anything into view
+   centred, as find in page does, slid the whole chat sideways and left it
+   there. `hidden` stays for browsers without `clip`. */
+.hai-main { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr); min-height: 0; position: relative; overflow: hidden; overflow: clip; }
 
 /* the conversation is a centred column; the scrollbar stays at the edge */
 .hai-chat {
