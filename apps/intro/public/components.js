@@ -328,7 +328,7 @@ function renderBlock(block) {
     case "p":
       return inline(h("p", "l-p"), block.text);
     case "h":
-      return h("h3", "l-h", block.text);
+      return inline(h("h3", "l-h"), block.text);
     case "list": {
       const ul = h("ul", "l-list");
       for (const item of block.items) ul.append(inline(h("li"), item));

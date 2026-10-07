@@ -27,25 +27,36 @@ const bad = (m) => {
   failures++;
 };
 
+// Every request has a deadline: a stream the server never ends, the failure
+// this test exists to catch, fails it instead of hanging it.
+const DEADLINE = 15_000;
+const get = (url) => fetch(url, { signal: AbortSignal.timeout(DEADLINE) });
+
 async function sse(route, body) {
-  const res = await fetch(`${BASE}${route}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
   const events = [];
-  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
-  let buf = "";
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buf += value;
-    let i;
-    while ((i = buf.indexOf("\n\n")) >= 0) {
-      const line = buf.slice(0, i).split("\n").find((l) => l.startsWith("data: "));
-      buf = buf.slice(i + 2);
-      if (line) events.push(JSON.parse(line.slice(6)));
+  try {
+    const res = await fetch(`${BASE}${route}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(DEADLINE),
+    });
+    const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+    let buf = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += value;
+      let i;
+      while ((i = buf.indexOf("\n\n")) >= 0) {
+        const line = buf.slice(0, i).split("\n").find((l) => l.startsWith("data: "));
+        buf = buf.slice(i + 2);
+        if (line) events.push(JSON.parse(line.slice(6)));
+      }
     }
+  } catch (err) {
+    if (err?.name !== "TimeoutError") throw err;
+    throw new Error(`${route} did not end its stream within ${DEADLINE / 1000}s (${events.length} events so far)`);
   }
   return events;
 }
@@ -53,7 +64,7 @@ async function sse(route, body) {
 async function waitFor(url, tries = 60) {
   for (let i = 0; i < tries; i++) {
     try {
-      if ((await fetch(url)).ok) return true;
+      if ((await fetch(url, { signal: AbortSignal.timeout(1_000) })).ok) return true;
     } catch {}
     await new Promise((r) => setTimeout(r, 150));
   }
@@ -80,14 +91,14 @@ try {
     ok("boots, with every live-source excerpt resolved");
 
     // the header reports the haikit that is actually installed
-    const about = await fetch(`${BASE}/version.json`).then((r) => r.json());
+    const about = await get(`${BASE}/version.json`).then((r) => r.json());
     const manifest = fileURLToPath(import.meta.resolve("@haikit/core/package.json", `file://${APP}/`));
     const installed = JSON.parse(readFileSync(manifest, "utf8")).version;
     about.haikit === installed ? ok(`reports the installed haikit (${installed})`) : bad(`version.json says ${about.haikit}, installed is ${installed}`);
 
     // the page and the client runtime it loads, served from node_modules
     for (const asset of ["/", "/components.js", "/logo.js", "/svg.js", "/architecture.js", "/illustrations.js", "/menu.js", "/styles.css", "/hai-client/app.js", "/hai-client/hai.css"]) {
-      const res = await fetch(`${BASE}${asset}`);
+      const res = await get(`${BASE}${asset}`);
       res.ok ? ok(`serves ${asset}`) : bad(`${asset} → ${res.status}`);
     }
 
@@ -285,7 +296,7 @@ try {
 
     // 7c · the header menu: what it lists, and what each kind of choice opens
     {
-      const menu = await fetch(`${BASE}/menu.json`).then((r) => r.json());
+      const menu = await get(`${BASE}/menu.json`).then((r) => r.json());
       const lessons = menu.lessons.flatMap((p) => p.lessons);
       menu.lessons.length === 2 && lessons.length === 14 && menu.tutorial.length === 10 && menu.tutorial[0].id === "01"
         ? ok("the menu lists 14 lessons in 2 parts, and the tutorial's 10 steps")
@@ -324,7 +335,7 @@ try {
     }
 
     // 9 · each surface has a component in the browser registry
-    const registry = await fetch(`${BASE}/components.js`).then((r) => r.text());
+    const registry = await get(`${BASE}/components.js`).then((r) => r.text());
     for (const component of ["welcome", "course_map", "lesson", "checkpoint", "next_lesson", "tutorial_step"]) {
       new RegExp(`\\b${component}\\s*:`).test(registry)
         ? ok(`${component} is registered in components.js`)

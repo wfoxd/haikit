@@ -1,8 +1,9 @@
 # Introducing HaiKIT
 
 HaiKIT's introduction, built with [HaiKIT](https://github.com/wfoxd/haikit):
-what an elicitation app is, and how HaiKIT builds whole apps with an LLM. This folder is a complete, self-contained app: copy it anywhere,
-install, and run. It depends only on the published `@haikit/*` packages.
+what an elicitation app is, and how HaiKIT builds whole apps with an LLM. This
+folder is a complete, self-contained app: copy it anywhere, install, and run.
+It depends only on the published `@haikit/*` packages.
 
 The introduction is a HaiKIT conversation. It opens on a welcome screen that asks
 where to begin, lesson 1.1 or the course map. Before the question, it shows the
@@ -13,13 +14,26 @@ Tutorial panel whose steps open HaiKIT's tutorial right here. The text lives in
 `src/server/course/index.ts`, and the illustrations are drawn as SVG in
 `public/illustrations.js`.
 
+From there a guide opens lessons with tools: each lesson is a `display`
+surface, and each checkpoint question is an `elicit` surface that parks the
+turn until the learner answers. After an answer, the next lesson waits behind a
+button the learner clicks when they're ready. Learners use elicitation while
+they read about it, and the model context drawer (**Context** in the header)
+shows what the model received the whole time.
+
+| Part | Lessons |
+| --- | --- |
+| 1. The elicitation app, explained | Why asking in prose fails, the parked turn, the dual channel, modes and actions, `query_ui` and `cap`, the life of a parked turn |
+| 2. How haikit implements it | The packages, the contract, the server half, tools, the registry, wiring, the compile-time guarantees, the runtime's pending state |
+
 ## The menu
 
 A menu bar under the header has **Home** (the welcome screen), **Tutorial**
 (its ten steps) and **Lesson** (every lesson, by part). The menu isn't a
 surface, so a choice reaches the server the way typing does: it sends a message
-such as “Open lesson 1.3”, and the guide shows what was asked for. The menu's contents come from `/menu.json`, built
-from the course and the tutorial when the server starts.
+such as “Open lesson 1.3”, and the guide shows what was asked for. The menu's
+contents come from `/menu.json`, built from the course and the tutorial when
+the server starts.
 
 ## The tutorial
 
@@ -36,17 +50,7 @@ the tutorial ever uses Markdown the parser doesn't know. To pick up the latest:
 
 ```bash
 npm run tutorial:update   # fetches docs/tutorial.md from GitHub, then runs npm test
-``` From there a guide opens lessons with tools: each lesson is a
-`display` surface, and each checkpoint question is an `elicit` surface that
-parks the turn until the learner answers. After an answer, the next lesson
-waits behind a button the learner clicks when they're ready. Learners use elicitation while they
-read about it, and the model context drawer (**Context** in the header) shows
-what the model received the whole time.
-
-| Part | Lessons |
-| --- | --- |
-| 1. The elicitation app, explained | Why asking in prose fails, the parked turn, the dual channel, modes and actions, `query_ui` and `cap`, the life of a parked turn |
-| 2. How haikit implements it | The packages, the contract, the server half, tools, the registry, wiring, the compile-time guarantees, the runtime's pending state |
+```
 
 ## Run it
 

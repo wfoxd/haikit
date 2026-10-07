@@ -21,6 +21,8 @@ jobs:
   test:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    # a run takes under a minute; anything that hangs fails here, not in 6 hours
+    timeout-minutes: 10
     strategy:
       matrix:
         # the engines floor (type stripping on by default), and what the
@@ -51,6 +53,7 @@ jobs:
   latest:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:

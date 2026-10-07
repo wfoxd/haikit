@@ -110,7 +110,11 @@ export function mountMenu(root, chat, data) {
 
   /** @param {Item} item */
   const choose = (item) => {
+    // closing hides the item that has focus: hand it back to the menu's button
+    const open = menus.find((m) => !m.panel.hidden);
+    const refocus = open && open.panel.contains(document.activeElement) ? open.trigger : null;
     closeAll();
+    refocus?.focus();
     // follow the reply in, wherever the reader had scrolled to
     const transcript = root.querySelector(".hai-transcript");
     if (transcript instanceof HTMLElement) {
