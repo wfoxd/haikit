@@ -1,0 +1,41 @@
+name: intro
+
+# apps/intro is a standalone app on the published @haikit/* packages, outside
+# the workspaces, so ci.yml never builds or tests it. This runs its own tests,
+# and only when something it's made of changes.
+on:
+  push:
+    branches: [main]
+    paths: ["apps/intro/**", ".github/workflows/intro.yml"]
+  pull_request:
+    paths: ["apps/intro/**", ".github/workflows/intro.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # the engines floor (type stripping on by default), and what the
+        # Dockerfile and the deployment guide run
+        node: ["22.18", "24"]
+    defaults:
+      run:
+        working-directory: apps/intro
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: apps/intro/package-lock.json
+      - run: npm ci
+
+      # server and browser typecheck, which also compiles test/guarantees.ts:
+      # what HaiKIT refuses to compile, against this app's own surfaces.
+      # then the smoke test: the real server, every lesson's live excerpts,
+      # the tutorial parsed, the guide driven through the menu and lessons
+      - run: npm test
