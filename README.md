@@ -34,6 +34,12 @@ To build your own, follow the tutorial, or read `examples/hello` — it is about
 150 lines. [The default UI guide](docs/default-ui.md) covers the chat UI every
 example uses: setting it up, theming it, and styling your surfaces to match.
 
+New to haikit? [`apps/intro`](apps/intro) is HaiKIT's introduction, built with
+HaiKIT: what an elicitation app is and how HaiKIT builds one, in two parts of
+short lessons, with the tutorial built in. It is a standalone app on the
+published packages: `cd apps/intro && npm install && npm start`, then
+http://localhost:5180.
+
 ## Packages
 
 | | |
