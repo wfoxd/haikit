@@ -13,14 +13,16 @@ import type { ModelAdapter, ModelRequest, ModelResponse } from "@haikit/core";
  * *different request* minutes later. An in-process iterator cannot cross that.
  */
 export interface AnthropicOptions {
+  /** Any Claude model ID. Defaults to `claude-haiku-5-5`, the fastest and cheapest. */
   model?: string;
   maxTokens?: number;
+  /** Defaults to `medium`. */
   effort?: "low" | "medium" | "high" | "xhigh" | "max";
   apiKey?: string;
 }
 
 export function anthropic(options: AnthropicOptions = {}): ModelAdapter {
-  const model = options.model ?? "claude-opus-5";
+  const model = options.model ?? "claude-haiku-5-5";
   let client: any = null;
 
   return {

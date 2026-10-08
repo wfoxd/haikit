@@ -13,7 +13,7 @@ const SCRIPTED = process.env.HAI_SCRIPTED === "1";
 const PORT = Number(process.env.PORT) || 5175;
 
 const hai = createHai({
-  model: SCRIPTED ? scripted() : anthropic({ model: "claude-opus-5", effort: "low" }),
+  model: SCRIPTED ? scripted() : anthropic({ model: "claude-haiku-5-5", effort: "low" }),
   store: memoryStore(),                                   
   tools,                                                  
   surfaces: [greetingPickerServer, greetingCardServer],                       
@@ -68,7 +68,7 @@ http
     }
   })
   .listen(PORT, () => {
-    console.log(`hello  http://localhost:${PORT}   model=${SCRIPTED ? "scripted" : "claude-opus-5"}`);
+    console.log(`hello  http://localhost:${PORT}   model=${SCRIPTED ? "scripted" : "claude-haiku-5-5"}`);
     if (!SCRIPTED && !process.env.ANTHROPIC_API_KEY) {
       console.log("no ANTHROPIC_API_KEY — run `npm run mock` for the scripted model");
     }

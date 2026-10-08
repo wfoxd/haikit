@@ -297,7 +297,7 @@ export const part2: PartDef = {
         },
         {
           kind: "p",
-          text: "The model is an adapter: anything with a `generate` method. Without an API key this introduction uses a scripted guide, which lives in the app, not the framework. It reads only what a real model would see, the digests and tool results, and takes every fact it states from those strings.",
+          text: "The model is an adapter: anything with a `generate` method. With an API key, this introduction runs Claude Haiku 5.5 at low effort, which suits a guide's short replies and quick tool calls; `HAI_MODEL` names another. Without a key it uses a scripted guide, which lives in the app, not the framework. It reads only what a real model would see, the digests and tool results, and takes every fact it states from those strings.",
         },
         { kind: "p", text: "In the browser, the whole page is one call:" },
         {

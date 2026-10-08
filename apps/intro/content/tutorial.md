@@ -541,7 +541,7 @@ import { tools } from "./tools.ts";
 import { greetingPickerServer } from "./surfaces.ts";
 
 const hai = createHai({
-  model: anthropic({ model: "claude-opus-5", effort: "low" }),  // 1
+  model: anthropic({ model: "claude-haiku-5-5", effort: "low" }),  // 1
   store: memoryStore(),                                   // 2
   tools,                                                  // 3
   surfaces: [greetingPickerServer],                       // 4
@@ -776,7 +776,7 @@ import { scripted } from "./scripted.ts";
 const SCRIPTED = process.env.HAI_SCRIPTED === "1";
 
 const hai = createHai({
-  model: SCRIPTED ? scripted() : anthropic({ model: "claude-opus-5", effort: "low" }),
+  model: SCRIPTED ? scripted() : anthropic({ model: "claude-haiku-5-5", effort: "low" }),
   // ...unchanged
 });
 ```
