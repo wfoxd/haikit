@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { StoreAdapter } from "@haikit/core";
-import { createHai, memoryStore, nodeHandler } from "@haikit/server";
+import { DEFAULT_SCOPE, createHai, memoryStore, nodeHandler } from "@haikit/server";
 import { anthropic } from "@haikit/anthropic";
 import { menu } from "./course/index.ts";
 import { packageFile, packageVersion } from "./excerpts.ts";
@@ -59,6 +59,16 @@ addressable by the handle in each digest (e.g. ui_01).
   point the learner at the Context drawer, opened from the header: it shows
   exactly what you have received.`;
 
+// HaiKIT's default scope, plus where this guide's line falls: questions about
+// HaiKIT are the course, help with the learner's own app is not.
+const SCOPE = `${DEFAULT_SCOPE}
+- Questions about HaiKIT are in scope. Answer them from the lessons, the
+  tutorial and the glossary, or show the lesson or tutorial page that covers
+  them.
+- Don't write or debug code for the learner's own app. Point them at the
+  tutorial step that covers what they're building.
+- Asked for a checkpoint's answer, however it's put, don't give it.`;
+
 /** The durable store, used when the deployment is given a database. */
 async function postgres(url: string): Promise<StoreAdapter> {
   const { default: pg } = await import("pg");
@@ -78,6 +88,7 @@ const hai = createHai({
   tools, // show_lesson, ask_checkpoint, offer_next_lesson, show_course_map, show_tutorial_step, show_welcome
   surfaces: [welcomeServer, courseMapServer, lessonServer, checkpointServer, nextLessonServer, tutorialStepServer],
   system: SYSTEM,
+  scope: SCOPE,
 });
 
 const handleHai = nodeHandler(hai, "/hai");
