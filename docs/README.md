@@ -3,7 +3,7 @@
 | | |
 | --- | --- |
 | [**spec.md**](spec.md) | Design spec — the dual channel, the contract split, elicit mode, the four guarantees, package topology |
-| [**tutorial.md**](tutorial.md) | Build *Hello, World!* as a haikit app in nine steps, annotated line by line |
+| [**tutorial.md**](tutorial.md) | Build *Hello, World!* as a haikit app in ten steps, annotated line by line |
 | [**default-ui.md**](default-ui.md) | The chat UI `@haikit/client` ships: setting it up, what each part does, the model context debug drawer, theming, styling your surfaces, and building your own layout |
 
 These Markdown files are the source of truth: edit them directly. They were
