@@ -70,7 +70,9 @@ async function postgres(url: string): Promise<StoreAdapter> {
 
 // #region create-hai
 const hai = createHai({
-  model: SCRIPTED ? scripted() : anthropic({ model: process.env.HAI_MODEL, effort: "low" }),
+  model: SCRIPTED
+    ? scripted()
+    : anthropic({ model: process.env.HAI_MODEL || "claude-haiku-5-5", effort: "low" }),
   store: DATABASE_URL ? await postgres(DATABASE_URL) : memoryStore(),
   init: welcome, // runs first in every conversation: the welcome screen
   tools, // show_lesson, ask_checkpoint, offer_next_lesson, show_course_map, show_tutorial_step, show_welcome

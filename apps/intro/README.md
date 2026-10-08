@@ -68,6 +68,10 @@ model cost. To use Claude as the guide:
 ANTHROPIC_API_KEY=… npm start
 ```
 
+The guide runs Claude Haiku 5.5 (`claude-haiku-5-5`) at low effort: fast and
+cheap, and suited to a guide's short replies and quick tool calls. Set
+`HAI_MODEL` to use another model, for example `HAI_MODEL=claude-sonnet-5-5`.
+
 `npm run dev` restarts the server when a file changes.
 
 ## Test it
@@ -123,7 +127,7 @@ listens on `PORT` (8080 in the image), and `GET /healthz` returns `ok`.
 | `PORT` | `5180`, or `8080` in the image | Port to listen on |
 | `ANTHROPIC_API_KEY` | unset | When set, Claude is the guide. Unset, the scripted guide is |
 | `HAI_SCRIPTED` | unset | `1` uses the scripted guide even when a key is set |
-| `HAI_MODEL` | `@haikit/anthropic`'s default | Which Claude model guides |
+| `HAI_MODEL` | `claude-haiku-5-5` | Which Claude model guides. Empty means the default |
 | `DATABASE_URL` | unset | Postgres connection string. When set, conversations are stored with `@haikit/postgres` and survive restarts. Its tables are created on startup |
 
 Without `DATABASE_URL` the course uses `memoryStore()`, which is meant for

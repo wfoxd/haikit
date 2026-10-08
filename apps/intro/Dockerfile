@@ -3,8 +3,9 @@
 #   docker build -t haikit-intro .
 #   docker run -p 8080:8080 haikit-intro
 #
-# Optional: ANTHROPIC_API_KEY (Claude instead of the scripted guide), HAI_MODEL,
-# DATABASE_URL (durable conversations in Postgres instead of memory).
+# Optional: ANTHROPIC_API_KEY (Claude Haiku 5.5 instead of the scripted guide),
+# HAI_MODEL (another Claude model), DATABASE_URL (durable conversations in
+# Postgres instead of memory).
 
 FROM node:24-slim
 ENV NODE_ENV=production PORT=8080
