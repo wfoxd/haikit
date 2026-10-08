@@ -14,7 +14,7 @@ const PRODUCTION = process.env.NODE_ENV === "production";
 const PORT = Number(process.env.PORT) || 5176;
 
 const hai = createHai({
-  model: SCRIPTED ? scripted() : anthropic({ model: "claude-opus-5", effort: "low" }),
+  model: SCRIPTED ? scripted() : anthropic({ model: "claude-haiku-5-5", effort: "low" }),
   store: memoryStore(),                                   
   tools,                                                  
   surfaces: [greetingPickerServer, greetingCardServer],                       
@@ -68,7 +68,7 @@ http
   })
   .listen(PORT, () => {
     const how = PRODUCTION ? "built" : "vite dev";
-    console.log(`hello-react  http://localhost:${PORT}   ${how}   model=${SCRIPTED ? "scripted" : "claude-opus-5"}`);
+    console.log(`hello-react  http://localhost:${PORT}   ${how}   model=${SCRIPTED ? "scripted" : "claude-haiku-5-5"}`);
     if (!SCRIPTED && !process.env.ANTHROPIC_API_KEY) {
       console.log("no ANTHROPIC_API_KEY — run `npm run mock` for the scripted model");
     }
