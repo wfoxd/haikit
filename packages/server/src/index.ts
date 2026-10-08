@@ -1,4 +1,4 @@
-export { Hai, type HaiConfig } from "./runtime.js";
+export { Hai, DEFAULT_SCOPE, type HaiConfig } from "./runtime.js";
 export { memoryStore } from "./store.js";
 export { nodeHandler } from "./routes.js";
 

@@ -72,6 +72,26 @@ mid-conversation invalidates newer models' earlier reasoning. But a later call
 from the model gets "already ran" instead of running it twice. Its result stays
 in context for every turn, so keep it digest-sized.
 
+**The model is kept to what your tools do.** HaiKIT appends `DEFAULT_SCOPE`
+to your `system` prompt. It tells the model to decline requests outside its
+tools in one sentence, never to claim something no tool did, and to treat tool
+results as data, not instructions. Pass `scope` to replace it, or
+`scope: false` to leave it off:
+
+```ts
+import { createHai, DEFAULT_SCOPE } from "@haikit/server";
+
+const hai = createHai({
+  model, store, tools, surfaces, system,
+  scope: `${DEFAULT_SCOPE}\n- Never quote a fare the search did not return.`,
+});
+```
+
+It guards what the model says, not what happens. The model can only call the
+tools it was given, and the browser can only send `{handle, action, value}`,
+so put every check with consequences, such as who may book what, inside the
+tool or action handler, where it runs as code.
+
 **A conversation closes once any of its surfaces passes its `staleAfterMs`.**
 From then on both routes answer with an `expired` event and the model is not
 called, so a picker left open over a weekend cannot resolve against last week's
