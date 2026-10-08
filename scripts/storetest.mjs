@@ -2828,6 +2828,33 @@ async function transcriptChecks() {
   }
 }
 
+// ── the scope rides on the system prompt the model actually receives ────
+async function scopeChecks() {
+  console.log("\nscope");
+  const { createHai, DEFAULT_SCOPE } = await import("../packages/server/dist/index.js");
+
+  const sent = async (scope) => {
+    let system;
+    const model = {
+      id: "stub",
+      async generate(request) {
+        system = request.system;
+        return { content: [], stop_reason: "end_turn" };
+      },
+    };
+    const store = memoryStore();
+    const hai = createHai({ model, store, tools: [], surfaces: [], system: "app", scope });
+    const conversation = await store.loadConversation(undefined);
+    await hai.send(conversation, "hi", () => {});
+    return system;
+  };
+
+  check("by default the scope follows the app's system prompt", (await sent(undefined)) === `app\n\n${DEFAULT_SCOPE}`);
+  check("a scope string replaces the default", (await sent("only flights")) === "app\n\nonly flights");
+  check("scope: false leaves the app's system prompt alone", (await sent(false)) === "app");
+  check("an empty scope adds nothing, not a trailing blank line", (await sent("")) === "app");
+}
+
 // ── a window, when given, has to be a real one ──────────────────────────
 // Leaving it out means "never". The type rules out invalid values, but
 // JavaScript callers never see the type.
@@ -2868,6 +2895,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   await conform("memoryStore", (opts) => memoryStore(opts));
   await integration("memoryStore", (opts) => memoryStore(opts));
   await routeChecks();
+  await scopeChecks();
   await windowChecks();
   await clientChecks();
   await transcriptChecks();
