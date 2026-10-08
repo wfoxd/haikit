@@ -93,9 +93,19 @@ That runs two checks:
 
 ## Which haikit it runs
 
-`package.json` asks for [`@haikit/*`](https://www.npmjs.com/search?q=haikit) `^0.9.2`, and `package-lock.json` records
-the exact versions installed. The header shows the version the server is
-running (also at `/version.json`).
+**Always run the newest [`@haikit/*`](https://www.npmjs.com/search?q=haikit)
+release.** The introduction teaches HaiKIT by running it, so an older release
+teaches an older HaiKIT. After every release, update, then deploy:
+
+```bash
+npm run haikit:update    # installs @haikit/*@latest, then runs npm test
+```
+
+Commit `package.json` and `package-lock.json` together. The lockfile records
+the exact versions, and the image installs from it with `npm ci`, so a
+deployment runs whatever the lockfile says. The header shows the version the
+server is running (also at `/version.json`), and CI's daily `latest` job checks
+that the app still passes on the newest release.
 
 Part 2 quotes real code instead of pasting it: this app's own files (between
 `#region` markers) and the installed haikit packages, such as `Pending` from
@@ -104,15 +114,11 @@ when the server starts, so a lesson always shows the code that is actually
 running. If an upgrade moves a quoted region, the server refuses to start and
 names the selector to fix in `src/server/course/`.
 
-To move to the newest haikit release:
-
-```bash
-npm run haikit:update    # installs @haikit/*@latest, then runs npm test
-```
-
 ## Deploy
 
-Build the image from this folder:
+Deploy on the newest haikit: run `npm run haikit:update` first (see
+[Which haikit it runs](#which-haikit-it-runs)). Then build the image from this
+folder:
 
 ```bash
 docker build -t haikit-intro .
