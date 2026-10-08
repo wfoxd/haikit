@@ -2828,9 +2828,6 @@ async function transcriptChecks() {
   }
 }
 
-// ── a window, when given, has to be a real one ──────────────────────────
-// Leaving it out means "never". The type rules out invalid values, but
-// JavaScript callers never see the type.
 // ── the scope rides on the system prompt the model actually receives ────
 async function scopeChecks() {
   console.log("\nscope");
@@ -2855,8 +2852,12 @@ async function scopeChecks() {
   check("by default the scope follows the app's system prompt", (await sent(undefined)) === `app\n\n${DEFAULT_SCOPE}`);
   check("a scope string replaces the default", (await sent("only flights")) === "app\n\nonly flights");
   check("scope: false leaves the app's system prompt alone", (await sent(false)) === "app");
+  check("an empty scope adds nothing, not a trailing blank line", (await sent("")) === "app");
 }
 
+// ── a window, when given, has to be a real one ──────────────────────────
+// Leaving it out means "never". The type rules out invalid values, but
+// JavaScript callers never see the type.
 async function windowChecks() {
   console.log("\nfreshness windows");
   const { createHai } = await import("../packages/server/dist/index.js");

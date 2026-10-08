@@ -21,7 +21,8 @@ export interface HaiConfig {
   surfaces: AnySurfaceImpl[];
   /**
    * Keeps the model to what the app's tools do, appended to `system`. Defaults
-   * to `DEFAULT_SCOPE`. Pass a string to replace it, or `false` to leave it off.
+   * to `DEFAULT_SCOPE`. Pass a string to replace it, or `false` to leave it off;
+   * an empty string leaves it off too, rather than adding a blank line.
    *
    * A guard on what the model says, not on what happens: the model can only
    * ever call the tools it was given, and anything with consequences belongs
@@ -102,7 +103,7 @@ export class Hai {
   constructor(config: HaiConfig) {
     this.config = config;
     const scope = config.scope ?? DEFAULT_SCOPE;
-    this.system = scope ? `${config.system}\n\n${scope}` : config.system;
+    this.system = scope === false || scope === "" ? config.system : `${config.system}\n\n${scope}`;
     for (const s of config.surfaces) {
       checkWindow(s);
       this.surfaces.set(s.surface.name, s);
