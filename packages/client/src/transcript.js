@@ -46,8 +46,13 @@ export function renderTranscript(root, chat) {
       el = renderBlock(block, chat);
       // an expanded tool row stays expanded when its status changes
       if (before?.el.open) el.open = true;
+    } else if (block.progress !== before.progress) {
+      // Progress changes the row in place. Rebuilt for every frame, a row a
+      // keyboard user is on would take their focus up to ten times a second.
+      const parts = rowParts.get(el);
+      if (parts) showStatus(parts, block, toolStatus(block, chat));
     }
-    shown.set(block.id, { el, look });
+    shown.set(block.id, { el, look, progress: block.progress });
     return el;
   });
   follow.shown = shown;
@@ -77,7 +82,8 @@ export function closeTranscript(root) {
 function appearance(block, chat) {
   // a surface shows a skeleton until its props arrive, and then itself for good
   if (block.kind === "ui") return chat.state.surfaces.get(block.handle)?.props ? "mounted" : "loading";
-  if (block.kind === "tool") return JSON.stringify({ ...block, status: toolStatus(block, chat) });
+  // progress is left out: it changes the row in place (see renderTranscript)
+  if (block.kind === "tool") return JSON.stringify({ ...block, progress: undefined, status: toolStatus(block, chat) });
   return JSON.stringify(block);
 }
 
@@ -121,38 +127,39 @@ function progressCount({ done, total }) {
   return total !== undefined ? `${done ?? 0}/${total}` : done !== undefined ? String(done) : "";
 }
 
-/** "Checking fare sources · 2/4" */
-function progressText(progress) {
-  return [progress.message, progressCount(progress)].filter(Boolean).join(" · ");
-}
+/** A tool row's element → its status text and progress bar, which progress changes in place. */
+const rowParts = new WeakMap();
 
 /**
- * A running tool's status from its progress, or null if it has reported none.
- * The message gives way first on a narrow row, so the count stays readable.
+ * Fill in what a tool row says of its call. While it runs, that is its
+ * progress once it has reported some: the message gives way first on a narrow
+ * row, so the count stays readable, and the bar fills once there is a total.
  */
-function progressStatus(progress) {
-  if (!progress) return null;
-  const el = h("span", "hai-tstatus hai-tprogress");
-  const count = progressCount(progress);
-  if (progress.message) el.append(h("span", "hai-tmessage", progress.message));
-  if (progress.message && count) el.append(" · ");
-  if (count) el.append(h("span", "hai-tcount", count));
-  return el;
-}
+function showStatus({ status: text, bar }, block, status) {
+  const progress = status === "running" ? block.progress : undefined;
+  const message = progress?.message ?? "";
+  const count = progress ? progressCount(progress) : "";
+  if (message || count) {
+    text.className = "hai-tstatus hai-tprogress";
+    const parts = [];
+    if (message) parts.push(h("span", "hai-tmessage", message));
+    if (message && count) parts.push(h("span", null, " · "));
+    if (count) parts.push(h("span", "hai-tcount", count));
+    text.replaceChildren(...parts);
+  } else {
+    text.className = "hai-tstatus";
+    text.textContent = (STATUS_TEXT[status] ?? ((ms) => `${ms} ms`))(block.ms);
+  }
 
-/** A thin bar along the row's bottom edge, once the tool has said how many steps in all. */
-function progressBar(progress) {
+  if (!bar) return;
   const total = progress?.total;
-  if (!total) return null;
+  bar.hidden = !total;
+  if (!total) return;
   const done = Math.min(progress.done ?? 0, total);
-  const bar = h("span", "hai-tbar");
-  bar.setAttribute("role", "progressbar");
-  bar.setAttribute("aria-valuemin", "0");
   bar.setAttribute("aria-valuemax", String(total));
   bar.setAttribute("aria-valuenow", String(done));
-  if (progress.message) bar.setAttribute("aria-valuetext", progressText(progress));
+  bar.setAttribute("aria-valuetext", [message, `${done} of ${total}`].filter(Boolean).join(" · "));
   bar.style.setProperty("--hai-progress", `${(done / total) * 100}%`);
-  return bar;
 }
 
 function statusMark(status) {
@@ -322,18 +329,24 @@ function renderBlock(block, chat) {
       const status = toolStatus(block, chat);
       const el = h("details", `hai-block hai-tool hai-status-${status}`);
       const summary = h("summary");
+      const parts = { status: h("span", "hai-tstatus"), bar: null };
       summary.append(
         statusMark(status),
         h("span", "hai-tname", block.name),
         h("span", "hai-targs", JSON.stringify(block.input)),
-        (status === "running" && progressStatus(block.progress)) ||
-          h("span", "hai-tstatus", (STATUS_TEXT[status] ?? ((ms) => `${ms} ms`))(block.ms)),
+        parts.status,
         icon("chevron", "hai-icon hai-chevron"),
       );
+      // a thin bar along the row's bottom edge, for progress with a total
       if (status === "running") {
-        const bar = progressBar(block.progress);
-        if (bar) summary.append(bar);
+        parts.bar = h("span", "hai-tbar");
+        parts.bar.setAttribute("role", "progressbar");
+        parts.bar.setAttribute("aria-label", `${block.name} progress`);
+        parts.bar.setAttribute("aria-valuemin", "0");
+        summary.append(parts.bar);
       }
+      rowParts.set(el, parts);
+      showStatus(parts, block, status);
       el.append(summary);
       const detail = h("div", "hai-tool-detail");
       detail.append(

@@ -315,7 +315,7 @@ for (const c of CASES) {
     const frames = turn.filter((e) => e.type === "progress");
     const finished = turn.findIndex((e) => e.type === "block_update");
     frames.length === 2
-      ? ok("52 calls in one tick send 2 frames")
+      ? ok("53 calls in one tick send 2 frames")
       : bad(`expected 2 frames, got ${frames.length}: ${JSON.stringify(frames)}`);
     JSON.stringify(frames.map(({ type, toolId, ...f }) => f)) ===
     JSON.stringify([{ message: "Counting", done: 0, total: 50 }, { done: 50 }])

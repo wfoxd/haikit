@@ -2476,8 +2476,17 @@ async function transcriptChecks() {
   // a move is reported by a scroll event at the next frame, as a browser does.
   class El {
     constructor(tag) {
-      Object.assign(this, { tagName: tag, children: [], dataset: {}, className: "", textContent: "", own: 20 });
-      Object.assign(this, { nodeType: 1, parentNode: null, moves: 0 });
+      Object.assign(this, { tagName: tag, children: [], dataset: {}, className: "", own: 20 });
+      Object.assign(this, { nodeType: 1, parentNode: null, moves: 0, text: "", attributes: {} });
+      this.style = { setProperty: (name, value) => (this.style[name] = value) };
+    }
+    // as in the DOM: its own text and its children's, and setting it replaces them
+    get textContent() {
+      return this.text + this.children.map((c) => c.textContent).join("");
+    }
+    set textContent(value) {
+      for (const child of [...this.children]) child.remove();
+      this.text = String(value);
     }
     // take a node from wherever it is; one that was already placed has moved
     adopt(node) {
@@ -2500,8 +2509,10 @@ async function transcriptChecks() {
       else this.children.splice(i, 0, node);
     }
     replaceChildren(...nodes) {
-      // every child comes out first, so one put straight back has moved too
+      // every child comes out first, so one put straight back has moved too;
+      // text set through textContent is a child in the DOM, so it goes as well
       for (const child of [...this.children]) child.remove();
+      this.text = "";
       for (const node of nodes) if (node.wasIn === this) node.moves++;
       this.append(...nodes);
     }
@@ -2521,8 +2532,10 @@ async function transcriptChecks() {
     get height() {
       return this.own + this.children.reduce((sum, c) => sum + c.height, 0);
     }
-    // icons and ARIA: attributes the renderer sets and nothing here reads
-    setAttribute() {}
+    // icons and ARIA
+    setAttribute(name, value) {
+      this.attributes[name] = String(value);
+    }
   }
   // whitespace in the page's markup, say
   class Text extends El {
@@ -2822,6 +2835,48 @@ async function transcriptChecks() {
     check("an unanswered question is out of date once the conversation is", says(unanswered) === "hai-status-expired out of date");
     check("an answered one stays resolved", says(answered) === "hai-status-resolved resolved");
     closeTranscript(rows);
+
+    // ── a running tool's progress ─────────────────────────────────────
+    // Progress changes the row in place. A row rebuilt for every frame would
+    // take the focus of a keyboard user on it, up to ten times a second.
+    const running = new Root();
+    const working = { state: { blocks: [], surfaces: new Map(), expired: null }, mount() {} };
+    const runningTool = { kind: "tool", id: "t-run", name: "search", input: {}, status: "running" };
+    working.state.blocks.push(runningTool);
+    const runRow = () => {
+      renderTranscript(running, working);
+      const el = running.children[0];
+      const summary = el.children[0];
+      return { el, text: summary.children[3].textContent, bar: summary.children.find((c) => c.className === "hai-tbar") };
+    };
+    const first = runRow();
+    check("a running tool with no progress says it is running", first.text === "running…" && first.bar?.hidden === true);
+    check("its progress bar has an accessible name", first.bar?.attributes["aria-label"] === "search progress");
+
+    runningTool.progress = { message: "Checking fare sources", done: 1, total: 4 };
+    const counting = runRow();
+    check("progress shows the message and the count", counting.text === "Checking fare sources · 1/4");
+    check(
+      "…in the same row, which has not moved",
+      counting.el === first.el && first.el.moves === 0 && running.children.length === 1,
+    );
+    check(
+      "…with the bar filled, and its value said in words",
+      counting.bar?.hidden === false &&
+        counting.bar.style["--hai-progress"] === "25%" &&
+        counting.bar.attributes["aria-valuetext"] === "Checking fare sources · 1 of 4",
+    );
+
+    runningTool.progress = { ...runningTool.progress, message: "" };
+    check("a message cleared to nothing leaves the count", runRow().text === "1/4");
+    runningTool.progress = { message: "" };
+    const cleared = runRow();
+    check("progress with nothing to show says it is running again", cleared.text === "running…" && cleared.bar.hidden);
+
+    Object.assign(runningTool, { status: "ok", ms: 12 });
+    const done = runRow();
+    check("a finished call shows how long it took, with no bar", done.text === "12 ms" && !done.bar);
+    closeTranscript(running);
   } finally {
     if (!hadDocument) delete globalThis.document;
     if (!hadObserver) delete globalThis.ResizeObserver;
