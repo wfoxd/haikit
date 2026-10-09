@@ -177,6 +177,28 @@ async function noticeChecks(label, db) {
       publisher.subscribe === undefined && typeof hearer.subscribe === "function");
     await pubsubChecks(publisher, hearer);
 
+    // A LISTEN that takes a while to take hold: subscribe resolves only once
+    // it has, so a message published straight after is heard.
+    {
+      const slowListen = {
+        async listen(channel, onNotify) {
+          await new Promise((r) => setTimeout(r, 300));
+          return db.listen(channel, onNotify);
+        },
+      };
+      const slowHearer = pgStore(db, { listen: slowListen });
+      const c = await publisher.loadConversation(undefined);
+      c.leaseUntil = null;
+      await publisher.saveConversation(c);
+      const got = [];
+      const listening = new AbortController();
+      await slowHearer.subscribe(c.id, (m) => got.push(m), listening.signal);
+      await publisher.publish(c.id, "right away");
+      for (let i = 0; i < 50 && !got.length; i++) await new Promise((r) => setTimeout(r, 20));
+      listening.abort();
+      check("subscribe resolves only once LISTEN has taken hold, so a message published straight after is heard", got.join() === "right away");
+    }
+
     // Half a message whose other half never comes is not kept: a cleanup is
     // scheduled with its first piece, and cancelled when the message is whole.
     const c = await publisher.loadConversation(undefined);

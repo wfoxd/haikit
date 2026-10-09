@@ -45,9 +45,9 @@ export async function pubsubChecks(from, to) {
   const heard = [];
   const other = [];
   const listening = new AbortController();
-  to.subscribe(a.id, (m) => heard.push(m), listening.signal);
-  to.subscribe(b.id, (m) => other.push(m), listening.signal);
-  await new Promise((r) => setTimeout(r, 100)); // a store may take a moment to start listening
+  // resolved once listening: nothing published after this may be missed
+  await to.subscribe(a.id, (m) => heard.push(m), listening.signal);
+  await to.subscribe(b.id, (m) => other.push(m), listening.signal);
   const long = `${"wake turn ".repeat(2_500)}— fares, 🛫, 終わり`; // past any one NOTIFY, and not ASCII
   const sent = ["one", "two", long, "four"];
   for (const m of sent) await from.publish(a.id, m);

@@ -142,6 +142,13 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
     return;
   }
 
+  // Hearing other processes' wake turns is in place before the browser is
+  // told its stream is open: a turn that starts after that is never missed.
+  const watchers = watchersOf(hai, conversationId);
+  await watchers.ready;
+  // gone while that was set up: its close has already been and gone
+  if (req.destroyed || res.destroyed) return forgetWatchers(hai, conversationId, watchers);
+
   res.writeHead(200, {
     "content-type": "text/event-stream",
     "cache-control": "no-cache",
@@ -176,7 +183,6 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
   // Every stream this process has open for the conversation hears a wake
   // turn, not only the one whose attempt won the lease: another tab shows the
   // reply too, and holds its requests until the turn lets go.
-  const watchers = watchersOf(hai, conversationId);
   watchers.streams.add(emit);
   // Joining while a wake turn runs: what it has shown so far, starting with
   // its `streaming` status, so the browser holds requests until it lets go,
@@ -287,6 +293,8 @@ interface Watchers {
   broadcast: Emit;
   /** Let this entry go, and stop hearing other processes for it. */
   forget: () => void;
+  /** Settles once this process is listening for other processes' turns. */
+  ready: Promise<void>;
 }
 
 /** Fold a wake turn's frame into what it has shown so far. */
@@ -360,6 +368,7 @@ function watchersOf(hai: Hai, conversationId: string): Watchers {
       live: false,
       shown: [],
       forget,
+      ready: Promise.resolve(),
       // A wake turn running here: its frames to this process's streams, and,
       // through the store, to every other process's. All but `context`, the
       // whole history, which another tab gets with its own next request.
@@ -374,7 +383,7 @@ function watchersOf(hai: Hai, conversationId: string): Watchers {
     };
 
     // A wake turn running in another process, heard through the store.
-    store.subscribe?.(
+    const subscribed = store.subscribe?.(
       conversationId,
       (message) => {
         let heard: { origin?: string; event?: WireEvent };
@@ -387,6 +396,8 @@ function watchersOf(hai: Hai, conversationId: string): Watchers {
       },
       hearing.signal,
     );
+    // best effort: a store that couldn't start listening doesn't hold the stream up
+    if (subscribed) fresh.ready = Promise.resolve(subscribed).catch(() => {});
 
     byConversation.set(conversationId, (watchers = fresh));
   }
@@ -394,8 +405,9 @@ function watchersOf(hai: Hai, conversationId: string): Watchers {
 }
 
 function forgetWatchers(_hai: Hai, _conversationId: string, watchers: Watchers) {
-  // a wake turn still running keeps its entry, so a stream that joins later still hears it
-  if (!watchers.live) watchers.forget();
+  // A wake turn still running keeps its entry, so a stream that joins later
+  // still hears it, and so does any stream still open.
+  if (!watchers.live && !watchers.streams.size) watchers.forget();
 }
 
 /** The first wait before trying a wake turn again on a busy conversation, and the longest. */

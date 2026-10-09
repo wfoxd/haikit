@@ -179,7 +179,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): StoreAdapter {
       for (const hear of [...(subscribers.get(conversationId) ?? [])]) hear(String(message));
     },
 
-    subscribe(conversationId, onMessage, signal) {
+    async subscribe(conversationId, onMessage, signal) {
       if (signal.aborted) return;
       const set = subscribers.get(conversationId) ?? new Set();
       set.add(onMessage);

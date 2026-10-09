@@ -865,8 +865,13 @@ export interface StoreAdapter {
    * the message as opaque text; a store may carry it however it likes.
    */
   publish?(conversationId: string, message: string): Promise<void>;
-  /** Hear what is published for a conversation, until `signal` aborts. See `publish`. */
-  subscribe?(conversationId: string, onMessage: (message: string) => void, signal: AbortSignal): void;
+  /**
+   * Hear what is published for a conversation, until `signal` aborts. See
+   * `publish`. Resolves once it is listening: anything published after that
+   * reaches `onMessage`. A store that cannot start listening still resolves,
+   * since this is best effort, and hears nothing.
+   */
+  subscribe?(conversationId: string, onMessage: (message: string) => void, signal: AbortSignal): Promise<void>;
 }
 
 /** Rough token estimate. Only used to surface the economics in the UI. */

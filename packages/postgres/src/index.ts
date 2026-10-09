@@ -320,7 +320,7 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
     }
   }
 
-  function subscribe(conversationId: string, onMessage: (message: string) => void, signal: AbortSignal) {
+  async function subscribe(conversationId: string, onMessage: (message: string) => void, signal: AbortSignal) {
     if (signal.aborted) return;
     const set = hearing.get(conversationId) ?? new Set();
     set.add(onMessage);
@@ -333,8 +333,10 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
       },
       { once: true },
     );
-    // best effort, as the contract says: a failed LISTEN is tried again next time
-    listenOn(options.listen!, TURN_CHANNEL, onTurn).catch(() => {});
+    // Resolves once LISTEN has taken hold, so nothing published after this
+    // resolves is missed. Best effort, as the contract says: a failed LISTEN
+    // is tried again next time, and this resolves all the same.
+    await listenOn(options.listen!, TURN_CHANNEL, onTurn).catch(() => {});
   }
 
   async function* watch(conversationId: string, signal: AbortSignal): AsyncIterable<void> {
