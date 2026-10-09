@@ -1,5 +1,12 @@
 # @haikit/anthropic
 
+## 0.15.0
+
+### Patch Changes
+
+- Updated dependencies [5c528d9]
+  - @haikit/core@0.15.0
+
 ## 0.14.0
 
 ### Patch Changes
