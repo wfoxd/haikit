@@ -167,9 +167,12 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
   };
 
   // Everything after `after`, a page at a time, until a page comes back short.
+  // A conversation deleted since the stream opened ends it: there is nothing
+  // more to wait for, and the browser's reconnect is then refused.
   const catchUp = async (page: NoticeRecord[] | null = null) => {
     for (;;) {
-      const records = page ?? (await store.getNotices(conversationId, after, PAGE)) ?? [];
+      const records = page ?? (await store.getNotices(conversationId, after, PAGE));
+      if (records === null) return aborter.abort();
       for (const n of records) {
         if (signal.aborted) return;
         if (n.seq <= after) continue;

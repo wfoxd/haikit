@@ -3001,6 +3001,31 @@ async function noticeStreamChecks() {
     }
   }
 
+  // ── a conversation deleted under an open stream ends it
+  {
+    const memory = memoryStore();
+    let deleted = false;
+    const vanishing = { ...memory, getNotices: async (...args) => (deleted ? null : memory.getNotices(...args)) };
+    const goneHai = createHai({ model, store: vanishing, tools: [], surfaces: [], notices: [held], system: "x" });
+    const goneHandler = nodeHandler(goneHai, "/hai");
+    const goneServer = http.createServer(async (req, res) => {
+      if (!(await goneHandler(req, res))) res.writeHead(404).end();
+    });
+    await new Promise((r) => goneServer.listen(5382, "127.0.0.1", r));
+    try {
+      const c = await memory.loadConversation(undefined);
+      c.leaseUntil = null;
+      await memory.saveConversation(c);
+      const res = await fetch(`http://127.0.0.1:5382/hai/events?conversationId=${c.id}`);
+      const ended = res.text().then(() => true);
+      deleted = true;
+      const result = await Promise.race([ended, wait(4_000).then(() => false)]);
+      check("a stream whose conversation is deleted ends, at the next read", result === true);
+    } finally {
+      goneServer.close();
+    }
+  }
+
   // ── a stream that keeps dropping backs off, though each attempt gets a 200
   const attempts = [];
   const flaky = http.createServer((req, res) => {

@@ -178,6 +178,17 @@ async function noticeChecks(label, db) {
     check("migrating a pre-notices database adds what notices need", n.seq === 1 && a.noticedThrough === 0);
   }
 
+  // a resume point past what an integer holds is read, not refused by a cast
+  {
+    const store = pgStore(db);
+    const a = await store.loadConversation(undefined);
+    let read = null;
+    try {
+      read = await store.getNotices(a.id, 2 ** 31);
+    } catch {}
+    check("a resume point past 2^31 reads as no notices, not an error", JSON.stringify(read) === "[]");
+  }
+
   // retention is the conversation's: deleting it deletes its notices
   {
     const store = pgStore(db);

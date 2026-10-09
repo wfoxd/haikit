@@ -418,7 +418,7 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
     async getNotices(conversationId, after, limit) {
       const { rows } = await db.query(
         `SELECT ${NOTICE_COLUMNS} FROM haikit_notices
-          WHERE conversation_id = $1 AND seq > $2::integer
+          WHERE conversation_id = $1 AND seq > $2::bigint
           ORDER BY seq
           LIMIT $3::integer`,
         [conversationId, after, limit ?? null],
