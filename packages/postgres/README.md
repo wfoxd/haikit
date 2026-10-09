@@ -52,11 +52,11 @@ With your own migration tool, apply the new `ALTER TABLE` from `schema` before
 deploying. Rows written before the column existed are held to the window your
 code declares.
 
-**Upgrading to 0.12:** `migrate()` adds `haikit_notices`, and `notice_seq` and
+**Upgrading to 0.13:** `migrate()` adds `haikit_notices`, and `notice_seq` and
 `noticed_through` to `haikit_conversations`, for `hai.notify`. As before, if
 you call `migrate()` at startup there is nothing to do.
 
-**Upgrading to 0.13:** `migrate()` adds `kind` to `haikit_notices`, and
+**Upgrading to 0.14:** `migrate()` adds `kind` to `haikit_notices`, and
 `wakes` and `woke_through` to `haikit_conversations`, for wake notices.
 
 Handles are numbered per conversation, so every conversation's digests start at
@@ -91,6 +91,22 @@ const store = pgStore(pool, {
 
 A notice belongs to its conversation and goes when it does: deleting a
 conversation deletes its notices. `sweepOrphans` never touches them.
+
+## Wake turns across servers
+
+With several app servers, the same `listen` connection carries a wake turn
+from the server running it to the others, so a browser connected to any of
+them sees the reply. `publish` sends each of the turn's frames as `NOTIFY`
+on `haikit_turns`. A frame longer than one `NOTIFY` can hold (just under
+8,000 bytes) goes as several, sent in one statement, and is put back
+together on arrival. Frames are sent one at a time per conversation, each
+committed before the next, so they arrive in order. Every store can publish;
+only one given `listen` hears.
+
+It is best effort, as `NOTIFY` is: a server whose listening connection is
+down misses those frames, and a tab there sees the reply when it next
+reconnects to a server that has it, or not at all. Nothing is stored, so
+there is nothing to migrate or clean up.
 
 ## Cleaning up
 

@@ -851,6 +851,22 @@ export interface StoreAdapter {
    * seconds regardless; this only makes a read sooner.
    */
   watch?(conversationId: string, signal: AbortSignal): AsyncIterable<void>;
+
+  /**
+   * Optional, with `subscribe`: carry a message to every process watching a
+   * conversation, so a wake turn running in one is seen by browsers connected
+   * to the others. Without them, a wake turn reaches only the events streams
+   * of the process that runs it.
+   *
+   * Deliver `message` to every `subscribe`r of this conversation, in every
+   * process, this one included, **in the order it was published** from this
+   * process, and whole, however long. It is best effort: a subscriber that
+   * was not listening at the time does not get it later. The runtime treats
+   * the message as opaque text; a store may carry it however it likes.
+   */
+  publish?(conversationId: string, message: string): Promise<void>;
+  /** Hear what is published for a conversation, until `signal` aborts. See `publish`. */
+  subscribe?(conversationId: string, onMessage: (message: string) => void, signal: AbortSignal): void;
 }
 
 /** Rough token estimate. Only used to surface the economics in the UI. */

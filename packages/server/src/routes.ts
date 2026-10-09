@@ -269,7 +269,11 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
   }
 }
 
-/** The events streams one process has open for a conversation, and the wake turn running there, if any. */
+/**
+ * The events streams one process has open for a conversation, and the wake
+ * turn they are watching, if any: one running here, or, through a store with
+ * `publish` and `subscribe`, in another process.
+ */
 interface Watchers {
   streams: Set<Emit>;
   live: boolean;
@@ -279,7 +283,10 @@ interface Watchers {
    * then everything else in order. A turn's worth, dropped when it ends.
    */
   shown: WireEvent[];
+  /** A wake turn running in this process: to every stream here, and to the other processes. */
   broadcast: Emit;
+  /** Let this entry go, and stop hearing other processes for it. */
+  forget: () => void;
 }
 
 /** Fold a wake turn's frame into what it has shown so far. */
@@ -302,42 +309,93 @@ function remember(shown: WireEvent[], event: WireEvent) {
 
 const watching = new WeakMap<Hai, Map<string, Watchers>>();
 
+/**
+ * Who this Hai is, among the processes sharing a store: what it publishes is
+ * marked with it, so it can tell its own messages from others' when the
+ * store hands them back.
+ */
+const origins = new WeakMap<Hai, string>();
+const originOf = (hai: Hai) => {
+  let origin = origins.get(hai);
+  if (!origin) origins.set(hai, (origin = globalThis.crypto.randomUUID()));
+  return origin;
+};
+
 function watchersOf(hai: Hai, conversationId: string): Watchers {
   let byConversation = watching.get(hai);
   if (!byConversation) watching.set(hai, (byConversation = new Map()));
   const map = byConversation;
   let watchers = byConversation.get(conversationId);
   if (!watchers) {
+    const { store } = hai.config;
+    const origin = originOf(hai);
+    // Hearing other processes' wake turns lasts as long as this entry does.
+    const hearing = new AbortController();
+    const forget = () => {
+      if (map.get(conversationId) !== fresh) return;
+      map.delete(conversationId);
+      hearing.abort();
+    };
+
+    // A wake turn's frame, to every stream here. `live` from its first
+    // `streaming` until `released`, with what it has shown kept meanwhile,
+    // for a stream that joins part way.
+    const deliver = (event: WireEvent) => {
+      if (event.type === "status" && event.status === "streaming" && !fresh.live) {
+        fresh.live = true;
+        fresh.shown = [];
+      }
+      if (fresh.live) remember(fresh.shown, event);
+      if (event.type === "released") {
+        fresh.live = false;
+        fresh.shown = [];
+      }
+      for (const send of fresh.streams) send(event);
+      // the turn outlived every stream that watched it: nothing left to keep
+      if (!fresh.live && !fresh.streams.size) forget();
+    };
+
     const fresh: Watchers = {
       streams: new Set(),
       live: false,
       shown: [],
-      // A wake turn's frames, to every stream. `live` from its first
-      // `streaming` until `released`, with what it has shown kept meanwhile,
-      // for a stream that joins part way.
+      forget,
+      // A wake turn running here: its frames to this process's streams, and,
+      // through the store, to every other process's. All but `context`, the
+      // whole history, which another tab gets with its own next request.
       broadcast: (event) => {
-        if (event.type === "status" && event.status === "streaming" && !fresh.live) {
-          fresh.live = true;
-          fresh.shown = [];
+        deliver(event);
+        if (store.publish && event.type !== "context") {
+          store.publish(conversationId, JSON.stringify({ origin, event })).catch(() => {
+            // best effort: another process's tabs miss this frame
+          });
         }
-        if (fresh.live) remember(fresh.shown, event);
-        if (event.type === "released") {
-          fresh.live = false;
-          fresh.shown = [];
-        }
-        for (const send of fresh.streams) send(event);
-        // the turn outlived every stream that watched it: nothing left to keep
-        if (!fresh.live && !fresh.streams.size && map.get(conversationId) === fresh) map.delete(conversationId);
       },
     };
+
+    // A wake turn running in another process, heard through the store.
+    store.subscribe?.(
+      conversationId,
+      (message) => {
+        let heard: { origin?: string; event?: WireEvent };
+        try {
+          heard = JSON.parse(message);
+        } catch {
+          return;
+        }
+        if (heard.origin !== origin && heard.event) deliver(heard.event);
+      },
+      hearing.signal,
+    );
+
     byConversation.set(conversationId, (watchers = fresh));
   }
   return watchers;
 }
 
-function forgetWatchers(hai: Hai, conversationId: string, watchers: Watchers) {
+function forgetWatchers(_hai: Hai, _conversationId: string, watchers: Watchers) {
   // a wake turn still running keeps its entry, so a stream that joins later still hears it
-  if (!watchers.live && watching.get(hai)?.get(conversationId) === watchers) watching.get(hai)!.delete(conversationId);
+  if (!watchers.live) watchers.forget();
 }
 
 /** The first wait before trying a wake turn again on a busy conversation, and the longest. */

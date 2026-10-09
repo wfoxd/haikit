@@ -55,6 +55,8 @@ export function memoryStore(options: MemoryStoreOptions = {}): StoreAdapter {
   // number and appending, so commit order is seq order for free.
   const notices = new Map<string, NoticeRecord[]>();
   const waiting = new Map<string, Set<() => void>>();
+  // conversation id → whoever subscribed to what is published for it
+  const subscribers = new Map<string, Set<(message: string) => void>>();
   let convSeq = 0;
   let handleSeq = 0;
 
@@ -167,6 +169,29 @@ export function memoryStore(options: MemoryStoreOptions = {}): StoreAdapter {
         else lo = mid + 1;
       }
       return copy(list.slice(lo, lo + limit));
+    },
+
+    /**
+     * In-process, since this store is one process: what one Hai publishes,
+     * every Hai sharing this store hears, synchronously and in order.
+     */
+    async publish(conversationId, message) {
+      for (const hear of [...(subscribers.get(conversationId) ?? [])]) hear(String(message));
+    },
+
+    subscribe(conversationId, onMessage, signal) {
+      if (signal.aborted) return;
+      const set = subscribers.get(conversationId) ?? new Set();
+      set.add(onMessage);
+      subscribers.set(conversationId, set);
+      signal.addEventListener(
+        "abort",
+        () => {
+          set.delete(onMessage);
+          if (!set.size && subscribers.get(conversationId) === set) subscribers.delete(conversationId);
+        },
+        { once: true },
+      );
     },
 
     async *watch(conversationId, signal) {

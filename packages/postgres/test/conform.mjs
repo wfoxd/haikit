@@ -15,7 +15,7 @@
  */
 
 import { PGlite } from "@electric-sql/pglite";
-import { conform, integration, failureCount } from "../../../scripts/storetest.mjs";
+import { conform, integration, failureCount, pubsubChecks } from "../../../scripts/storetest.mjs";
 import { pgStore, migrate, sweepOrphans } from "../dist/index.js";
 import { isConversationBusy } from "../../core/dist/index.js";
 
@@ -166,6 +166,16 @@ async function noticeChecks(label, db) {
     check("a notice's NOTIFY wakes whoever watches its conversation", step !== "timeout" && step.done === false);
     aborter.abort();
     check("watch ends when its signal aborts", (await steps.next()).done === true);
+  }
+
+  // publish / subscribe over NOTIFY: one store publishes, another, listening
+  // on the same database as a second process would, hears it
+  {
+    const publisher = pgStore(db);
+    const hearer = pgStore(db, { listen: db });
+    check("a store publishes always, and subscribes only with a listener", typeof publisher.publish === "function" &&
+      publisher.subscribe === undefined && typeof hearer.subscribe === "function");
+    await pubsubChecks(publisher, hearer);
   }
 
   // a database migrated before notices existed gains them

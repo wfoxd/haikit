@@ -30,6 +30,40 @@ const payload = (conversationId) => ({
   mode: "elicit",
 });
 
+/**
+ * What `publish` and `subscribe` promise, between a store that publishes and
+ * one that hears: the same store, or two sharing a database. Exported for
+ * adapters whose stores only hear with extra wiring.
+ */
+export async function pubsubChecks(from, to) {
+  const a = await from.loadConversation(undefined);
+  const b = await from.loadConversation(undefined);
+  for (const c of [a, b]) {
+    c.leaseUntil = null;
+    await from.saveConversation(c);
+  }
+  const heard = [];
+  const other = [];
+  const listening = new AbortController();
+  to.subscribe(a.id, (m) => heard.push(m), listening.signal);
+  to.subscribe(b.id, (m) => other.push(m), listening.signal);
+  await new Promise((r) => setTimeout(r, 100)); // a store may take a moment to start listening
+  const long = `${"wake turn ".repeat(2_500)}— fares, 🛫, 終わり`; // past any one NOTIFY, and not ASCII
+  const sent = ["one", "two", long, "four"];
+  for (const m of sent) await from.publish(a.id, m);
+  const arrived = async (n) => {
+    for (let i = 0; i < 100 && heard.length < n; i++) await new Promise((r) => setTimeout(r, 20));
+  };
+  await arrived(sent.length);
+  check("a published message reaches a subscriber, in the order published", JSON.stringify(heard.slice(0, 2)) === '["one","two"]' && heard[3] === "four");
+  check(`a message far longer than one NOTIFY arrives whole (${long.length} characters, some not ASCII)`, heard[2] === long);
+  check("a message for one conversation reaches no other's subscribers", other.length === 0);
+  listening.abort();
+  await from.publish(a.id, "after");
+  await new Promise((r) => setTimeout(r, 200));
+  check("a subscriber hears nothing once its signal aborts", !heard.includes("after"));
+}
+
 /** @param {() => import("@haikit/core").StoreAdapter} make */
 export async function conform(label, make) {
   console.log(`\n${label}`);
@@ -427,6 +461,12 @@ export async function conform(label, make) {
       const stopped = await Promise.race([ended, new Promise((r) => setTimeout(() => r(false), 2_000))]);
       check("watch ends when its signal aborts", stopped === true);
     }
+  }
+
+  // ── publish / subscribe, when a store offers them ─────────────────────
+  {
+    const s = make();
+    if (s.publish && s.subscribe) await pubsubChecks(s, s);
   }
 
   // ── the rightful holder's save still succeeds ─────────────────────────
@@ -3685,6 +3725,164 @@ async function wakeStreamChecks() {
   }
 }
 
+// ── two processes on one store: a wake turn in one reaches tabs on the other
+// Two Hai instances sharing a store stand in for two app servers behind a
+// load balancer. Only the first registers the wake notice, so the turn always
+// runs there; the second only streams, and relies on publish/subscribe.
+async function crossInstanceChecks() {
+  console.log("\nwake turns across processes");
+  const http = await import("node:http");
+  const { createHai, memoryStore, nodeHandler } = await import("../packages/server/dist/index.js");
+  const { defineNotice } = await import("../packages/core/dist/index.js");
+  const { createChat } = await import("../packages/client/src/index.js");
+  const any = { parse: (v) => v };
+  const dropped = defineNotice({ name: "dropped", version: 1, kind: "wake", payload: any }).implement({ model: (p) => `${p.flight} is cheaper.` });
+  const quiet = defineNotice({ name: "quiet", version: 1, payload: any }).implement({ model: () => null });
+  let slow = 0;
+  const model = {
+    id: "stub",
+    async generate({ messages, onTextDelta }) {
+      const last = messages.at(-1).content;
+      const text = typeof last === "string" ? last : last.at(-1).text;
+      if (!text.startsWith("[The user")) {
+        onTextDelta(`You said ${text}.`);
+        return { content: [{ type: "text", text: `You said ${text}.` }], stop_reason: "end_turn" };
+      }
+      onTextDelta("Heads up: ");
+      await new Promise((r) => setTimeout(r, slow));
+      onTextDelta("cheaper.");
+      return { content: [{ type: "text", text: "Heads up: cheaper." }], stop_reason: "end_turn" };
+    },
+  };
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const until = async (cond, ms = 3_000) => {
+    for (const end = Date.now() + ms; Date.now() < end; await wait(10)) if (cond()) return true;
+    return cond();
+  };
+  async function stream(url, done, ms = 4_000) {
+    const aborter = new AbortController();
+    const got = [];
+    const timer = setTimeout(() => aborter.abort(), ms);
+    try {
+      const res = await fetch(url, { signal: aborter.signal });
+      const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+      let buffer = "";
+      while (!done(got)) {
+        const { value, done: ended } = await reader.read();
+        if (ended) break;
+        buffer += value;
+        let i;
+        while ((i = buffer.indexOf("\n\n")) >= 0) {
+          const line = buffer.slice(0, i).split("\n").find((l) => l.startsWith("data: "));
+          buffer = buffer.slice(i + 2);
+          if (line) got.push(JSON.parse(line.slice(6)));
+        }
+      }
+    } catch {}
+    clearTimeout(timer);
+    aborter.abort();
+    return got;
+  }
+  const released = (got) => got.some((e) => e.type === "released");
+  const reply = (got) => {
+    const opened = got.find((e) => e.type === "block_start" && e.block.kind === "assistant");
+    return (opened?.block.text ?? "") + got.filter((e) => e.type === "text_delta" && e.id === opened?.block.id).map((e) => e.text).join("");
+  };
+
+  // ports of their own each time: fetch keeps connections alive, and a closed
+  // server still answers on one it already had
+  async function pair(store, [first, second]) {
+    const one = createHai({ model, store, tools: [], surfaces: [], notices: [dropped], system: "x" });
+    const two = createHai({ model, store, tools: [], surfaces: [], notices: [quiet], system: "x" });
+    const servers = [];
+    for (const [hai, port] of [[one, first], [two, second]]) {
+      const handler = nodeHandler(hai, "/hai");
+      const server = http.createServer(async (req, res) => {
+        if (!(await handler(req, res))) res.writeHead(404).end();
+      });
+      await new Promise((r) => server.listen(port, "127.0.0.1", r));
+      servers.push(server);
+    }
+    return { one, two, close: () => servers.forEach((s) => s.close()) };
+  }
+  const begin = async (store) => {
+    const c = await store.loadConversation(undefined);
+    c.messages.push({ role: "user", content: "hi" }, { role: "assistant", content: [{ type: "text", text: "hello" }] });
+    c.leaseUntil = null;
+    await store.saveConversation(c);
+    return c.id;
+  };
+
+  // ── with publish/subscribe: tabs on the other process see the turn
+  {
+    const store = memoryStore();
+    const { one, close } = await pair(store, [5384, 5385]);
+    try {
+      const id = await begin(store);
+      const onOther = stream(`http://127.0.0.1:5385/hai/events?conversationId=${id}`, released);
+      const onSame = stream(`http://127.0.0.1:5384/hai/events?conversationId=${id}`, released);
+      await wait(150);
+      slow = 400;
+      await one.notify(id, dropped, { flight: "AC832" });
+      await wait(200); // part way through the reply
+      const late = stream(`http://127.0.0.1:5385/hai/events?conversationId=${id}`, released);
+      const [other, same, joined] = await Promise.all([onOther, onSame, late]);
+      check(
+        "a wake turn running in one process streams to a tab on another, through the store",
+        reply(same) === "Heads up: cheaper." && reply(other) === "Heads up: cheaper." && released(other),
+      );
+      check(
+        "a tab joining on the other process mid-reply gets the reply so far, then the rest",
+        reply(joined) === "Heads up: cheaper." && joined.find((e) => e.type === "block_start")?.block.text === "Heads up: ",
+      );
+      check("the history's whole context isn't sent across", !other.some((e) => e.type === "context"));
+
+      // a chat on the other process waits for the turn instead of meeting a 409
+      const chat = createChat({ endpoint: "http://127.0.0.1:5385/hai", registry: {} });
+      await chat.send("first");
+      // the turn runs where its notice's process has a stream open: another tab, there
+      const watcher = stream(`http://127.0.0.1:5384/hai/events?conversationId=${chat.state.conversationId}`, released, 6_000);
+      await wait(150);
+      slow = 800;
+      await one.notify(chat.state.conversationId, dropped, { flight: "NH7" });
+      await until(() => chat.state.status === "streaming");
+      const sent = await chat.send("during");
+      await watcher;
+      check(
+        "a message sent from the other process during the turn waits for it, and goes through",
+        sent === true && !chat.state.blocks.some((b) => b.kind === "error") &&
+          chat.state.blocks.some((b) => b.kind === "assistant" && b.text === "Heads up: cheaper."),
+      );
+      chat.close();
+    } finally {
+      close();
+    }
+  }
+
+  // ── without them: the turn stays on its own process, as before
+  {
+    const memory = memoryStore();
+    const { publish, subscribe, ...store } = memory;
+    void publish, subscribe;
+    const { one, close } = await pair(store, [5386, 5387]);
+    try {
+      const id = await begin(store);
+      const onOther = stream(`http://127.0.0.1:5387/hai/events?conversationId=${id}`, released, 2_500);
+      const onSame = stream(`http://127.0.0.1:5386/hai/events?conversationId=${id}`, released, 2_500);
+      await wait(150);
+      slow = 0;
+      await one.notify(id, dropped, { flight: "JL1" });
+      const [other, same] = await Promise.all([onOther, onSame]);
+      check(
+        "with a store that can't publish, only tabs on the turn's own process see it",
+        reply(same) === "Heads up: cheaper." && reply(other) === "" && other.some((e) => e.type === "notice"),
+      );
+    } finally {
+      close();
+    }
+  }
+}
+
 // ── the transcript follows new content, and keeps a reader's place ──────
 // Surfaces mount a microtask after the render that creates them, and only then
 // have height. A transcript that scrolls before that, or decides whether to
@@ -4202,6 +4400,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   await clientChecks();
   await noticeStreamChecks();
   await wakeStreamChecks();
+  await crossInstanceChecks();
   await transcriptChecks();
 
   // Said plainly because a suite that looks exhaustive is worse than one that

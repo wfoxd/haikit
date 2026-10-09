@@ -62,6 +62,18 @@ const LEASE_MS = 120_000;
 /** The channel `putNotice` notifies on, with the conversation id as payload. */
 export const NOTICE_CHANNEL = "haikit_notices";
 
+/** The channel `publish` carries messages on, in pieces small enough for NOTIFY. */
+export const TURN_CHANNEL = "haikit_turns";
+
+/**
+ * The most of a message one NOTIFY carries. Postgres refuses payloads of 8000
+ * bytes or more; a piece is ASCII, so this leaves room for its header.
+ */
+const PIECE = 7_000;
+
+/** How long half a message waits for the rest before it is given up on. */
+const PIECE_TIMEOUT_MS = 30_000;
+
 /**
  * The schema, one statement per entry. `migrate()` runs these; export them to
  * your own migration tool instead if you have one.
@@ -211,20 +223,96 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
     throw new RangeError(`leaseMs must be a positive, finite number of milliseconds (got ${leaseMs})`);
   }
 
-  // One LISTEN for the whole store, taken when something first watches, and
-  // each notification handed to whoever is watching that conversation.
+  // One LISTEN per channel for the whole store, taken when something first
+  // needs it, and each notification handed to whoever wants that conversation.
   const waiting = new Map<string, Set<() => void>>();
-  let listening: Promise<unknown> | null = null;
-  const listen = (listener: Listener) =>
-    (listening ??= listener
-      .listen(NOTICE_CHANNEL, (id) => {
-        for (const wake of waiting.get(id) ?? []) wake();
-      })
-      .catch((err) => {
-        // try again on the next watch, rather than never
-        listening = null;
+  const listening = new Map<string, Promise<unknown>>();
+  const listenOn = (listener: Listener, channel: string, onNotify: (payload: string) => void) => {
+    let started = listening.get(channel);
+    if (!started) {
+      started = listener.listen(channel, onNotify).catch((err) => {
+        // try again next time, rather than never
+        listening.delete(channel);
         throw err;
-      }));
+      });
+      listening.set(channel, started);
+    }
+    return started;
+  };
+  const listen = (listener: Listener) =>
+    listenOn(listener, NOTICE_CHANNEL, (id) => {
+      for (const wake of waiting.get(id) ?? []) wake();
+    });
+
+  // ── publish / subscribe, over NOTIFY ───────────────────────────────────
+  // A message goes out as pieces of at most PIECE base64 characters, each
+  // `<conversation> <message id> <index> <count> <piece>`, all in one
+  // statement, and is put back together on the way in. Messages from this
+  // store are sent one at a time per conversation, each committed before the
+  // next starts, so they arrive in the order they were published.
+  const hearing = new Map<string, Set<(message: string) => void>>();
+  const partial = new Map<string, { pieces: string[]; got: number; at: number }>();
+  const sending = new Map<string, Promise<void>>();
+
+  const onTurn = (payload: string) => {
+    const [conversationId, id, index, count, piece] = payload.split(" ");
+    if (!hearing.has(conversationId)) return;
+    const now = Date.now();
+    for (const [key, half] of partial) if (now - half.at > PIECE_TIMEOUT_MS) partial.delete(key);
+    const n = Number(count);
+    const entry = partial.get(id) ?? { pieces: new Array<string>(n), got: 0, at: now };
+    if (entry.pieces[Number(index)] === undefined) entry.got++;
+    entry.pieces[Number(index)] = piece ?? "";
+    if (entry.got < n) return void partial.set(id, entry);
+    partial.delete(id);
+    const message = new TextDecoder().decode(Uint8Array.from(atob(entry.pieces.join("")), (c) => c.charCodeAt(0)));
+    for (const hear of [...(hearing.get(conversationId) ?? [])]) hear(message);
+  };
+
+  async function publish(conversationId: string, message: string) {
+    const bytes = new TextEncoder().encode(String(message));
+    let binary = "";
+    for (const b of bytes) binary += String.fromCharCode(b);
+    const encoded = btoa(binary);
+    const id = newToken().replaceAll("-", "");
+    const count = Math.max(1, Math.ceil(encoded.length / PIECE));
+    const pieces = Array.from({ length: count }, (_, i) =>
+      `${conversationId} ${id} ${i} ${count} ${encoded.slice(i * PIECE, (i + 1) * PIECE)}`,
+    );
+    const before = sending.get(conversationId) ?? Promise.resolve();
+    const sent = before.then(() =>
+      db.query(`SELECT pg_notify('${TURN_CHANNEL}', piece) FROM jsonb_array_elements_text($1::jsonb) AS piece`, [
+        JSON.stringify(pieces),
+      ]),
+    );
+    const settled = sent.then(
+      () => {},
+      () => {},
+    );
+    sending.set(conversationId, settled);
+    try {
+      await sent;
+    } finally {
+      if (sending.get(conversationId) === settled) sending.delete(conversationId);
+    }
+  }
+
+  function subscribe(conversationId: string, onMessage: (message: string) => void, signal: AbortSignal) {
+    if (signal.aborted) return;
+    const set = hearing.get(conversationId) ?? new Set();
+    set.add(onMessage);
+    hearing.set(conversationId, set);
+    signal.addEventListener(
+      "abort",
+      () => {
+        set.delete(onMessage);
+        if (!set.size && hearing.get(conversationId) === set) hearing.delete(conversationId);
+      },
+      { once: true },
+    );
+    // best effort, as the contract says: a failed LISTEN is tried again next time
+    listenOn(options.listen!, TURN_CHANNEL, onTurn).catch(() => {});
+  }
 
   async function* watch(conversationId: string, signal: AbortSignal): AsyncIterable<void> {
     // One wake-up stands for any number of notices: a step resolves once
@@ -446,7 +534,9 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
       return exists.rows.length ? [] : null;
     },
 
-    ...(options.listen ? { watch } : {}),
+    // Anyone can publish; hearing it takes a LISTEN connection.
+    publish,
+    ...(options.listen ? { watch, subscribe } : {}),
   };
 }
 
