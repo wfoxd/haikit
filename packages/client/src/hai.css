@@ -327,7 +327,26 @@
   font: 12px var(--hai-mono);
   color: var(--hai-dim);
 }
-.hai-tstatus { color: var(--hai-dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.hai-tstatus {
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--hai-dim);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+/* a running tool's progress: the message gives way before the count does */
+.hai-tprogress { display: flex; min-width: 0; white-space: pre; }
+.hai-tmessage { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.hai-tcount { flex: none; }
+/* …and a bar along the bottom edge of its row */
+.hai-tool summary:has(.hai-tbar) { position: relative; }
+.hai-tbar {
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 2px;
+  background: linear-gradient(to right, var(--hai-accent) var(--hai-progress, 0%), transparent 0);
+}
 .hai-chevron { width: 14px; height: 14px; color: var(--hai-dim); transition: transform .15s; }
 .hai-tool[open] .hai-chevron { transform: rotate(90deg); }
 

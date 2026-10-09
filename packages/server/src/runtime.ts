@@ -6,6 +6,7 @@ import {
   type Conversation,
   type Emit,
   type ModelAdapter,
+  type Progress,
   type StoreAdapter,
   type Tool,
   type ToolCtx,
@@ -706,9 +707,35 @@ export class Hai {
     // set once the tool has returned or thrown: a render after that shows nothing
     let done = false;
 
+    // Progress is throttled, not queued: a tool that reports every row would
+    // otherwise flood the stream with frames nobody can read. The first goes
+    // out at once, later ones at most every PROGRESS_MS, carrying every field
+    // named since the last, and whatever is still waiting when the tool
+    // returns goes out then.
+    let unsent: Progress | null = null;
+    let lastSent = 0;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const flushProgress = () => {
+      if (timer) clearTimeout(timer);
+      timer = null;
+      if (!unsent) return;
+      emit({ type: "progress", toolId: toolBlockId, ...unsent });
+      unsent = null;
+      lastSent = Date.now();
+    };
+
     const ctx: ToolCtx = {
       conversationId: conversation.id,
       text: (model) => ({ model }),
+      progress: (progress) => {
+        if (done) return;
+        const fields = progressFields(progress);
+        if (!fields) return;
+        unsent = { ...unsent, ...fields };
+        const wait = lastSent + PROGRESS_MS - Date.now();
+        if (wait <= 0) flushProgress();
+        else timer ??= setTimeout(flushProgress, wait);
+      },
       render: ((impl: AnySurfaceImpl, props: unknown, options?: { mode?: "display" | "elicit" }) => {
         if (done) return Promise.resolve({ model: "Not shown: the tool had already finished." });
         const shown = render(impl, props, options);
@@ -742,6 +769,8 @@ export class Hai {
     // in while the others finish. They finish before anything is decided or
     // undone, so none can open a question, or record a handle, afterwards.
     done = true;
+    // the last frame goes out before the row says the call has finished
+    flushProgress();
     await Promise.all(rendering);
     // A tool error is information for the model; a lost lease is not. Fencing
     // exists so a superseded turn stops — converting StaleLease into "tool
@@ -829,6 +858,28 @@ function strictest(recorded: unknown, current: unknown): number | "never" | unde
 }
 
 const newId = () => globalThis.crypto.randomUUID().replaceAll("-", "").slice(0, 16);
+
+/** The least time between two progress frames from one tool call. */
+const PROGRESS_MS = 100;
+
+/**
+ * The fields of a `ctx.progress` call worth sending, or null if none are.
+ * Checked at runtime because JavaScript callers never see the type, and a
+ * progress report is not worth failing a tool over: a field that isn't what
+ * its type says is dropped, not thrown on. `done` must be a finite number,
+ * zero or more, and `total` a finite number more than zero: there is no bar
+ * to draw for a workload of nothing.
+ */
+function progressFields(progress: unknown): Progress | null {
+  if (!progress || typeof progress !== "object") return null;
+  const { message, done, total } = progress as Record<string, unknown>;
+  const finite = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n);
+  const fields: Progress = {};
+  if (typeof message === "string") fields.message = message;
+  if (finite(done) && done >= 0) fields.done = done;
+  if (finite(total) && total > 0) fields.total = total;
+  return Object.keys(fields).length ? fields : null;
+}
 
 /** "2 hours", "15 minutes" — for a sentence a person reads. */
 function duration(ms: number): string {

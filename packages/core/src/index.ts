@@ -270,11 +270,32 @@ export interface ToolReturn {
   handle?: string;
 }
 
+/**
+ * How far a running tool has got. Every field is optional, and a call updates
+ * only the fields it names: say what is happening once, then count.
+ */
+export interface Progress {
+  /** What the tool is doing now, for a person to read. */
+  message?: string;
+  /** Steps finished so far. */
+  done?: number;
+  /** Steps in all, when the tool knows: more than zero. With it, the browser draws a bar. */
+  total?: number;
+}
+
 export interface ToolCtx {
   readonly conversationId: string;
 
   /** A tool with no UI. */
   text(model: string): ToolReturn;
+
+  /**
+   * Tell the browser how far this call has got. UI channel only: nothing is
+   * stored, and the model never sees it. Frames go out at most every 100 ms,
+   * and the last one always does. A call after the tool has returned does
+   * nothing.
+   */
+  progress(progress: Progress): void;
 
   /**
    * Render a surface as a blocking question. Requires a `resolve` action.
@@ -407,7 +428,17 @@ export interface PayloadRecord {
 export type Block =
   | { kind: "user"; id: string; text: string }
   | { kind: "assistant"; id: string; text: string }
-  | { kind: "tool"; id: string; name: string; input: unknown; status: string; ms?: number; result?: string }
+  | {
+      kind: "tool";
+      id: string;
+      name: string;
+      input: unknown;
+      status: string;
+      ms?: number;
+      result?: string;
+      /** What `progress` events have said so far, merged. Set by the client. */
+      progress?: Progress;
+    }
   | { kind: "interaction"; id: string; handle: string; label: string };
 
 export type WireEvent =
@@ -415,6 +446,8 @@ export type WireEvent =
   | { type: "block_start"; block: Block }
   | { type: "text_delta"; id: string; text: string }
   | { type: "block_update"; id: string; status: string; ms: number; result: string }
+  /** A running tool's `ctx.progress`. Only the fields that call named are present. */
+  | ({ type: "progress"; toolId: string } & Progress)
   | {
       type: "ui_open";
       handle: string;
