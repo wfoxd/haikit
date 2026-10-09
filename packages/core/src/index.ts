@@ -633,6 +633,13 @@ export type WireEvent =
       mode: string;
       /** The surface's freshness window. Absent when it never goes out of date. */
       staleAfterMs?: number;
+      /**
+       * How long ago the server stored this surface, measured as the frame was
+       * written: set when a frame is replayed to a stream that joins a wake
+       * turn part way. Absent means just now. A duration, not a time, so the
+       * browser's clock and the server's are never compared.
+       */
+      ageMs?: number;
     }
   | { type: "ui_props"; handle: string; props: unknown }
   | { type: "ui_state"; handle: string; state: "frozen"; selection?: unknown }

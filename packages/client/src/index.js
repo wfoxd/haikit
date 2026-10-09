@@ -293,7 +293,11 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
           state.blocks.push(early);
         }
         if (typeof event.staleAfterMs === "number") {
-          const at = sentAt + event.staleAfterMs;
+          // From when the request that rendered it was sent, or, for a surface
+          // replayed to a stream that joined a wake turn part way, from when
+          // it was stored, by its age: whichever is earlier.
+          const from = typeof event.ageMs === "number" ? Math.min(sentAt, Date.now() - event.ageMs) : sentAt;
+          const at = from + event.staleAfterMs;
           if (state.expiresAt === null || at < state.expiresAt) {
             state.expiresAt = at;
             closingWindow = event.staleAfterMs;

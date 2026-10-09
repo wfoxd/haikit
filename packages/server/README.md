@@ -12,6 +12,13 @@ const handle = nodeHandler(hai, "/hai");
 
 Two routes: `POST /hai/chat` and `POST /hai/interact`, both streaming SSE.
 
+**Don't let a proxy buffer the streams.** Every route streams SSE, and a
+browser counts a surface's freshness from when its frames arrive, so a proxy
+that holds them back makes the browser's deadline late. The responses send
+`cache-control: no-cache, no-transform` and `x-accel-buffering: no`, which
+nginx honours. Turn response buffering off for these paths in any other
+proxy or CDN in front of them.
+
 **A conversation id is a bearer token: put the routes behind your own auth.**
 `nodeHandler` does no authentication. Anyone with a conversation's id can send
 to it, click in it, read its notices, and wake it, so it is only as private
