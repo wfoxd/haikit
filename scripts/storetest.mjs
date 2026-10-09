@@ -3527,6 +3527,41 @@ async function wakeStreamChecks() {
         late.findIndex((e) => e.type === "status" && e.status === "streaming") < late.findIndex((e) => e.type === "released"),
     );
 
+    // ── a stream that joins part way gets the reply so far, then the rest
+    {
+      const joined = await begin();
+      const halves = { first: "Heads up: ", rest: "it got cheaper." };
+      const parts = [];
+      const partial = {
+        id: "halves",
+        async generate({ onTextDelta }) {
+          onTextDelta(halves.first);
+          parts.push("first");
+          await new Promise((r) => setTimeout(r, 600));
+          onTextDelta(halves.rest);
+          return { content: [{ type: "text", text: halves.first + halves.rest }], stop_reason: "end_turn" };
+        },
+      };
+      const original = model.generate;
+      model.generate = (req) => {
+        const last = req.messages.at(-1).content;
+        return typeof last !== "string" && last.at(-1).text.startsWith("[The user") ? partial.generate(req) : original(req);
+      };
+      const first = stream(`${base}/hai/events?conversationId=${joined}`, (got) => got.some((e) => e.type === "released"), 4_000);
+      await wait(150);
+      await hai.notify(joined, dropped, { flight: "HALF" });
+      await until(() => parts.length === 1); // the first half has been said
+      const late = await stream(`${base}/hai/events?conversationId=${joined}`, (got) => got.some((e) => e.type === "released"), 4_000);
+      await first;
+      model.generate = original;
+      const opened = late.find((e) => e.type === "block_start" && e.block.kind === "assistant");
+      const said = (opened?.block.text ?? "") + late.filter((e) => e.type === "text_delta" && e.id === opened?.block.id).map((e) => e.text).join("");
+      check(
+        "a stream that joins mid-reply gets the text so far in one block, then the rest",
+        opened?.block.text === halves.first && said === halves.first + halves.rest,
+      );
+    }
+
     // ── the client: a message sent during a wake turn waits for it, rather than 409
     const chat = createChat({ endpoint: `${base}/hai`, registry: {} });
     await chat.send("first");
@@ -3590,6 +3625,30 @@ async function wakeStreamChecks() {
       "a message sent after the events connection drops mid-turn keeps trying until the turn ends",
       afterDrop === true && posts.some((p) => p.status === 409) && posts.at(-1).status === 200 &&
         asked.at(-1) === "after the drop" && !chat.state.blocks.some((b) => b.kind === "error"),
+    );
+
+    // The connection drops mid-reply and comes back while the turn still
+    // runs: the reply is whole, once, not cut short or doubled.
+    const plain = model.generate;
+    model.generate = async (req) => {
+      const last = req.messages.at(-1).content;
+      if (typeof last === "string" || !last.at(-1).text.startsWith("[The user")) return plain(req);
+      asked.push(last.at(-1).text);
+      req.onTextDelta("Back: ");
+      await new Promise((r) => setTimeout(r, 2_500)); // the client reconnects meanwhile
+      req.onTextDelta("all of it.");
+      return { content: [{ type: "text", text: "Back: all of it." }], stop_reason: "end_turn" };
+    };
+    mark = heard.length;
+    await hai.notify(cid, dropped, { flight: "BACK" });
+    await until(() => chat.state.blocks.some((b) => b.kind === "assistant" && b.text === "Back: "), 4_000);
+    for (const res of streams) res.destroy();
+    await until(() => heard.indexOf("released", mark) >= 0, 8_000);
+    model.generate = plain;
+    const back = chat.state.blocks.filter((b) => b.kind === "assistant" && b.text.startsWith("Back"));
+    check(
+      "a wake reply cut off by a dropped connection is whole once it reconnects, and shown once",
+      back.length === 1 && back[0].text === "Back: all of it.",
     );
 
     // The server takes the conversation a moment before the wake turn can

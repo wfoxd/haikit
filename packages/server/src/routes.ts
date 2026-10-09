@@ -178,8 +178,10 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
   // reply too, and holds its requests until the turn lets go.
   const watchers = watchersOf(hai, conversationId);
   watchers.streams.add(emit);
-  // joining while a wake turn runs: hold requests until it lets go
-  if (watchers.live) emit({ type: "status", status: "streaming" });
+  // Joining while a wake turn runs: what it has shown so far, starting with
+  // its `streaming` status, so the browser holds requests until it lets go,
+  // and the reply's later text has a block to land in.
+  if (watchers.live) for (const event of watchers.shown) emit(event);
 
   // Wake turns run beside the notice loop, so a notice never waits behind a
   // turn, nor behind the retries while another request holds the
@@ -267,11 +269,35 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
   }
 }
 
-/** The events streams one process has open for a conversation, and whether a wake turn is running there. */
+/** The events streams one process has open for a conversation, and the wake turn running there, if any. */
 interface Watchers {
   streams: Set<Emit>;
   live: boolean;
+  /**
+   * What the running wake turn has shown so far, as the frames a stream that
+   * joins now needs: each block once, with its text and status up to date,
+   * then everything else in order. A turn's worth, dropped when it ends.
+   */
+  shown: WireEvent[];
   broadcast: Emit;
+}
+
+/** Fold a wake turn's frame into what it has shown so far. */
+function remember(shown: WireEvent[], event: WireEvent) {
+  const block = (id: string) =>
+    shown.find((e): e is Extract<WireEvent, { type: "block_start" }> => e.type === "block_start" && e.block.id === id)?.block;
+  if (event.type === "block_start") shown.push({ ...event, block: { ...event.block } });
+  else if (event.type === "text_delta") {
+    const b = block(event.id);
+    if (b && "text" in b) b.text += event.text;
+  } else if (event.type === "block_update") {
+    const b = block(event.id);
+    if (b) Object.assign(b, { status: event.status, ms: event.ms, result: event.result });
+  } else if (event.type === "progress") {
+    const { type, toolId, ...fields } = event;
+    const b = block(toolId);
+    if (b?.kind === "tool") b.progress = { ...b.progress, ...fields };
+  } else shown.push(event);
 }
 
 const watching = new WeakMap<Hai, Map<string, Watchers>>();
@@ -285,11 +311,20 @@ function watchersOf(hai: Hai, conversationId: string): Watchers {
     const fresh: Watchers = {
       streams: new Set(),
       live: false,
-      // a wake turn's frames, to every stream; `live` from its first
-      // `streaming` until `released`, for a stream that joins part way
+      shown: [],
+      // A wake turn's frames, to every stream. `live` from its first
+      // `streaming` until `released`, with what it has shown kept meanwhile,
+      // for a stream that joins part way.
       broadcast: (event) => {
-        if (event.type === "status" && event.status === "streaming") fresh.live = true;
-        if (event.type === "released") fresh.live = false;
+        if (event.type === "status" && event.status === "streaming" && !fresh.live) {
+          fresh.live = true;
+          fresh.shown = [];
+        }
+        if (fresh.live) remember(fresh.shown, event);
+        if (event.type === "released") {
+          fresh.live = false;
+          fresh.shown = [];
+        }
         for (const send of fresh.streams) send(event);
         // the turn outlived every stream that watched it: nothing left to keep
         if (!fresh.live && !fresh.streams.size && map.get(conversationId) === fresh) map.delete(conversationId);

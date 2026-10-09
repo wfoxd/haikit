@@ -12,6 +12,13 @@ const handle = nodeHandler(hai, "/hai");
 
 Two routes: `POST /hai/chat` and `POST /hai/interact`, both streaming SSE.
 
+**A conversation id is a bearer token: put the routes behind your own auth.**
+`nodeHandler` does no authentication. Anyone with a conversation's id can send
+to it, click in it, read its notices, and wake it, so it is only as private
+as its id. `pgStore` and `memoryStore` mint unguessable ids. Before handing a
+request to `nodeHandler`, check that the signed-in user owns that
+conversation, as you would for any record.
+
 **`/hai/interact` accepts `{handle, action, value}` and nothing else.** What an
 action *means* is resolved server-side from the surface's declared contract. If
 the client could name a tool, a prompt injection inside any tool result would

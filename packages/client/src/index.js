@@ -238,9 +238,15 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
         break;
       }
 
-      case "block_start":
-        state.blocks.push({ ...event.block });
+      // A stream that rejoins a wake turn is sent what the turn has shown so
+      // far: a block this client already has is brought up to date, not added
+      // again.
+      case "block_start": {
+        const known = state.blocks.find((b) => b.id === event.block.id);
+        if (known) Object.assign(known, event.block);
+        else state.blocks.push({ ...event.block });
         break;
+      }
 
       case "text_delta": {
         const block = state.blocks.find((b) => b.id === event.id);
@@ -266,6 +272,7 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
       }
 
       case "ui_open":
+        if (state.surfaces.has(event.handle)) break; // shown already: a rejoin's catch-up
         state.surfaces.set(event.handle, {
           handle: event.handle,
           component: event.component,
