@@ -42,7 +42,7 @@ export interface PgStoreOptions {
   leaseMs?: number;
   /**
    * A connection that can `LISTEN`, so the events route hears of a notice the
-   * moment it lands instead of reading every couple of seconds. It needs a
+   * moment it lands, rather than at its next read a couple of seconds on. It needs a
    * connection of its own: a pooled one goes back to the pool and stops
    * listening. PGlite's `listen` fits as it is; see the README for `pg`.
    */

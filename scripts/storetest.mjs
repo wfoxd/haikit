@@ -2967,6 +2967,40 @@ async function noticeStreamChecks() {
     server.close();
   }
 
+  // ── a watch that never wakes cannot keep a notice from the browser
+  {
+    const memory = memoryStore();
+    const deaf = {
+      ...memory,
+      // listens, and never says a word: a lost NOTIFY, a dropped LISTEN
+      async *watch(_id, signal) {
+        await new Promise((r) => signal.addEventListener("abort", r, { once: true }));
+      },
+    };
+    const quietHai = createHai({ model, store: deaf, tools: [], surfaces: [], notices: [held], system: "x" });
+    const quietHandler = nodeHandler(quietHai, "/hai");
+    const quietServer = http.createServer(async (req, res) => {
+      if (!(await quietHandler(req, res))) res.writeHead(404).end();
+    });
+    await new Promise((r) => quietServer.listen(5381, "127.0.0.1", r));
+    try {
+      const c = await deaf.loadConversation(undefined);
+      c.leaseUntil = null;
+      await deaf.saveConversation(c);
+      const reading = read(`http://127.0.0.1:5381/hai/events?conversationId=${c.id}`, {}, 1, 4_000);
+      await wait(200);
+      const sentAt = Date.now();
+      await quietHai.notify(c.id, held, { flight: "LOST" });
+      const got = await reading;
+      check(
+        `a notice whose wake-up never comes still arrives, on the next read (${((Date.now() - sentAt) / 1000).toFixed(1)}s)`,
+        got.frames[0]?.event.payload.flight === "LOST",
+      );
+    } finally {
+      quietServer.close();
+    }
+  }
+
   // ── a stream that keeps dropping backs off, though each attempt gets a 200
   const attempts = [];
   const flaky = http.createServer((req, res) => {

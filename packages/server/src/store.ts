@@ -153,7 +153,17 @@ export function memoryStore(options: MemoryStoreOptions = {}): StoreAdapter {
     async getNotices(conversationId, after, limit = Infinity) {
       if (!conversations.has(conversationId)) return null;
       const list = notices.get(conversationId) ?? [];
-      return copy(list.filter((n) => n.seq > after).slice(0, limit));
+      // Seq order, so the first one past `after` is found by halving, and only
+      // the page asked for is copied: reading a long backlog a page at a time
+      // never walks or copies the rest of it.
+      let lo = 0;
+      let hi = list.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (list[mid].seq > after) hi = mid;
+        else lo = mid + 1;
+      }
+      return copy(list.slice(lo, lo + limit));
     },
 
     async *watch(conversationId, signal) {

@@ -105,7 +105,10 @@ export function nodeHandler(hai: Hai, basePath = "/hai") {
   };
 }
 
-/** How long a notice waits to be read when the store has no `watch`. */
+/**
+ * The longest a notice waits to be read. A store's `watch` makes it sooner;
+ * this is what still finds a notice whose wake-up was lost.
+ */
 const POLL_MS = 2_000;
 /** Proxies drop a stream that says nothing for long; a comment keeps it open. */
 const HEARTBEAT_MS = 25_000;
@@ -188,7 +191,7 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
 
   // a heartbeat is only for a stream gone quiet, never one already backed up
   const heartbeat = setInterval(() => res.writableNeedDrain || res.write(": ping\n\n"), HEARTBEAT_MS);
-  const wakes = (store.watch?.(conversationId, signal) ?? every(POLL_MS, signal))[Symbol.asyncIterator]();
+  const wakes = wakeups(store.watch?.(conversationId, signal), signal)[Symbol.asyncIterator]();
   try {
     await catchUp(first);
     // Watching starts before the next read, so a notice that landed after the
@@ -208,19 +211,36 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
   }
 }
 
-/** A wake-up every `ms` until `signal` aborts: what the events route reads on without `watch`. */
-async function* every(ms: number, signal: AbortSignal): AsyncIterable<void> {
-  while (!signal.aborted) {
-    await new Promise<void>((r) => {
-      const done = () => {
-        clearTimeout(timer);
-        signal.removeEventListener("abort", done);
-        r();
-      };
-      const timer = setTimeout(done, ms);
-      signal.addEventListener("abort", done);
-    });
-    if (!signal.aborted) yield;
+/**
+ * When the events route reads next: every POLL_MS, and sooner whenever the
+ * store's `watch` says a notice may have landed. `watch` alone is not enough.
+ * A wake-up can be lost, and a LISTEN connection can drop, and either would
+ * leave the stream open on heartbeats with a notice it never reads. A `watch`
+ * that ends or fails leaves the reads every POLL_MS to carry on.
+ */
+async function* wakeups(watch: AsyncIterable<void> | undefined, signal: AbortSignal): AsyncIterable<void> {
+  const steps = watch?.[Symbol.asyncIterator]();
+  // started now, so the watch is listening before the caller's next read
+  let step: Promise<unknown> | null = steps?.next().then((r) => !r.done, () => false) ?? null;
+  try {
+    while (!signal.aborted) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let onAbort: (() => void) | undefined;
+      const tick = new Promise<"tick">((resolve) => {
+        onAbort = () => resolve("tick");
+        timer = setTimeout(onAbort, POLL_MS);
+        signal.addEventListener("abort", onAbort);
+      });
+      const woke = await Promise.race(step ? [tick, step] : [tick]);
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort!);
+      if (signal.aborted) return;
+      // the watch stepped: listen for the next; it ended or failed: stop listening
+      if (woke !== "tick") step = woke ? steps!.next().then((r) => !r.done, () => false) : null;
+      yield;
+    }
+  } finally {
+    await steps?.return?.();
   }
 }
 

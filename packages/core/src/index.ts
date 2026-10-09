@@ -799,8 +799,8 @@ export interface StoreAdapter {
    * Optional. Resolves each step whenever a notice may have landed in this
    * conversation, until `signal` aborts. It carries nothing: the caller reads
    * with `getNotices`, so a wake-up that is lost or spurious delays a notice
-   * but never loses or duplicates one. Without it, the events route reads
-   * every couple of seconds instead.
+   * but never loses or duplicates one. The events route reads every couple of
+   * seconds regardless; this only makes a read sooner.
    */
   watch?(conversationId: string, signal: AbortSignal): AsyncIterable<void>;
 }

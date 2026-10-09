@@ -158,8 +158,9 @@ With any notices listed, `hello` tells the browser to open a fourth route,
 each with its sequence number as its SSE `id`, so a browser that reconnects
 with `Last-Event-ID` picks up where it left off. It takes no lease, writes
 nothing, and accepts nothing from the browser but which conversation and where
-to resume. The `model` text never goes out on it. A store with `watch` wakes it
-the moment a notice lands; without one, it reads every two seconds.
+to resume. The `model` text never goes out on it. It reads the store every two
+seconds, and a store with `watch` wakes it the moment a notice lands. The
+two-second read stays even then, so a lost wake-up only delays a notice.
 
 **A conversation closes once any of its surfaces passes its `staleAfterMs`.**
 From then on both routes answer with an `expired` event and the model is not

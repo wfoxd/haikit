@@ -68,7 +68,7 @@ lease token: a notice lands whoever holds the turn. The same statement sends a
 `NOTIFY` on `haikit_notices` with the conversation id.
 
 Give the store a connection that can `LISTEN`, and the events route hears of a
-notice the moment it lands instead of reading every two seconds. It needs a
+notice the moment it lands, rather than at its next two-second read. It needs a
 connection of its own: a pooled one goes back to the pool and stops listening.
 PGlite fits as it is (`pgStore(db, { listen: db })`). With `pg`:
 

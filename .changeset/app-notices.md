@@ -12,4 +12,4 @@ The payload is typed from the contract and checked against its schema before it 
 
 The client renders notices from a `notices` registry, passed to `createChat` or `mountChat`, with no `send`. `@haikit/react` adds `reactNotice`.
 
-**Breaking for custom stores:** `StoreAdapter` gains `putNotice` and `getNotices`, and an optional `watch`. `memoryStore()` and `pgStore()` implement them. `@haikit/postgres`'s `migrate()` adds the `haikit_notices` table and two columns on `haikit_conversations`; pass `listen` to `pgStore` so the events route hears of notices at once rather than every two seconds.
+**Breaking for custom stores:** `StoreAdapter` gains `putNotice` and `getNotices`, and an optional `watch`. `memoryStore()` and `pgStore()` implement them. `@haikit/postgres`'s `migrate()` adds the `haikit_notices` table and two columns on `haikit_conversations`; pass `listen` to `pgStore` so the events route hears of notices at once rather than at its next two-second read.
