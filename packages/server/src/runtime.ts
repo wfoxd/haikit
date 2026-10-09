@@ -67,8 +67,12 @@ export interface HaiConfig {
   maxWakes?: { count: number; perMs: number };
 }
 
-/** What `hai.wake` did: started a turn, found the conversation busy, was held back by `maxWakes`, or had nothing to do. */
-export type WakeOutcome = "woke" | "busy" | "limited" | "idle";
+/**
+ * What `hai.wake` did: started a turn; started one that failed, and put the
+ * conversation back as it was; found the conversation busy; was held back by
+ * `maxWakes`; or had nothing to do.
+ */
+export type WakeOutcome = "woke" | "failed" | "busy" | "limited" | "idle";
 
 /**
  * Opens the history when init runs before the user has said anything: the
@@ -243,7 +247,7 @@ export class Hai {
     } catch (err) {
       if (isStaleLease(err)) superseded = true;
       emit({ type: "error", message: (err as Error).message });
-      outcome = "woke";
+      outcome = "failed";
     } finally {
       // As the route does at the end of a request: release the lease, keeping
       // the token so the save can prove this is still the rightful holder.
@@ -254,6 +258,9 @@ export class Hai {
         if (!isStaleLease(err)) throw err;
         emit({ type: "error", message: (err as Error).message });
       }
+      // Only now may the browser send again: until the save above, the lease
+      // was still held, and a message would have been refused.
+      if (outcome === "woke" || outcome === "failed") emit({ type: "released" });
     }
     return outcome;
   }
@@ -269,19 +276,51 @@ export class Hai {
     const now = Date.now();
     const recent = (conversation.wakes ?? []).filter((t) => now - t < this.maxWakes.perMs);
     // Past the limit or not, these notices never start a turn again: past it,
-    // they wait for the user's next message, as passive ones do.
+    // they wait for the user's next message, as passive ones do. (A turn that
+    // fails gives them back.)
+    const wokeBefore = conversation.wokeThrough;
     conversation.wokeThrough = unread.wake;
     if (recent.length >= this.maxWakes.count) {
       conversation.wakes = recent;
       return "limited";
     }
+    // Counted as it starts, so a turn that fails still counts: a model that is
+    // down cannot be asked again on every notice and every reconnect.
     conversation.wakes = [...recent, now].slice(-this.maxWakes.count);
+
+    // what the turn changes, so a failed one can be undone
+    const before = {
+      messages: conversation.messages.length,
+      handles: conversation.handles.length,
+      frozen: conversation.frozen.length,
+      status: conversation.status,
+      noticedThrough: conversation.noticedThrough,
+      wokeThrough: wokeBefore,
+    };
 
     // Every unread notice rides in, passive ones too, then a line saying the
     // user wrote none of it.
     conversation.messages.push({ role: "user", content: [...unread.blocks, { type: "text", text: WOKEN }] });
     conversation.noticedThrough = unread.through;
-    await this.runTurn(conversation, emit);
+    try {
+      await this.runTurn(conversation, emit);
+    } catch (err) {
+      // A turn that fails part way leaves a user message with no reply, and a
+      // status of `streaming`: saved, that would be a history the next message
+      // cannot follow. Put it back as it was, notices unread and able to wake
+      // again. Payloads the turn stored are left behind, inert, as an
+      // overtaken turn's are. A lost lease needs no undoing: nothing is saved.
+      if (!isStaleLease(err)) {
+        conversation.messages.length = before.messages;
+        conversation.handles.length = before.handles;
+        conversation.frozen.length = before.frozen;
+        conversation.status = before.status;
+        conversation.pending = null;
+        conversation.noticedThrough = before.noticedThrough;
+        conversation.wokeThrough = before.wokeThrough;
+      }
+      throw err;
+    }
     return "woke";
   }
 

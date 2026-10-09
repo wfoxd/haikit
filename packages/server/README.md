@@ -196,7 +196,11 @@ createHai({ /* … */, notices: [fareDroppedServer], maxWakes: { count: 1, perMs
 ```
 
 Several wake notices waiting at once start one turn. One held back by
-`maxWakes` never wakes later. `hai.wake(conversationId, emit)` is what the
+`maxWakes` never wakes later. A wake turn whose model call fails is undone:
+the history is left as it was and its notices can wake again, though the
+attempt still counts against `maxWakes`. When a turn ends, the stream sends
+`released` once the conversation is saved and free, and the client waits for
+that before it sends anything. `hai.wake(conversationId, emit)` is what the
 route calls, if you serve the events stream yourself.
 
 **A conversation closes once any of its surfaces passes its `staleAfterMs`.**

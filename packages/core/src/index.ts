@@ -607,6 +607,12 @@ export type WireEvent =
    * as part of the history, in the `context` event's inspector view.
    */
   | { type: "notice"; seq: number; name: string; version: number; payload: unknown; handle?: string }
+  /**
+   * On the events stream, after a wake turn: the server has saved the
+   * conversation and let it go, so the browser may send again. Its `status`
+   * frames come before this, while the server still holds the conversation.
+   */
+  | { type: "released" }
   | { type: "block_start"; block: Block }
   | { type: "text_delta"; id: string; text: string }
   | { type: "block_update"; id: string; status: string; ms: number; result: string }

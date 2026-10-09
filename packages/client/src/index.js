@@ -387,13 +387,18 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
     }
   }
 
-  /** Track a wake turn from the events stream's status, error and expired frames. */
+  /**
+   * Track a wake turn on the events stream: it starts with a `streaming`
+   * status, and is done with `released`, which the server sends only once it
+   * has saved the conversation and let it go. Its `idle` status comes before
+   * that save, so a message sent on it would still find the conversation held.
+   */
   function followTurn(event) {
     if (event.type === "status" && event.status === "streaming") {
       if (!remote) remote = new Promise((resolve) => (endRemote = resolve));
       // surfaces it shows are stamped after this, as a request's are after it is sent
       sentAt = Date.now();
-    } else if (event.type === "status" || event.type === "error" || event.type === "expired") {
+    } else if (event.type === "released") {
       finishRemote();
     }
   }

@@ -2776,10 +2776,12 @@ async function wakeChecks(make) {
   });
   const next = [];
   const seen = [];
+  let down = false; // the model fails, as a provider outage would
   const model = {
     id: "stub",
     async generate(req) {
       seen.push(JSON.parse(JSON.stringify(req.messages)));
+      if (down) throw new Error("model unavailable");
       const kind = next.shift();
       if (kind) return { content: [{ type: "tool_use", id: `tu_${kind}_${seen.length}`, name: "show", input: { kind } }], stop_reason: "tool_use" };
       return { content: [{ type: "text", text: "noted" }], stop_reason: "end_turn" };
@@ -2892,6 +2894,30 @@ async function wakeChecks(make) {
   const answered = await request(id, (c2, emit) => waitingHai.interact(c2, { handle: pick, action: "choose", value: "A" }, emit));
   const answer = answered.messages.find((m) => Array.isArray(m.content) && m.content.some((b) => b.type === "tool_result" && /Chose A/.test(b.content)));
   check("…its answer carries the notice, after the tool result", same(answer.content.at(-1), note("dropped", "P1 is cheaper.")));
+
+  // ── a turn that fails is undone: no half-recorded history, notices unread
+  const failing = make2({ count: 10, perMs: 60_000 });
+  const fid = (await request(undefined, (c2, emit) => failing.send(c2, "hi", emit))).id;
+  await failing.notify(fid, dropped, { flight: "DOWN" });
+  const intact = await peek(fid);
+  down = true;
+  const failEvents = [];
+  const failed = await failing.wake(fid, (e) => failEvents.push(e));
+  down = false;
+  const after = await peek(fid);
+  check("a wake turn whose model fails reports it", failed === "failed");
+  check(
+    "…and leaves the history as it was: no stray user message, status idle, the notice unread",
+    after.messages.length === intact.messages.length && after.status === "idle" &&
+      after.noticedThrough === intact.noticedThrough && (after.wokeThrough ?? 0) === (intact.wokeThrough ?? 0),
+  );
+  check(
+    "…telling the browser, and then that it may send again",
+    failEvents.some((e) => e.type === "error") && failEvents.at(-1)?.type === "released",
+  );
+  check("…and counts against maxWakes, so an outage can't be retried endlessly", (after.wakes ?? []).length === 1);
+  check("once the model is back, the notice wakes", (await failing.wake(fid, () => {})) === "woke" &&
+    same(lastUser(await peek(fid))[0], note("dropped", "DOWN is cheaper.")));
 
   // ── out of date: no turn
   next.push("brief");
@@ -3261,7 +3287,16 @@ async function wakeStreamChecks() {
       return { content: [{ type: "text", text: reply }], stop_reason: "end_turn" };
     },
   };
-  const store = memoryStore();
+  // set to make each save take this long, as a slow database would
+  let slowSave = 0;
+  const memory = memoryStore();
+  const store = {
+    ...memory,
+    async saveConversation(c) {
+      if (slowSave) await new Promise((r) => setTimeout(r, slowSave));
+      return memory.saveConversation(c);
+    },
+  };
   const hai = createHai({ model, store, tools: [], surfaces: [], notices: [dropped], system: "x", maxWakes: { count: 100, perMs: 60_000 } });
   const handler = nodeHandler(hai, "/hai");
   const posts = []; // every POST, and how it was answered
@@ -3368,6 +3403,25 @@ async function wakeStreamChecks() {
     check(
       "the wake turn's reply sits under its notice in the transcript",
       chat.state.blocks.findIndex((b) => b.kind === "notice") < chat.state.blocks.findIndex((b) => b.kind === "assistant" && b.text === "Heads up: cheaper."),
+    );
+
+    // The turn says it is idle before its save lets the conversation go. A
+    // message sent on that would still find it held: the client waits for
+    // `released` instead.
+    slow = 0;
+    slowSave = 400;
+    const released = [];
+    const off = chat.subscribe((_s, e) => e.type === "released" && released.push(Date.now()));
+    await hai.notify(cid, dropped, { flight: "BA2" });
+    await until(() => chat.state.status === "idle" && asked.at(-1).startsWith("[The user"), 3_000);
+    posts.length = 0;
+    const tail = await chat.send("right after");
+    slowSave = 0;
+    off();
+    check(
+      "a message sent as a wake turn goes idle waits for its save, and goes through",
+      tail === true && released.length === 1 && posts.every((p) => p.status !== 409) &&
+        !chat.state.blocks.some((b) => b.kind === "error"),
     );
     chat.close();
   } finally {
