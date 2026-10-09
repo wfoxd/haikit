@@ -12,8 +12,9 @@ import type { Hai } from "./runtime.js";
  * Note what the interact route accepts: {handle, action, value} and nothing
  * else. The client cannot name a tool, a handler, or an action target.
  *
- * `GET /events` streams a conversation's notices. It accepts nothing from the
- * browser beyond which conversation, and where to resume.
+ * `GET /events` streams a conversation's notices, and the turns `wake`
+ * notices start. It accepts nothing from the browser beyond which
+ * conversation, and where to resume.
  */
 export function nodeHandler(hai: Hai, basePath = "/hai") {
   return async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
@@ -167,10 +168,43 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
     });
   };
 
+  // A wake turn's events go out as they come, one frame each, and a stream
+  // the browser has left takes no more.
+  const emit: Emit = (event) => {
+    if (!signal.aborted && !res.writableEnded) res.write(`data: ${JSON.stringify(event)}\n\n`);
+  };
+
+  // Wake turns run beside the notice loop, so a notice never waits behind a
+  // turn, nor behind the retries while another request holds the
+  // conversation. One attempt at a time; a wake notice that lands meanwhile
+  // asks for another once it is done.
+  let waking: Promise<void> | null = null;
+  let again = false;
+  const wake = () => {
+    if (!hai.wakes || signal.aborted) return;
+    if (waking) {
+      again = true;
+      return;
+    }
+    waking = (async () => {
+      do {
+        again = false;
+        let wait = WAKE_RETRY_MS;
+        while (!signal.aborted && (await hai.wake(conversationId, emit)) === "busy") {
+          await pause(wait, signal);
+          wait = Math.min(wait * 2, WAKE_RETRY_MAX_MS);
+        }
+      } while (again && !signal.aborted);
+    })()
+      .catch((err) => emit({ type: "error", message: (err as Error).message }))
+      .finally(() => (waking = null));
+  };
+
   // Everything after `after`, a page at a time, until a page comes back short.
   // A conversation deleted since the stream opened ends it: there is nothing
   // more to wait for, and the browser's reconnect is then refused.
   const catchUp = async (page: NoticeRecord[] | null = null) => {
+    let woken = false;
     for (;;) {
       const records = page ?? (await store.getNotices(conversationId, after, PAGE));
       if (records === null) return aborter.abort();
@@ -187,10 +221,12 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
         };
         await write(`id: ${n.seq}\ndata: ${JSON.stringify(event)}\n\n`);
         after = n.seq;
+        woken ||= n.kind === "wake";
       }
-      if (records.length < PAGE || signal.aborted) return;
+      if (records.length < PAGE || signal.aborted) break;
       page = null;
     }
+    if (woken) wake();
   };
 
   // a heartbeat is only for a stream gone quiet, never one already backed up
@@ -198,6 +234,9 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
   const wakes = wakeups(store.watch?.(conversationId, signal), signal)[Symbol.asyncIterator]();
   try {
     await catchUp(first);
+    // A wake notice may be waiting from before this browser connected: one
+    // that arrived while nobody watched, or while the conversation was busy.
+    wake();
     // Watching starts before the next read, so a notice that landed after the
     // backlog was read is either in that read or wakes the loop.
     let next = wakes.next();
@@ -214,6 +253,22 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
     res.end();
   }
 }
+
+/** The first wait before trying a wake turn again on a busy conversation, and the longest. */
+const WAKE_RETRY_MS = 250;
+const WAKE_RETRY_MAX_MS = 5_000;
+
+/** Wait `ms`, or until `signal` aborts. */
+const pause = (ms: number, signal: AbortSignal) =>
+  new Promise<void>((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal.addEventListener("abort", done);
+  });
 
 /**
  * When the events route reads next: every POLL_MS, and sooner whenever the

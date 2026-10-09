@@ -111,6 +111,11 @@ mountChat({
 });
 ```
 
+A `wake` notice's turn comes down the same stream: its reply appears under the
+notice like any other. While it runs, `send` and `interact` wait for it to
+finish rather than being refused, just as they wait behind this chat's own
+requests.
+
 A notice's component gets **no `send`**: nothing in it can reach the server. A
 name the registry doesn't list renders an error card. Like a surface, `mount`
 may return `{ unmount }`. With `createChat`, mount one yourself with

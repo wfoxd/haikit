@@ -69,6 +69,8 @@ const CASES = [
     progress: 4, // fare sources search_flights reports, one by one
     // picking a flight asks the airline for a hold, confirmed later as a notice
     notice: { name: "hold_confirmed", ask: "is my fare held?", expectInReply: /^Yes\. Air Canada confirmed the fare hold on AC832/ },
+    // …and a little later cuts the fare: a wake notice, so the model speaks unasked
+    wake: { name: "fare_dropped", expectInReply: /^Heads up: Air Canada dropped the held fare on AC832/ },
   },
 ];
 
@@ -100,6 +102,33 @@ async function sse(url, body) {
     }
   }
   return events;
+}
+
+// An events stream, read until `done(events)` or `ms` have passed.
+async function eventsUntil(url, done, ms, headers = {}) {
+  const aborter = new AbortController();
+  const timer = setTimeout(() => aborter.abort(), ms);
+  const got = [];
+  try {
+    const res = await fetch(url, { signal: aborter.signal, headers });
+    const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+    let buf = "";
+    while (!done(got)) {
+      const { value, done: ended } = await reader.read();
+      if (ended) break;
+      buf += value;
+      let i;
+      while ((i = buf.indexOf("\n\n")) >= 0) {
+        const lines = buf.slice(0, i).split("\n");
+        buf = buf.slice(i + 2);
+        const data = lines.find((l) => l.startsWith("data: "));
+        if (data) got.push({ id: lines.find((l) => l.startsWith("id: "))?.slice(4), ...JSON.parse(data.slice(6)) });
+      }
+    }
+  } catch {}
+  clearTimeout(timer);
+  aborter.abort();
+  return got;
 }
 
 // An events stream, read until `enough` notices or `ms` have passed.
@@ -257,6 +286,24 @@ for (const c of CASES) {
         : bad(`the next user message was ${JSON.stringify(carried)}`);
       const reply = asked.filter((e) => e.type === "text_delta").map((e) => e.text).join("");
       c.notice.expectInReply.test(reply) ? ok("the model answers from it") : bad(`reply was: ${reply}`);
+
+      // the wake notice starts a turn of its own, streamed where the browser watches
+      if (c.wake) {
+        const seen = await eventsUntil(
+          `${base}/hai/events?conversationId=${conversationId}`,
+          (got) => got.some((e) => e.type === "status" && e.status === "idle"),
+          8_000,
+          { "last-event-id": String(notice.seq) },
+        );
+        const woke = seen.find((e) => e.type === "notice");
+        woke?.name === c.wake.name
+          ? ok(`${c.wake.name} arrives as a wake notice`)
+          : bad(`expected a ${c.wake.name} notice, got ${JSON.stringify(woke)}`);
+        const said = seen.filter((e) => e.type === "text_delta").map((e) => e.text).join("");
+        c.wake.expectInReply.test(said) && seen.some((e) => e.type === "status" && e.status === "idle")
+          ? ok("it starts a turn on the events stream, and the model speaks unasked")
+          : bad(`the wake turn said: ${said || "(nothing)"}`);
+      }
     }
 
     // 4 · a resolved surface cannot be re-resolved

@@ -186,7 +186,8 @@ place until you scroll back down.
 - **Notices** from `hai.notify` show as a card labelled `notice · <name>`,
   drawn by the component you register for that name in `mountChat`'s
   `notices`. One that names a surface sits right under it. Screen readers
-  announce it as it arrives.
+  announce it as it arrives. A wake notice's reply streams in after it, as
+  any reply does, and the message box waits for it to finish.
 - **Errors** show as a red notice.
 - **An out-of-date conversation** shows a notice with a **Start a new
   conversation** button. Its surfaces are greyed out and stop responding. This

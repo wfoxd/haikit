@@ -166,6 +166,39 @@ the inspector, the same as a digest. It reads the store every two
 seconds, and a store with `watch` wakes it the moment a notice lands. The
 two-second read stays even then, so a lost wake-up only delays a notice.
 
+**A `wake` notice starts a turn of its own.** Declare one with `kind: "wake"`,
+and its `model` function must return text, since the turn is the model's
+answer to it:
+
+```ts
+export const fareDropped = defineNotice({ name: "fare_dropped", version: 1, kind: "wake", payload: FareDrop });
+const fareDroppedServer = fareDropped.implement({
+  model: (p) => `The fare on ${p.flightId} dropped from $${p.was} to $${p.now}.`,
+});
+```
+
+It is sent the same way, with `hai.notify`. The turn runs where a browser is
+watching: the events route, holding the conversation's stream, takes the
+lease and streams the turn down that stream. The user message it records
+carries every unread notice, then
+`[The user has not said anything. The notifications above arrived on their own.]`.
+If the conversation is busy, the route tries again, backing off from 250 ms to
+5 s, until it is free or the browser leaves. No turn starts in these cases,
+and the notice rides the user's next message, as a passive one does:
+
+- nobody is watching (a browser that connects later starts it);
+- a question is waiting for an answer;
+- the conversation hasn't begun, or is out of date;
+- it's past `maxWakes`, by default one wake turn a minute per conversation.
+
+```ts
+createHai({ /* … */, notices: [fareDroppedServer], maxWakes: { count: 1, perMs: 60_000 } });
+```
+
+Several wake notices waiting at once start one turn. One held back by
+`maxWakes` never wakes later. `hai.wake(conversationId, emit)` is what the
+route calls, if you serve the events stream yourself.
+
 **A conversation closes once any of its surfaces passes its `staleAfterMs`.**
 From then on both routes answer with an `expired` event and the model is not
 called, so a picker left open over a weekend cannot resolve against last week's

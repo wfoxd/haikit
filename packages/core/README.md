@@ -37,7 +37,8 @@ A notice, declared with `defineNotice`, is something the server tells a
 conversation outside of any request. Its payload goes to the browser and its
 `model` text to the model, in the next user message; `model` returns `null`
 when the model needn't hear it. `hai.notify` types the payload from the
-contract.
+contract. A notice declared with `kind: "wake"` also starts a turn, so its
+`model` must return text: `null` is a compile error.
 
 `npm run typetest` at the repo root compiles those tests twice — once with their
 `@ts-expect-error` directives (must be clean) and once stripped (every marked

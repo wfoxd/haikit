@@ -80,6 +80,13 @@ export function scripted(): ModelAdapter {
         return say("Noted. Anything else before I hold it?", onTextDelta);
       }
 
+      // A wake turn: notifications arrived on their own, and the user said
+      // nothing. Tell them what changed.
+      if (text.startsWith("[the user has not said anything")) {
+        const drop = [...JSON.stringify(messages).matchAll(/\[App notification: fare_dropped\] ([^"\\]*)/g)].at(-1)?.[1];
+        return say(drop ? `Heads up: ${drop}` : "Something changed on the airline's side; nothing you need to do.", onTextDelta);
+      }
+
       if (/hold|held|confirm|book/.test(text)) {
         return say(hold ? `Yes. ${hold}` : "Not yet. I'll tell you as soon as the airline confirms.", onTextDelta);
       }

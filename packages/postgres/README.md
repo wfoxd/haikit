@@ -56,6 +56,9 @@ code declares.
 `noticed_through` to `haikit_conversations`, for `hai.notify`. As before, if
 you call `migrate()` at startup there is nothing to do.
 
+**Upgrading to 0.13:** `migrate()` adds `kind` to `haikit_notices`, and
+`wakes` and `woke_through` to `haikit_conversations`, for wake notices.
+
 Handles are numbered per conversation, so every conversation's digests start at
 `ui_01`.
 

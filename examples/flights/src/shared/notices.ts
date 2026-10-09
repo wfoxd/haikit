@@ -20,3 +20,19 @@ export const holdConfirmed = defineNotice({
     reference: z.string(),
   }),
 });
+
+/**
+ * The airline has cut the fare on the flight being held. A `wake` notice:
+ * the model hears it straight away and tells the user, unasked.
+ */
+export const fareDropped = defineNotice({
+  name: "fare_dropped",
+  version: 1,
+  kind: "wake",
+  payload: z.object({
+    flightId: z.string(),
+    airline: z.string(),
+    was: z.number(),
+    now: z.number(),
+  }),
+});

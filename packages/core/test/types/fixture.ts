@@ -57,3 +57,11 @@ export const heldNotice = defineNotice({
 });
 
 export const heldNoticeImpl = heldNotice.implement({ model: (p) => `${p.flight} is held.` });
+
+/** A wake notice: it starts a turn, so the model must hear something. */
+export const droppedNotice = defineNotice({
+  name: "fixture_dropped",
+  version: 1,
+  kind: "wake",
+  payload: { parse: (v) => v as { flight: string } } satisfies Schema<{ flight: string }>,
+});

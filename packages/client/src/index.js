@@ -72,6 +72,13 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
   /** The events stream's conversation while it is open, and how to stop it. */
   let listening = null;
   let listenAborter = null;
+  /**
+   * Settles when the turn a wake notice started, streaming on the events
+   * stream, is done. Until then nothing is posted: the server holds the
+   * conversation for that turn, and a message sent now would only be told 409.
+   */
+  let remote = null;
+  let endRemote = () => {};
   /** seq → the mounted notice's instance and element */
   const noticeMounts = new Map();
 
@@ -117,6 +124,11 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
     // The deadline is checked again here, not only when queued: a long turn
     // ahead of this request can run past it while it waits.
     if (gen !== generation || closed()) return;
+    // queued behind a wake turn, as behind one of this client's own
+    while (remote) {
+      await remote;
+      if (gen !== generation || closed()) return;
+    }
     sentAt = Date.now();
     let res = await post(path, body, signal);
 
@@ -346,15 +358,19 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
               buffer = buffer.slice(i + 2);
               const line = frame.split("\n").find((l) => l.startsWith("data: "));
               if (line) {
-                apply(JSON.parse(line.slice(6)));
+                const event = JSON.parse(line.slice(6));
+                followTurn(event);
+                apply(event);
                 delivered = true;
               }
             }
           }
         }
       } catch {
-        if (signal.aborted) return;
+        if (signal.aborted) return finishRemote();
       }
+      // a turn cut off with its connection is over, as far as waiting goes
+      finishRemote();
       if (delivered || Date.now() - opened >= HEALTHY_MS) wait = 1_000;
       // Dropped, refused, or the network went away: try again, backing off.
       // reset() or close() ends the wait at once, timer and all.
@@ -371,7 +387,24 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
     }
   }
 
+  /** Track a wake turn from the events stream's status, error and expired frames. */
+  function followTurn(event) {
+    if (event.type === "status" && event.status === "streaming") {
+      if (!remote) remote = new Promise((resolve) => (endRemote = resolve));
+      // surfaces it shows are stamped after this, as a request's are after it is sent
+      sentAt = Date.now();
+    } else if (event.type === "status" || event.type === "error" || event.type === "expired") {
+      finishRemote();
+    }
+  }
+
+  function finishRemote() {
+    remote = null;
+    endRemote();
+  }
+
   function stopListening() {
+    finishRemote();
     listenAborter?.abort();
     listenAborter = null;
     listening = null;

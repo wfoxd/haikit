@@ -102,6 +102,8 @@ export function memoryStore(options: MemoryStoreOptions = {}): StoreAdapter {
         leaseUntil: Date.now() + leaseMs,
         leaseToken: newToken(),
         noticedThrough: 0,
+        wakes: [],
+        wokeThrough: 0,
       };
       conversations.set(conversation.id, conversation);
       return copy(conversation);

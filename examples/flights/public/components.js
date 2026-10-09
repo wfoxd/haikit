@@ -197,4 +197,18 @@ export const notices = {
       el.append(head, foot);
     },
   },
+  fare_dropped: {
+    /**
+     * @param {HTMLElement} el
+     * @param {import("@haikit/core").Infer<typeof import("../src/shared/notices.ts").fareDropped.payload>} payload
+     */
+    mount(el, payload) {
+      const head = h("div", "c-head");
+      head.append(
+        h("span", "c-title", `Fare dropped · ${payload.airline} ${payload.flightId}`),
+        h("span", "c-sub", `$${payload.was} → $${payload.now}`),
+      );
+      el.append(head);
+    },
+  },
 };

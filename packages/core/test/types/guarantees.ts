@@ -10,7 +10,7 @@
  */
 
 import { defineSurface, inform, type Notify, type Schema, type ToolCtx } from "../../src/index.js";
-import { card, cardImpl, heldNotice, heldNoticeImpl, picker, pickerImpl, type Row } from "./fixture.js";
+import { card, cardImpl, droppedNotice, heldNotice, heldNoticeImpl, picker, pickerImpl, type Row } from "./fixture.js";
 
 declare const ctx: ToolCtx;
 declare const notify: Notify;
@@ -32,6 +32,9 @@ heldNotice.implement({});
 
 // @ts-expect-error  model() answers with text or null, not a number
 heldNotice.implement({ model: () => 42 });
+
+// @ts-expect-error  a wake notice starts a turn: the model must hear something
+droppedNotice.implement({ model: () => null });
 
 // ── GUARANTEE 2: a query must return Capped, i.e. must call cap() ──────
 picker.implement({
@@ -98,6 +101,9 @@ await notify("conv_1", heldNoticeImpl, { flight: 832 });
 // ── correct calls, for contrast — these must NOT error ─────────────────
 // a notice the model hears nothing of says so
 heldNotice.implement({ model: () => null });
+// a wake notice says what the turn it starts is about, and sends like any other
+const droppedImpl = droppedNotice.implement({ model: (p) => `${p.flight} dropped.` });
+await notify("conv_1", droppedImpl, { flight: "AC832" });
 await notify("conv_1", heldNoticeImpl, { flight: "AC832" });
 const { seq }: { seq: number } = await notify("conv_1", heldNoticeImpl, { flight: "AC832" }, { handle: "ui_01" });
 void seq;
