@@ -67,6 +67,8 @@ const CASES = [
     expectInResolution: /Selected: Air Canada AC832/,
     staleAfterMs: 15 * 60_000,
     progress: 4, // fare sources search_flights reports, one by one
+    // picking a flight asks the airline for a hold, confirmed later as a notice
+    notice: { name: "hold_confirmed", ask: "is my fare held?", expectInReply: /^Yes\. Air Canada confirmed the fare hold on AC832/ },
   },
 ];
 
@@ -98,6 +100,32 @@ async function sse(url, body) {
     }
   }
   return events;
+}
+
+// An events stream, read until `enough` notices or `ms` have passed.
+async function notices(url, enough, ms) {
+  const aborter = new AbortController();
+  const timer = setTimeout(() => aborter.abort(), ms);
+  const got = [];
+  try {
+    const res = await fetch(url, { signal: aborter.signal });
+    const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+    let buf = "";
+    while (got.length < enough) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += value;
+      let i;
+      while ((i = buf.indexOf("\n\n")) >= 0) {
+        const line = buf.slice(0, i).split("\n").find((l) => l.startsWith("data: "));
+        buf = buf.slice(i + 2);
+        if (line) got.push(JSON.parse(line.slice(6)));
+      }
+    }
+  } catch {}
+  clearTimeout(timer);
+  aborter.abort();
+  return got;
 }
 
 async function waitFor(url, tries = 40) {
@@ -153,6 +181,10 @@ for (const c of CASES) {
     const status = turn.filter((e) => e.type === "status").at(-1);
 
     toolBlock?.block.name === c.tool ? ok(`calls ${c.tool}`) : bad(`expected ${c.tool}`);
+    const events = turn.find((e) => e.type === "hello")?.events;
+    (events === true) === Boolean(c.notice)
+      ? ok(c.notice ? "hello opens the events stream" : "hello opens no events stream: the app sends no notices")
+      : bad(`hello.events was ${events}`);
     if (c.progress) {
       // UI channel only: on the tool's row, before its surface, never in context
       const frames = turn.filter((e) => e.type === "progress");
@@ -210,6 +242,22 @@ for (const c of CASES) {
     c.expectInResolution.test(label) ? ok("click becomes the tool_result") : bad(`resolution was: ${label}`);
     frozen === "frozen" ? ok("surface freezes") : bad("surface not frozen");
     endStatus?.status === "idle" ? ok("turn resumes and completes") : bad(`ended ${endStatus?.status}`);
+
+    // 3b · the click set something going that answers later, as a notice
+    if (c.notice) {
+      const [notice] = await notices(`${base}/hai/events?conversationId=${conversationId}`, 1, 5_000);
+      notice?.type === "notice" && notice.name === c.notice.name && notice.handle === uiOpen.handle
+        ? ok(`${c.notice.name} arrives on the events stream, beside the surface it answers`)
+        : bad(`expected a ${c.notice.name} notice, got ${JSON.stringify(notice)}`);
+      const asked = await sse(`${base}/hai/chat`, { conversationId, message: c.notice.ask });
+      const history = asked.filter((e) => e.type === "context").at(-1)?.messages ?? [];
+      const carried = history.findLast((m) => m.role === "user")?.content;
+      Array.isArray(carried) && carried[0]?.text?.startsWith(`[App notification: ${c.notice.name}]`) && carried.at(-1)?.text === c.notice.ask
+        ? ok("the next message carries the notice to the model, ahead of what the user typed")
+        : bad(`the next user message was ${JSON.stringify(carried)}`);
+      const reply = asked.filter((e) => e.type === "text_delta").map((e) => e.text).join("");
+      c.notice.expectInReply.test(reply) ? ok("the model answers from it") : bad(`reply was: ${reply}`);
+    }
 
     // 4 · a resolved surface cannot be re-resolved
     const replay = await sse(`${base}/hai/interact`, {

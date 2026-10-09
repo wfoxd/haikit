@@ -86,6 +86,7 @@ function dropFavicon() {
  * @param {{
  *   root: HTMLElement,
  *   registry: Record<string, { mount: Function }>,
+ *   notices?: Record<string, { mount: Function }>,
  *   endpoint?: string,
  *   title?: string,
  *   subtitle?: string,
@@ -99,6 +100,7 @@ function dropFavicon() {
 export function mountChat({
   root,
   registry,
+  notices,
   endpoint = "/hai",
   title = "HaiKIT",
   subtitle = "",
@@ -108,7 +110,7 @@ export function mountChat({
   emptyText = "",
   theme,
 }) {
-  const chat = createChat({ endpoint, registry });
+  const chat = createChat({ endpoint, registry, notices });
   const id = `hai-${++shells}`;
 
   // Unset, the page follows the system. A pin goes on the root, where hai.css

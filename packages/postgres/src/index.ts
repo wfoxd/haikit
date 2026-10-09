@@ -15,6 +15,7 @@ import {
   ConversationBusy,
   StaleLease,
   type Conversation,
+  type NoticeRecord,
   type PayloadRecord,
   type StoreAdapter,
 } from "@haikit/core";
@@ -39,9 +40,27 @@ export interface PgStoreOptions {
    * which is safe (its writes are fenced out) but wasteful.
    */
   leaseMs?: number;
+  /**
+   * A connection that can `LISTEN`, so the events route hears of a notice the
+   * moment it lands instead of reading every couple of seconds. It needs a
+   * connection of its own: a pooled one goes back to the pool and stops
+   * listening. PGlite's `listen` fits as it is; see the README for `pg`.
+   */
+  listen?: Listener;
+}
+
+/**
+ * Something that can `LISTEN` on a channel and report each `NOTIFY` payload.
+ * Resolves once listening, to a function that stops.
+ */
+export interface Listener {
+  listen(channel: string, onNotify: (payload: string) => void): Promise<unknown>;
 }
 
 const LEASE_MS = 120_000;
+
+/** The channel `putNotice` notifies on, with the conversation id as payload. */
+export const NOTICE_CHANNEL = "haikit_notices";
 
 /**
  * The schema, one statement per entry. `migrate()` runs these; export them to
@@ -58,7 +77,26 @@ export const schema: readonly string[] = [
      lease_until  timestamptz,
      lease_token  text,
      handle_seq   integer NOT NULL DEFAULT 0,
+     -- the last notice number given out, and the last one its history took in
+     notice_seq      integer NOT NULL DEFAULT 0,
+     noticed_through integer NOT NULL DEFAULT 0,
      updated_at   timestamptz NOT NULL DEFAULT now()
+   )`,
+  // a table created before notices existed gains the columns
+  `ALTER TABLE haikit_conversations ADD COLUMN IF NOT EXISTS notice_seq integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE haikit_conversations ADD COLUMN IF NOT EXISTS noticed_through integer NOT NULL DEFAULT 0`,
+  // Append-only, and never an orphan: a notice belongs to a conversation that
+  // exists, and goes when it does.
+  `CREATE TABLE IF NOT EXISTS haikit_notices (
+     conversation_id text NOT NULL REFERENCES haikit_conversations(id) ON DELETE CASCADE,
+     seq             integer NOT NULL,
+     created_at      timestamptz NOT NULL DEFAULT now(),
+     name            text NOT NULL,
+     version         integer NOT NULL,
+     payload         jsonb NOT NULL,
+     model           text,
+     handle          text,
+     PRIMARY KEY (conversation_id, seq)
    )`,
   // Write-once. Nothing about a payload changes after insert — everything that
   // does lives on the fenced conversation row (see Conversation.frozen).
@@ -97,8 +135,12 @@ export async function migrate(db: Queryable): Promise<void> {
 // a second time throws. Taking text every time removes the guess.
 const CONVERSATION_COLUMNS = `
   id, status, messages::text AS messages, handles::text AS handles,
-  frozen::text AS frozen, pending::text AS pending, lease_token,
+  frozen::text AS frozen, pending::text AS pending, lease_token, noticed_through,
   (extract(epoch FROM lease_until) * 1000)::float8 AS lease_until_ms`;
+
+const NOTICE_COLUMNS = `
+  conversation_id, seq, name, version, payload::text AS payload, model, handle,
+  (extract(epoch FROM created_at) * 1000)::float8 AS created_at_ms`;
 
 // The window is read as text too: 'Infinity' is how "never" is stored, and
 // drivers need not agree on turning it into a number.
@@ -118,6 +160,18 @@ const toConversation = (row: any): Conversation => ({
   pending: row.pending == null ? null : json(row.pending),
   leaseUntil: row.lease_until_ms == null ? null : Number(row.lease_until_ms),
   leaseToken: row.lease_token,
+  noticedThrough: Number(row.noticed_through ?? 0),
+});
+
+const toNotice = (row: any): NoticeRecord => ({
+  conversationId: row.conversation_id,
+  seq: Number(row.seq),
+  createdAt: Number(row.created_at_ms),
+  name: row.name,
+  version: Number(row.version),
+  payload: json(row.payload),
+  model: row.model,
+  ...(row.handle == null ? {} : { handle: row.handle }),
 });
 
 const toPayload = (row: any): PayloadRecord => ({
@@ -143,6 +197,54 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
   // here, loudly, rather than run with no mutual exclusion at all.
   if (!Number.isFinite(leaseMs) || leaseMs <= 0) {
     throw new RangeError(`leaseMs must be a positive, finite number of milliseconds (got ${leaseMs})`);
+  }
+
+  // One LISTEN for the whole store, taken when something first watches, and
+  // each notification handed to whoever is watching that conversation.
+  const waiting = new Map<string, Set<() => void>>();
+  let listening: Promise<unknown> | null = null;
+  const listen = (listener: Listener) =>
+    (listening ??= listener
+      .listen(NOTICE_CHANNEL, (id) => {
+        for (const wake of waiting.get(id) ?? []) wake();
+      })
+      .catch((err) => {
+        // try again on the next watch, rather than never
+        listening = null;
+        throw err;
+      }));
+
+  async function* watch(conversationId: string, signal: AbortSignal): AsyncIterable<void> {
+    // One wake-up stands for any number of notices: a step resolves once
+    // something has landed since the last, and the caller reads them all.
+    let landed = false;
+    let wake: (() => void) | null = null;
+    const listener = () => {
+      landed = true;
+      wake?.();
+    };
+    const onAbort = () => wake?.();
+    const set = waiting.get(conversationId) ?? new Set();
+    set.add(listener);
+    waiting.set(conversationId, set);
+    signal.addEventListener("abort", onAbort);
+    try {
+      await listen(options.listen!);
+      // A notice that landed before LISTEN took hold sent its NOTIFY to no
+      // one, so the first step is free: the caller reads once now.
+      landed = true;
+      while (!signal.aborted) {
+        if (!landed) await new Promise<void>((r) => (wake = r));
+        wake = null;
+        if (signal.aborted) return;
+        landed = false;
+        yield;
+      }
+    } finally {
+      signal.removeEventListener("abort", onAbort);
+      set.delete(listener);
+      if (!set.size) waiting.delete(conversationId);
+    }
   }
 
   /** A fenced write matched nothing. Say which of the two reasons applies. */
@@ -199,6 +301,7 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
                 frozen      = $6::jsonb,
                 pending     = $7::jsonb,
                 lease_until = to_timestamp($8::float8 / 1000),
+                noticed_through = $9::integer,
                 updated_at  = now()
           WHERE id = $1 AND lease_token = $2
           RETURNING id`,
@@ -212,6 +315,7 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
           // SQL NULL, not the JSON value null — keep "no pending turn" queryable
           conversation.pending == null ? null : JSON.stringify(conversation.pending),
           conversation.leaseUntil,
+          conversation.noticedThrough ?? 0,
         ],
       );
       if (!rows.length) await stale(conversation.id);
@@ -280,6 +384,52 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
         return record ? [structuredClone(record)] : [];
       });
     },
+
+    async putNotice(record) {
+      // Number, insert and notify in one statement. The UPDATE takes the next
+      // number under the conversation's row lock, so two notices in one
+      // conversation commit in the order they were numbered and a reader never
+      // sees a later one before an earlier. No conversation, no row from
+      // `next`, nothing inserted. Unfenced: no lease token is checked.
+      const { rows } = await db.query(
+        `WITH next AS (
+           UPDATE haikit_conversations SET notice_seq = notice_seq + 1
+            WHERE id = $1::text
+            RETURNING notice_seq
+         ), stored AS (
+           INSERT INTO haikit_notices (conversation_id, seq, name, version, payload, model, handle)
+           SELECT $1::text, notice_seq, $2::text, $3::integer, $4::jsonb, $5::text, $6::text FROM next
+           RETURNING ${NOTICE_COLUMNS}
+         )
+         SELECT stored.*, pg_notify('${NOTICE_CHANNEL}', $1::text) FROM stored`,
+        [
+          record.conversationId,
+          record.name,
+          record.version,
+          JSON.stringify(record.payload ?? null),
+          record.model,
+          record.handle ?? null,
+        ],
+      );
+      if (!rows.length) throw new Error(`conversation ${record.conversationId} does not exist`);
+      return toNotice(rows[0]);
+    },
+
+    async getNotices(conversationId, after, limit) {
+      const { rows } = await db.query(
+        `SELECT ${NOTICE_COLUMNS} FROM haikit_notices
+          WHERE conversation_id = $1 AND seq > $2::integer
+          ORDER BY seq
+          LIMIT $3::integer`,
+        [conversationId, after, limit ?? null],
+      );
+      if (rows.length) return rows.map(toNotice);
+      // nothing to return: say which of the two reasons applies
+      const exists = await db.query(`SELECT 1 FROM haikit_conversations WHERE id = $1`, [conversationId]);
+      return exists.rows.length ? [] : null;
+    },
+
+    ...(options.listen ? { watch } : {}),
   };
 }
 

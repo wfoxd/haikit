@@ -6,7 +6,7 @@
  * zod — or on any example app.
  */
 
-import { defineSurface, inform, query, resolve, type Schema } from "../../src/index.js";
+import { defineNotice, defineSurface, inform, query, resolve, type Schema } from "../../src/index.js";
 
 const str: Schema<string> = { parse: (v) => v as string };
 const any: Schema<Record<string, unknown>> = { parse: (v) => v as Record<string, unknown> };
@@ -48,3 +48,12 @@ export const pickerImpl = picker.implement({
   queries: { filter: (_args, { props, cap }) => cap(props.rows, (r) => r.label) },
   staleAfterMs: 60_000,
 });
+
+/** A notice: a held fare, its payload one flight. */
+export const heldNotice = defineNotice({
+  name: "fixture_held",
+  version: 1,
+  payload: { parse: (v) => v as { flight: string } } satisfies Schema<{ flight: string }>,
+});
+
+export const heldNoticeImpl = heldNotice.implement({ model: (p) => `${p.flight} is held.` });

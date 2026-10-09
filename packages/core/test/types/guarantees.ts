@@ -9,10 +9,11 @@
  * wrong owner: delete the example and the regression test goes with it.
  */
 
-import { defineSurface, inform, type Schema, type ToolCtx } from "../../src/index.js";
-import { card, cardImpl, picker, pickerImpl, type Row } from "./fixture.js";
+import { defineSurface, inform, type Notify, type Schema, type ToolCtx } from "../../src/index.js";
+import { card, cardImpl, heldNotice, heldNoticeImpl, picker, pickerImpl, type Row } from "./fixture.js";
 
 declare const ctx: ToolCtx;
+declare const notify: Notify;
 declare const props: { rows: Row[] };
 
 const str: Schema<string> = { parse: (v) => v as string };
@@ -24,6 +25,13 @@ picker.implement({
   queries: { filter: (_a, { props: p, cap }) => cap(p.rows, String) },
   staleAfterMs: "never",
 });
+
+// ── GUARANTEE 1, for notices: a notice says what the model hears ────────
+// @ts-expect-error  Property 'model' is missing
+heldNotice.implement({});
+
+// @ts-expect-error  model() answers with text or null, not a number
+heldNotice.implement({ model: () => 42 });
 
 // ── GUARANTEE 2: a query must return Capped, i.e. must call cap() ──────
 picker.implement({
@@ -80,7 +88,19 @@ picker.implement({
 // @ts-expect-error  'rows' is missing
 await ctx.render(pickerImpl, { wrong: true }, { mode: "elicit" });
 
+// ── a notice's payload is typed from its contract ──────────────────────
+// @ts-expect-error  'flight' is missing
+await notify("conv_1", heldNoticeImpl, { fare: 343 });
+
+// @ts-expect-error  'flight' is a string
+await notify("conv_1", heldNoticeImpl, { flight: 832 });
+
 // ── correct calls, for contrast — these must NOT error ─────────────────
+// a notice the model hears nothing of says so
+heldNotice.implement({ model: () => null });
+await notify("conv_1", heldNoticeImpl, { flight: "AC832" });
+const { seq }: { seq: number } = await notify("conv_1", heldNoticeImpl, { flight: "AC832" }, { handle: "ui_01" });
+void seq;
 // no window declared: it defaults to "never", so code written before
 // freshness windows existed still compiles
 picker.implement({

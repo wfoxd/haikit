@@ -14,7 +14,7 @@ for (const name of ["Node", "HTMLElement", "Event", "MouseEvent"]) globalThis[na
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const { createElement: h, useEffect, useState, act } = await import("react");
-const { reactSurface } = await import("../packages/react/dist/index.js");
+const { reactSurface, reactNotice } = await import("../packages/react/dist/index.js");
 const { renderTranscript } = await import("../packages/client/src/transcript.js");
 
 let failures = 0;
@@ -118,6 +118,28 @@ for (const chunk of ["One, ", "two, ", "three."]) {
 }
 check("under the default transcript a React surface mounts once while a reply streams", effects === 1);
 await act(async () => surfaces.get("ui_02").instance.unmount());
+
+// ── a notice: rendered from its payload, with nothing to send
+{
+  let noticeCleanups = 0;
+  function Held({ payload, seq, handle }) {
+    useEffect(() => () => void noticeCleanups++, []);
+    return h("p", { className: "held", "data-seq": seq, "data-handle": handle }, `${payload.flight} is held`);
+  }
+  const noticeEl = document.createElement("div");
+  document.body.append(noticeEl);
+  let held;
+  await act(async () => {
+    held = reactNotice(Held).mount(noticeEl, { flight: "AC832" }, { seq: 4, version: 1, handle: "ui_01" });
+  });
+  const p = noticeEl.querySelector("p.held");
+  check(
+    "a React notice renders its payload, seq and handle as soon as mount() returns",
+    p?.textContent === "AC832 is held" && p.dataset.seq === "4" && p.dataset.handle === "ui_01",
+  );
+  await act(async () => held.unmount());
+  check("unmount() cleans up a React notice", noticeCleanups === 1 && noticeEl.childNodes.length === 0);
+}
 
 console.log(failures ? `\n${failures} check(s) failed\n` : "\nreact: all checks passed\n");
 process.exit(failures ? 1 : 0);

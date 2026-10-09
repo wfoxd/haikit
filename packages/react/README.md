@@ -57,6 +57,23 @@ contract the server implements:
 Import the contract with `import type`. Only the types are needed, so the
 schemas and their library stay out of the browser bundle.
 
+## Notices
+
+`reactNotice` does the same for a notice, from the same `defineNotice` contract
+the server sends it with. `NoticeProps<typeof yourNotice>` gives the component
+`payload`, typed from the contract, its `seq`, and the `handle` of the surface
+it sits beside, if any. There is no `send`: a notice cannot reach the server.
+
+```tsx
+import type { holdConfirmed } from "../shared/notices";
+
+function HoldConfirmed({ payload }: NoticeProps<typeof holdConfirmed>) {
+  return <p>Fare held · {payload.flightId} · ref {payload.reference}</p>;
+}
+
+mountChat({ root, registry, notices: { hold_confirmed: reactNotice(HoldConfirmed) } });
+```
+
 ## Lifecycle
 
 The default transcript mounts a surface **once**, so `useState` survives the

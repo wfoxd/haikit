@@ -415,6 +415,22 @@
 }
 .hai-shimmer:nth-child(3) { width: 82%; }
 .hai-shimmer:nth-child(4) { width: 60%; }
+/* a notice: something the server said outside of any request */
+.hai-notice {
+  margin-bottom: 18px;
+  overflow: hidden;
+  border: 1px solid var(--hai-line);
+  border-radius: var(--hai-radius);
+  background: var(--hai-panel);
+}
+.hai-notice-label {
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--hai-line);
+  background: var(--hai-panel-2);
+  font: 11px var(--hai-mono);
+  color: var(--hai-dim);
+}
+.hai-notice > .hai-surface-error { margin: 0; border: none; border-radius: 0; }
 .hai-surface-error {
   margin-bottom: 18px;
   padding: 11px 14px;

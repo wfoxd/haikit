@@ -376,6 +376,20 @@ function renderBlock(block, chat) {
       return el;
     }
 
+    // Something the server told this conversation outside of any request. The
+    // label says what kind; the app's component, from the notices registry,
+    // draws the rest. A status region, so a screen reader announces it.
+    case "notice": {
+      const el = h("div", "hai-notice");
+      el.setAttribute("role", "status");
+      el.dataset.notice = block.name;
+      el.append(h("div", "hai-notice-label", `notice · ${block.name}`));
+      const body = h("div", "hai-notice-body");
+      el.append(body);
+      queueMicrotask(() => chat.mountNotice(block.seq, body));
+      return el;
+    }
+
     default:
       return h("div", "hai-block", JSON.stringify(block));
   }

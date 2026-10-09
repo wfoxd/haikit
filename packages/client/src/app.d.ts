@@ -1,8 +1,10 @@
-import type { Chat, Registry } from "./index.js";
+import type { Chat, NoticeRegistry, Registry } from "./index.js";
 
 export interface MountChatOptions {
   root: HTMLElement;
   registry: Registry;
+  /** Components for the notices the server sends, by notice name. */
+  notices?: NoticeRegistry;
   /** Base path the server's two routes are mounted at. Default `/hai`. */
   endpoint?: string;
   title?: string;

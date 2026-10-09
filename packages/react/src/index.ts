@@ -13,8 +13,8 @@
 import { createElement, type ComponentType } from "react";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
-import type { ComponentDef, SurfaceMode, SurfaceState } from "@haikit/client";
-import type { ActionMap, Infer, QueryMap, Surface } from "@haikit/core";
+import type { ComponentDef, NoticeDef, SurfaceMode, SurfaceState } from "@haikit/client";
+import type { ActionMap, Infer, Notice, QueryMap, Surface } from "@haikit/core";
 
 type AnySurface = Surface<any, ActionMap, QueryMap>;
 type PropsOf<S> = S extends Surface<infer P, any, any> ? P : never;
@@ -89,6 +89,43 @@ export function reactSurface<S extends AnySurface>(Component: ComponentType<Surf
           expired = true;
           draw();
         },
+        unmount() {
+          root.unmount();
+        },
+      };
+    },
+  };
+}
+
+type AnyNotice = Notice<any>;
+type PayloadOf<N> = N extends Notice<infer P> ? P : never;
+
+/** What a React notice component receives, typed from its notice contract. */
+export interface NoticeProps<N extends AnyNotice> {
+  /** The notice's payload, as its `payload` schema produced it. */
+  payload: PayloadOf<N>;
+  /** Its sequence number in the conversation. */
+  seq: number;
+  /** The surface it is shown beside, if any. */
+  handle?: string;
+}
+
+/**
+ * A notices registry entry that renders `Component` into the notice's element.
+ * As with `reactSurface`, the first render is synchronous and the root is
+ * unmounted when the notice goes away. A notice has no `send`.
+ */
+export function reactNotice<N extends AnyNotice>(Component: ComponentType<NoticeProps<N>>): NoticeDef<PayloadOf<N>> {
+  return {
+    mount(element, payload, ctx) {
+      const root = createRoot(element);
+      try {
+        flushSync(() => root.render(createElement(Component, { payload, seq: ctx.seq, handle: ctx.handle })));
+      } catch (err) {
+        root.unmount();
+        throw err;
+      }
+      return {
         unmount() {
           root.unmount();
         },

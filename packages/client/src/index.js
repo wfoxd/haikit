@@ -10,9 +10,9 @@
  */
 
 /**
- * @param {{endpoint?: string, registry: Record<string, {mount: Function}>}} options
+ * @param {{endpoint?: string, registry: Record<string, {mount: Function}>, notices?: Record<string, {mount: Function}>}} options
  */
-export function createChat({ endpoint = "/hai", registry }) {
+export function createChat({ endpoint = "/hai", registry, notices = {} }) {
   const listeners = new Set();
   const state = {
     conversationId: null,
@@ -31,6 +31,8 @@ export function createChat({ endpoint = "/hai", registry }) {
     expiresAt: null,
     /** The notice, once the conversation is out of date. Final until `reset()`. */
     expired: null,
+    /** Notices the server has sent this conversation, in the order they were sent. */
+    notices: [],
   };
 
   const notify = (event) => listeners.forEach((fn) => fn(state, event));
@@ -66,6 +68,12 @@ export function createChat({ endpoint = "/hai", registry }) {
 
   /** Set by close(): this chat is done for good, and does nothing more. */
   let shutDown = false;
+
+  /** The events stream's conversation while it is open, and how to stop it. */
+  let listening = null;
+  let listenAborter = null;
+  /** seq → the mounted notice's instance and element */
+  const noticeMounts = new Map();
 
   /**
    * When the request now streaming was sent. The server stamps every surface
@@ -172,7 +180,26 @@ export function createChat({ endpoint = "/hai", registry }) {
       case "hello":
         state.conversationId = event.conversationId;
         state.model = event.model;
+        if (event.events) listen(event.conversationId);
         break;
+
+      // From the events stream. A reconnect resumes after the last one seen,
+      // so a repeat is only ever one already shown, and is dropped.
+      case "notice": {
+        if (state.notices.some((n) => n.seq === event.seq)) return;
+        const { type, ...notice } = event;
+        state.notices.push(notice);
+        const block = { kind: "notice", id: `n:${event.seq}`, ...notice };
+        // beside its surface — after any notices already there — or at the end
+        const at = event.handle === undefined ? -1 : state.blocks.findIndex((b) => b.id === `ui:${event.handle}`);
+        if (at < 0) state.blocks.push(block);
+        else {
+          let i = at + 1;
+          while (state.blocks[i]?.kind === "notice" && state.blocks[i].handle === event.handle) i++;
+          state.blocks.splice(i, 0, block);
+        }
+        break;
+      }
 
       case "block_start":
         state.blocks.push({ ...event.block });
@@ -264,6 +291,96 @@ export function createChat({ endpoint = "/hai", registry }) {
         break;
     }
     notify(event);
+  }
+
+  // ── notices ────────────────────────────────────────────────────────
+  // A GET that stays open, read the same way as a turn's stream. It ends when
+  // the conversation does — reset() or close() — and otherwise reconnects,
+  // resuming after the last notice it saw. An out-of-date conversation keeps
+  // it: a confirmation is still true once fares have gone stale.
+
+  function listen(conversationId) {
+    if (listening === conversationId || shutDown) return;
+    listenAborter?.abort();
+    listenAborter = new AbortController();
+    listening = conversationId;
+    void follow(conversationId, generation, listenAborter.signal);
+  }
+
+  async function follow(conversationId, gen, signal) {
+    let wait = 1_000;
+    while (gen === generation && !signal.aborted) {
+      try {
+        const last = state.notices.at(-1)?.seq ?? 0;
+        const res = await fetch(`${endpoint}/events?conversationId=${encodeURIComponent(conversationId)}`, {
+          headers: last ? { "last-event-id": String(last) } : {},
+          signal,
+        });
+        // the server has no such conversation, or sends no notices: stop
+        if (res.status === 404) return;
+        if (res.ok) {
+          wait = 1_000;
+          const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+          let buffer = "";
+          for (;;) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buffer += value;
+            let i;
+            while ((i = buffer.indexOf("\n\n")) >= 0) {
+              if (gen !== generation) return;
+              const frame = buffer.slice(0, i);
+              buffer = buffer.slice(i + 2);
+              const line = frame.split("\n").find((l) => l.startsWith("data: "));
+              if (line) apply(JSON.parse(line.slice(6)));
+            }
+          }
+        }
+      } catch {
+        if (signal.aborted) return;
+      }
+      // dropped, refused, or the network went away: try again, backing off
+      await new Promise((r) => setTimeout(r, wait));
+      wait = Math.min(wait * 2, 30_000);
+    }
+  }
+
+  function stopListening() {
+    listenAborter?.abort();
+    listenAborter = null;
+    listening = null;
+  }
+
+  /**
+   * Mount a notice into an element, from the `notices` registry. As with
+   * surfaces, a name the registry doesn't list renders an error card, never
+   * an improvised UI. A notice has no `send`: it cannot reach the server.
+   */
+  function mountNotice(seq, element) {
+    const notice = state.notices.find((n) => n.seq === seq);
+    if (shutDown || !notice) return null;
+    unmountNotice(seq);
+
+    const definition = notices[notice.name];
+    if (!definition) {
+      element.textContent = `unknown notice: ${notice.name}`;
+      element.className = "hai-surface-error";
+      return null;
+    }
+    element.replaceChildren();
+    const instance = definition.mount(element, notice.payload, {
+      seq,
+      version: notice.version,
+      handle: notice.handle,
+    });
+    noticeMounts.set(seq, instance);
+    return instance;
+  }
+
+  function unmountNotice(seq) {
+    const instance = noticeMounts.get(seq);
+    noticeMounts.delete(seq);
+    attempt(() => instance?.unmount?.());
   }
 
   // ── expiry ─────────────────────────────────────────────────────────
@@ -409,8 +526,10 @@ export function createChat({ endpoint = "/hai", registry }) {
     generation++;
     aborter.abort();
     aborter = new AbortController();
+    stopListening();
     clearTimeout(timer);
     for (const surface of state.surfaces.values()) unmount(surface);
+    for (const seq of [...noticeMounts.keys()]) unmountNotice(seq);
     Object.assign(state, {
       conversationId: null,
       status: "idle",
@@ -418,6 +537,7 @@ export function createChat({ endpoint = "/hai", registry }) {
       context: { messages: [], modelTokens: 0, uiTokens: 0 },
       expiresAt: null,
       expired: null,
+      notices: [],
     });
     state.surfaces.clear();
     notify({ type: "reset" });
@@ -434,8 +554,10 @@ export function createChat({ endpoint = "/hai", registry }) {
     shutDown = true;
     generation++;
     aborter.abort();
+    stopListening();
     clearTimeout(timer);
     for (const surface of state.surfaces.values()) unmount(surface);
+    for (const seq of [...noticeMounts.keys()]) unmountNotice(seq);
     // Every subscriber hears it, even after one that throws, and none is held
     // on to: they are let go of before they are told.
     const subscribers = [...listeners];
@@ -449,6 +571,7 @@ export function createChat({ endpoint = "/hai", registry }) {
     send,
     interact,
     mount,
+    mountNotice,
     reset,
     close,
     subscribe(fn) {

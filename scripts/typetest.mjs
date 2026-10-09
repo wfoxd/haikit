@@ -82,7 +82,7 @@ console.log(`✓ pass 2 — ${expected.length - failures}/${expected.length} gua
 if (failures) process.exit(1);
 
 console.log("\nGuarantees verified:");
-console.log("  1. a surface cannot exist without a digest");
+console.log("  1. a surface cannot exist without a digest, nor a notice without its model text");
 console.log("  2. a query's return value can only be produced by cap()");
 console.log("  3. mode:\"elicit\" requires a declared resolve action");
 console.log("  4. an undeclared action does not exist");

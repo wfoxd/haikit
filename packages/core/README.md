@@ -24,7 +24,7 @@ Enforced in the type system, and asserted by `test/types/guarantees.ts`:
 
 | | |
 |---|---|
-| a surface cannot exist without a `digest` | `digest` is a required field |
+| a surface cannot exist without a `digest`, nor a notice without its `model` text | both are required fields |
 | a query's result can only be produced by `cap()` | `Capped` has no other constructor |
 | `mode: "elicit"` needs a `resolve` action | otherwise the call does not typecheck |
 | an undeclared action does not exist | the contract *is* the allowlist |
@@ -32,6 +32,12 @@ Enforced in the type system, and asserted by `test/types/guarantees.ts`:
 A surface can also declare `staleAfterMs`, how long its data may be acted on:
 milliseconds, or `"never"`, which is the default. Once any surface in a
 conversation is past its window, the conversation closes.
+
+A notice, declared with `defineNotice`, is something the server tells a
+conversation outside of any request. Its payload goes to the browser and its
+`model` text to the model, in the next user message; `model` returns `null`
+when the model needn't hear it. `hai.notify` types the payload from the
+contract.
 
 `npm run typetest` at the repo root compiles those tests twice — once with their
 `@ts-expect-error` directives (must be clean) and once stripped (every marked
