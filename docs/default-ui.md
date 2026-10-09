@@ -183,6 +183,10 @@ place until you scroll back down.
   below.
 - **Answers given in a surface** show as a line with an arrow icon. That line
   is what the model received as the tool's result.
+- **Notices** from `hai.notify` show as a card labelled `notice · <name>`,
+  drawn by the component you register for that name in `mountChat`'s
+  `notices`. One that names a surface sits right under it. Screen readers
+  announce it as it arrives.
 - **Errors** show as a red notice.
 - **An out-of-date conversation** shows a notice with a **Start a new
   conversation** button. Its surfaces are greyed out and stop responding. This
@@ -381,6 +385,8 @@ These hooks are stable if you need to style around a surface:
 | `.hai-tool` | a tool row |
 | `.hai-tool.hai-status-awaiting` | a tool row by status: also `running`, `resolved`, `expired`, `ok` and `error` |
 | `.hai-tbar` | a running tool's progress bar. Its fill is `--hai-progress`, a percentage |
+| `.hai-notice` | the card a notice mounts into. Also `.hai-notice-label` and `.hai-notice-body` |
+| `.hai-notice[data-notice="hold_confirmed"]` | one notice's cards |
 | `.hai-status[data-status="awaiting"]` | the status line by conversation status: also `streaming` and `idle` |
 
 ## Lifecycle

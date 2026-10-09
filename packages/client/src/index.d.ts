@@ -19,7 +19,17 @@ export interface Progress {
   total?: number;
 }
 
-/** Blocks the server emits, plus the three the client synthesises locally. */
+/** A notice the server sent, as the events stream delivered it. */
+export interface NoticeRecord {
+  seq: number;
+  name: string;
+  version: number;
+  payload: unknown;
+  /** The surface it is shown beside. */
+  handle?: string;
+}
+
+/** Blocks the server emits, plus the four the client synthesises locally. */
 export type Block =
   | { kind: "user"; id: string; text: string }
   | { kind: "assistant"; id: string; text: string }
@@ -40,7 +50,9 @@ export type Block =
   /** synthesised from `error` */
   | { kind: "error"; id: string; message: string }
   /** synthesised from `expired` — the conversation is closed; offer `reset()` */
-  | { kind: "expired"; id: string; message: string };
+  | { kind: "expired"; id: string; message: string }
+  /** synthesised from `notice` — after its surface's block when it names one, else at the end */
+  | ({ kind: "notice"; id: string } & NoticeRecord);
 
 /** The SSE frame shape. Narrow on `type` to get the specific payload. */
 export type WireEvent = { type: string } & Record<string, any>;
@@ -90,6 +102,27 @@ export interface ComponentDef<P = any> {
  */
 export type Registry = Record<string, ComponentDef<any>>;
 
+/** What `mountNotice()` hands your notice component. There is no `send`. */
+export interface NoticeMountCtx {
+  seq: number;
+  version: number;
+  /** The surface it is shown beside, if any. */
+  handle?: string;
+}
+
+/** Returned by a notice's `mount`. `unmount` is called when it goes away. */
+export interface NoticeInstance {
+  unmount?(): void;
+}
+
+/** A notice component. `payload` is whatever the notice's `payload` schema produces. */
+export interface NoticeDef<P = any> {
+  mount(element: HTMLElement, payload: P, ctx: NoticeMountCtx): NoticeInstance | null | void;
+}
+
+/** The notices allowlist, by notice name. Separate from `Registry`, so names never clash. */
+export type NoticeRegistry = Record<string, NoticeDef<any>>;
+
 export interface SurfaceRecord {
   handle: string;
   component: string;
@@ -125,6 +158,8 @@ export interface ChatState {
    * until `reset()` starts a new conversation.
    */
   expired: string | null;
+  /** Notices the server has sent this conversation, in order. */
+  notices: NoticeRecord[];
 }
 
 export interface Chat {
@@ -154,6 +189,12 @@ export interface Chat {
    */
   mount(handle: string, element: HTMLElement): SurfaceInstance | null;
   /**
+   * Mounts the notice numbered `seq` into `element`, from the `notices`
+   * registry. Null if there is no such notice, or the chat is closed. An
+   * unregistered name renders an error card.
+   */
+  mountNotice(seq: number, element: HTMLElement): NoticeInstance | null;
+  /**
    * Start a new conversation on the next send. Anything queued for the old one
    * is never sent, a request still open is aborted — the new conversation
    * never waits behind it — and every surface is unmounted. Subscribers are
@@ -172,4 +213,9 @@ export interface Chat {
   subscribe(fn: (state: ChatState, event: WireEvent) => void): () => void;
 }
 
-export function createChat(options: { endpoint?: string; registry: Registry }): Chat;
+/**
+ * When the server sends notices (its `hello` says so), the chat also keeps
+ * `GET {endpoint}/events` open for the conversation, resuming after the last
+ * notice it saw if the connection drops, until `reset()` or `close()`.
+ */
+export function createChat(options: { endpoint?: string; registry: Registry; notices?: NoticeRegistry }): Chat;

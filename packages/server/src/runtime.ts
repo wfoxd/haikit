@@ -1,11 +1,13 @@
 import {
   estTokens,
+  type AnyNoticeImpl,
   isStaleLease,
   makeCap,
   type AnySurfaceImpl,
   type Conversation,
   type Emit,
   type ModelAdapter,
+  type Notify,
   type Progress,
   type StoreAdapter,
   type Tool,
@@ -48,6 +50,12 @@ export interface HaiConfig {
    * model gets "already ran" back instead of running it again.
    */
   init?: Tool;
+  /**
+   * The notices this app sends with `hai.notify`. A notice not listed here is
+   * refused, as an unregistered surface is. With any listed, the browser opens
+   * the events stream (`GET {base}/events`) to receive them.
+   */
+  notices?: AnyNoticeImpl[];
 }
 
 /**
@@ -97,6 +105,7 @@ export class Hai {
   readonly config: HaiConfig;
   private readonly surfaces = new Map<string, AnySurfaceImpl>();
   private readonly tools = new Map<string, Tool>();
+  private readonly notices = new Map<string, AnyNoticeImpl>();
   /** What the model gets as its system prompt: the app's, then the scope. */
   readonly system: string;
   private seq = 0;
@@ -110,6 +119,10 @@ export class Hai {
       this.surfaces.set(s.surface.name, s);
     }
     for (const t of config.tools) this.tools.set(t.name, t);
+    for (const n of config.notices ?? []) {
+      if (this.notices.has(n.notice.name)) throw new Error(`two notices are named "${n.notice.name}"`);
+      this.notices.set(n.notice.name, n);
+    }
     // query_ui is DERIVED, never authored. It cannot drift from the surfaces
     // that actually exist, and it always exists.
     const queryUi = this.buildQueryUiTool();
@@ -121,6 +134,68 @@ export class Hai {
       }
       this.tools.set(config.init.name, config.init);
     }
+  }
+
+  /** Whether this app sends notices, so the browser should open the events stream. */
+  get sendsNotices(): boolean {
+    return this.notices.size > 0;
+  }
+
+  /**
+   * Send a notice to a conversation: its payload to the browser now, over the
+   * events stream, and its model text to the model in the next user message
+   * the conversation records.
+   *
+   * Takes no lease, so it works while a turn is streaming, while one is
+   * parked, and with nobody connected. It never starts a turn.
+   */
+  readonly notify: Notify = async (conversationId, notice, payload, options = {}) => {
+    const name = notice?.notice?.name;
+    if (this.notices.get(name) !== notice) {
+      throw new Error(`notice "${name}" is not registered: list it in createHai({ notices })`);
+    }
+    // Validated before it is stored: notify is called from webhooks and job
+    // queues, whose data comes from outside this process.
+    const parsed = notice.notice.payload.parse(payload);
+    const model: unknown = notice.impl.model(parsed);
+    if (model !== null && typeof model !== "string") {
+      throw new TypeError(`notice "${name}": model() must return a string or null`);
+    }
+    // Checked against the stored surfaces, which needs no lease. One left behind
+    // by an overtaken turn may pass as well, until it is swept, unlike a click
+    // on it: a click changes the history, and the handle here only says where
+    // the browser shows the notice. The model never sees it.
+    const { handle } = options;
+    if (handle !== undefined && !(await this.config.store.getPayload(handle, conversationId))) {
+      throw new Error(`notice "${name}": no surface ${handle} in conversation ${conversationId}`);
+    }
+    const record = await this.config.store.putNotice({
+      conversationId,
+      name,
+      version: notice.notice.version,
+      payload: parsed,
+      model,
+      ...(handle === undefined ? {} : { handle }),
+    });
+    return { seq: record.seq };
+  };
+
+  /**
+   * The notices this conversation's history hasn't taken in yet: their model
+   * text as blocks for the user message this request is about to record, and
+   * the number to set `noticedThrough` to when it does. Set it only where the
+   * message is pushed, so a request refused before then takes nothing in.
+   */
+  private async unreadNotices(conversation: Conversation): Promise<{ blocks: TextBlock[]; through: number }> {
+    const through = conversation.noticedThrough ?? 0;
+    if (!this.notices.size) return { blocks: [], through };
+    const fresh = (await this.config.store.getNotices(conversation.id, through)) ?? [];
+    return {
+      blocks: fresh.flatMap((n) =>
+        n.model === null ? [] : [{ type: "text" as const, text: `[App notification: ${n.name}] ${n.model}` }],
+      ),
+      through: fresh.at(-1)?.seq ?? through,
+    };
   }
 
   private nid(prefix: string) {
@@ -216,6 +291,10 @@ export class Hai {
 
     // The first message is the one that starts the conversation.
     const starting = conversation.messages.length === 0;
+    // Notices ride in the user's message, ahead of what they typed: they
+    // arrived before it.
+    const unread = await this.unreadNotices(conversation);
+    const message = withText(unread.blocks, text);
 
     // The user typed while a tool was parked. Every tool_use in a turn must
     // receive a tool_result, so close the pending one out honestly first.
@@ -241,9 +320,10 @@ export class Hai {
 
     emit({ type: "block_start", block: { kind: "user", id: this.nid("b"), text } });
     if (starting && this.config.init) {
-      if (await this.runInit(conversation, text, emit)) return; // parked on its surface
+      if (await this.runInit(conversation, message, emit, unread.through)) return; // parked on its surface
     } else {
-      conversation.messages.push({ role: "user", content: text });
+      conversation.messages.push({ role: "user", content: message });
+      conversation.noticedThrough = unread.through;
     }
     await this.runTurn(conversation, emit);
   }
@@ -256,22 +336,29 @@ export class Hai {
    */
   async start(conversation: Conversation, emit: Emit): Promise<void> {
     if (!this.config.init || conversation.messages.length > 0) return;
-    if (await this.runInit(conversation, STARTED, emit)) return; // parked on its surface
+    const unread = await this.unreadNotices(conversation);
+    if (await this.runInit(conversation, withText(unread.blocks, STARTED), emit, unread.through)) return; // parked on its surface
     conversation.status = "idle";
     emit({ type: "status", status: "idle" });
     await this.emitContext(conversation, emit);
   }
 
   /**
-   * Run the init tool as the conversation's first tool call, after `text` —
-   * the user's first message, or STARTED when it runs before one. Returns
-   * true when it parked the conversation on an elicit surface.
+   * Run the init tool as the conversation's first tool call, after `message` —
+   * the user's first message, or STARTED when it runs before one, with any
+   * unread notices, which take the conversation's notices through `through`.
+   * Returns true when it parked the conversation on an elicit surface.
    *
    * Nothing reaches the history until the tool has succeeded — not even the
    * user's message — so a refused start leaves the conversation exactly as
    * the route found it, and the next message starts it again.
    */
-  private async runInit(conversation: Conversation, text: string, emit: Emit): Promise<boolean> {
+  private async runInit(
+    conversation: Conversation,
+    message: string | TextBlock[],
+    emit: Emit,
+    through: number,
+  ): Promise<boolean> {
     const init = this.config.init!;
     const call = { type: "tool_use", id: `toolu_init_${newId()}`, name: init.name, input: {} };
     const toolBlockId = this.nid("b");
@@ -307,7 +394,8 @@ export class Hai {
     const ms = Date.now() - started;
     for (const e of held) emit(e);
 
-    conversation.messages.push({ role: "user", content: text });
+    conversation.messages.push({ role: "user", content: message });
+    conversation.noticedThrough = through;
     conversation.messages.push({ role: "assistant", content: [call] });
 
     if (asked) {
@@ -389,11 +477,15 @@ export class Hai {
       throw new Error(`action failed: ${(err as Error).message}`);
     }
 
+    // Read after the handler, so a notice its own work sent rides with the click.
+    const unread = await this.unreadNotices(conversation);
+
     // what recording the click changes, so a failed save below can undo it
     const before = {
       messages: conversation.messages.length,
       frozen: conversation.frozen.length,
       status: conversation.status,
+      noticedThrough: conversation.noticedThrough,
     };
     if (pending) {
       // resolve: the gate above let it through only for the waiting surface
@@ -409,14 +501,17 @@ export class Hai {
             // so nothing about the search has reached the model yet.
             content: `${pending.digest}\n${label}`,
           },
+          // after the tool results, which the API requires to come first
+          ...unread.blocks,
         ],
       });
       conversation.pending = null;
       conversation.status = "idle"; // answered; the save below records that
     } else {
       // inform: enriches the conversation without having blocked it
-      conversation.messages.push({ role: "user", content: `[UI interaction] ${label}` });
+      conversation.messages.push({ role: "user", content: withText(unread.blocks, `[UI interaction] ${label}`) });
     }
+    conversation.noticedThrough = unread.through;
 
     // Commit the click before the model runs. The handler may have written,
     // and a model turn can outlast the lease; saved now, the click stays on
@@ -437,6 +532,7 @@ export class Hai {
       conversation.frozen.length = before.frozen;
       conversation.pending = pending;
       conversation.status = before.status;
+      conversation.noticedThrough = before.noticedThrough;
       throw err;
     }
 
@@ -858,6 +954,19 @@ function strictest(recorded: unknown, current: unknown): number | "never" | unde
 }
 
 const newId = () => globalThis.crypto.randomUUID().replaceAll("-", "").slice(0, 16);
+
+interface TextBlock {
+  type: "text";
+  text: string;
+}
+
+/**
+ * A user message: `text` after any notice blocks, or `text` alone when there
+ * are none — so a conversation with no notices keeps exactly the history it
+ * always had.
+ */
+const withText = (blocks: TextBlock[], text: string): string | TextBlock[] =>
+  blocks.length ? [...blocks, { type: "text", text }] : text;
 
 /** The least time between two progress frames from one tool call. */
 const PROGRESS_MS = 100;

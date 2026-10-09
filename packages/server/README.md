@@ -113,6 +113,59 @@ tools it was given, and the browser can only send `{handle, action, value}`,
 so put every check with consequences, such as who may book what, inside the
 tool or action handler, where it runs as code.
 
+**The server can tell a conversation something later, with a notice.** A
+webhook confirming a booking, a job finishing: `hai.notify` sends the browser
+the notice's payload now, and the model its `model` text in the next user
+message the conversation records. Declare it once, beside your surfaces:
+
+```ts
+// shared/notices.ts — imported by both halves
+export const holdConfirmed = defineNotice({
+  name: "hold_confirmed",
+  version: 1,
+  payload: z.object({ flightId: z.string(), reference: z.string() }),
+});
+
+// server
+const holdConfirmedServer = holdConfirmed.implement({
+  // required, like a digest: what the model hears, or null for nothing
+  model: (p) => `The airline confirmed the hold on ${p.flightId}, reference ${p.reference}.`,
+});
+const hai = createHai({ model, store, tools, surfaces, system, notices: [holdConfirmedServer] });
+
+// anywhere, whenever: a webhook, a queue, an action handler's follow-up
+await hai.notify(conversationId, holdConfirmedServer, { flightId: "AC832", reference: "QX7P2L" }, { handle: "ui_01" });
+```
+
+The payload is typed from the contract, and checked against its schema before
+it is stored. A notice that isn't listed in `notices`, a payload that fails its
+schema, or a `handle` with no surface stored in the conversation is refused.
+Pass a handle from the conversation's saved history, such as an action
+handler's `ctx.handle`. The check is against the stored surfaces, not that
+history, so a surface left behind by an overtaken turn may also pass, until a
+sweep such as `@haikit/postgres`'s `sweepOrphans` removes it. That is no
+promise, just harmless: the handle only says where the browser shows the
+notice, the model never sees it, and a notice can't change anything.
+
+`notify` takes no lease, so it works while a turn is streaming, while one is
+parked on a question, and with nobody connected. It never touches the history
+itself: the next request that records a user message takes every unread notice
+in. A typed message carries them ahead of what the user typed, and an answer to
+a question carries them after its tool results. Taking them in commits with
+that request's history, so a turn whose save is lost leaves them unread for
+the next one. A notice never starts a turn.
+
+With any notices listed, `hello` tells the browser to open a fourth route,
+`GET /hai/events?conversationId=…`. It streams the conversation's notices,
+each with its sequence number as its SSE `id`, so a browser that reconnects
+with `Last-Event-ID` picks up where it left off. It takes no lease, writes
+nothing, and accepts nothing from the browser but which conversation and where
+to resume. The `model` text never goes out on it. The browser sees that only
+once a turn has taken it in, as part of the history the `context` event shows
+the inspector, the same as a digest. It reads the store every two
+seconds, and a store with `watch` wakes it the moment a notice lands. The
+two-second read stays even then, so a lost wake-up only delays a notice.
+
 **A conversation closes once any of its surfaces passes its `staleAfterMs`.**
 From then on both routes answer with an `expired` event and the model is not
 called, so a picker left open over a weekend cannot resolve against last week's

@@ -339,6 +339,87 @@ export async function conform(label, make) {
     );
   }
 
+  // ── notices: appended unfenced, numbered in order, read back as given ─
+  {
+    const s = make();
+    const a = await s.loadConversation(undefined); // a holds the lease throughout
+    const b = await s.loadConversation(undefined);
+    const notice = (conversationId, extra) => ({ conversationId, name: "n", version: 1, payload: { x: 1 }, model: "m", ...extra });
+
+    check("a new conversation has taken in no notices", (a.noticedThrough ?? 0) === 0);
+    check("a conversation with no notices reads as empty, not missing", JSON.stringify(await s.getNotices(a.id, 0)) === "[]");
+    check("an unknown conversation's notices read as null", (await s.getNotices("conv_unknown", 0)) === null);
+    let refused = false;
+    try {
+      await s.putNotice(notice("conv_unknown"));
+    } catch {
+      refused = true;
+    }
+    check("a notice for an unknown conversation is refused", refused);
+
+    // unfenced: a turn holds a's lease, and the notice lands anyway
+    const before = Date.now();
+    const shapes = ["hello", "", 42, true, null, [1, "two"], { nested: { deep: ["x"] } }];
+    const put = [];
+    for (const payload of shapes) put.push(await s.putNotice(notice(a.id, { payload })));
+    put.push(await s.putNotice(notice(a.id, { model: null, handle: "ui_01", name: "other", version: 3 })));
+    await s.putNotice(notice(b.id));
+    const after = Date.now();
+    check("a notice lands while another holds the conversation's lease", put.length === shapes.length + 1);
+    check(
+      "seq increases with each notice in a conversation",
+      put.every((n, i) => i === 0 || n.seq > put[i - 1].seq),
+    );
+    const all = await s.getNotices(a.id, 0);
+    check(
+      "notices read back in seq order, every field as given",
+      JSON.stringify(all) === JSON.stringify(put) &&
+        all.slice(0, shapes.length).every((n, i) => JSON.stringify(n.payload) === JSON.stringify(shapes[i])),
+    );
+    const last = all.at(-1);
+    check(
+      "a null model, a handle, a name and a version round-trip; an absent handle stays absent",
+      last.model === null && last.handle === "ui_01" && last.name === "other" && last.version === 3 && !("handle" in all[0]),
+    );
+    const slack = 60_000;
+    check(
+      "a notice's createdAt is epoch milliseconds from when it was written",
+      all.every((n) => typeof n.createdAt === "number" && n.createdAt >= before - slack && n.createdAt <= after + slack),
+    );
+    check("notices are scoped to their conversation", (await s.getNotices(b.id, 0)).length === 1);
+    const tail = await s.getNotices(a.id, put[5].seq);
+    check("`after` returns only later notices", tail.length === 2 && tail[0].seq === put[6].seq);
+    const page = await s.getNotices(a.id, 0, 3);
+    check("`limit` caps how many come back, from the start", page.length === 3 && page[2].seq === put[2].seq);
+    all[0].payload = "mutated";
+    check("a read notice is a copy", (await s.getNotices(a.id, 0))[0].payload === "hello");
+
+    // taken in on the fenced row, with the history that records it
+    a.noticedThrough = put[3].seq;
+    a.leaseUntil = null;
+    await s.saveConversation(a);
+    const reloaded = await s.loadConversation(a.id);
+    check("noticedThrough round-trips with the conversation", reloaded.noticedThrough === put[3].seq);
+
+    // a store that can wake the events route does so, and lets go when told
+    if (s.watch) {
+      const aborter = new AbortController();
+      const steps = s.watch(b.id, aborter.signal)[Symbol.asyncIterator]();
+      const woke = steps.next();
+      await s.getNotices(b.id, 0); // the route reads after it starts watching
+      await s.putNotice(notice(b.id));
+      const first = await Promise.race([woke, new Promise((r) => setTimeout(() => r("timeout"), 2_000))]);
+      check("watch wakes when a notice lands", first !== "timeout" && first.done === false);
+      // spurious wake-ups are allowed; what matters is that abort ends it
+      const ended = (async () => {
+        for (;;) if ((await steps.next()).done) return true;
+      })();
+      aborter.abort();
+      const stopped = await Promise.race([ended, new Promise((r) => setTimeout(() => r(false), 2_000))]);
+      check("watch ends when its signal aborts", stopped === true);
+    }
+  }
+
   // ── the rightful holder's save still succeeds ─────────────────────────
   {
     const s = make();
@@ -372,6 +453,7 @@ export async function integration(label, make) {
   await initChecks(make);
   await actionChecks(make);
   await oneQuestionChecks(make);
+  await noticeChecks(make);
   return failures;
 }
 
@@ -2486,6 +2568,506 @@ async function oneQuestionChecks(make) {
   }
 }
 
+// ── notices reach the model in the next user message, and only there ────
+// A notice never touches the history when it is sent: whoever holds the turn,
+// the next request that records a user message takes it in, after any tool
+// results, and the history's `noticedThrough` moves with it on the fenced row.
+async function noticeChecks(make) {
+  console.log("\nnotices");
+  const { createHai } = await import("../packages/server/dist/index.js");
+  const { defineNotice, defineSurface, defineTool, resolve, inform, StaleLease } = await import("../packages/core/dist/index.js");
+  const any = { parse: (v) => v };
+  const store = make();
+
+  const flightOnly = {
+    parse(v) {
+      if (typeof v?.flight !== "string") throw new Error("flight must be a string");
+      return { flight: v.flight };
+    },
+  };
+  const held = defineNotice({ name: "held", version: 2, payload: flightOnly }).implement({
+    model: (p) => `${p.flight} is held.`,
+  });
+  const quiet = defineNotice({ name: "quiet", version: 1, payload: any }).implement({ model: () => null });
+  const stray = defineNotice({ name: "stray", version: 1, payload: any }).implement({ model: () => "x" });
+  const broken = defineNotice({ name: "broken", version: 1, payload: any }).implement({ model: () => 42 });
+
+  const picker = defineSurface({ name: "pick", version: 1, props: any, actions: { choose: resolve(any) }, queries: {} })
+    .implement({ digest: () => "a picker", actions: { choose: (v) => `Chose ${v}.` }, queries: {} });
+  const card = defineSurface({ name: "card", version: 1, props: any, actions: { note: inform(any) }, queries: {} })
+    .implement({ digest: () => "a card", actions: { note: (v) => `Noted ${v}.` }, queries: {} });
+  const show = defineTool({
+    name: "show",
+    description: "d",
+    input: any,
+    inputJsonSchema: { type: "object" },
+    run: (i, ctx) => (i.kind === "pick" ? ctx.render(picker, {}, { mode: "elicit" }) : ctx.render(card, {})),
+  });
+  const next = [];
+  const model = {
+    id: "stub",
+    async generate() {
+      const kind = next.shift();
+      if (kind) return { content: [{ type: "tool_use", id: `tu_${kind}_${Math.random()}`, name: "show", input: { kind } }], stop_reason: "tool_use" };
+      return { content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" };
+    },
+  };
+  const hai = createHai({ model, store, tools: [show], surfaces: [picker, card], notices: [held, quiet, broken], system: "x" });
+  const plain = createHai({ model, store, tools: [show], surfaces: [picker, card], system: "x" });
+
+  async function request(app, id, act) {
+    const c = await store.loadConversation(id);
+    let error = null;
+    try {
+      await act(c, () => {});
+    } catch (err) {
+      error = err;
+    }
+    c.leaseUntil = null;
+    await store.saveConversation(c);
+    return { c, error };
+  }
+  const say = (app, text) => (c, emit) => app.send(c, text, emit);
+  const click = (app, handle, action, value) => (c, emit) => app.interact(c, { handle, action, value }, emit);
+  const refused = async (fn) => {
+    try {
+      await fn();
+      return false;
+    } catch {
+      return true;
+    }
+  };
+  const lastUser = (c) => c.messages.filter((m) => m.role === "user").at(-1).content;
+  const note = (flight) => ({ type: "text", text: `[App notification: held] ${flight} is held.` });
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+  // ── what notify refuses, before anything is stored
+  next.push("card");
+  const opened = await request(hai, undefined, say(hai, "hi"));
+  const id = opened.c.id;
+  const cardHandle = opened.c.handles[0];
+  check("an app that sends notices says so to the browser", hai.sendsNotices && !plain.sendsNotices);
+  check("an unregistered notice is refused", await refused(() => hai.notify(id, stray, {})));
+  check("a payload that fails its schema is refused", await refused(() => hai.notify(id, held, { flight: 7 })));
+  check("a model() that returns neither text nor null is refused", await refused(() => hai.notify(id, broken, {})));
+  check("a handle with no surface stored in the conversation is refused", await refused(() => hai.notify(id, held, { flight: "X" }, { handle: "ui_99" })));
+  check("a notice for an unknown conversation is refused", await refused(() => hai.notify("conv_nope", held, { flight: "X" })));
+  check("nothing refused was stored", same(await store.getNotices(id, 0), []));
+  check("two notices with one name are refused at construction", await refused(async () =>
+    createHai({ model, store, tools: [], surfaces: [], notices: [held, held], system: "x" })));
+
+  // ── idle: the next message carries it, ahead of what the user typed
+  const { seq } = await hai.notify(id, held, { flight: "AC832", extra: "dropped by the schema" }, { handle: cardHandle });
+  const [stored] = await store.getNotices(id, 0);
+  check(
+    "a notice is stored validated, with its model text, version and handle",
+    seq === stored.seq && same(stored.payload, { flight: "AC832" }) && stored.model === "AC832 is held." &&
+      stored.version === 2 && stored.handle === cardHandle,
+  );
+  const quietSeq = (await hai.notify(id, quiet, { anything: true })).seq;
+  const idle = await request(hai, id, say(hai, "anything new?"));
+  check(
+    "the next message carries the notice ahead of what the user typed",
+    same(lastUser(idle.c), [note("AC832"), { type: "text", text: "anything new?" }]),
+  );
+  check("a notice with no model text is taken in without a word", idle.c.noticedThrough === quietSeq);
+  const again = await request(hai, id, say(hai, "and now?"));
+  check("a notice is taken in once", lastUser(again.c) === "and now?");
+
+  // ── parked: it rides with the answer, after the tool results
+  next.push("pick");
+  const parked = await request(hai, id, say(hai, "pick one"));
+  const pickHandle = parked.c.handles.at(-1);
+  await hai.notify(id, held, { flight: "NH7" });
+  const stillParked = await store.loadConversation(id);
+  check("a notice sent while a question waits leaves the history alone", stillParked.messages.length === parked.c.messages.length);
+  stillParked.leaseUntil = null;
+  await store.saveConversation(stillParked);
+  const answered = await request(hai, id, click(hai, pickHandle, "choose", "A"));
+  const answer = answered.c.messages.find((m) => Array.isArray(m.content) && m.content.some((b) => b.type === "tool_result" && /Chose A/.test(b.content)));
+  check(
+    "an answer carries the notice after its tool result",
+    answer?.content.at(-2)?.type === "tool_result" && same(answer.content.at(-1), note("NH7")),
+  );
+
+  // ── typed over a question: it rides with what the user typed
+  next.push("pick");
+  await request(hai, id, say(hai, "pick again"));
+  await hai.notify(id, held, { flight: "JL1" });
+  const typed = await request(hai, id, say(hai, "never mind"));
+  check(
+    "a message typed over a question carries it",
+    same(lastUser(typed.c), [note("JL1"), { type: "text", text: "never mind" }]),
+  );
+
+  // ── an inform click carries it too
+  await hai.notify(id, held, { flight: "UA9" });
+  const informed = await request(hai, id, click(hai, cardHandle, "note", "aisle"));
+  check(
+    "an inform click carries it",
+    same(lastUser(informed.c), [note("UA9"), { type: "text", text: "[UI interaction] Noted aisle." }]),
+  );
+
+  // ── a click whose save is lost takes nothing in
+  await hai.notify(id, held, { flight: "DL5" });
+  const before = await store.loadConversation(id);
+  const through = before.noticedThrough;
+  before.leaseUntil = null;
+  await store.saveConversation(before);
+  const losing = { ...store, saveConversation: async (c) => { throw new StaleLease(c.id); } };
+  const fenced = createHai({ model, store: losing, tools: [show], surfaces: [picker, card], notices: [held], system: "x" });
+  const lost = await store.loadConversation(id);
+  let threw = false;
+  try {
+    await fenced.interact(lost, { handle: cardHandle, action: "note", value: "x" }, () => {});
+  } catch {
+    threw = true;
+  }
+  check("a click whose save is rejected puts noticedThrough back", threw && lost.noticedThrough === through);
+  lost.leaseUntil = null;
+  await store.saveConversation(lost);
+  const retaken = await request(hai, id, say(hai, "still there?"));
+  check("…so the next message takes the notice in", same(lastUser(retaken.c)[0], note("DL5")));
+
+  // ── an app without notices keeps the history it always had
+  const unchanged = await request(plain, undefined, say(plain, "hello"));
+  check("with no notices, a message stays plain text", unchanged.c.messages[0].content === "hello");
+}
+
+// ── the events stream, and the client that follows it ──────────────────
+// Real parts end to end: a Hai with notices behind nodeHandler, read first with
+// plain fetches, then by createChat.
+async function noticeStreamChecks() {
+  console.log("\nnotice stream");
+  const http = await import("node:http");
+  const { createHai, memoryStore, nodeHandler } = await import("../packages/server/dist/index.js");
+  const { defineNotice, defineSurface, defineTool } = await import("../packages/core/dist/index.js");
+  const { createChat } = await import("../packages/client/src/index.js");
+  const any = { parse: (v) => v };
+  const held = defineNotice({ name: "held", version: 1, payload: any }).implement({ model: (p) => `secret ${p.flight}` });
+  const card = defineSurface({ name: "card", version: 1, props: any }).implement({ digest: () => "a card", actions: {}, queries: {} });
+  // set to have the tool send a notice about its own surface as it shows it
+  let noticeFromTool = null;
+  const show = defineTool({
+    name: "show",
+    description: "d",
+    input: any,
+    inputJsonSchema: { type: "object" },
+    async run(_i, ctx) {
+      const shownCard = await ctx.render(card, {});
+      if (noticeFromTool) await hai.notify(ctx.conversationId, held, noticeFromTool, { handle: shownCard.handle });
+      return shownCard;
+    },
+  });
+  let shown = false;
+  const model = {
+    id: "stub",
+    async generate() {
+      if (!shown) {
+        shown = true;
+        return { content: [{ type: "tool_use", id: "tu_1", name: "show", input: {} }], stop_reason: "tool_use" };
+      }
+      return { content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" };
+    },
+  };
+  // every limit the events route reads notices with
+  const limits = [];
+  const memory = memoryStore();
+  const store = { ...memory, getNotices: (id, after, limit) => (limits.push(limit), memory.getNotices(id, after, limit)) };
+  const hai = createHai({ model, store, tools: [show], surfaces: [card], notices: [held], system: "x" });
+  const plain = createHai({ model, store: memoryStore(), tools: [], surfaces: [], system: "x" });
+  const withNotices = nodeHandler(hai, "/hai");
+  const without = nodeHandler(plain, "/plain");
+  // every events response still open, so a test can drop them all
+  const streams = new Set();
+  // set to hold a chat's whole response back until a while after it ends, as
+  // a buffering proxy might, so its frames reach the client late
+  let holdChat = false;
+  const server = http.createServer(async (req, res) => {
+    if (req.url.includes("/events")) {
+      streams.add(res);
+      res.on("close", () => streams.delete(res));
+    }
+    if (holdChat && req.url.endsWith("/chat")) {
+      const chunks = [];
+      const write = res.write.bind(res);
+      const end = res.end.bind(res);
+      res.write = (chunk) => (chunks.push(chunk), true);
+      res.end = (chunk) => {
+        if (chunk) chunks.push(chunk);
+        setTimeout(() => (chunks.forEach((c) => write(c)), end()), 300);
+        return res;
+      };
+    }
+    if (!(await withNotices(req, res)) && !(await without(req, res))) res.writeHead(404).end("not handled");
+  });
+  await new Promise((r) => server.listen(5379, "127.0.0.1", r));
+  const base = "http://127.0.0.1:5379";
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  // the surface a conversation's turn rendered, read the way a turn would
+  const firstHandle = async (id) => {
+    const c = await store.loadConversation(id);
+    c.leaseUntil = null;
+    await store.saveConversation(c);
+    return c.handles[0];
+  };
+  const until = async (cond, ms = 2_000) => {
+    for (const end = Date.now() + ms; Date.now() < end; await wait(10)) if (cond()) return true;
+    return cond();
+  };
+
+  // Read an events stream for `ms`, or until `enough` frames: each frame's id
+  // and event.
+  async function read(url, headers = {}, enough = Infinity, ms = 600) {
+    const aborter = new AbortController();
+    const res = await fetch(url, { headers, signal: aborter.signal });
+    const frames = [];
+    if (!res.ok) return { status: res.status, frames };
+    const timer = setTimeout(() => aborter.abort(), ms);
+    try {
+      const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+      let buffer = "";
+      while (frames.length < enough) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += value;
+        let i;
+        while ((i = buffer.indexOf("\n\n")) >= 0) {
+          const lines = buffer.slice(0, i).split("\n");
+          buffer = buffer.slice(i + 2);
+          const data = lines.find((l) => l.startsWith("data: "));
+          if (data) frames.push({ id: lines.find((l) => l.startsWith("id: "))?.slice(4), event: JSON.parse(data.slice(6)) });
+        }
+      }
+    } catch {}
+    clearTimeout(timer);
+    aborter.abort();
+    return { status: res.status, frames };
+  }
+
+  try {
+    // ── the route
+    const chat = await fetch(`${base}/hai/chat`, { method: "POST", body: JSON.stringify({ message: "hi" }) }).then((r) => r.text());
+    const hello = JSON.parse(chat.split("\n").find((l) => l.startsWith("data: ")).slice(6));
+    const id = hello.conversationId;
+    check("hello tells the browser to open the events stream", hello.events === true);
+    const plainHello = await fetch(`${base}/plain/chat`, { method: "POST", body: JSON.stringify({ message: "hi" }) }).then((r) => r.text());
+    check("…and says nothing of it when the app sends no notices", !plainHello.includes('"events"'));
+    check("an app with no notices has no events route", (await fetch(`${base}/plain/events?conversationId=conv_1`)).status === 404 &&
+      (await fetch(`${base}/plain/events?conversationId=conv_1`).then((r) => r.text())) === "not handled");
+    check("an unknown conversation's stream is refused", (await read(`${base}/hai/events?conversationId=conv_nope`)).status === 404);
+
+    const handle = await firstHandle(id);
+    await hai.notify(id, held, { flight: "AC832" }, { handle });
+    await hai.notify(id, held, { flight: "NH7" });
+    const backlog = await read(`${base}/hai/events?conversationId=${id}`, {}, 2);
+    check(
+      "the stream starts with every notice sent before it opened, each with its seq as its id",
+      backlog.frames.length === 2 && backlog.frames.every((f) => f.id === String(f.event.seq)) &&
+        backlog.frames[0].event.type === "notice" && backlog.frames[0].event.handle === handle &&
+        backlog.frames[0].event.payload.flight === "AC832" && backlog.frames[0].event.name === "held",
+    );
+    check("the model's half is not on the events stream", !JSON.stringify(backlog.frames).includes("secret"));
+    const resumed = await read(`${base}/hai/events?conversationId=${id}`, { "last-event-id": backlog.frames[0].id }, 1);
+    check("Last-Event-ID resumes after the last notice seen", resumed.frames.length === 1 && resumed.frames[0].event.payload.flight === "NH7");
+    // nothing to catch up on: the stream still opens at once, not at the first heartbeat
+    const opening = Date.now();
+    const quiet = await Promise.race([
+      fetch(`${base}/hai/events?conversationId=${id}&after=${backlog.frames[1].id}`),
+      wait(2_000).then(() => null),
+    ]);
+    check(`a stream with nothing to send yet opens at once (${Date.now() - opening}ms)`, quiet?.status === 200);
+    await quiet?.body.cancel();
+    const live = read(`${base}/hai/events?conversationId=${id}`, { "last-event-id": backlog.frames[1].id }, 1, 2_000);
+    await wait(100);
+    await hai.notify(id, held, { flight: "JL1" });
+    const arrived = await live;
+    check("a notice sent while the stream is open arrives on it", arrived.frames[0]?.event.payload.flight === "JL1");
+    await until(() => streams.size === 0);
+    check("a stream the browser closes is let go of", streams.size === 0);
+
+    // ── a long backlog goes out a page at a time
+    for (let i = 0; i < 250; i++) await hai.notify(id, held, { flight: `F${i}` });
+    limits.length = 0;
+    const lastSeen = arrived.frames[0].id;
+    const long = await read(`${base}/hai/events?conversationId=${id}`, { "last-event-id": lastSeen }, 250, 3_000);
+    check(
+      "a backlog of 250 arrives whole, in order",
+      long.frames.length === 250 && long.frames.every((f, i) => f.event.payload.flight === `F${i}`),
+    );
+    check(
+      "…read from the store in pages, never all at once",
+      limits.length >= 3 && limits.every((limit) => Number.isInteger(limit) && limit > 0 && limit <= 100),
+    );
+
+    // ── a reader that stops reading cannot make the server buffer everything
+    const stalled = new AbortController();
+    const response = await fetch(`${base}/hai/events?conversationId=${id}&after=${long.frames.at(-1).id}`, {
+      signal: stalled.signal,
+    }); // and never read
+    await until(() => streams.size === 1);
+    const [backedUp] = streams;
+    const bulk = "x".repeat(64 * 1024);
+    for (let i = 0; i < 200; i++) await hai.notify(id, held, { flight: `B${i}`, bulk });
+    let buffered = 0;
+    for (let i = 0; i < 50; i++, await wait(20)) buffered = Math.max(buffered, backedUp.writableLength);
+    check(
+      `the server buffers little for a reader that has stopped (${Math.round(buffered / 1024)} KiB of 12.5 MiB sent)`,
+      buffered < 1024 * 1024,
+    );
+    stalled.abort();
+    void response;
+    check("…and lets go of it when it leaves", await until(() => streams.size === 0));
+
+    // ── the client
+    // a notice component that returns nothing from mount
+    const client = createChat({ endpoint: `${base}/hai`, registry: {}, notices: { held: { mount() {} } } });
+    shown = false; // its first turn shows a card too
+    await client.send("hello again"); // joins no conversation: a new one
+    const cid = client.state.conversationId;
+    check("the client opens the events stream when hello says to", await until(() => streams.size === 1));
+    const ch = await firstHandle(cid);
+    await hai.notify(cid, held, { flight: "UA9" });
+    await hai.notify(cid, held, { flight: "DL5" }, { handle: ch });
+    check("notices arrive in the client's state", await until(() => client.state.notices.length === 2));
+    const slot = { textContent: "", className: "", replaceChildren() {} };
+    check(
+      "mountNotice() answers null, not undefined, for a component that returns nothing",
+      client.mountNotice(client.state.notices[0].seq, slot) === null,
+    );
+    const kinds = client.state.blocks.map((b) => (b.kind === "notice" ? `notice:${b.payload.flight}` : b.kind));
+    const ui = kinds.indexOf("ui");
+    check(
+      "a notice naming a surface sits after it; one that names none goes at the end",
+      kinds[ui + 1] === "notice:DL5" && kinds.at(-1) === "notice:UA9",
+    );
+    // the connection drops; the client reconnects and resumes after DL5
+    for (const res of streams) res.destroy();
+    await hai.notify(cid, held, { flight: "BA2" });
+    check("after a dropped connection, the client reconnects and catches up", await until(() => client.state.notices.length === 3, 4_000));
+    check(
+      "…with nothing shown twice",
+      new Set(client.state.notices.map((n) => n.seq)).size === client.state.notices.length,
+    );
+    // a notice that beats its surface to the client moves under it once it opens
+    const order = [];
+    const stop = client.subscribe((_s, event) => order.push(event.type));
+    shown = false;
+    noticeFromTool = { flight: "EARLY" };
+    holdChat = true;
+    await client.send("show another");
+    holdChat = false;
+    noticeFromTool = null;
+    stop();
+    const early = client.state.blocks.findIndex((b) => b.kind === "notice" && b.payload.flight === "EARLY");
+    const lastUi = client.state.blocks.findLastIndex((b) => b.kind === "ui");
+    check("(the notice really did arrive before its surface opened)", order.indexOf("notice") < order.indexOf("ui_open"));
+    check("a notice that arrives before its surface sits under it once it opens", early === lastUi + 1);
+
+    client.reset();
+    check("reset() closes the stream", await until(() => streams.size === 0));
+    check("…and forgets the old conversation's notices", client.state.notices.length === 0);
+    client.close();
+  } finally {
+    for (const res of streams) res.destroy();
+    server.close();
+  }
+
+  // ── a watch that never wakes cannot keep a notice from the browser
+  {
+    const memory = memoryStore();
+    const deaf = {
+      ...memory,
+      // listens, and never says a word: a lost NOTIFY, a dropped LISTEN
+      async *watch(_id, signal) {
+        await new Promise((r) => signal.addEventListener("abort", r, { once: true }));
+      },
+    };
+    const quietHai = createHai({ model, store: deaf, tools: [], surfaces: [], notices: [held], system: "x" });
+    const quietHandler = nodeHandler(quietHai, "/hai");
+    const quietServer = http.createServer(async (req, res) => {
+      if (!(await quietHandler(req, res))) res.writeHead(404).end();
+    });
+    await new Promise((r) => quietServer.listen(5381, "127.0.0.1", r));
+    try {
+      const c = await deaf.loadConversation(undefined);
+      c.leaseUntil = null;
+      await deaf.saveConversation(c);
+      const reading = read(`http://127.0.0.1:5381/hai/events?conversationId=${c.id}`, {}, 1, 4_000);
+      await wait(200);
+      const sentAt = Date.now();
+      await quietHai.notify(c.id, held, { flight: "LOST" });
+      const got = await reading;
+      check(
+        `a notice whose wake-up never comes still arrives, on the next read (${((Date.now() - sentAt) / 1000).toFixed(1)}s)`,
+        got.frames[0]?.event.payload.flight === "LOST",
+      );
+    } finally {
+      quietServer.close();
+    }
+  }
+
+  // ── a conversation deleted under an open stream ends it
+  {
+    const memory = memoryStore();
+    let deleted = false;
+    const vanishing = { ...memory, getNotices: async (...args) => (deleted ? null : memory.getNotices(...args)) };
+    const goneHai = createHai({ model, store: vanishing, tools: [], surfaces: [], notices: [held], system: "x" });
+    const goneHandler = nodeHandler(goneHai, "/hai");
+    const goneServer = http.createServer(async (req, res) => {
+      if (!(await goneHandler(req, res))) res.writeHead(404).end();
+    });
+    await new Promise((r) => goneServer.listen(5382, "127.0.0.1", r));
+    try {
+      const c = await memory.loadConversation(undefined);
+      c.leaseUntil = null;
+      await memory.saveConversation(c);
+      const res = await fetch(`http://127.0.0.1:5382/hai/events?conversationId=${c.id}`);
+      const ended = res.text().then(() => true);
+      deleted = true;
+      const result = await Promise.race([ended, wait(4_000).then(() => false)]);
+      check("a stream whose conversation is deleted ends, at the next read", result === true);
+    } finally {
+      goneServer.close();
+    }
+  }
+
+  // ── a stream that keeps dropping backs off, though each attempt gets a 200
+  const attempts = [];
+  const flaky = http.createServer((req, res) => {
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    if (req.url.includes("/events")) {
+      attempts.push(Date.now());
+      return void res.end(); // up, then straight back down
+    }
+    req.resume();
+    req.on("end", () => {
+      res.write(`data: ${JSON.stringify({ type: "hello", conversationId: "conv_1", model: "m", events: true })}\n\n`);
+      res.end(`data: ${JSON.stringify({ type: "status", status: "idle" })}\n\n`);
+    });
+  });
+  await new Promise((r) => flaky.listen(5380, "127.0.0.1", r));
+  const dropping = createChat({ endpoint: "http://127.0.0.1:5380/hai", registry: {} });
+  try {
+    await dropping.send("hi");
+    await until(() => attempts.length >= 3, 6_000);
+    const gaps = attempts.slice(1, 3).map((t, i) => t - attempts[i]);
+    check(
+      `each drop waits longer before the next try (${gaps.map((g) => `${(g / 1000).toFixed(1)}s`).join(", ")})`,
+      gaps.length === 2 && gaps[0] >= 900 && gaps[1] >= 1_800,
+    );
+    // the chat is now waiting out a backoff; closing it ends that wait, timer and all
+    const timers = () => process.getActiveResourcesInfo().filter((r) => r === "Timeout").length;
+    const waiting = timers();
+    dropping.close();
+    await wait(0);
+    check(`close() during a backoff lets go of its timer (${waiting} → ${timers()})`, timers() === waiting - 1);
+  } finally {
+    dropping.close();
+    flaky.close();
+  }
+}
+
 // ── the transcript follows new content, and keeps a reader's place ──────
 // Surfaces mount a microtask after the render that creates them, and only then
 // have height. A transcript that scrolls before that, or decides whether to
@@ -2899,6 +3481,32 @@ async function transcriptChecks() {
     const done = runRow();
     check("a finished call shows how long it took, with no bar", done.text === "12 ms" && !done.bar);
     closeTranscript(running);
+
+    // ── a notice: labelled, announced, and drawn by the app's component ─
+    const noticed = new Root();
+    const mounted = [];
+    const telling = {
+      state: { blocks: [], surfaces: new Map(), expired: null },
+      mount() {},
+      mountNotice: (seq, el) => mounted.push({ seq, el }),
+    };
+    telling.state.blocks.push({ kind: "notice", id: "n:3", seq: 3, name: "hold_confirmed", version: 1, payload: {} });
+    renderTranscript(noticed, telling);
+    await settled();
+    const card = noticed.children[0];
+    check(
+      "a notice is a status region labelled with its name",
+      card?.className === "hai-notice" && card.attributes.role === "status" &&
+        card.children[0].textContent === "notice · hold_confirmed",
+    );
+    check(
+      "…and its component is mounted into its body, once",
+      mounted.length === 1 && mounted[0].seq === 3 && mounted[0].el === card.children[1],
+    );
+    renderTranscript(noticed, telling);
+    await settled();
+    check("rendering again leaves a notice mounted as it was", mounted.length === 1 && noticed.children[0] === card);
+    closeTranscript(noticed);
   } finally {
     if (!hadDocument) delete globalThis.document;
     if (!hadObserver) delete globalThis.ResizeObserver;
@@ -2975,6 +3583,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   await scopeChecks();
   await windowChecks();
   await clientChecks();
+  await noticeStreamChecks();
   await transcriptChecks();
 
   // Said plainly because a suite that looks exhaustive is worse than one that

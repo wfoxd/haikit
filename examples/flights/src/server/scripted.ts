@@ -65,13 +65,23 @@ export function scripted(): ModelAdapter {
       }
 
       // ── reacting to a user message ─────────────────────────────────
-      const text = (typeof last?.content === "string" ? last.content : "").toLowerCase();
+      // Notices ride ahead of what the user typed, as text blocks; what they
+      // typed is the last block.
+      const typed = typeof last?.content === "string" ? last.content : (last?.content as any[] | undefined)?.at(-1)?.text;
+      const text = String(typed ?? "").toLowerCase();
+      // the latest confirmation: an earlier one is for a flight held before
+      const hold = [...JSON.stringify(messages).matchAll(/\[App notification: hold_confirmed\] ([^"\\]*)/g)].at(-1)?.[1];
+
       const handle = JSON.stringify(messages).match(/ui_\d+/)?.[0];
 
       // An `inform` arrives as a plain user turn. Check it BEFORE the keyword
       // branches, or "Picked seat 20D" re-triggers the seat map tool.
       if (text.startsWith("[ui interaction]")) {
         return say("Noted. Anything else before I hold it?", onTextDelta);
+      }
+
+      if (/hold|held|confirm|book/.test(text)) {
+        return say(hold ? `Yes. ${hold}` : "Not yet. I'll tell you as soon as the airline confirms.", onTextDelta);
       }
 
       if (/seat/.test(text)) {

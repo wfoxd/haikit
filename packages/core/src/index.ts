@@ -241,6 +241,85 @@ export function defineSurface<P, A extends ActionMap = {}, Q extends QueryMap = 
   return surface;
 }
 
+// ───────────────────────────────────────────────────────── notices
+
+export interface NoticeImplDef<P> {
+  /**
+   * GUARANTEE 1, for notices — required. What the model hears of this notice,
+   * or `null` for nothing.
+   *
+   * A notice has two halves, like a tool result: its payload goes to the
+   * browser, and this goes to the model, in the next user message. Leaving the
+   * model out has to be a decision, or the browser shows a change the model
+   * goes on talking past. Precompute what the next turn needs, as a digest
+   * does; the payload can be large, because only the browser receives it.
+   *
+   * Runs once, when the notice is sent, and the text is stored with it: a later
+   * deploy that renames the notice or changes this cannot change what the model
+   * hears of one already sent.
+   */
+  model: (payload: P) => string | null;
+}
+
+export interface Notice<P> {
+  readonly name: string;
+  readonly version: number;
+  readonly payload: Schema<P>;
+  implement(impl: NoticeImplDef<P>): NoticeImpl<P>;
+}
+
+export interface NoticeImpl<P> {
+  readonly notice: Notice<P>;
+  readonly impl: NoticeImplDef<P>;
+}
+
+export type AnyNoticeImpl = NoticeImpl<any>;
+
+/**
+ * Declare a notice: something the server tells a conversation outside of any
+ * request, such as a booking confirmed by a webhook. Import this module from
+ * BOTH halves, as with a surface: the server calls `.implement()` and sends it
+ * with `hai.notify`, the browser renders its payload from the client's
+ * `notices` registry.
+ *
+ * A notice cannot round-trip. Its component gets no `send`; one that needs a
+ * button should show a surface instead.
+ */
+export function defineNotice<P>(def: { name: string; version: number; payload: Schema<P> }): Notice<P> {
+  const notice: Notice<P> = {
+    name: def.name,
+    version: def.version,
+    payload: def.payload,
+    implement(impl) {
+      return { notice, impl };
+    },
+  };
+  return notice;
+}
+
+export interface NotifyOptions {
+  /**
+   * A surface the browser shows this notice beside: one from the
+   * conversation's saved history, such as an action handler's `ctx.handle`.
+   * It is checked against the stored surfaces, so one left behind by an
+   * overtaken turn may pass too until a sweep removes it. No promise, just
+   * harmless: the handle only places the notice, and the model never sees it.
+   */
+  handle?: string;
+}
+
+/**
+ * Send a notice to a conversation. The payload is typed from the notice's
+ * contract, and checked against its schema before it is stored. Resolves to the
+ * notice's sequence number in that conversation.
+ */
+export type Notify = <P>(
+  conversationId: string,
+  notice: NoticeImpl<P>,
+  payload: NoInfer<P>,
+  options?: NotifyOptions,
+) => Promise<{ seq: number }>;
+
 // ─────────────────────────────────────── GUARANTEE 3: elicit safety
 
 type ResolveKeys<A extends ActionMap> = {
@@ -396,6 +475,44 @@ export interface Conversation {
    * token no longer matches the stored one has been superseded.
    */
   leaseToken: string | null;
+  /**
+   * The highest notice sequence number this conversation's history has taken
+   * in: every notice up to it has reached the model (or said it had nothing
+   * for it). Missing on conversations from before notices, which means 0.
+   *
+   * Lives on the fenced row for the reason `frozen` does. Taking a notice in
+   * and the history recording its text are one transition: a turn whose save
+   * is discarded leaves the notice untaken, and the turn that won takes it in.
+   */
+  noticedThrough?: number;
+}
+
+/**
+ * A notice as stored: what `hai.notify` sent, numbered in its conversation.
+ * Append-only — nothing about a notice changes once it is written.
+ */
+export interface NoticeRecord {
+  conversationId: string;
+  /**
+   * Per conversation, strictly increasing, and in commit order: a reader that
+   * has seen `seq` must never later find a smaller one appear. Gaps are fine.
+   */
+  seq: number;
+  /** When it was written, in epoch milliseconds. */
+  createdAt: number;
+  /** The notice contract's name and version. */
+  name: string;
+  version: number;
+  /** The payload, validated. Returned exactly as given. */
+  payload: unknown;
+  /**
+   * What the model hears of it, computed when it was sent. Never on the events
+   * stream. Once a turn takes it in, it is part of the history, and the
+   * `context` event shows it to the browser's inspector, as it does digests.
+   */
+  model: string | null;
+  /** A surface the browser shows it beside. */
+  handle?: string;
 }
 
 /**
@@ -442,7 +559,19 @@ export type Block =
   | { kind: "interaction"; id: string; handle: string; label: string };
 
 export type WireEvent =
-  | { type: "hello"; conversationId: string; model: string }
+  | {
+      type: "hello";
+      conversationId: string;
+      model: string;
+      /** The server sends notices: open `GET {base}/events` for this conversation. */
+      events?: true;
+    }
+  /**
+   * A notice, on the events stream only. Its `model` half is not in it: that
+   * goes to the model, in the next user message, and the browser sees it only
+   * as part of the history, in the `context` event's inspector view.
+   */
+  | { type: "notice"; seq: number; name: string; version: number; payload: unknown; handle?: string }
   | { type: "block_start"; block: Block }
   | { type: "text_delta"; id: string; text: string }
   | { type: "block_update"; id: string; status: string; ms: number; result: string }
@@ -639,6 +768,48 @@ export interface StoreAdapter {
    * network, so the loop is O(surfaces) queries per turn against a real store.
    */
   getPayloads(handles: string[], conversationId: string): Promise<PayloadRecord[]>;
+
+  /**
+   * Append a notice and return it as stored, numbered and timestamped.
+   *
+   * **Unfenced**: it takes no lease token. A notice comes from outside any
+   * turn — a webhook, a job queue — and must land while a turn is streaming or
+   * parked, so it never touches the conversation's history; the turn that next
+   * records a user message takes it in.
+   *
+   * Throws if the conversation does not exist. Every field comes back exactly
+   * as given.
+   *
+   * **`seq` must be in commit order, not merely increasing.** A global
+   * sequence lets one write take 10 and commit after another commits 11: a
+   * reader at 11 then never sees 10. Number it per conversation under the
+   * conversation's row lock, in the same statement as the insert:
+   *
+   * ```sql
+   * WITH next AS (
+   *   UPDATE conversations SET notice_seq = notice_seq + 1
+   *    WHERE id = $1 RETURNING notice_seq)
+   * INSERT INTO notices (conversation_id, seq, …)
+   * SELECT $1, notice_seq, … FROM next RETURNING *
+   * ```
+   *
+   * No row from `next` means no such conversation. Like the lease, a
+   * single-process suite cannot hold a store to this; it is a review item.
+   */
+  putNotice(record: Omit<NoticeRecord, "seq" | "createdAt">): Promise<NoticeRecord>;
+  /**
+   * A conversation's notices with `seq > after`, in seq order, at most `limit`
+   * of them. `null` means there is no such conversation; `[]` means none yet.
+   */
+  getNotices(conversationId: string, after: number, limit?: number): Promise<NoticeRecord[] | null>;
+  /**
+   * Optional. Resolves each step whenever a notice may have landed in this
+   * conversation, until `signal` aborts. It carries nothing: the caller reads
+   * with `getNotices`, so a wake-up that is lost or spurious delays a notice
+   * but never loses or duplicates one. The events route reads every couple of
+   * seconds regardless; this only makes a read sooner.
+   */
+  watch?(conversationId: string, signal: AbortSignal): AsyncIterable<void>;
 }
 
 /** Rough token estimate. Only used to surface the economics in the UI. */

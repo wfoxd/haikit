@@ -86,6 +86,36 @@ unmounted, and subscribers hear `{ type: "closed" }`. `mountChat` then removes
 its shell. A page using `renderTranscript` directly calls `closeTranscript(root)`
 when it removes a transcript, so its resize observer and scroll listener let go.
 
+## Notices
+
+When the server sends notices (`hai.notify`), its `hello` says so, and the chat
+keeps `GET /hai/events` open for the conversation. A dropped connection
+reconnects, backing off, and resumes after the last notice it saw, so none is
+missed or shown twice. `reset()` and `close()` end it.
+
+Each notice lands in `state.notices` and as a `notice` block: right after its
+surface's block when it names one, otherwise at the end. Its component comes
+from a `notices` registry, kept apart from the surface registry so the two
+never clash on a name:
+
+```js
+mountChat({
+  root, registry,
+  notices: {
+    hold_confirmed: {
+      mount(el, payload, { seq, handle }) {
+        el.textContent = `Fare held · ${payload.flightId} · ref ${payload.reference}`;
+      },
+    },
+  },
+});
+```
+
+A notice's component gets **no `send`**: nothing in it can reach the server. A
+name the registry doesn't list renders an error card. Like a surface, `mount`
+may return `{ unmount }`. With `createChat`, mount one yourself with
+`chat.mountNotice(seq, element)`.
+
 ## Out-of-date conversations
 
 The server closes a conversation once any surface passes its freshness window.

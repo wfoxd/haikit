@@ -9,6 +9,7 @@
 import type { Flight } from "../shared/surfaces.ts";
 import { flightTable, seatMap } from "../shared/surfaces.ts";
 import { stopLabel } from "./data.ts";
+import { requestHold } from "./airline.ts";
 
 const fmt = (f: Flight) =>
   `${f.airline} ${f.id} $${f.price} ${f.depart}->${f.arrive} ${f.duration} ${stopLabel(f.stops)}`;
@@ -50,9 +51,11 @@ export const flightTableServer = flightTable.implement({
     // Interactions are the cheapest precision you will ever buy — this is ONE
     // row, so be generous. The rank line is what lets the model comment
     // intelligently about a board it cannot see.
-    select(flightId, { props }) {
+    select(flightId, { props, handle, conversationId }) {
       const f = props.flights.find((x) => x.id === flightId);
       if (!f) return `Selection failed: unknown flight ${flightId}.`;
+      // The airline confirms a little later, as a notice beside this table.
+      requestHold(conversationId, handle, f, props.date);
       return (
         `Selected: ${f.airline} ${f.id}, ${props.origin} ${f.depart} -> ${props.destination} ${f.arrive}, ` +
         `${stopLabel(f.stops)}, ${f.duration}, $${f.price}. Rank: ${rank(f, props.flights)}.`

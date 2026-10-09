@@ -4,8 +4,8 @@
  * load-bearing, or tsc reports it as unused.
  */
 
-import { defineSurface, inform, resolve, type Schema } from "@haikit/core";
-import { reactSurface, type SurfaceProps } from "../src/index.js";
+import { defineNotice, defineSurface, inform, resolve, type Schema } from "@haikit/core";
+import { reactNotice, reactSurface, type NoticeProps, type SurfaceProps } from "../src/index.js";
 
 const str: Schema<string> = { parse: (v) => v as string };
 const rows: Schema<{ rows: string[] }> = { parse: (v) => v as { rows: string[] } };
@@ -25,3 +25,22 @@ function Picker({ props, send }: SurfaceProps<typeof picker>) {
 }
 
 export const registry = { picker: reactSurface(Picker) };
+
+const held = defineNotice({ name: "held", version: 1, payload: { parse: (v) => v as { flight: string } } });
+
+function Held({ payload, seq }: NoticeProps<typeof held>) {
+  void payload.flight.toUpperCase();
+  void seq.toFixed();
+  // @ts-expect-error  the payload is typed from the contract
+  void payload.fare;
+  return null;
+}
+
+// @ts-expect-error  a notice has nothing to send
+function Sends({ send }: NoticeProps<typeof held>) {
+  void send;
+  return null;
+}
+void Sends;
+
+export const notices = { held: reactNotice(Held) };

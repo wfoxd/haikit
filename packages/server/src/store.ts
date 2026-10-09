@@ -2,6 +2,7 @@ import {
   ConversationBusy,
   StaleLease,
   type Conversation,
+  type NoticeRecord,
   type PayloadRecord,
   type StoreAdapter,
 } from "@haikit/core";
@@ -49,6 +50,11 @@ export function memoryStore(options: MemoryStoreOptions = {}): StoreAdapter {
   }
   const conversations = new Map<string, Conversation>();
   const payloads = new Map<string, PayloadRecord>();
+  // conversation id → its notices in seq order, and who is waiting to hear of
+  // the next one. Numbered per conversation: nothing awaits between taking a
+  // number and appending, so commit order is seq order for free.
+  const notices = new Map<string, NoticeRecord[]>();
+  const waiting = new Map<string, Set<() => void>>();
   let convSeq = 0;
   let handleSeq = 0;
 
@@ -95,6 +101,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): StoreAdapter {
         pending: null,
         leaseUntil: Date.now() + leaseMs,
         leaseToken: newToken(),
+        noticedThrough: 0,
       };
       conversations.set(conversation.id, conversation);
       return copy(conversation);
@@ -128,6 +135,64 @@ export function memoryStore(options: MemoryStoreOptions = {}): StoreAdapter {
         if (record && record.conversationId === conversationId) out.push(copy(record));
       }
       return out;
+    },
+
+    /** Unfenced, as the contract says: a notice lands whoever holds the turn. */
+    async putNotice(record) {
+      if (!conversations.has(record.conversationId)) {
+        throw new Error(`conversation ${record.conversationId} does not exist`);
+      }
+      const list = notices.get(record.conversationId) ?? [];
+      const stored: NoticeRecord = copy({ ...record, seq: (list.at(-1)?.seq ?? 0) + 1, createdAt: Date.now() });
+      list.push(stored);
+      notices.set(record.conversationId, list);
+      for (const wake of waiting.get(record.conversationId) ?? []) wake();
+      return copy(stored);
+    },
+
+    async getNotices(conversationId, after, limit = Infinity) {
+      if (!conversations.has(conversationId)) return null;
+      const list = notices.get(conversationId) ?? [];
+      // Seq order, so the first one past `after` is found by halving, and only
+      // the page asked for is copied: reading a long backlog a page at a time
+      // never walks or copies the rest of it.
+      let lo = 0;
+      let hi = list.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (list[mid].seq > after) hi = mid;
+        else lo = mid + 1;
+      }
+      return copy(list.slice(lo, lo + limit));
+    },
+
+    async *watch(conversationId, signal) {
+      // One wake-up stands for any number of notices: a step resolves once
+      // something has landed since the last, and the caller reads them all.
+      let landed = false;
+      let wake: (() => void) | null = null;
+      const listener = () => {
+        landed = true;
+        wake?.();
+      };
+      const onAbort = () => wake?.();
+      const set = waiting.get(conversationId) ?? new Set();
+      set.add(listener);
+      waiting.set(conversationId, set);
+      signal.addEventListener("abort", onAbort);
+      try {
+        while (!signal.aborted) {
+          if (!landed) await new Promise<void>((r) => (wake = r));
+          wake = null;
+          if (signal.aborted) return;
+          landed = false;
+          yield;
+        }
+      } finally {
+        signal.removeEventListener("abort", onAbort);
+        set.delete(listener);
+        if (!set.size) waiting.delete(conversationId);
+      }
     },
   };
 }

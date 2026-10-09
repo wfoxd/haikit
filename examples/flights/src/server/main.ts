@@ -15,6 +15,8 @@ import { anthropic } from "@haikit/anthropic";
 import { scripted } from "./scripted.ts";
 import { tools } from "./tools.ts";
 import { flightTableServer, seatMapServer } from "./surfaces.ts";
+import { holdConfirmedServer } from "./notices.ts";
+import { connectAirline } from "./airline.ts";
 
 const SCRIPTED = process.env.HAI_SCRIPTED === "1";
 const PORT = Number(process.env.PORT) || 5173;
@@ -24,6 +26,7 @@ const hai = createHai({
   store: memoryStore(),
   tools,
   surfaces: [flightTableServer, seatMapServer],
+  notices: [holdConfirmedServer],
   system: `You are a flight assistant embedded in a UI that renders tool results as interactive components.
 
 Tools return a short DIGEST into your context. The full dataset goes to the user's browser and is
@@ -34,8 +37,11 @@ Rules:
   anything beyond it requires query_ui. Do not guess.
 - search_flights renders a picker and blocks until the user selects. The component is the question —
   do not also ask the user to type a choice.
+- Picking a flight asks the airline to hold the fare. Its confirmation arrives later as an
+  [App notification: hold_confirmed]. Until one has, do not say the fare is held.
 - Keep replies to one or two sentences.`,
 });
+connectAirline(hai.notify);
 
 const handleHai = nodeHandler(hai, "/hai");
 

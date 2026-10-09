@@ -145,6 +145,61 @@ async function adapterChecks(label, db) {
   }
 }
 
+/** Notices: LISTEN wake-ups, the upgrade from a table without them, and retention. */
+async function noticeChecks(label, db) {
+  console.log(`\n${label} — notices`);
+  const notice = (conversationId) => ({ conversationId, name: "n", version: 1, payload: {}, model: null });
+
+  // with a LISTEN connection, the store can wake the events route
+  {
+    const store = pgStore(db, { listen: db });
+    check("a store given a listener offers watch", typeof store.watch === "function");
+    check("a store without one does not", pgStore(db).watch === undefined);
+    const a = await store.loadConversation(undefined);
+    const aborter = new AbortController();
+    const steps = store.watch(a.id, aborter.signal)[Symbol.asyncIterator]();
+    // the first step is free: anything that landed before LISTEN took hold
+    await steps.next();
+    const woke = steps.next();
+    await store.putNotice(notice(a.id));
+    const step = await Promise.race([woke, new Promise((r) => setTimeout(() => r("timeout"), 2_000))]);
+    check("a notice's NOTIFY wakes whoever watches its conversation", step !== "timeout" && step.done === false);
+    aborter.abort();
+    check("watch ends when its signal aborts", (await steps.next()).done === true);
+  }
+
+  // a database migrated before notices existed gains them
+  {
+    await db.query(`ALTER TABLE haikit_conversations DROP COLUMN notice_seq, DROP COLUMN noticed_through`);
+    await migrate(db);
+    const store = pgStore(db);
+    const a = await store.loadConversation(undefined);
+    const n = await store.putNotice(notice(a.id));
+    check("migrating a pre-notices database adds what notices need", n.seq === 1 && a.noticedThrough === 0);
+  }
+
+  // a resume point past what an integer holds is read, not refused by a cast
+  {
+    const store = pgStore(db);
+    const a = await store.loadConversation(undefined);
+    let read = null;
+    try {
+      read = await store.getNotices(a.id, 2 ** 31);
+    } catch {}
+    check("a resume point past 2^31 reads as no notices, not an error", JSON.stringify(read) === "[]");
+  }
+
+  // retention is the conversation's: deleting it deletes its notices
+  {
+    const store = pgStore(db);
+    const a = await store.loadConversation(undefined);
+    await store.putNotice(notice(a.id));
+    await db.query(`DELETE FROM haikit_conversations WHERE id = $1`, [a.id]);
+    const { rows } = await db.query(`SELECT 1 FROM haikit_notices WHERE conversation_id = $1`, [a.id]);
+    check("deleting a conversation deletes its notices", rows.length === 0);
+  }
+}
+
 /** Only meaningful against a real server with real parallel connections. */
 async function concurrencyChecks(pool) {
   console.log("\npostgres — concurrency (real connections)");
@@ -265,6 +320,7 @@ async function sweepRaceChecks(pool) {
   await conform("postgres (PGlite)", (opts) => pgStore(db, opts));
   await integration("postgres (PGlite)", (opts) => pgStore(db, opts));
   await adapterChecks("postgres (PGlite)", db);
+  await noticeChecks("postgres (PGlite)", db);
   await db.close();
 }
 

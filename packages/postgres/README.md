@@ -40,7 +40,7 @@ exactly one to win.
 
 ## Schema
 
-Two tables, `haikit_conversations` and `haikit_payloads`. `migrate()` creates
+Three tables, `haikit_conversations`, `haikit_payloads` and `haikit_notices`. `migrate()` creates
 them if they do not exist and brings existing ones up to date; if you use your
 own migration tool, the statements are exported as `schema`.
 
@@ -52,8 +52,42 @@ With your own migration tool, apply the new `ALTER TABLE` from `schema` before
 deploying. Rows written before the column existed are held to the window your
 code declares.
 
+**Upgrading to 0.12:** `migrate()` adds `haikit_notices`, and `notice_seq` and
+`noticed_through` to `haikit_conversations`, for `hai.notify`. As before, if
+you call `migrate()` at startup there is nothing to do.
+
 Handles are numbered per conversation, so every conversation's digests start at
 `ui_01`.
+
+## Notices
+
+A notice is one `INSERT … SELECT`, numbered under the conversation's row lock,
+so two notices in one conversation always commit in the order they were
+numbered and a reader resuming after one can never miss an earlier. It takes no
+lease token: a notice lands whoever holds the turn. The same statement sends a
+`NOTIFY` on `haikit_notices` with the conversation id.
+
+Give the store a connection that can `LISTEN`, and the events route hears of a
+notice the moment it lands, rather than at its next two-second read. It needs a
+connection of its own: a pooled one goes back to the pool and stops listening.
+PGlite fits as it is (`pgStore(db, { listen: db })`). With `pg`:
+
+```ts
+const listener = new pg.Client({ connectionString: process.env.DATABASE_URL });
+await listener.connect();
+
+const store = pgStore(pool, {
+  listen: {
+    async listen(channel, onNotify) {
+      listener.on("notification", (msg) => msg.channel === channel && onNotify(msg.payload ?? ""));
+      await listener.query(`LISTEN ${channel}`);
+    },
+  },
+});
+```
+
+A notice belongs to its conversation and goes when it does: deleting a
+conversation deletes its notices. `sweepOrphans` never touches them.
 
 ## Cleaning up
 

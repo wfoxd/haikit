@@ -174,3 +174,27 @@ export const registry = {
     },
   },
 };
+
+/**
+ * Client halves of the notice contracts, typechecked against
+ * `src/shared/notices.ts` like the surfaces above. A notice component has no
+ * `send`: it shows what the server said, and nothing in it reaches back.
+ */
+export const notices = {
+  hold_confirmed: {
+    /**
+     * @param {HTMLElement} el
+     * @param {import("@haikit/core").Infer<typeof import("../src/shared/notices.ts").holdConfirmed.payload>} payload
+     */
+    mount(el, payload) {
+      const head = h("div", "c-head");
+      head.append(
+        h("span", "c-title", `Fare held · ${payload.airline} ${payload.flightId}`),
+        h("span", "c-sub", `${payload.date} · departs ${payload.depart} · $${payload.price}`),
+      );
+      const foot = h("div", "c-foot");
+      foot.append(h("span", "hint", "reference"), h("span", "mono", payload.reference));
+      el.append(head, foot);
+    },
+  },
+};
