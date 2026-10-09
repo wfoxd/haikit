@@ -44,3 +44,15 @@ function Sends({ send }: NoticeProps<typeof held>) {
 void Sends;
 
 export const notices = { held: reactNotice(Held) };
+
+// a wake notice renders the same way, typed from its contract too
+const dropped = defineNotice({ name: "dropped", version: 1, kind: "wake", payload: { parse: (v) => v as { was: number } } });
+
+function Dropped({ payload }: NoticeProps<typeof dropped>) {
+  void payload.was.toFixed();
+  // @ts-expect-error  the payload is typed from the contract
+  void payload.now;
+  return null;
+}
+
+export const wakeNotices = { dropped: reactNotice(Dropped) };

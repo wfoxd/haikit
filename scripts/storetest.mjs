@@ -2919,6 +2919,62 @@ async function wakeChecks(make) {
   check("once the model is back, the notice wakes", (await failing.wake(fid, () => {})) === "woke" &&
     same(lastUser(await peek(fid))[0], note("dropped", "DOWN is cheaper.")));
 
+  // ── a wake turn that outlasts its lease is not run again by a takeover
+  {
+    const shortStore = make({ leaseMs: 60 });
+    let wakeRuns = 0;
+    const slowModel = {
+      id: "slow",
+      async generate(req) {
+        const last = req.messages.at(-1).content;
+        if (Array.isArray(last) && last.at(-1)?.text?.startsWith("[The user")) {
+          wakeRuns++;
+          await new Promise((r) => setTimeout(r, 150)); // longer than the lease
+        }
+        return { content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" };
+      },
+    };
+    const slowHai = createHai({ model: slowModel, store: shortStore, tools: [], surfaces: [], notices: [dropped], system: "x", maxWakes: { count: 10, perMs: 60_000 } });
+    const c = await shortStore.loadConversation(undefined);
+    await slowHai.send(c, "hi", () => {});
+    c.leaseUntil = null;
+    await shortStore.saveConversation(c);
+    await slowHai.notify(c.id, dropped, { flight: "SLOW" });
+    const first = slowHai.wake(c.id, () => {}).catch(() => "threw");
+    await new Promise((r) => setTimeout(r, 100)); // the first turn's lease has lapsed
+    const second = await slowHai.wake(c.id, () => {});
+    await first;
+    check(
+      `a takeover of a wake turn that outlasts its lease finds nothing to wake for (${second}, ${wakeRuns} model call)`,
+      second === "idle" && wakeRuns === 1,
+    );
+  }
+
+  // ── a save that fails still lets the browser go
+  {
+    const flaky = make();
+    let saves = 0;
+    const failingSave = { ...flaky, saveConversation: async (c2) => (++saves === 2 ? Promise.reject(new Error("database away")) : flaky.saveConversation(c2)) };
+    const flakyHai = createHai({ model, store: failingSave, tools: [], surfaces: [], notices: [dropped], system: "x", maxWakes: { count: 10, perMs: 60_000 } });
+    const c = await flaky.loadConversation(undefined);
+    await flakyHai.send(c, "hi", () => {});
+    c.leaseUntil = null;
+    await flaky.saveConversation(c);
+    await flakyHai.notify(c.id, dropped, { flight: "LOSSY" });
+    const sent = [];
+    saves = 0; // the wake's own saves: the commit, then the one on the way out
+    let threw = false;
+    try {
+      await flakyHai.wake(c.id, (e) => sent.push(e.type));
+    } catch {
+      threw = true;
+    }
+    check(
+      "a wake whose final save fails says so, still tells the browser it may send, and reports the failure",
+      threw && sent.includes("error") && sent.at(-1) === "released",
+    );
+  }
+
   // ── out of date: no turn
   next.push("brief");
   await request(id, (c2, emit) => waitingHai.send(c2, "brief", emit));

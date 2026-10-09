@@ -242,6 +242,7 @@ export class Hai {
     }
     let outcome: WakeOutcome = "idle";
     let superseded = false;
+    let saveFailed: unknown = null;
     try {
       outcome = await this.wakeTurn(conversation, emit);
     } catch (err) {
@@ -255,13 +256,16 @@ export class Hai {
       try {
         if (!superseded) await this.config.store.saveConversation(conversation);
       } catch (err) {
-        if (!isStaleLease(err)) throw err;
         emit({ type: "error", message: (err as Error).message });
+        if (!isStaleLease(err)) saveFailed = err;
       }
       // Only now may the browser send again: until the save above, the lease
-      // was still held, and a message would have been refused.
+      // was still held. Sent even when that save failed, or the browser would
+      // wait for ever; the conversation is then held until its lease lapses,
+      // and a message sent meanwhile is refused as busy, which it reports.
       if (outcome === "woke" || outcome === "failed") emit({ type: "released" });
     }
+    if (saveFailed) throw saveFailed;
     return outcome;
   }
 
@@ -303,13 +307,20 @@ export class Hai {
     conversation.messages.push({ role: "user", content: [...unread.blocks, { type: "text", text: WOKEN }] });
     conversation.noticedThrough = unread.through;
     try {
+      // Committed before the model runs, as a click is. A turn can outlast the
+      // lease, and a stream retrying meanwhile would take the conversation
+      // over and run these same notices again, tools and all. Saved now, it
+      // finds nothing left to wake for. The save is fenced: if another request
+      // took the conversation over first, this stops here.
+      await this.config.store.saveConversation(conversation);
       await this.runTurn(conversation, emit);
     } catch (err) {
       // A turn that fails part way leaves a user message with no reply, and a
       // status of `streaming`: saved, that would be a history the next message
       // cannot follow. Put it back as it was, notices unread and able to wake
-      // again. Payloads the turn stored are left behind, inert, as an
-      // overtaken turn's are. A lost lease needs no undoing: nothing is saved.
+      // again; the save on the way out overwrites the commit above. Payloads
+      // the turn stored are left behind, inert, as an overtaken turn's are. A
+      // lost lease needs no undoing: nothing more is saved.
       if (!isStaleLease(err)) {
         conversation.messages.length = before.messages;
         conversation.handles.length = before.handles;
