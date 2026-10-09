@@ -2746,7 +2746,19 @@ async function noticeStreamChecks() {
   const any = { parse: (v) => v };
   const held = defineNotice({ name: "held", version: 1, payload: any }).implement({ model: (p) => `secret ${p.flight}` });
   const card = defineSurface({ name: "card", version: 1, props: any }).implement({ digest: () => "a card", actions: {}, queries: {} });
-  const show = defineTool({ name: "show", description: "d", input: any, inputJsonSchema: { type: "object" }, run: (_i, ctx) => ctx.render(card, {}) });
+  // set to have the tool send a notice about its own surface as it shows it
+  let noticeFromTool = null;
+  const show = defineTool({
+    name: "show",
+    description: "d",
+    input: any,
+    inputJsonSchema: { type: "object" },
+    async run(_i, ctx) {
+      const shownCard = await ctx.render(card, {});
+      if (noticeFromTool) await hai.notify(ctx.conversationId, held, noticeFromTool, { handle: shownCard.handle });
+      return shownCard;
+    },
+  });
   let shown = false;
   const model = {
     id: "stub",
@@ -2758,17 +2770,34 @@ async function noticeStreamChecks() {
       return { content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" };
     },
   };
-  const store = memoryStore();
+  // every limit the events route reads notices with
+  const limits = [];
+  const memory = memoryStore();
+  const store = { ...memory, getNotices: (id, after, limit) => (limits.push(limit), memory.getNotices(id, after, limit)) };
   const hai = createHai({ model, store, tools: [show], surfaces: [card], notices: [held], system: "x" });
   const plain = createHai({ model, store: memoryStore(), tools: [], surfaces: [], system: "x" });
   const withNotices = nodeHandler(hai, "/hai");
   const without = nodeHandler(plain, "/plain");
   // every events response still open, so a test can drop them all
   const streams = new Set();
+  // set to hold a chat's whole response back until a while after it ends, as
+  // a buffering proxy might, so its frames reach the client late
+  let holdChat = false;
   const server = http.createServer(async (req, res) => {
     if (req.url.includes("/events")) {
       streams.add(res);
       res.on("close", () => streams.delete(res));
+    }
+    if (holdChat && req.url.endsWith("/chat")) {
+      const chunks = [];
+      const write = res.write.bind(res);
+      const end = res.end.bind(res);
+      res.write = (chunk) => (chunks.push(chunk), true);
+      res.end = (chunk) => {
+        if (chunk) chunks.push(chunk);
+        setTimeout(() => (chunks.forEach((c) => write(c)), end()), 300);
+        return res;
+      };
     }
     if (!(await withNotices(req, res)) && !(await without(req, res))) res.writeHead(404).end("not handled");
   });
@@ -2849,6 +2878,39 @@ async function noticeStreamChecks() {
     await until(() => streams.size === 0);
     check("a stream the browser closes is let go of", streams.size === 0);
 
+    // ── a long backlog goes out a page at a time
+    for (let i = 0; i < 250; i++) await hai.notify(id, held, { flight: `F${i}` });
+    limits.length = 0;
+    const lastSeen = arrived.frames[0].id;
+    const long = await read(`${base}/hai/events?conversationId=${id}`, { "last-event-id": lastSeen }, 250, 3_000);
+    check(
+      "a backlog of 250 arrives whole, in order",
+      long.frames.length === 250 && long.frames.every((f, i) => f.event.payload.flight === `F${i}`),
+    );
+    check(
+      "…read from the store in pages, never all at once",
+      limits.length >= 3 && limits.every((limit) => Number.isInteger(limit) && limit > 0 && limit <= 100),
+    );
+
+    // ── a reader that stops reading cannot make the server buffer everything
+    const stalled = new AbortController();
+    const response = await fetch(`${base}/hai/events?conversationId=${id}&after=${long.frames.at(-1).id}`, {
+      signal: stalled.signal,
+    }); // and never read
+    await until(() => streams.size === 1);
+    const [backedUp] = streams;
+    const bulk = "x".repeat(64 * 1024);
+    for (let i = 0; i < 200; i++) await hai.notify(id, held, { flight: `B${i}`, bulk });
+    let buffered = 0;
+    for (let i = 0; i < 50; i++, await wait(20)) buffered = Math.max(buffered, backedUp.writableLength);
+    check(
+      `the server buffers little for a reader that has stopped (${Math.round(buffered / 1024)} KiB of 12.5 MiB sent)`,
+      buffered < 1024 * 1024,
+    );
+    stalled.abort();
+    void response;
+    check("…and lets go of it when it leaves", await until(() => streams.size === 0));
+
     // ── the client
     const client = createChat({ endpoint: `${base}/hai`, registry: {}, notices: {} });
     shown = false; // its first turn shows a card too
@@ -2873,6 +2935,21 @@ async function noticeStreamChecks() {
       "…with nothing shown twice",
       new Set(client.state.notices.map((n) => n.seq)).size === client.state.notices.length,
     );
+    // a notice that beats its surface to the client moves under it once it opens
+    const order = [];
+    const stop = client.subscribe((_s, event) => order.push(event.type));
+    shown = false;
+    noticeFromTool = { flight: "EARLY" };
+    holdChat = true;
+    await client.send("show another");
+    holdChat = false;
+    noticeFromTool = null;
+    stop();
+    const early = client.state.blocks.findIndex((b) => b.kind === "notice" && b.payload.flight === "EARLY");
+    const lastUi = client.state.blocks.findLastIndex((b) => b.kind === "ui");
+    check("(the notice really did arrive before its surface opened)", order.indexOf("notice") < order.indexOf("ui_open"));
+    check("a notice that arrives before its surface sits under it once it opens", early === lastUi + 1);
+
     client.reset();
     check("reset() closes the stream", await until(() => streams.size === 0));
     check("…and forgets the old conversation's notices", client.state.notices.length === 0);
@@ -2880,6 +2957,35 @@ async function noticeStreamChecks() {
   } finally {
     for (const res of streams) res.destroy();
     server.close();
+  }
+
+  // ── a stream that keeps dropping backs off, though each attempt gets a 200
+  const attempts = [];
+  const flaky = http.createServer((req, res) => {
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    if (req.url.includes("/events")) {
+      attempts.push(Date.now());
+      return void res.end(); // up, then straight back down
+    }
+    req.resume();
+    req.on("end", () => {
+      res.write(`data: ${JSON.stringify({ type: "hello", conversationId: "conv_1", model: "m", events: true })}\n\n`);
+      res.end(`data: ${JSON.stringify({ type: "status", status: "idle" })}\n\n`);
+    });
+  });
+  await new Promise((r) => flaky.listen(5380, "127.0.0.1", r));
+  const dropping = createChat({ endpoint: "http://127.0.0.1:5380/hai", registry: {} });
+  try {
+    await dropping.send("hi");
+    await until(() => attempts.length >= 3, 6_000);
+    const gaps = attempts.slice(1, 3).map((t, i) => t - attempts[i]);
+    check(
+      `each drop waits longer before the next try (${gaps.map((g) => `${(g / 1000).toFixed(1)}s`).join(", ")})`,
+      gaps.length === 2 && gaps[0] >= 900 && gaps[1] >= 1_800,
+    );
+  } finally {
+    dropping.close();
+    flaky.close();
   }
 }
 

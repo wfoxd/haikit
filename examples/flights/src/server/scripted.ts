@@ -69,7 +69,8 @@ export function scripted(): ModelAdapter {
       // typed is the last block.
       const typed = typeof last?.content === "string" ? last.content : (last?.content as any[] | undefined)?.at(-1)?.text;
       const text = String(typed ?? "").toLowerCase();
-      const hold = JSON.stringify(messages).match(/\[App notification: hold_confirmed\] ([^"\\]*)/)?.[1];
+      // the latest confirmation: an earlier one is for a flight held before
+      const hold = [...JSON.stringify(messages).matchAll(/\[App notification: hold_confirmed\] ([^"\\]*)/g)].at(-1)?.[1];
 
       const handle = JSON.stringify(messages).match(/ui_\d+/)?.[0];
 

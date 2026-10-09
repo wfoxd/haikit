@@ -240,6 +240,14 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
           element: null,
         });
         state.blocks.push({ kind: "ui", id: `ui:${event.handle}`, handle: event.handle, toolId: event.toolId });
+        // Notices come on a stream of their own, so one can arrive before the
+        // surface it names: it went to the end then, and moves under it now.
+        // Moved within the same array, which the transcript would otherwise
+        // take for a new conversation's.
+        for (const early of state.blocks.filter((b) => b.kind === "notice" && b.handle === event.handle)) {
+          state.blocks.splice(state.blocks.indexOf(early), 1);
+          state.blocks.push(early);
+        }
         if (typeof event.staleAfterMs === "number") {
           const at = sentAt + event.staleAfterMs;
           if (state.expiresAt === null || at < state.expiresAt) {
@@ -310,6 +318,11 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
   async function follow(conversationId, gen, signal) {
     let wait = 1_000;
     while (gen === generation && !signal.aborted) {
+      // A connection that delivered a notice, or stayed up a while, was
+      // healthy, and the next drop starts the backoff over. One that drops
+      // straight after it opens was not, however often the server says 200.
+      const opened = Date.now();
+      let delivered = false;
       try {
         const last = state.notices.at(-1)?.seq ?? 0;
         const res = await fetch(`${endpoint}/events?conversationId=${encodeURIComponent(conversationId)}`, {
@@ -319,7 +332,6 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
         // the server has no such conversation, or sends no notices: stop
         if (res.status === 404) return;
         if (res.ok) {
-          wait = 1_000;
           const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
           let buffer = "";
           for (;;) {
@@ -332,13 +344,17 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
               const frame = buffer.slice(0, i);
               buffer = buffer.slice(i + 2);
               const line = frame.split("\n").find((l) => l.startsWith("data: "));
-              if (line) apply(JSON.parse(line.slice(6)));
+              if (line) {
+                apply(JSON.parse(line.slice(6)));
+                delivered = true;
+              }
             }
           }
         }
       } catch {
         if (signal.aborted) return;
       }
+      if (delivered || Date.now() - opened >= HEALTHY_MS) wait = 1_000;
       // dropped, refused, or the network went away: try again, backing off
       await new Promise((r) => setTimeout(r, wait));
       wait = Math.min(wait * 2, 30_000);
@@ -582,6 +598,9 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
     },
   };
 }
+
+/** An events connection that stays up this long was healthy, whatever it delivered. */
+const HEALTHY_MS = 30_000;
 
 /**
  * Run `fn`, reporting what it throws without letting it stop the caller: the

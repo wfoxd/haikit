@@ -110,11 +110,19 @@ const POLL_MS = 2_000;
 /** Proxies drop a stream that says nothing for long; a comment keeps it open. */
 const HEARTBEAT_MS = 25_000;
 
+/** Notices read from the store at a time, so a long backlog goes out page by page. */
+const PAGE = 100;
+
 /**
  * Stream a conversation's notices: every one after where the browser has got
  * to (`Last-Event-ID` on a reconnect, else `?after=`), then each as it lands.
  * Takes no lease and writes nothing. Each notice goes out as its payload; its
  * model text never leaves the server.
+ *
+ * Bounded both ways. The store is read a page at a time, so a conversation
+ * with years of notices is never held in memory at once, and nothing more is
+ * written while the socket is still taking what was, so a reader that is slow
+ * cannot make the server buffer every notice for it.
  */
 async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse, url: URL) {
   const { store } = hai.config;
@@ -122,8 +130,8 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
   const resume = Number(req.headers["last-event-id"] ?? url.searchParams.get("after") ?? 0);
   let after = Number.isSafeInteger(resume) && resume > 0 ? resume : 0;
 
-  const backlog = await store.getNotices(conversationId, after);
-  if (backlog === null) {
+  const first = await store.getNotices(conversationId, after, PAGE);
+  if (first === null) {
     res.writeHead(404, { "content-type": "application/json" });
     res.end(JSON.stringify({ error: "unknown conversation" }));
     return;
@@ -134,38 +142,60 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
     "cache-control": "no-cache",
     connection: "keep-alive",
   });
-  const send = (records: NoticeRecord[] | null) => {
-    for (const n of records ?? []) {
-      if (n.seq <= after) continue;
-      const event: WireEvent = {
-        type: "notice",
-        seq: n.seq,
-        name: n.name,
-        version: n.version,
-        payload: n.payload,
-        ...(n.handle === undefined ? {} : { handle: n.handle }),
+  const aborter = new AbortController();
+  const { signal } = aborter;
+  res.on("close", () => aborter.abort());
+
+  // Resolves once the socket has taken what is queued, or the browser has gone.
+  const write = async (chunk: string) => {
+    if (res.write(chunk)) return;
+    await new Promise<void>((resolve) => {
+      const done = () => {
+        res.off("drain", done);
+        signal.removeEventListener("abort", done);
+        resolve();
       };
-      res.write(`id: ${n.seq}\ndata: ${JSON.stringify(event)}\n\n`);
-      after = n.seq;
+      res.on("drain", done);
+      signal.addEventListener("abort", done);
+    });
+  };
+
+  // Everything after `after`, a page at a time, until a page comes back short.
+  const catchUp = async (page: NoticeRecord[] | null = null) => {
+    for (;;) {
+      const records = page ?? (await store.getNotices(conversationId, after, PAGE)) ?? [];
+      for (const n of records) {
+        if (signal.aborted) return;
+        if (n.seq <= after) continue;
+        const event: WireEvent = {
+          type: "notice",
+          seq: n.seq,
+          name: n.name,
+          version: n.version,
+          payload: n.payload,
+          ...(n.handle === undefined ? {} : { handle: n.handle }),
+        };
+        await write(`id: ${n.seq}\ndata: ${JSON.stringify(event)}\n\n`);
+        after = n.seq;
+      }
+      if (records.length < PAGE || signal.aborted) return;
+      page = null;
     }
   };
-  send(backlog);
 
-  const aborter = new AbortController();
-  res.on("close", () => aborter.abort());
-  const heartbeat = setInterval(() => res.write(": ping\n\n"), HEARTBEAT_MS);
-  const wakes = (store.watch?.(conversationId, aborter.signal) ?? every(POLL_MS, aborter.signal))[
-    Symbol.asyncIterator
-  ]();
+  // a heartbeat is only for a stream gone quiet, never one already backed up
+  const heartbeat = setInterval(() => res.writableNeedDrain || res.write(": ping\n\n"), HEARTBEAT_MS);
+  const wakes = (store.watch?.(conversationId, signal) ?? every(POLL_MS, signal))[Symbol.asyncIterator]();
   try {
-    // Watching starts before the second read, so a notice that landed after
-    // the backlog was read is either in that read or wakes the loop.
+    await catchUp(first);
+    // Watching starts before the next read, so a notice that landed after the
+    // backlog was read is either in that read or wakes the loop.
     let next = wakes.next();
-    send(await store.getNotices(conversationId, after));
-    while (!aborter.signal.aborted) {
+    await catchUp();
+    while (!signal.aborted) {
       if ((await next).done) break;
       next = wakes.next();
-      send(await store.getNotices(conversationId, after));
+      await catchUp();
     }
   } finally {
     clearInterval(heartbeat);
