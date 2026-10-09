@@ -210,6 +210,29 @@ async function noticeChecks(label, db) {
       "half a message schedules its own cleanup, cancelled once the rest arrives",
       scheduled === 1 && cleanups.size === 0 && heard.join() === "hello",
     );
+
+    // Anything may NOTIFY on the channel. What doesn't hold together is
+    // dropped, and a real message after it still arrives.
+    const junk = [
+      "nonsense",
+      `${c.id}`,
+      `${c.id} j1 0 NaN aGk=`,
+      `${c.id} j2 1.5 2 aGk=`,
+      `${c.id} j3 3 2 aGk=`,
+      `${c.id} j4 0 1 %%%not-base64%%%`,
+      `${c.id} j5 0 1 ${btoa("\xff\xfe")}`, // base64, but not UTF-8
+      `${c.id} j6 0 99999999 aGk=`,
+    ];
+    heard.length = 0;
+    let threw = null;
+    try {
+      for (const payload of junk) await db.query(`SELECT pg_notify('haikit_turns', $1)`, [payload]);
+      await publisher.publish(c.id, "still here");
+      for (let i = 0; i < 50 && !heard.length; i++) await new Promise((r) => setTimeout(r, 20));
+    } catch (err) {
+      threw = err;
+    }
+    check("malformed NOTIFY traffic is dropped, and a real message after it arrives", !threw && heard.join() === "still here");
     listening.abort();
   }
 

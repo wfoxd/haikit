@@ -3393,9 +3393,14 @@ async function noticeStreamChecks() {
       `each drop waits longer before the next try (${gaps.map((g) => `${(g / 1000).toFixed(1)}s`).join(", ")})`,
       gaps.length === 2 && gaps[0] >= 900 && gaps[1] >= 1_800,
     );
-    // the chat is now waiting out a backoff; closing it ends that wait, timer and all
+    // the chat is now waiting out a backoff (once its timer is set, a moment
+    // after the server saw the attempt); closing it ends that wait, timer and all
     const timers = () => process.getActiveResourcesInfo().filter((r) => r === "Timeout").length;
-    const waiting = timers();
+    const idle = await (async () => {
+      for (let i = 0; i < 200 && timers() < 1; i++) await new Promise((r) => setImmediate(r));
+      return timers();
+    })();
+    const waiting = idle;
     dropping.close();
     await wait(0);
     check(`close() during a backoff lets go of its timer (${waiting} → ${timers()})`, timers() === waiting - 1);
@@ -3845,12 +3850,12 @@ async function crossInstanceChecks() {
       await wait(150);
       slow = 800;
       await one.notify(chat.state.conversationId, dropped, { flight: "NH7" });
-      await until(() => chat.state.status === "streaming");
+      const streaming = await until(() => chat.state.status === "streaming");
       const sent = await chat.send("during");
       await watcher;
       check(
         "a message sent from the other process during the turn waits for it, and goes through",
-        sent === true && !chat.state.blocks.some((b) => b.kind === "error") &&
+        streaming && sent === true && !chat.state.blocks.some((b) => b.kind === "error") &&
           chat.state.blocks.some((b) => b.kind === "assistant" && b.text === "Heads up: cheaper."),
       );
       chat.close();

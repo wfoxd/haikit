@@ -74,6 +74,9 @@ const PIECE = 7_000;
 /** How long half a message waits for the rest before it is given up on. */
 const PIECE_TIMEOUT_MS = 30_000;
 
+/** The most pieces one message may claim to have: about 70 MB, far past any frame. */
+const MAX_PIECES = 10_000;
+
 /**
  * The schema, one statement per entry. `migrate()` runs these; export them to
  * your own migration tool instead if you have one.
@@ -255,10 +258,16 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
   const sending = new Map<string, Promise<void>>();
 
   const onTurn = (payload: string) => {
-    const [conversationId, id, index, count, piece] = payload.split(" ");
+    const [conversationId, id, index, count, piece] = String(payload).split(" ");
     if (!hearing.has(conversationId)) return;
+    // The channel is shared, and anything may NOTIFY on it: a piece that
+    // doesn't hold together is dropped, never let throw out of the listener.
     const n = Number(count);
-    let entry = partial.get(id);
+    const i = Number(index);
+    if (!id || !Number.isSafeInteger(n) || n < 1 || n > MAX_PIECES || !Number.isSafeInteger(i) || i < 0 || i >= n) return;
+    const known = partial.get(id);
+    if (known && known.pieces.length !== n) return;
+    let entry = known;
     if (!entry) {
       // A message whose other pieces never come (a listening connection that
       // dropped part way) is given up on after a while, whatever else arrives.
@@ -267,12 +276,19 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
       (expire as { unref?: () => void }).unref?.();
       entry = { pieces: new Array<string>(n), got: 0, expire };
     }
-    if (entry.pieces[Number(index)] === undefined) entry.got++;
-    entry.pieces[Number(index)] = piece ?? "";
+    if (entry.pieces[i] === undefined) entry.got++;
+    entry.pieces[i] = piece ?? "";
     if (entry.got < n) return void partial.set(id, entry);
     clearTimeout(entry.expire);
     partial.delete(id);
-    const message = new TextDecoder().decode(Uint8Array.from(atob(entry.pieces.join("")), (c) => c.charCodeAt(0)));
+    let message: string;
+    try {
+      message = new TextDecoder("utf-8", { fatal: true }).decode(
+        Uint8Array.from(atob(entry.pieces.join("")), (c) => c.charCodeAt(0)),
+      );
+    } catch {
+      return; // not base64, or not UTF-8 once decoded: not one of ours
+    }
     for (const hear of [...(hearing.get(conversationId) ?? [])]) hear(message);
   };
 
