@@ -892,6 +892,10 @@ export class Hai {
       const parsed = impl.surface.props.parse(props);
       const window = windowOf(impl);
 
+      // Taken before the store stamps the payload, so an age counted from it
+      // is never younger than the server's own: freshness runs from the
+      // store's stamp, and the digest below can take a while.
+      const storing = Date.now();
       const handle = await this.config.store.putPayload(
         {
           conversationId: conversation.id,
@@ -922,6 +926,8 @@ export class Hai {
         // so a browser left open can close the conversation on time, rather
         // than only finding out when its next request is refused
         ...(window === "never" ? {} : { staleAfterMs: window }),
+        // how long ago it was stored: the digest's time, and a replay's wait
+        ageMs: Date.now() - storing,
       });
       emit({ type: "ui_props", handle, props: parsed });
 

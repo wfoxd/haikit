@@ -337,7 +337,11 @@ function remember(shown: WireEvent[], event: WireEvent) {
   } else shown.push(event);
 }
 
-/** When each remembered surface was stored, by this process's clock, as near as it knows. */
+/**
+ * When each remembered surface was stored, by this process's clock: from the
+ * age its frame came with, so a slow digest counts. For a turn heard from
+ * another process, the time on the wire between them does not.
+ */
 const born = new WeakMap<WireEvent, number>();
 
 /** A remembered frame as it goes out now: a surface with how long ago it was stored. */

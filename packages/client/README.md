@@ -133,10 +133,11 @@ with `data-expired` set.
 
 The browser counts each window from when it sent the request that rendered
 the surface, which is never later than the server's own stamp, so its
-deadline is never later than the server's. A surface replayed to a stream
-that joined a wake turn part way comes with `ageMs`, how long ago the server
-stored it, and is counted from then instead. That's a duration, not a time,
-so the two clocks are never compared. `chat.reset()` starts a new conversation; the default
+deadline is never later than the server's. Each surface also comes with
+`ageMs`, how long ago the server stored it: the time its digest took, plus,
+for one replayed to a stream that joined a wake turn part way, how long it
+waited. The window is counted from whichever is earlier. That's a duration,
+not a time, so the two clocks are never compared. `chat.reset()` starts a new conversation; the default
 transcript renders the notice with a button that calls it.
 
 ## Serving it

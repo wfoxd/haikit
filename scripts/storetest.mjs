@@ -4003,7 +4003,11 @@ async function surfaceAgeChecks() {
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const dropped = defineNotice({ name: "dropped", version: 1, kind: "wake", payload: any }).implement({ model: () => "cheaper" });
   const fare = defineSurface({ name: "fare", version: 1, props: any }).implement({
-    digest: () => "a fare",
+    // a digest that takes a while: the surface is stored before it runs
+    digest: () => {
+      for (const end = Date.now() + 300; Date.now() < end; );
+      return "a fare";
+    },
     actions: {},
     queries: {},
     staleAfterMs: 60_000,
@@ -4068,10 +4072,13 @@ async function surfaceAgeChecks() {
     const watched = await first;
     const live = watched.got.find((e) => e.type === "ui_open");
     const replayed = late.got.find((e) => e.type === "ui_open");
-    check("a surface streamed as it is shown carries no age", live && !("ageMs" in live));
     check(
-      `a surface replayed to a stream that joins later carries its age (${replayed?.ageMs} ms)`,
-      typeof replayed?.ageMs === "number" && replayed.ageMs >= 350 && replayed.ageMs < 3_000,
+      `a surface streamed as it is shown is aged from when it was stored, its digest's time included (${live?.ageMs} ms)`,
+      typeof live?.ageMs === "number" && live.ageMs >= 290 && live.ageMs < 2_000,
+    );
+    check(
+      `a surface replayed to a stream that joins later carries its age, the wait included (${replayed?.ageMs} ms)`,
+      typeof replayed?.ageMs === "number" && replayed.ageMs >= live.ageMs + 150 && replayed.ageMs < 4_000,
     );
     check(
       "the events stream asks proxies not to buffer or transform it",
