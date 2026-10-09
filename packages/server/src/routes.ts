@@ -361,15 +361,19 @@ function watchersOf(hai: Hai, conversationId: string): Watchers {
     // `streaming` until `released`, with what it has shown kept meanwhile,
     // for a stream that joins part way.
     //
-    // Frames name their turn. Frames from different processes can arrive out
-    // of order between them, so a turn's `released` may come after the next
-    // turn has started elsewhere: anything but the current turn's frames is
-    // dropped, and a new turn's `streaming` takes over from an old one.
+    // Frames name their turn, and its number in the conversation. Frames
+    // from different processes can arrive out of order between them, so an
+    // old turn's frames, even its start, may come after the next turn's
+    // start. A turn takes over only with a number at least as high as any
+    // seen; anything but the current turn's frames is dropped.
     let current: string | null = null;
-    const deliver = (event: WireEvent, turn: string) => {
+    let newest = 0;
+    const deliver = (event: WireEvent, turn: string, number: number | undefined) => {
       if (event.type === "status" && event.status === "streaming") {
         if (current !== turn) {
+          if (number !== undefined && number < newest) return; // an older turn's late start
           current = turn;
+          if (number !== undefined) newest = number;
           fresh.live = true;
           fresh.shown = [];
         }
@@ -399,10 +403,13 @@ function watchersOf(hai: Hai, conversationId: string): Watchers {
       pending: 0,
       turn: () => {
         const turn = globalThis.crypto.randomUUID();
+        // its number, from the first frame of the turn
+        let number: number | undefined;
         return (event) => {
-          deliver(event, turn);
+          if (number === undefined && event.type === "status" && typeof event.wake === "number") number = event.wake;
+          deliver(event, turn, number);
           if (store.publish && event.type !== "context") {
-            store.publish(conversationId, JSON.stringify({ origin, turn, event })).catch(() => {
+            store.publish(conversationId, JSON.stringify({ origin, turn, number, event })).catch(() => {
               // best effort: another process's tabs miss this frame
             });
           }
@@ -414,13 +421,15 @@ function watchersOf(hai: Hai, conversationId: string): Watchers {
     const subscribed = store.subscribe?.(
       conversationId,
       (message) => {
-        let heard: { origin?: string; turn?: string; event?: WireEvent };
+        let heard: { origin?: string; turn?: string; number?: number; event?: WireEvent };
         try {
           heard = JSON.parse(message);
         } catch {
           return;
         }
-        if (heard.origin !== origin && heard.event && typeof heard.turn === "string") deliver(heard.event, heard.turn);
+        if (heard.origin !== origin && heard.event && typeof heard.turn === "string") {
+          deliver(heard.event, heard.turn, typeof heard.number === "number" ? heard.number : undefined);
+        }
       },
       hearing.signal,
     );

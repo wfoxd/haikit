@@ -255,13 +255,26 @@ async function noticeChecks(label, db) {
       threw = err;
     }
     check("malformed NOTIFY traffic is dropped, and a real message after it arrives", !threw && heard.join() === "still here");
+
+    // past the most one message can be split into: refused, not sent to be dropped
+    const { MAX_PUBLISH_BYTES } = await import("../dist/index.js");
+    let refusal = null;
+    try {
+      await publisher.publish(c.id, "x".repeat(MAX_PUBLISH_BYTES + 1));
+    } catch (err) {
+      refusal = err;
+    }
+    check(
+      `a message past the publish maximum (${Math.round(MAX_PUBLISH_BYTES / 1e6)} MB) is refused, not sent and dropped`,
+      refusal instanceof RangeError,
+    );
     listening.abort();
   }
 
   // a database migrated before notices existed gains them
   {
     await db.query(
-      `ALTER TABLE haikit_conversations DROP COLUMN notice_seq, DROP COLUMN noticed_through, DROP COLUMN wakes, DROP COLUMN woke_through`,
+      `ALTER TABLE haikit_conversations DROP COLUMN notice_seq, DROP COLUMN noticed_through, DROP COLUMN wakes, DROP COLUMN woke_through, DROP COLUMN wake_turns`,
     );
     await db.query(`ALTER TABLE haikit_notices DROP COLUMN kind`);
     await migrate(db);
@@ -270,7 +283,7 @@ async function noticeChecks(label, db) {
     const n = await store.putNotice({ ...notice(a.id), kind: "wake" });
     check(
       "migrating a pre-notices database adds what notices and wake turns need",
-      n.seq === 1 && n.kind === "wake" && a.noticedThrough === 0 && JSON.stringify(a.wakes) === "[]" && a.wokeThrough === 0,
+      n.seq === 1 && n.kind === "wake" && a.noticedThrough === 0 && JSON.stringify(a.wakes) === "[]" && a.wokeThrough === 0 && a.wakeTurns === 0,
     );
   }
 

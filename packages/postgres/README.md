@@ -101,12 +101,17 @@ on `haikit_turns`. A frame longer than one `NOTIFY` can hold (just under
 8,000 bytes) goes as several, sent in one statement, and is put back
 together on arrival. Frames are sent one at a time per conversation, each
 committed before the next, so they arrive in order. Every store can publish;
-only one given `listen` hears.
+only one given `listen` hears. A message past `MAX_PUBLISH_BYTES` (about
+52 MB, far beyond any frame) is refused, not sent.
+
+**Upgrading:** `migrate()` adds `wake_turns` to `haikit_conversations`, each
+conversation's count of wake turns, which numbers them so a late frame from
+an older turn can't take over from a newer one.
 
 It is best effort, as `NOTIFY` is: a server whose listening connection is
 down misses those frames, and a tab there sees the reply when it next
-reconnects to a server that has it, or not at all. Nothing is stored, so
-there is nothing to migrate or clean up.
+reconnects to a server that has it, or not at all. The frames themselves
+are never stored, so there is nothing of them to clean up.
 
 ## Cleaning up
 

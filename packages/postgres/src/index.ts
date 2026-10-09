@@ -74,8 +74,11 @@ const PIECE = 7_000;
 /** How long half a message waits for the rest before it is given up on. */
 const PIECE_TIMEOUT_MS = 30_000;
 
-/** The most pieces one message may claim to have: about 70 MB, far past any frame. */
+/** The most pieces one message may claim to have: about 52 MB of message, far past any frame. */
 const MAX_PIECES = 10_000;
+
+/** The longest message `publish` takes, in UTF-8 bytes: what MAX_PIECES pieces of base64 hold. */
+export const MAX_PUBLISH_BYTES = Math.floor((PIECE * MAX_PIECES * 3) / 4);
 
 /**
  * The schema, one statement per entry. `migrate()` runs these; export them to
@@ -98,6 +101,8 @@ export const schema: readonly string[] = [
      -- when recent wake turns started, and the last notice that may no longer start one
      wakes           jsonb NOT NULL DEFAULT '[]',
      woke_through    integer NOT NULL DEFAULT 0,
+     -- how many wake turns it has started, to tell an older turn's frames from a newer's
+     wake_turns      integer NOT NULL DEFAULT 0,
      updated_at   timestamptz NOT NULL DEFAULT now()
    )`,
   // a table created before notices existed gains the columns
@@ -105,6 +110,7 @@ export const schema: readonly string[] = [
   `ALTER TABLE haikit_conversations ADD COLUMN IF NOT EXISTS noticed_through integer NOT NULL DEFAULT 0`,
   `ALTER TABLE haikit_conversations ADD COLUMN IF NOT EXISTS wakes jsonb NOT NULL DEFAULT '[]'`,
   `ALTER TABLE haikit_conversations ADD COLUMN IF NOT EXISTS woke_through integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE haikit_conversations ADD COLUMN IF NOT EXISTS wake_turns integer NOT NULL DEFAULT 0`,
   // Append-only, and never an orphan: a notice belongs to a conversation that
   // exists, and goes when it does.
   `CREATE TABLE IF NOT EXISTS haikit_notices (
@@ -159,7 +165,7 @@ export async function migrate(db: Queryable): Promise<void> {
 const CONVERSATION_COLUMNS = `
   id, status, messages::text AS messages, handles::text AS handles,
   frozen::text AS frozen, pending::text AS pending, lease_token, noticed_through,
-  wakes::text AS wakes, woke_through,
+  wakes::text AS wakes, woke_through, wake_turns,
   (extract(epoch FROM lease_until) * 1000)::float8 AS lease_until_ms`;
 
 const NOTICE_COLUMNS = `
@@ -187,6 +193,7 @@ const toConversation = (row: any): Conversation => ({
   noticedThrough: Number(row.noticed_through ?? 0),
   wakes: row.wakes == null ? [] : json(row.wakes),
   wokeThrough: Number(row.woke_through ?? 0),
+  wakeTurns: Number(row.wake_turns ?? 0),
 });
 
 const toNotice = (row: any): NoticeRecord => ({
@@ -294,6 +301,13 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
 
   async function publish(conversationId: string, message: string) {
     const bytes = new TextEncoder().encode(String(message));
+    // Refused here rather than sent and dropped by every listener, and before
+    // any of the work of encoding it.
+    if (bytes.length > MAX_PUBLISH_BYTES) {
+      throw new RangeError(
+        `message too long to publish: ${bytes.length} bytes, over the ${MAX_PUBLISH_BYTES}-byte maximum`,
+      );
+    }
     let binary = "";
     for (const b of bytes) binary += String.fromCharCode(b);
     const encoded = btoa(binary);
@@ -429,6 +443,7 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
                 noticed_through = $9::integer,
                 wakes       = $10::jsonb,
                 woke_through = $11::integer,
+                wake_turns  = $12::integer,
                 updated_at  = now()
           WHERE id = $1 AND lease_token = $2
           RETURNING id`,
@@ -445,6 +460,7 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
           conversation.noticedThrough ?? 0,
           JSON.stringify(conversation.wakes ?? []),
           conversation.wokeThrough ?? 0,
+          conversation.wakeTurns ?? 0,
         ],
       );
       if (!rows.length) await stale(conversation.id);

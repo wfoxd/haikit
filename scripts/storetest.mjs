@@ -431,17 +431,21 @@ export async function conform(label, make) {
     check("a read notice is a copy", (await s.getNotices(a.id, 0))[0].payload === "hello");
 
     // taken in on the fenced row, with the history that records it
-    check("a new conversation has started no wake turns", JSON.stringify(a.wakes ?? []) === "[]" && (a.wokeThrough ?? 0) === 0);
+    check(
+      "a new conversation has started no wake turns",
+      JSON.stringify(a.wakes ?? []) === "[]" && (a.wokeThrough ?? 0) === 0 && (a.wakeTurns ?? 0) === 0,
+    );
     a.noticedThrough = put[3].seq;
     a.wakes = [1_700_000_000_000, 1_700_000_060_000];
     a.wokeThrough = put[2].seq;
+    a.wakeTurns = 7;
     a.leaseUntil = null;
     await s.saveConversation(a);
     const reloaded = await s.loadConversation(a.id);
     check("noticedThrough round-trips with the conversation", reloaded.noticedThrough === put[3].seq);
     check(
-      "wakes and wokeThrough round-trip with the conversation",
-      JSON.stringify(reloaded.wakes) === JSON.stringify(a.wakes) && reloaded.wokeThrough === put[2].seq,
+      "wakes, wokeThrough and wakeTurns round-trip with the conversation",
+      JSON.stringify(reloaded.wakes) === JSON.stringify(a.wakes) && reloaded.wokeThrough === put[2].seq && reloaded.wakeTurns === 7,
     );
 
     // a store that can wake the events route does so, and lets go when told
@@ -2890,6 +2894,11 @@ async function wakeChecks(make) {
   events.length = 0;
   check("an idle conversation with a wake notice wakes", (await hai.wake(id, watch)) === "woke");
   let c = await peek(id);
+  const firstFrame = events.find((e) => e.type === "status");
+  check(
+    "a wake turn's first frame says it is streaming, with the turn's number in the conversation",
+    firstFrame?.status === "streaming" && firstFrame.wake === 1 && c.wakeTurns === 1,
+  );
   check(
     "the turn's user message carries every unread notice, then says the user wrote none of it",
     same(lastUser(c), [note("held", "AC832 is held."), note("dropped", "AC832 is cheaper."), WOKEN]),
@@ -2956,7 +2965,10 @@ async function wakeChecks(make) {
     failEvents.some((e) => e.type === "error") && failEvents.at(-1)?.type === "released",
   );
   check("…and counts against maxWakes, so an outage can't be retried endlessly", (after.wakes ?? []).length === 1);
-  check("once the model is back, the notice wakes", (await failing.wake(fid, () => {})) === "woke" &&
+  check("…and takes a turn number, so a retry is numbered after it", after.wakeTurns === 1);
+  const retryFrames = [];
+  check("once the model is back, the notice wakes", (await failing.wake(fid, (e) => retryFrames.push(e))) === "woke" &&
+    retryFrames.find((e) => e.type === "status")?.wake === 2 &&
     same(lastUser(await peek(fid))[0], note("dropped", "DOWN is cheaper.")));
 
   // ── a turn that fails after a tool ran keeps what happened, and never wakes again
@@ -3893,6 +3905,25 @@ async function crossInstanceChecks() {
         !got.some((e) => e.type === "released") && got.some((e) => e.type === "text_delta" && e.text === "done"),
       );
       check("…and an old turn's later frames are dropped", !got.some((e) => e.type === "block_start" && e.block.id === "old"));
+
+      // numbered turns: an older turn's start, arriving after a newer one's, doesn't take over
+      const id2 = await begin(memory);
+      const numbered = stream(`http://127.0.0.1:5388/hai/events?conversationId=${id2}`, (got) => got.some((e) => e.type === "released"), 3_000);
+      await wait(150);
+      const at = (origin, turn, number, event) => memory.publish(id2, JSON.stringify({ origin, turn, number, event }));
+      await at("B", "t4", 4, { type: "status", status: "streaming", wake: 4 });
+      await at("A", "t3", 3, { type: "status", status: "streaming", wake: 3 }); // late, and older
+      await at("B", "t4", 4, { type: "block_start", block: { kind: "assistant", id: "four", text: "" } });
+      await at("B", "t4", 4, { type: "text_delta", id: "four", text: "newer" });
+      await at("A", "t3", 3, { type: "released" });
+      await at("B", "t4", 4, { type: "released" });
+      const ordered = await numbered;
+      check(
+        "an older turn's start that arrives after a newer one's doesn't take over",
+        ordered.filter((e) => e.type === "status" && e.status === "streaming").length === 1 &&
+          ordered.some((e) => e.type === "text_delta" && e.text === "newer") &&
+          ordered.filter((e) => e.type === "released").length === 1 && ordered.at(-1)?.type === "released",
+      );
     } finally {
       server.close();
     }
