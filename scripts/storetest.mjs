@@ -3473,32 +3473,42 @@ async function wakeStreamChecks() {
     // The turn says it is idle before its save lets the conversation go. A
     // message sent on that would still find it held: the client waits for
     // `released` instead.
+    // What this chat hears from here on, so each wait below is for this
+    // turn's own frames, not ones left from the turn before.
+    const heard = [];
+    const off = chat.subscribe((_s, e) => heard.push(e.type === "status" ? `status:${e.status}` : e.type));
+    const turnAfter = (from) => {
+      const started = heard.indexOf("status:streaming", from);
+      return started >= 0 && heard.indexOf("status:idle", started) >= 0;
+    };
+
     slow = 0;
     slowSave = 400;
-    const released = [];
-    const off = chat.subscribe((_s, e) => e.type === "released" && released.push(Date.now()));
+    let mark = heard.length;
     await hai.notify(cid, dropped, { flight: "BA2" });
-    await until(() => chat.state.status === "idle" && asked.at(-1).startsWith("[The user"), 3_000);
+    // the turn has said it is idle; its save still holds the conversation
+    await until(() => turnAfter(mark), 4_000);
     posts.length = 0;
     const tail = await chat.send("right after");
     slowSave = 0;
-    off();
     check(
       "a message sent as a wake turn goes idle waits for its save, and goes through",
-      tail === true && released.length === 1 && posts.every((p) => p.status !== 409) &&
-        !chat.state.blocks.some((b) => b.kind === "error"),
+      tail === true && heard.indexOf("released", mark) > heard.indexOf("status:idle", mark) &&
+        posts.every((p) => p.status !== 409) && !chat.state.blocks.some((b) => b.kind === "error"),
     );
 
     // The events connection drops mid-turn. The turn runs on, holding the
     // conversation, and its `released` is lost: a message sent now must keep
     // trying until the turn lets go, not give up after one retry.
-    slow = 800;
+    slow = 1_500;
+    mark = heard.length;
     await hai.notify(cid, dropped, { flight: "CUT" });
-    await until(() => chat.state.status === "streaming");
+    await until(() => heard.indexOf("status:streaming", mark) >= 0, 4_000);
     for (const res of streams) res.destroy();
     posts.length = 0;
     const afterDrop = await chat.send("after the drop");
     slow = 0;
+    off();
     check(
       "a message sent after the events connection drops mid-turn keeps trying until the turn ends",
       afterDrop === true && posts.some((p) => p.status === 409) && posts.at(-1).status === 200 &&
