@@ -93,7 +93,8 @@ export function memoryStore(options: MemoryStoreOptions = {}): StoreAdapter {
         return copy(stored);
       }
       const conversation: Conversation = {
-        id: `conv_${++convSeq}`,
+        // unguessable, like pgStore's: a conversation id is all the routes ask for
+        id: `conv_${++convSeq}_${newToken().replaceAll("-", "").slice(0, 16)}`,
         status: "idle",
         messages: [],
         handles: [],
@@ -102,6 +103,8 @@ export function memoryStore(options: MemoryStoreOptions = {}): StoreAdapter {
         leaseUntil: Date.now() + leaseMs,
         leaseToken: newToken(),
         noticedThrough: 0,
+        wakes: [],
+        wokeThrough: 0,
       };
       conversations.set(conversation.id, conversation);
       return copy(conversation);

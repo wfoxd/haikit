@@ -243,7 +243,14 @@ export function defineSurface<P, A extends ActionMap = {}, Q extends QueryMap = 
 
 // ───────────────────────────────────────────────────────── notices
 
-export interface NoticeImplDef<P> {
+/**
+ * What a notice does once the browser has shown it. A `passive` notice waits
+ * for the user: the model hears it in their next message. A `wake` notice
+ * starts a turn of its own, so the model can respond without being asked.
+ */
+export type NoticeKind = "passive" | "wake";
+
+export interface NoticeImplDef<P, K extends NoticeKind = NoticeKind> {
   /**
    * GUARANTEE 1, for notices — required. What the model hears of this notice,
    * or `null` for nothing.
@@ -257,23 +264,27 @@ export interface NoticeImplDef<P> {
    * Runs once, when the notice is sent, and the text is stored with it: a later
    * deploy that renames the notice or changes this cannot change what the model
    * hears of one already sent.
+   *
+   * A `wake` notice must return text: a turn started by a notice the model
+   * cannot hear would have nothing to respond to.
    */
-  model: (payload: P) => string | null;
+  model: (payload: P) => K extends "wake" ? string : string | null;
 }
 
-export interface Notice<P> {
+export interface Notice<P, K extends NoticeKind = "passive"> {
   readonly name: string;
   readonly version: number;
+  readonly kind: K;
   readonly payload: Schema<P>;
-  implement(impl: NoticeImplDef<P>): NoticeImpl<P>;
+  implement(impl: NoticeImplDef<P, K>): NoticeImpl<P, K>;
 }
 
-export interface NoticeImpl<P> {
-  readonly notice: Notice<P>;
-  readonly impl: NoticeImplDef<P>;
+export interface NoticeImpl<P, K extends NoticeKind = NoticeKind> {
+  readonly notice: Notice<P, K>;
+  readonly impl: NoticeImplDef<P, K>;
 }
 
-export type AnyNoticeImpl = NoticeImpl<any>;
+export type AnyNoticeImpl = NoticeImpl<any, any>;
 
 /**
  * Declare a notice: something the server tells a conversation outside of any
@@ -284,11 +295,21 @@ export type AnyNoticeImpl = NoticeImpl<any>;
  *
  * A notice cannot round-trip. Its component gets no `send`; one that needs a
  * button should show a surface instead.
+ *
+ * A `wake` notice also starts a turn, where a browser is watching: see
+ * `HaiConfig.maxWakes` in `@haikit/server` for what it may and may not do.
  */
-export function defineNotice<P>(def: { name: string; version: number; payload: Schema<P> }): Notice<P> {
-  const notice: Notice<P> = {
+export function defineNotice<P, K extends NoticeKind = "passive">(def: {
+  name: string;
+  version: number;
+  /** `passive` (the default) waits for the user; `wake` starts a turn. */
+  kind?: K;
+  payload: Schema<P>;
+}): Notice<P, K> {
+  const notice: Notice<P, K> = {
     name: def.name,
     version: def.version,
+    kind: (def.kind ?? "passive") as K,
     payload: def.payload,
     implement(impl) {
       return { notice, impl };
@@ -313,9 +334,9 @@ export interface NotifyOptions {
  * contract, and checked against its schema before it is stored. Resolves to the
  * notice's sequence number in that conversation.
  */
-export type Notify = <P>(
+export type Notify = <P, K extends NoticeKind>(
   conversationId: string,
-  notice: NoticeImpl<P>,
+  notice: NoticeImpl<P, K>,
   payload: NoInfer<P>,
   options?: NotifyOptions,
 ) => Promise<{ seq: number }>;
@@ -485,6 +506,18 @@ export interface Conversation {
    * is discarded leaves the notice untaken, and the turn that won takes it in.
    */
   noticedThrough?: number;
+  /**
+   * When this conversation's recent wake turns started, in epoch ms, newest
+   * last: what `maxWakes` counts. Kept on the fenced row, so a wake turn and
+   * the record of it commit together.
+   */
+  wakes?: number[];
+  /**
+   * The highest notice seq that can no longer start a turn: it started one,
+   * or arrived past `maxWakes` and was left to ride the user's next message.
+   * Missing means 0.
+   */
+  wokeThrough?: number;
 }
 
 /**
@@ -503,6 +536,8 @@ export interface NoticeRecord {
   /** The notice contract's name and version. */
   name: string;
   version: number;
+  /** Absent for a passive notice, which is the default. */
+  kind?: "wake";
   /** The payload, validated. Returned exactly as given. */
   payload: unknown;
   /**
@@ -572,6 +607,12 @@ export type WireEvent =
    * as part of the history, in the `context` event's inspector view.
    */
   | { type: "notice"; seq: number; name: string; version: number; payload: unknown; handle?: string }
+  /**
+   * On the events stream, after a wake turn: the server has saved the
+   * conversation and let it go, so the browser may send again. Its `status`
+   * frames come before this, while the server still holds the conversation.
+   */
+  | { type: "released" }
   | { type: "block_start"; block: Block }
   | { type: "text_delta"; id: string; text: string }
   | { type: "block_update"; id: string; status: string; ms: number; result: string }

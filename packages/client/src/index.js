@@ -72,6 +72,19 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
   /** The events stream's conversation while it is open, and how to stop it. */
   let listening = null;
   let listenAborter = null;
+  /**
+   * Settles when the turn a wake notice started, streaming on the events
+   * stream, is done. Until then nothing is posted: the server holds the
+   * conversation for that turn, and a message sent now would only be told 409.
+   */
+  let remote = null;
+  let endRemote = () => {};
+  /**
+   * Set when the events connection dropped while a wake turn ran. That turn
+   * still holds the conversation on the server, and its `released` is lost
+   * with the connection, so the next request is given longer to get in.
+   */
+  let cutOff = false;
   /** seq → the mounted notice's instance and element */
   const noticeMounts = new Map();
 
@@ -117,6 +130,11 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
     // The deadline is checked again here, not only when queued: a long turn
     // ahead of this request can run past it while it waits.
     if (gen !== generation || closed()) return;
+    // queued behind a wake turn, as behind one of this client's own
+    while (remote) {
+      await remote;
+      if (gen !== generation || closed()) return;
+    }
     sentAt = Date.now();
     let res = await post(path, body, signal);
 
@@ -128,8 +146,26 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
       await new Promise((r) => setTimeout(r, 150));
       // the deadline can pass during the wait, and reset() or close() come
       if (gen !== generation || closed()) return;
+      // A wake turn may be what holds it, and have said so meanwhile: wait it
+      // out, as if it had said so before this request went.
+      while (remote) {
+        await remote;
+        if (gen !== generation || closed()) return;
+      }
       res = await post(path, body, signal); // rejects at once if reset() aborted it meanwhile
     }
+    // A wake turn this client lost sight of holds the conversation until it
+    // ends, which may be a while: keep trying, backing off, for as long as a
+    // turn can hold it before its lease lapses.
+    if (res.status === 409 && cutOff) {
+      const giveUp = Date.now() + CUT_OFF_MS;
+      for (let wait = 250; res.status === 409 && Date.now() < giveUp; wait = Math.min(wait * 2, 2_000)) {
+        await new Promise((r) => setTimeout(r, wait));
+        if (gen !== generation || closed()) return;
+        res = await post(path, body, signal);
+      }
+    }
+    if (res.status !== 409) cutOff = false;
     // Anything but a second 409 means the server took the request up itself —
     // even an error — unless the stream says `expired` below. A 409 means it
     // turned the message away unread.
@@ -202,9 +238,15 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
         break;
       }
 
-      case "block_start":
-        state.blocks.push({ ...event.block });
+      // A stream that rejoins a wake turn is sent what the turn has shown so
+      // far: a block this client already has is brought up to date, not added
+      // again.
+      case "block_start": {
+        const known = state.blocks.find((b) => b.id === event.block.id);
+        if (known) Object.assign(known, event.block);
+        else state.blocks.push({ ...event.block });
         break;
+      }
 
       case "text_delta": {
         const block = state.blocks.find((b) => b.id === event.id);
@@ -230,6 +272,7 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
       }
 
       case "ui_open":
+        if (state.surfaces.has(event.handle)) break; // shown already: a rejoin's catch-up
         state.surfaces.set(event.handle, {
           handle: event.handle,
           component: event.component,
@@ -346,15 +389,21 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
               buffer = buffer.slice(i + 2);
               const line = frame.split("\n").find((l) => l.startsWith("data: "));
               if (line) {
-                apply(JSON.parse(line.slice(6)));
+                const event = JSON.parse(line.slice(6));
+                followTurn(event);
+                apply(event);
                 delivered = true;
               }
             }
           }
         }
       } catch {
-        if (signal.aborted) return;
+        if (signal.aborted) return finishRemote();
       }
+      // A turn cut off with its connection runs on, but nothing will say when
+      // it ends: stop waiting for it, and give the next request longer instead.
+      if (remote) cutOff = true;
+      finishRemote();
       if (delivered || Date.now() - opened >= HEALTHY_MS) wait = 1_000;
       // Dropped, refused, or the network went away: try again, backing off.
       // reset() or close() ends the wait at once, timer and all.
@@ -371,7 +420,29 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
     }
   }
 
+  /**
+   * Track a wake turn on the events stream: it starts with a `streaming`
+   * status, and is done with `released`, which the server sends only once it
+   * has saved the conversation and let it go. Its `idle` status comes before
+   * that save, so a message sent on it would still find the conversation held.
+   */
+  function followTurn(event) {
+    if (event.type === "status" && event.status === "streaming") {
+      if (!remote) remote = new Promise((resolve) => (endRemote = resolve));
+      // surfaces it shows are stamped after this, as a request's are after it is sent
+      sentAt = Date.now();
+    } else if (event.type === "released") {
+      finishRemote();
+    }
+  }
+
+  function finishRemote() {
+    remote = null;
+    endRemote();
+  }
+
   function stopListening() {
+    finishRemote();
     listenAborter?.abort();
     listenAborter = null;
     listening = null;
@@ -551,6 +622,7 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
     aborter.abort();
     aborter = new AbortController();
     stopListening();
+    cutOff = false;
     clearTimeout(timer);
     for (const surface of state.surfaces.values()) unmount(surface);
     for (const seq of [...noticeMounts.keys()]) unmountNotice(seq);
@@ -606,6 +678,13 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
     },
   };
 }
+
+/**
+ * How long a request keeps trying a conversation held by a wake turn whose
+ * events connection dropped: the default lease, the longest that turn can
+ * hold it.
+ */
+const CUT_OFF_MS = 120_000;
 
 /** An events connection that stays up this long was healthy, whatever it delivered. */
 const HEALTHY_MS = 30_000;

@@ -363,9 +363,10 @@ export async function conform(label, make) {
     const put = [];
     for (const payload of shapes) put.push(await s.putNotice(notice(a.id, { payload })));
     put.push(await s.putNotice(notice(a.id, { model: null, handle: "ui_01", name: "other", version: 3 })));
+    put.push(await s.putNotice(notice(a.id, { kind: "wake" })));
     await s.putNotice(notice(b.id));
     const after = Date.now();
-    check("a notice lands while another holds the conversation's lease", put.length === shapes.length + 1);
+    check("a notice lands while another holds the conversation's lease", put.length === shapes.length + 2);
     check(
       "seq increases with each notice in a conversation",
       put.every((n, i) => i === 0 || n.seq > put[i - 1].seq),
@@ -376,11 +377,12 @@ export async function conform(label, make) {
       JSON.stringify(all) === JSON.stringify(put) &&
         all.slice(0, shapes.length).every((n, i) => JSON.stringify(n.payload) === JSON.stringify(shapes[i])),
     );
-    const last = all.at(-1);
+    const other = all.at(-2);
     check(
       "a null model, a handle, a name and a version round-trip; an absent handle stays absent",
-      last.model === null && last.handle === "ui_01" && last.name === "other" && last.version === 3 && !("handle" in all[0]),
+      other.model === null && other.handle === "ui_01" && other.name === "other" && other.version === 3 && !("handle" in all[0]),
     );
+    check("a wake notice's kind round-trips; a passive one has none", all.at(-1).kind === "wake" && !("kind" in all[0]));
     const slack = 60_000;
     check(
       "a notice's createdAt is epoch milliseconds from when it was written",
@@ -388,18 +390,25 @@ export async function conform(label, make) {
     );
     check("notices are scoped to their conversation", (await s.getNotices(b.id, 0)).length === 1);
     const tail = await s.getNotices(a.id, put[5].seq);
-    check("`after` returns only later notices", tail.length === 2 && tail[0].seq === put[6].seq);
+    check("`after` returns only later notices", tail.length === 3 && tail[0].seq === put[6].seq);
     const page = await s.getNotices(a.id, 0, 3);
     check("`limit` caps how many come back, from the start", page.length === 3 && page[2].seq === put[2].seq);
     all[0].payload = "mutated";
     check("a read notice is a copy", (await s.getNotices(a.id, 0))[0].payload === "hello");
 
     // taken in on the fenced row, with the history that records it
+    check("a new conversation has started no wake turns", JSON.stringify(a.wakes ?? []) === "[]" && (a.wokeThrough ?? 0) === 0);
     a.noticedThrough = put[3].seq;
+    a.wakes = [1_700_000_000_000, 1_700_000_060_000];
+    a.wokeThrough = put[2].seq;
     a.leaseUntil = null;
     await s.saveConversation(a);
     const reloaded = await s.loadConversation(a.id);
     check("noticedThrough round-trips with the conversation", reloaded.noticedThrough === put[3].seq);
+    check(
+      "wakes and wokeThrough round-trip with the conversation",
+      JSON.stringify(reloaded.wakes) === JSON.stringify(a.wakes) && reloaded.wokeThrough === put[2].seq,
+    );
 
     // a store that can wake the events route does so, and lets go when told
     if (s.watch) {
@@ -454,6 +463,7 @@ export async function integration(label, make) {
   await actionChecks(make);
   await oneQuestionChecks(make);
   await noticeChecks(make);
+  await wakeChecks(make);
   return failures;
 }
 
@@ -2734,6 +2744,293 @@ async function noticeChecks(make) {
   check("with no notices, a message stays plain text", unchanged.c.messages[0].content === "hello");
 }
 
+// ── a wake notice starts a turn, when the conversation can take one ─────
+// hai.wake is what the events route calls. It takes the lease like any
+// request, and releases it before it resolves.
+async function wakeChecks(make) {
+  console.log("\nwake notices");
+  const { createHai } = await import("../packages/server/dist/index.js");
+  const { defineNotice, defineSurface, defineTool, resolve } = await import("../packages/core/dist/index.js");
+  const any = { parse: (v) => v };
+  const store = make();
+
+  const held = defineNotice({ name: "held", version: 1, payload: any }).implement({ model: (p) => `${p.flight} is held.` });
+  const dropped = defineNotice({ name: "dropped", version: 1, kind: "wake", payload: any }).implement({
+    model: (p) => `${p.flight} is cheaper.`,
+  });
+  const mute = defineNotice({ name: "mute", version: 1, kind: "wake", payload: any }).implement({ model: () => null });
+  const picker = defineSurface({ name: "pick", version: 1, props: any, actions: { choose: resolve(any) }, queries: {} })
+    .implement({ digest: () => "a picker", actions: { choose: (v) => `Chose ${v}.` }, queries: {} });
+  const brief = defineSurface({ name: "brief", version: 1, props: any }).implement({
+    digest: () => "short-lived",
+    actions: {},
+    queries: {},
+    staleAfterMs: 20,
+  });
+  const show = defineTool({
+    name: "show",
+    description: "d",
+    input: any,
+    inputJsonSchema: { type: "object" },
+    run: (i, ctx) => (i.kind === "pick" ? ctx.render(picker, {}, { mode: "elicit" }) : ctx.render(brief, {})),
+  });
+  const next = [];
+  const seen = [];
+  let down = false; // the model fails, as a provider outage would
+  const model = {
+    id: "stub",
+    async generate(req) {
+      seen.push(JSON.parse(JSON.stringify(req.messages)));
+      if (down) throw new Error("model unavailable");
+      const kind = next.shift();
+      if (kind) return { content: [{ type: "tool_use", id: `tu_${kind}_${seen.length}`, name: "show", input: { kind } }], stop_reason: "tool_use" };
+      return { content: [{ type: "text", text: "noted" }], stop_reason: "end_turn" };
+    },
+  };
+  const make2 = (maxWakes) => createHai({ model, store, tools: [show], surfaces: [picker, brief], notices: [held, dropped, mute], system: "x", maxWakes });
+  const hai = make2({ count: 1, perMs: 300 });
+
+  async function request(id, act) {
+    const c = await store.loadConversation(id);
+    try {
+      await act(c, () => {});
+    } finally {
+      c.leaseUntil = null;
+      await store.saveConversation(c);
+    }
+    return c;
+  }
+  const say = (text) => (c, emit) => hai.send(c, text, emit);
+  const peek = async (id) => {
+    const c = await store.loadConversation(id);
+    c.leaseUntil = null;
+    await store.saveConversation(c);
+    return c;
+  };
+  const lastUser = (c) => c.messages.filter((m) => m.role === "user").at(-1).content;
+  const note = (name, text) => ({ type: "text", text: `[App notification: ${name}] ${text}` });
+  const WOKEN = { type: "text", text: "[The user has not said anything. The notifications above arrived on their own.]" };
+  // by content, not key order: a jsonb column hands keys back in an order of its own
+  const canon = (v) =>
+    JSON.stringify(v, (_k, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort()) : x));
+  const same = (a, b) => canon(a) === canon(b);
+  const refused = async (fn) => {
+    try {
+      await fn();
+      return false;
+    } catch {
+      return true;
+    }
+  };
+  const events = [];
+  const watch = (e) => events.push(e);
+
+  check("an app with a wake notice says so", hai.wakes && !createHai({ model, store, tools: [], surfaces: [], notices: [held], system: "x" }).wakes);
+  check(
+    "a maxWakes that would never or always wake is refused",
+    (await refused(async () => make2({ count: 0, perMs: 1000 }))) && (await refused(async () => make2({ count: 1, perMs: Infinity }))),
+  );
+
+  // ── nothing to wake for, or nowhere to
+  check("an unknown conversation does not wake, nor come to exist", (await hai.wake("conv_nope", watch)) === "idle" &&
+    (await store.getNotices("conv_nope", 0)) === null);
+  const fresh = await request(undefined, async () => {});
+  await hai.notify(fresh.id, dropped, { flight: "A1" });
+  check("a conversation that hasn't begun does not wake", (await hai.wake(fresh.id, watch)) === "idle" && (await peek(fresh.id)).messages.length === 0);
+  check("a wake notice whose model() returns null is refused", await refused(() => hai.notify(fresh.id, mute, {})));
+
+  const id = (await request(undefined, say("hi"))).id;
+  await hai.notify(id, held, { flight: "AC832" });
+  const quiet = (await peek(id)).messages.length;
+  check("passive notices alone do not wake", (await hai.wake(id, watch)) === "idle" && (await peek(id)).messages.length === quiet);
+
+  // ── a wake notice starts a turn carrying every unread notice
+  await hai.notify(id, dropped, { flight: "AC832" });
+  const before = seen.length;
+  events.length = 0;
+  check("an idle conversation with a wake notice wakes", (await hai.wake(id, watch)) === "woke");
+  let c = await peek(id);
+  check(
+    "the turn's user message carries every unread notice, then says the user wrote none of it",
+    same(lastUser(c), [note("held", "AC832 is held."), note("dropped", "AC832 is cheaper."), WOKEN]),
+  );
+  check("the model ran once, and its reply is in the history", seen.length === before + 1 && c.messages.at(-1).role === "assistant");
+  check(
+    "the turn streams to whoever called, and the lease is released",
+    events.some((e) => e.type === "text_delta" || e.type === "status") && c.leaseUntil === null,
+  );
+  check("a woken notice does not wake again", (await hai.wake(id, watch)) === "idle");
+
+  // ── maxWakes: past it, wake notices wait for the user, for good
+  await hai.notify(id, dropped, { flight: "NH7" });
+  const limitedAt = (await peek(id)).messages.length;
+  check("a second wake inside the window is held back", (await hai.wake(id, watch)) === "limited");
+  check("…and leaves the history alone", (await peek(id)).messages.length === limitedAt);
+  await new Promise((r) => setTimeout(r, 350)); // the window passes
+  check("once held back, a notice never wakes later", (await hai.wake(id, watch)) === "idle");
+  const typed = await request(id, say("anything?"));
+  check("it rides the user's next message instead", same(lastUser(typed)[0], note("dropped", "NH7 is cheaper.")));
+
+  // ── several at once make one turn
+  for (const flight of ["X1", "X2", "X3"]) await hai.notify(id, dropped, { flight });
+  const batchFrom = seen.length;
+  check("three wake notices wake once", (await hai.wake(id, watch)) === "woke" && seen.length === batchFrom + 1);
+  check("…carrying all three", lastUser(await peek(id)).length === 4);
+
+  // ── busy: someone else holds the conversation
+  const holder = await store.loadConversation(id);
+  await hai.notify(id, dropped, { flight: "B1" });
+  check("a conversation another request holds is busy", (await hai.wake(id, watch)) === "busy");
+  holder.leaseUntil = null;
+  await store.saveConversation(holder);
+
+  // ── a question waiting: no turn, and the answer carries the notice
+  const waitingHai = make2({ count: 10, perMs: 60_000 });
+  next.push("pick");
+  const parked = await request(id, (c2, emit) => waitingHai.send(c2, "pick", emit));
+  const pick = parked.handles.at(-1);
+  await waitingHai.notify(id, dropped, { flight: "P1" });
+  check("a conversation waiting on a question does not wake", (await waitingHai.wake(id, watch)) === "idle");
+  const answered = await request(id, (c2, emit) => waitingHai.interact(c2, { handle: pick, action: "choose", value: "A" }, emit));
+  const answer = answered.messages.find((m) => Array.isArray(m.content) && m.content.some((b) => b.type === "tool_result" && /Chose A/.test(b.content)));
+  check("…its answer carries the notice, after the tool result", same(answer.content.at(-1), note("dropped", "P1 is cheaper.")));
+
+  // ── a turn that fails is undone: no half-recorded history, notices unread
+  const failing = make2({ count: 10, perMs: 60_000 });
+  const fid = (await request(undefined, (c2, emit) => failing.send(c2, "hi", emit))).id;
+  await failing.notify(fid, dropped, { flight: "DOWN" });
+  const intact = await peek(fid);
+  down = true;
+  const failEvents = [];
+  const failed = await failing.wake(fid, (e) => failEvents.push(e));
+  down = false;
+  const after = await peek(fid);
+  check("a wake turn whose model fails reports it", failed === "failed");
+  check(
+    "…and leaves the history as it was: no stray user message, status idle, the notice unread",
+    after.messages.length === intact.messages.length && after.status === "idle" &&
+      after.noticedThrough === intact.noticedThrough && (after.wokeThrough ?? 0) === (intact.wokeThrough ?? 0),
+  );
+  check(
+    "…telling the browser, and then that it may send again",
+    failEvents.some((e) => e.type === "error") && failEvents.at(-1)?.type === "released",
+  );
+  check("…and counts against maxWakes, so an outage can't be retried endlessly", (after.wakes ?? []).length === 1);
+  check("once the model is back, the notice wakes", (await failing.wake(fid, () => {})) === "woke" &&
+    same(lastUser(await peek(fid))[0], note("dropped", "DOWN is cheaper.")));
+
+  // ── a turn that fails after a tool ran keeps what happened, and never wakes again
+  {
+    const bookStore = make();
+    let bookings = 0;
+    const book = defineTool({
+      name: "book",
+      description: "d",
+      input: any,
+      inputJsonSchema: { type: "object" },
+      run: (_i, ctx) => (bookings++, ctx.text("Booked.")),
+    });
+    let calls = 0;
+    const flakyModel = {
+      id: "flaky",
+      async generate(req) {
+        const last = req.messages.at(-1).content;
+        const woke = Array.isArray(last) && last.at(-1)?.text?.startsWith("[The user");
+        if (woke) {
+          calls++;
+          return { content: [{ type: "tool_use", id: `tu_book_${calls}`, name: "book", input: {} }], stop_reason: "tool_use" };
+        }
+        if (Array.isArray(last) && last.some((b) => b.type === "tool_result")) throw new Error("model unavailable");
+        return { content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" };
+      },
+    };
+    const bookHai = createHai({ model: flakyModel, store: bookStore, tools: [book], surfaces: [], notices: [dropped], system: "x", maxWakes: { count: 10, perMs: 60_000 } });
+    const c = await bookStore.loadConversation(undefined);
+    await bookHai.send(c, "hi", () => {});
+    c.leaseUntil = null;
+    await bookStore.saveConversation(c);
+    await bookHai.notify(c.id, dropped, { flight: "BOOK" });
+    const outcome = await bookHai.wake(c.id, () => {});
+    const kept = await bookStore.loadConversation(c.id);
+    kept.leaseUntil = null;
+    await bookStore.saveConversation(kept);
+    const blocks = kept.messages.flatMap((m) => (Array.isArray(m.content) ? m.content : []));
+    check(
+      "a wake turn that fails after a tool ran keeps the tool's call and result, and closes",
+      outcome === "failed" && bookings === 1 && blocks.some((b) => b.type === "tool_use" && b.name === "book") &&
+        blocks.some((b) => b.type === "tool_result" && b.content === "Booked.") && kept.status === "idle",
+    );
+    check(
+      "…and its notice never wakes again, so the tool never runs twice",
+      (await bookHai.wake(c.id, () => {})) === "idle" && bookings === 1,
+    );
+  }
+
+  // ── a wake turn that outlasts its lease is not run again by a takeover
+  {
+    const shortStore = make({ leaseMs: 60 });
+    let wakeRuns = 0;
+    const slowModel = {
+      id: "slow",
+      async generate(req) {
+        const last = req.messages.at(-1).content;
+        if (Array.isArray(last) && last.at(-1)?.text?.startsWith("[The user")) {
+          wakeRuns++;
+          await new Promise((r) => setTimeout(r, 150)); // longer than the lease
+        }
+        return { content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" };
+      },
+    };
+    const slowHai = createHai({ model: slowModel, store: shortStore, tools: [], surfaces: [], notices: [dropped], system: "x", maxWakes: { count: 10, perMs: 60_000 } });
+    const c = await shortStore.loadConversation(undefined);
+    await slowHai.send(c, "hi", () => {});
+    c.leaseUntil = null;
+    await shortStore.saveConversation(c);
+    await slowHai.notify(c.id, dropped, { flight: "SLOW" });
+    const first = slowHai.wake(c.id, () => {}).catch(() => "threw");
+    await new Promise((r) => setTimeout(r, 100)); // the first turn's lease has lapsed
+    const second = await slowHai.wake(c.id, () => {});
+    await first;
+    check(
+      `a takeover of a wake turn that outlasts its lease finds nothing to wake for (${second}, ${wakeRuns} model call)`,
+      second === "idle" && wakeRuns === 1,
+    );
+  }
+
+  // ── a save that fails still lets the browser go
+  {
+    const flaky = make();
+    let saves = 0;
+    const failingSave = { ...flaky, saveConversation: async (c2) => (++saves === 2 ? Promise.reject(new Error("database away")) : flaky.saveConversation(c2)) };
+    const flakyHai = createHai({ model, store: failingSave, tools: [], surfaces: [], notices: [dropped], system: "x", maxWakes: { count: 10, perMs: 60_000 } });
+    const c = await flaky.loadConversation(undefined);
+    await flakyHai.send(c, "hi", () => {});
+    c.leaseUntil = null;
+    await flaky.saveConversation(c);
+    await flakyHai.notify(c.id, dropped, { flight: "LOSSY" });
+    const sent = [];
+    saves = 0; // the wake's own saves: the commit, then the one on the way out
+    let threw = false;
+    try {
+      await flakyHai.wake(c.id, (e) => sent.push(e.type));
+    } catch {
+      threw = true;
+    }
+    check(
+      "a wake whose final save fails still tells the browser it may send, then throws for its caller to report",
+      threw && sent.at(-1) === "released" && !sent.includes("error"),
+    );
+  }
+
+  // ── out of date: no turn
+  next.push("brief");
+  await request(id, (c2, emit) => waitingHai.send(c2, "brief", emit));
+  await new Promise((r) => setTimeout(r, 40));
+  await waitingHai.notify(id, dropped, { flight: "OLD" });
+  const staleAt = (await peek(id)).messages.length;
+  check("an out-of-date conversation does not wake", (await waitingHai.wake(id, watch)) === "idle" && (await peek(id)).messages.length === staleAt);
+}
+
 // ── the events stream, and the client that follows it ──────────────────
 // Real parts end to end: a Hai with notices behind nodeHandler, read first with
 // plain fetches, then by createChat.
@@ -3065,6 +3362,326 @@ async function noticeStreamChecks() {
   } finally {
     dropping.close();
     flaky.close();
+  }
+}
+
+// ── a wake turn runs where a browser watches, and the client waits for it ─
+async function wakeStreamChecks() {
+  console.log("\nwake stream");
+  const http = await import("node:http");
+  const { createHai, memoryStore, nodeHandler } = await import("../packages/server/dist/index.js");
+  const { defineNotice } = await import("../packages/core/dist/index.js");
+  const { createChat } = await import("../packages/client/src/index.js");
+  const any = { parse: (v) => v };
+  const dropped = defineNotice({ name: "dropped", version: 1, kind: "wake", payload: any }).implement({
+    model: (p) => `${p.flight} is cheaper.`,
+  });
+  let slow = 0; // how long the model takes to answer a wake turn
+  const asked = []; // what each model call was answering
+  const model = {
+    id: "stub",
+    async generate({ messages, onTextDelta }) {
+      const last = messages.at(-1).content;
+      const text = typeof last === "string" ? last : last.at(-1).text;
+      asked.push(text);
+      if (text.startsWith("[The user has not said anything")) await new Promise((r) => setTimeout(r, slow));
+      const reply = text.startsWith("[The user") ? "Heads up: cheaper." : `You said ${text}.`;
+      onTextDelta(reply);
+      return { content: [{ type: "text", text: reply }], stop_reason: "end_turn" };
+    },
+  };
+  // set to make each save take this long, as a slow database would, or to
+  // fail the save that ends a wake turn
+  let slowSave = 0;
+  let failWakeSave = false;
+  let onLoad = null; // called once by the next conversation load
+  const memory = memoryStore();
+  const store = {
+    ...memory,
+    async loadConversation(id) {
+      const c = await memory.loadConversation(id);
+      const call = onLoad;
+      onLoad = null;
+      call?.();
+      return c;
+    },
+    async saveConversation(c) {
+      if (slowSave) await new Promise((r) => setTimeout(r, slowSave));
+      const woke = c.messages.at(-1)?.role === "assistant" && c.messages.at(-2)?.content?.at?.(-1)?.text?.startsWith("[The user");
+      if (failWakeSave && woke) throw new Error("database away");
+      return memory.saveConversation(c);
+    },
+  };
+  const hai = createHai({ model, store, tools: [], surfaces: [], notices: [dropped], system: "x", maxWakes: { count: 100, perMs: 60_000 } });
+  const handler = nodeHandler(hai, "/hai");
+  const posts = []; // every POST, and how it was answered
+  const streams = new Set(); // events responses still open
+  const server = http.createServer(async (req, res) => {
+    if (req.url.includes("/events")) {
+      streams.add(res);
+      res.on("close", () => streams.delete(res));
+    }
+    if (req.method === "POST") {
+      const at = posts.push({ path: req.url, status: null }) - 1;
+      res.on("finish", () => (posts[at].status = res.statusCode));
+    }
+    if (!(await handler(req, res))) res.writeHead(404).end();
+  });
+  await new Promise((r) => server.listen(5383, "127.0.0.1", r));
+  const base = "http://127.0.0.1:5383";
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const until = async (cond, ms = 3_000) => {
+    for (const end = Date.now() + ms; Date.now() < end; await wait(10)) if (cond()) return true;
+    return cond();
+  };
+  // events read off one stream until `done`, or `ms`
+  async function stream(url, done, ms = 3_000, headers = {}) {
+    const aborter = new AbortController();
+    const got = [];
+    const timer = setTimeout(() => aborter.abort(), ms);
+    try {
+      const res = await fetch(url, { headers, signal: aborter.signal });
+      const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+      let buffer = "";
+      while (!done(got)) {
+        const { value, done: ended } = await reader.read();
+        if (ended) break;
+        buffer += value;
+        let i;
+        while ((i = buffer.indexOf("\n\n")) >= 0) {
+          const line = buffer.slice(0, i).split("\n").find((l) => l.startsWith("data: "));
+          buffer = buffer.slice(i + 2);
+          if (line) got.push(JSON.parse(line.slice(6)));
+        }
+      }
+    } catch {}
+    clearTimeout(timer);
+    aborter.abort();
+    return got;
+  }
+  const finished = (got) => got.some((e) => e.type === "status" && e.status === "idle");
+  const begin = async () => {
+    const c = await store.loadConversation(undefined);
+    c.messages.push({ role: "user", content: "hi" }, { role: "assistant", content: [{ type: "text", text: "hello" }] });
+    c.leaseUntil = null;
+    await store.saveConversation(c);
+    return c.id;
+  };
+
+  try {
+    // ── a wake notice while the browser watches: the turn comes down the stream
+    const id = await begin();
+    const watching = stream(`${base}/hai/events?conversationId=${id}`, finished);
+    await wait(100);
+    await hai.notify(id, dropped, { flight: "AC832" });
+    const got = await watching;
+    const kinds = got.map((e) => e.type);
+    check(
+      "a wake notice's turn streams after it, on the events stream",
+      kinds[0] === "notice" && kinds.includes("text_delta") && finished(got) &&
+        got.filter((e) => e.type === "text_delta").map((e) => e.text).join("") === "Heads up: cheaper.",
+    );
+
+    // ── busy: the route tries again until the conversation is free
+    const holder = await store.loadConversation(id);
+    const retrying = stream(`${base}/hai/events?conversationId=${id}`, finished, 4_000, { "last-event-id": String(got[0].seq) });
+    await wait(100);
+    await hai.notify(id, dropped, { flight: "NH7" });
+    await wait(600);
+    holder.leaseUntil = null;
+    await store.saveConversation(holder);
+    check("a wake notice that lands while the conversation is busy wakes once it is free", finished(await retrying));
+
+    // ── nobody watching: the turn waits for a browser to connect. This one
+    // resumes past the notice, already shown before it went away, so only the
+    // check on connecting can start the turn.
+    const later = await begin();
+    const { seq: missed } = await hai.notify(later, dropped, { flight: "JL1" });
+    await wait(200);
+    const untouched = asked.length;
+    const connected = await stream(`${base}/hai/events?conversationId=${later}`, finished, 3_000, { "last-event-id": String(missed) });
+    check(
+      "with nobody watching no turn runs; the first browser to connect starts it",
+      untouched === asked.length - 1 && finished(connected),
+    );
+
+    // ── every stream on this process hears the turn, not only the one that ran it
+    const shared = await begin();
+    const tabA = stream(`${base}/hai/events?conversationId=${shared}`, (got) => got.some((e) => e.type === "released"), 4_000);
+    const tabB = stream(`${base}/hai/events?conversationId=${shared}`, (got) => got.some((e) => e.type === "released"), 4_000);
+    await wait(150);
+    slow = 600;
+    await hai.notify(shared, dropped, { flight: "TWO" });
+    await wait(200); // the turn is under way
+    const lateTab = stream(`${base}/hai/events?conversationId=${shared}`, (got) => got.some((e) => e.type === "released"), 4_000);
+    const [a, b, late] = await Promise.all([tabA, tabB, lateTab]);
+    slow = 0;
+    const replied = (got) => got.filter((e) => e.type === "text_delta").map((e) => e.text).join("") === "Heads up: cheaper.";
+    check(
+      "two tabs on one conversation both see a wake turn's reply, and both hear it let go",
+      replied(a) && replied(b) && a.some((e) => e.type === "released") && b.some((e) => e.type === "released"),
+    );
+    check(
+      "a tab that connects during a wake turn is told one is running, then that it let go",
+      late.findIndex((e) => e.type === "status" && e.status === "streaming") >= 0 &&
+        late.findIndex((e) => e.type === "status" && e.status === "streaming") < late.findIndex((e) => e.type === "released"),
+    );
+
+    // ── a stream that joins part way gets the reply so far, then the rest
+    {
+      const joined = await begin();
+      const halves = { first: "Heads up: ", rest: "it got cheaper." };
+      const parts = [];
+      const partial = {
+        id: "halves",
+        async generate({ onTextDelta }) {
+          onTextDelta(halves.first);
+          parts.push("first");
+          await new Promise((r) => setTimeout(r, 600));
+          onTextDelta(halves.rest);
+          return { content: [{ type: "text", text: halves.first + halves.rest }], stop_reason: "end_turn" };
+        },
+      };
+      const original = model.generate;
+      model.generate = (req) => {
+        const last = req.messages.at(-1).content;
+        return typeof last !== "string" && last.at(-1).text.startsWith("[The user") ? partial.generate(req) : original(req);
+      };
+      const first = stream(`${base}/hai/events?conversationId=${joined}`, (got) => got.some((e) => e.type === "released"), 4_000);
+      await wait(150);
+      await hai.notify(joined, dropped, { flight: "HALF" });
+      await until(() => parts.length === 1); // the first half has been said
+      const late = await stream(`${base}/hai/events?conversationId=${joined}`, (got) => got.some((e) => e.type === "released"), 4_000);
+      await first;
+      model.generate = original;
+      const opened = late.find((e) => e.type === "block_start" && e.block.kind === "assistant");
+      const said = (opened?.block.text ?? "") + late.filter((e) => e.type === "text_delta" && e.id === opened?.block.id).map((e) => e.text).join("");
+      check(
+        "a stream that joins mid-reply gets the text so far in one block, then the rest",
+        opened?.block.text === halves.first && said === halves.first + halves.rest,
+      );
+    }
+
+    // ── the client: a message sent during a wake turn waits for it, rather than 409
+    const chat = createChat({ endpoint: `${base}/hai`, registry: {} });
+    await chat.send("first");
+    const cid = chat.state.conversationId;
+    await wait(150); // the events stream opens on hello
+    slow = 400;
+    await hai.notify(cid, dropped, { flight: "UA9" });
+    check("the client sees the wake turn start", await until(() => chat.state.status === "streaming"));
+    posts.length = 0;
+    const sent = await chat.send("during");
+    check(
+      "a message sent during a wake turn waits for it, and goes through",
+      sent === true && posts.every((p) => p.status !== 409) && !chat.state.blocks.some((b) => b.kind === "error"),
+    );
+    check("…after the wake turn's reply", asked.at(-1) === "during" && asked.at(-2).startsWith("[The user"));
+    check(
+      "the wake turn's reply sits under its notice in the transcript",
+      chat.state.blocks.findIndex((b) => b.kind === "notice") < chat.state.blocks.findIndex((b) => b.kind === "assistant" && b.text === "Heads up: cheaper."),
+    );
+
+    // The turn says it is idle before its save lets the conversation go. A
+    // message sent on that would still find it held: the client waits for
+    // `released` instead.
+    // What this chat hears from here on, so each wait below is for this
+    // turn's own frames, not ones left from the turn before.
+    const heard = [];
+    const off = chat.subscribe((_s, e) => heard.push(e.type === "status" ? `status:${e.status}` : e.type));
+    const turnAfter = (from) => {
+      const started = heard.indexOf("status:streaming", from);
+      return started >= 0 && heard.indexOf("status:idle", started) >= 0;
+    };
+
+    slow = 0;
+    slowSave = 400;
+    let mark = heard.length;
+    await hai.notify(cid, dropped, { flight: "BA2" });
+    // the turn has said it is idle; its save still holds the conversation
+    await until(() => turnAfter(mark), 4_000);
+    posts.length = 0;
+    const tail = await chat.send("right after");
+    slowSave = 0;
+    check(
+      "a message sent as a wake turn goes idle waits for its save, and goes through",
+      tail === true && heard.indexOf("released", mark) > heard.indexOf("status:idle", mark) &&
+        posts.every((p) => p.status !== 409) && !chat.state.blocks.some((b) => b.kind === "error"),
+    );
+
+    // The events connection drops mid-turn. The turn runs on, holding the
+    // conversation, and its `released` is lost: a message sent now must keep
+    // trying until the turn lets go, not give up after one retry.
+    slow = 1_500;
+    mark = heard.length;
+    await hai.notify(cid, dropped, { flight: "CUT" });
+    await until(() => heard.indexOf("status:streaming", mark) >= 0, 4_000);
+    for (const res of streams) res.destroy();
+    posts.length = 0;
+    const afterDrop = await chat.send("after the drop");
+    slow = 0;
+    off();
+    check(
+      "a message sent after the events connection drops mid-turn keeps trying until the turn ends",
+      afterDrop === true && posts.some((p) => p.status === 409) && posts.at(-1).status === 200 &&
+        asked.at(-1) === "after the drop" && !chat.state.blocks.some((b) => b.kind === "error"),
+    );
+
+    // The connection drops mid-reply and comes back while the turn still
+    // runs: the reply is whole, once, not cut short or doubled.
+    const plain = model.generate;
+    model.generate = async (req) => {
+      const last = req.messages.at(-1).content;
+      if (typeof last === "string" || !last.at(-1).text.startsWith("[The user")) return plain(req);
+      asked.push(last.at(-1).text);
+      req.onTextDelta("Back: ");
+      await new Promise((r) => setTimeout(r, 2_500)); // the client reconnects meanwhile
+      req.onTextDelta("all of it.");
+      return { content: [{ type: "text", text: "Back: all of it." }], stop_reason: "end_turn" };
+    };
+    mark = heard.length;
+    await hai.notify(cid, dropped, { flight: "BACK" });
+    await until(() => chat.state.blocks.some((b) => b.kind === "assistant" && b.text === "Back: "), 4_000);
+    for (const res of streams) res.destroy();
+    await until(() => heard.indexOf("released", mark) >= 0, 8_000);
+    model.generate = plain;
+    const back = chat.state.blocks.filter((b) => b.kind === "assistant" && b.text.startsWith("Back"));
+    check(
+      "a wake reply cut off by a dropped connection is whole once it reconnects, and shown once",
+      back.length === 1 && back[0].text === "Back: all of it.",
+    );
+
+    // The server takes the conversation a moment before the wake turn can
+    // stream anything. A message sent in that moment waits for the turn too,
+    // however long the save before the model takes.
+    await until(() => streams.size === 1, 4_000); // reconnected
+    const taken = new Promise((resolve) => (onLoad = resolve));
+    slowSave = 400;
+    await hai.notify(cid, dropped, { flight: "EARLY" });
+    await taken; // the wake turn holds the conversation now
+    posts.length = 0;
+    const early = await chat.send("as it wakes");
+    slowSave = 0;
+    check(
+      "a message sent the moment a wake turn takes the conversation waits for it, and goes through",
+      early === true && asked.at(-1) === "as it wakes" && !chat.state.blocks.some((b) => b.kind === "error"),
+    );
+
+    // a wake whose final save fails is reported once, by the route
+    await until(() => streams.size === 1, 4_000); // reconnected
+    const errorsBefore = chat.state.blocks.filter((b) => b.kind === "error").length;
+    failWakeSave = true;
+    await hai.notify(cid, dropped, { flight: "LOST" });
+    await until(() => chat.state.blocks.filter((b) => b.kind === "error").length > errorsBefore, 3_000);
+    await wait(300);
+    failWakeSave = false;
+    check(
+      "a wake whose final save fails shows one error, not two",
+      chat.state.blocks.filter((b) => b.kind === "error").length === errorsBefore + 1,
+    );
+    chat.close();
+  } finally {
+    server.close();
   }
 }
 
@@ -3584,6 +4201,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   await windowChecks();
   await clientChecks();
   await noticeStreamChecks();
+  await wakeStreamChecks();
   await transcriptChecks();
 
   // Said plainly because a suite that looks exhaustive is worse than one that

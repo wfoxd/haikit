@@ -97,8 +97,9 @@ export function reactSurface<S extends AnySurface>(Component: ComponentType<Surf
   };
 }
 
-type AnyNotice = Notice<any>;
-type PayloadOf<N> = N extends Notice<infer P> ? P : never;
+// any kind: a wake notice renders as a passive one does
+type AnyNotice = Notice<any, any>;
+type PayloadOf<N> = N extends Notice<infer P, any> ? P : never;
 
 /** What a React notice component receives, typed from its notice contract. */
 export interface NoticeProps<N extends AnyNotice> {

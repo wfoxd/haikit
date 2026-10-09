@@ -12,6 +12,13 @@ const handle = nodeHandler(hai, "/hai");
 
 Two routes: `POST /hai/chat` and `POST /hai/interact`, both streaming SSE.
 
+**A conversation id is a bearer token: put the routes behind your own auth.**
+`nodeHandler` does no authentication. Anyone with a conversation's id can send
+to it, click in it, read its notices, and wake it, so it is only as private
+as its id. `pgStore` and `memoryStore` mint unguessable ids. Before handing a
+request to `nodeHandler`, check that the signed-in user owns that
+conversation, as you would for any record.
+
 **`/hai/interact` accepts `{handle, action, value}` and nothing else.** What an
 action *means* is resolved server-side from the surface's declared contract. If
 the client could name a tool, a prompt injection inside any tool result would
@@ -165,6 +172,49 @@ once a turn has taken it in, as part of the history the `context` event shows
 the inspector, the same as a digest. It reads the store every two
 seconds, and a store with `watch` wakes it the moment a notice lands. The
 two-second read stays even then, so a lost wake-up only delays a notice.
+
+**A `wake` notice starts a turn of its own.** Declare one with `kind: "wake"`,
+and its `model` function must return text, since the turn is the model's
+answer to it:
+
+```ts
+export const fareDropped = defineNotice({ name: "fare_dropped", version: 1, kind: "wake", payload: FareDrop });
+const fareDroppedServer = fareDropped.implement({
+  model: (p) => `The fare on ${p.flightId} dropped from $${p.was} to $${p.now}.`,
+});
+```
+
+It is sent the same way, with `hai.notify`. The turn runs where a browser is
+watching: the events route, holding the conversation's stream, takes the
+lease and streams the turn down that stream. The user message it records
+carries every unread notice, then
+`[The user has not said anything. The notifications above arrived on their own.]`.
+If the conversation is busy, the route tries again, backing off from 250 ms to
+5 s, until it is free or the browser leaves. No turn starts in these cases,
+and the notice rides the user's next message, as a passive one does:
+
+- nobody is watching (a browser that connects later starts it);
+- a question is waiting for an answer;
+- the conversation hasn't begun, or is out of date;
+- it's past `maxWakes`, by default one wake turn a minute per conversation.
+
+```ts
+createHai({ /* … */, notices: [fareDroppedServer], maxWakes: { count: 1, perMs: 60_000 } });
+```
+
+Several wake notices waiting at once start one turn. One held back by
+`maxWakes` never wakes later. Every events stream this process has open for
+the conversation hears the turn, so a second tab shows the reply too; a tab
+connected to another server instance does not.
+
+A wake turn whose model call fails before any tool has run is undone: the
+history is left as it was and its notices can wake again, though the attempt
+still counts against `maxWakes`. Once a tool has run, a failure keeps what
+happened, the call and its result, and closes the turn. The notice never
+wakes again, so no tool runs twice. When a turn ends, the stream sends
+`released` once the conversation is saved and free, and the client waits for
+that before it sends anything. `hai.wake(conversationId, emit)` is what the
+route calls, if you serve the events stream yourself.
 
 **A conversation closes once any of its surfaces passes its `staleAfterMs`.**
 From then on both routes answer with an `expired` event and the model is not

@@ -170,12 +170,18 @@ async function noticeChecks(label, db) {
 
   // a database migrated before notices existed gains them
   {
-    await db.query(`ALTER TABLE haikit_conversations DROP COLUMN notice_seq, DROP COLUMN noticed_through`);
+    await db.query(
+      `ALTER TABLE haikit_conversations DROP COLUMN notice_seq, DROP COLUMN noticed_through, DROP COLUMN wakes, DROP COLUMN woke_through`,
+    );
+    await db.query(`ALTER TABLE haikit_notices DROP COLUMN kind`);
     await migrate(db);
     const store = pgStore(db);
     const a = await store.loadConversation(undefined);
-    const n = await store.putNotice(notice(a.id));
-    check("migrating a pre-notices database adds what notices need", n.seq === 1 && a.noticedThrough === 0);
+    const n = await store.putNotice({ ...notice(a.id), kind: "wake" });
+    check(
+      "migrating a pre-notices database adds what notices and wake turns need",
+      n.seq === 1 && n.kind === "wake" && a.noticedThrough === 0 && JSON.stringify(a.wakes) === "[]" && a.wokeThrough === 0,
+    );
   }
 
   // a resume point past what an integer holds is read, not refused by a cast

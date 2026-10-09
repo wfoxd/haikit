@@ -80,11 +80,16 @@ export const schema: readonly string[] = [
      -- the last notice number given out, and the last one its history took in
      notice_seq      integer NOT NULL DEFAULT 0,
      noticed_through integer NOT NULL DEFAULT 0,
+     -- when recent wake turns started, and the last notice that may no longer start one
+     wakes           jsonb NOT NULL DEFAULT '[]',
+     woke_through    integer NOT NULL DEFAULT 0,
      updated_at   timestamptz NOT NULL DEFAULT now()
    )`,
   // a table created before notices existed gains the columns
   `ALTER TABLE haikit_conversations ADD COLUMN IF NOT EXISTS notice_seq integer NOT NULL DEFAULT 0`,
   `ALTER TABLE haikit_conversations ADD COLUMN IF NOT EXISTS noticed_through integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE haikit_conversations ADD COLUMN IF NOT EXISTS wakes jsonb NOT NULL DEFAULT '[]'`,
+  `ALTER TABLE haikit_conversations ADD COLUMN IF NOT EXISTS woke_through integer NOT NULL DEFAULT 0`,
   // Append-only, and never an orphan: a notice belongs to a conversation that
   // exists, and goes when it does.
   `CREATE TABLE IF NOT EXISTS haikit_notices (
@@ -96,8 +101,11 @@ export const schema: readonly string[] = [
      payload         jsonb NOT NULL,
      model           text,
      handle          text,
+     -- 'wake', or NULL for a passive notice
+     kind            text,
      PRIMARY KEY (conversation_id, seq)
    )`,
+  `ALTER TABLE haikit_notices ADD COLUMN IF NOT EXISTS kind text`,
   // Write-once. Nothing about a payload changes after insert — everything that
   // does lives on the fenced conversation row (see Conversation.frozen).
   `CREATE TABLE IF NOT EXISTS haikit_payloads (
@@ -136,10 +144,11 @@ export async function migrate(db: Queryable): Promise<void> {
 const CONVERSATION_COLUMNS = `
   id, status, messages::text AS messages, handles::text AS handles,
   frozen::text AS frozen, pending::text AS pending, lease_token, noticed_through,
+  wakes::text AS wakes, woke_through,
   (extract(epoch FROM lease_until) * 1000)::float8 AS lease_until_ms`;
 
 const NOTICE_COLUMNS = `
-  conversation_id, seq, name, version, payload::text AS payload, model, handle,
+  conversation_id, seq, name, version, payload::text AS payload, model, handle, kind,
   (extract(epoch FROM created_at) * 1000)::float8 AS created_at_ms`;
 
 // The window is read as text too: 'Infinity' is how "never" is stored, and
@@ -161,6 +170,8 @@ const toConversation = (row: any): Conversation => ({
   leaseUntil: row.lease_until_ms == null ? null : Number(row.lease_until_ms),
   leaseToken: row.lease_token,
   noticedThrough: Number(row.noticed_through ?? 0),
+  wakes: row.wakes == null ? [] : json(row.wakes),
+  wokeThrough: Number(row.woke_through ?? 0),
 });
 
 const toNotice = (row: any): NoticeRecord => ({
@@ -172,6 +183,7 @@ const toNotice = (row: any): NoticeRecord => ({
   payload: json(row.payload),
   model: row.model,
   ...(row.handle == null ? {} : { handle: row.handle }),
+  ...(row.kind === "wake" ? { kind: "wake" as const } : {}),
 });
 
 const toPayload = (row: any): PayloadRecord => ({
@@ -302,6 +314,8 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
                 pending     = $7::jsonb,
                 lease_until = to_timestamp($8::float8 / 1000),
                 noticed_through = $9::integer,
+                wakes       = $10::jsonb,
+                woke_through = $11::integer,
                 updated_at  = now()
           WHERE id = $1 AND lease_token = $2
           RETURNING id`,
@@ -316,6 +330,8 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
           conversation.pending == null ? null : JSON.stringify(conversation.pending),
           conversation.leaseUntil,
           conversation.noticedThrough ?? 0,
+          JSON.stringify(conversation.wakes ?? []),
+          conversation.wokeThrough ?? 0,
         ],
       );
       if (!rows.length) await stale(conversation.id);
@@ -397,8 +413,8 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
             WHERE id = $1::text
             RETURNING notice_seq
          ), stored AS (
-           INSERT INTO haikit_notices (conversation_id, seq, name, version, payload, model, handle)
-           SELECT $1::text, notice_seq, $2::text, $3::integer, $4::jsonb, $5::text, $6::text FROM next
+           INSERT INTO haikit_notices (conversation_id, seq, name, version, payload, model, handle, kind)
+           SELECT $1::text, notice_seq, $2::text, $3::integer, $4::jsonb, $5::text, $6::text, $7::text FROM next
            RETURNING ${NOTICE_COLUMNS}
          )
          SELECT stored.*, pg_notify('${NOTICE_CHANNEL}', $1::text) FROM stored`,
@@ -409,6 +425,7 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
           JSON.stringify(record.payload ?? null),
           record.model,
           record.handle ?? null,
+          record.kind === "wake" ? "wake" : null,
         ],
       );
       if (!rows.length) throw new Error(`conversation ${record.conversationId} does not exist`);
