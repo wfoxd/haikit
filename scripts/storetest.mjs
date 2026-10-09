@@ -3864,6 +3864,76 @@ async function crossInstanceChecks() {
     }
   }
 
+  // ── frames from different processes, out of order between them
+  // One process's turn ends after another's has started; its late `released`
+  // must not end the new one. Frames are published straight into the store,
+  // as two other processes would.
+  {
+    const memory = memoryStore();
+    const hai = createHai({ model, store: memory, tools: [], surfaces: [], notices: [quiet], system: "x" });
+    const handler = nodeHandler(hai, "/hai");
+    const server = http.createServer(async (req, res) => {
+      if (!(await handler(req, res))) res.writeHead(404).end();
+    });
+    await new Promise((r) => server.listen(5388, "127.0.0.1", r));
+    try {
+      const id = await begin(memory);
+      const watching = stream(`http://127.0.0.1:5388/hai/events?conversationId=${id}`, (got) => got.some((e) => e.type === "text_delta" && e.text === "done"), 3_000);
+      await wait(150);
+      const from = (origin, turn, event) => memory.publish(id, JSON.stringify({ origin, turn, event }));
+      await from("A", "t1", { type: "status", status: "streaming" });
+      await from("B", "t2", { type: "status", status: "streaming" });
+      await from("A", "t1", { type: "released" }); // late, from the turn before
+      await from("A", "t1", { type: "block_start", block: { kind: "assistant", id: "old", text: "" } });
+      await from("B", "t2", { type: "block_start", block: { kind: "assistant", id: "new", text: "" } });
+      await from("B", "t2", { type: "text_delta", id: "new", text: "done" });
+      const got = await watching;
+      check(
+        "a turn's late `released` doesn't end the turn that started after it elsewhere",
+        !got.some((e) => e.type === "released") && got.some((e) => e.type === "text_delta" && e.text === "done"),
+      );
+      check("…and an old turn's later frames are dropped", !got.some((e) => e.type === "block_start" && e.block.id === "old"));
+    } finally {
+      server.close();
+    }
+  }
+
+  // ── a stream still being set up keeps the subscription it is waiting on
+  // Listening takes a while to start. Two streams wait on it; one leaves
+  // before it is ready. The other must still hear later turns.
+  {
+    const memory = memoryStore();
+    const slowStore = {
+      ...memory,
+      async subscribe(id, onMessage, signal) {
+        await memory.subscribe(id, onMessage, signal);
+        await new Promise((r) => setTimeout(r, 300));
+      },
+    };
+    const hai = createHai({ model, store: slowStore, tools: [], surfaces: [], notices: [quiet], system: "x" });
+    const handler = nodeHandler(hai, "/hai");
+    const server = http.createServer(async (req, res) => {
+      if (!(await handler(req, res))) res.writeHead(404).end();
+    });
+    await new Promise((r) => server.listen(5389, "127.0.0.1", r));
+    try {
+      const id = await begin(memory);
+      const leaving = new AbortController();
+      fetch(`http://127.0.0.1:5389/hai/events?conversationId=${id}`, { signal: leaving.signal }).catch(() => {});
+      const staying = stream(`http://127.0.0.1:5389/hai/events?conversationId=${id}`, released, 3_000);
+      await wait(100);
+      leaving.abort(); // gone while listening is still starting
+      await wait(400); // listening has started; the staying stream is open
+      const from = (event) => memory.publish(id, JSON.stringify({ origin: "elsewhere", turn: "t9", event }));
+      await from({ type: "status", status: "streaming" });
+      await from({ type: "released" });
+      const got = await staying;
+      check("a stream that waited on listening still hears turns, though another left while it waited", released(got));
+    } finally {
+      server.close();
+    }
+  }
+
   // ── without them: the turn stays on its own process, as before
   {
     const memory = memoryStore();
