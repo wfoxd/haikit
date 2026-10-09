@@ -2991,6 +2991,12 @@ async function noticeStreamChecks() {
       `each drop waits longer before the next try (${gaps.map((g) => `${(g / 1000).toFixed(1)}s`).join(", ")})`,
       gaps.length === 2 && gaps[0] >= 900 && gaps[1] >= 1_800,
     );
+    // the chat is now waiting out a backoff; closing it ends that wait, timer and all
+    const timers = () => process.getActiveResourcesInfo().filter((r) => r === "Timeout").length;
+    const waiting = timers();
+    dropping.close();
+    await wait(0);
+    check(`close() during a backoff lets go of its timer (${waiting} → ${timers()})`, timers() === waiting - 1);
   } finally {
     dropping.close();
     flaky.close();

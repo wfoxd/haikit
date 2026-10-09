@@ -183,10 +183,11 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
         if (event.events) listen(event.conversationId);
         break;
 
-      // From the events stream. A reconnect resumes after the last one seen,
-      // so a repeat is only ever one already shown, and is dropped.
+      // From the events stream, in seq order. A reconnect resumes after the
+      // last one seen, so anything not past it is one already shown, and is
+      // dropped: one comparison, however long the backlog.
       case "notice": {
-        if (state.notices.some((n) => n.seq === event.seq)) return;
+        if (event.seq <= (state.notices.at(-1)?.seq ?? 0)) return;
         const { type, ...notice } = event;
         state.notices.push(notice);
         const block = { kind: "notice", id: `n:${event.seq}`, ...notice };
@@ -355,8 +356,17 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
         if (signal.aborted) return;
       }
       if (delivered || Date.now() - opened >= HEALTHY_MS) wait = 1_000;
-      // dropped, refused, or the network went away: try again, backing off
-      await new Promise((r) => setTimeout(r, wait));
+      // Dropped, refused, or the network went away: try again, backing off.
+      // reset() or close() ends the wait at once, timer and all.
+      await new Promise((resolve) => {
+        const done = () => {
+          clearTimeout(timer);
+          signal.removeEventListener("abort", done);
+          resolve();
+        };
+        const timer = setTimeout(done, wait);
+        signal.addEventListener("abort", done);
+      });
       wait = Math.min(wait * 2, 30_000);
     }
   }
