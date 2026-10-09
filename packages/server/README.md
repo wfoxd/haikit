@@ -196,9 +196,15 @@ createHai({ /* … */, notices: [fareDroppedServer], maxWakes: { count: 1, perMs
 ```
 
 Several wake notices waiting at once start one turn. One held back by
-`maxWakes` never wakes later. A wake turn whose model call fails is undone:
-the history is left as it was and its notices can wake again, though the
-attempt still counts against `maxWakes`. When a turn ends, the stream sends
+`maxWakes` never wakes later. Every events stream this process has open for
+the conversation hears the turn, so a second tab shows the reply too; a tab
+connected to another server instance does not.
+
+A wake turn whose model call fails before any tool has run is undone: the
+history is left as it was and its notices can wake again, though the attempt
+still counts against `maxWakes`. Once a tool has run, a failure keeps what
+happened, the call and its result, and closes the turn. The notice never
+wakes again, so no tool runs twice. When a turn ends, the stream sends
 `released` once the conversation is saved and free, and the client waits for
 that before it sends anything. `hai.wake(conversationId, emit)` is what the
 route calls, if you serve the events stream yourself.

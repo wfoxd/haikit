@@ -173,6 +173,13 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
   const emit: Emit = (event) => {
     if (!signal.aborted && !res.writableEnded) res.write(`data: ${JSON.stringify(event)}\n\n`);
   };
+  // Every stream this process has open for the conversation hears a wake
+  // turn, not only the one whose attempt won the lease: another tab shows the
+  // reply too, and holds its requests until the turn lets go.
+  const watchers = watchersOf(hai, conversationId);
+  watchers.streams.add(emit);
+  // joining while a wake turn runs: hold requests until it lets go
+  if (watchers.live) emit({ type: "status", status: "streaming" });
 
   // Wake turns run beside the notice loop, so a notice never waits behind a
   // turn, nor behind the retries while another request holds the
@@ -190,7 +197,7 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
       do {
         again = false;
         let wait = WAKE_RETRY_MS;
-        while (!signal.aborted && (await hai.wake(conversationId, emit)) === "busy") {
+        while (!signal.aborted && (await hai.wake(conversationId, watchers.broadcast)) === "busy") {
           await pause(wait, signal);
           wait = Math.min(wait * 2, WAKE_RETRY_MAX_MS);
         }
@@ -253,9 +260,49 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
   } finally {
     clearInterval(heartbeat);
     aborter.abort();
+    watchers.streams.delete(emit);
+    if (!watchers.streams.size) forgetWatchers(hai, conversationId, watchers);
     await wakes.return?.();
     res.end();
   }
+}
+
+/** The events streams one process has open for a conversation, and whether a wake turn is running there. */
+interface Watchers {
+  streams: Set<Emit>;
+  live: boolean;
+  broadcast: Emit;
+}
+
+const watching = new WeakMap<Hai, Map<string, Watchers>>();
+
+function watchersOf(hai: Hai, conversationId: string): Watchers {
+  let byConversation = watching.get(hai);
+  if (!byConversation) watching.set(hai, (byConversation = new Map()));
+  const map = byConversation;
+  let watchers = byConversation.get(conversationId);
+  if (!watchers) {
+    const fresh: Watchers = {
+      streams: new Set(),
+      live: false,
+      // a wake turn's frames, to every stream; `live` from its first
+      // `streaming` until `released`, for a stream that joins part way
+      broadcast: (event) => {
+        if (event.type === "status" && event.status === "streaming") fresh.live = true;
+        if (event.type === "released") fresh.live = false;
+        for (const send of fresh.streams) send(event);
+        // the turn outlived every stream that watched it: nothing left to keep
+        if (!fresh.live && !fresh.streams.size && map.get(conversationId) === fresh) map.delete(conversationId);
+      },
+    };
+    byConversation.set(conversationId, (watchers = fresh));
+  }
+  return watchers;
+}
+
+function forgetWatchers(hai: Hai, conversationId: string, watchers: Watchers) {
+  // a wake turn still running keeps its entry, so a stream that joins later still hears it
+  if (!watchers.live && watching.get(hai)?.get(conversationId) === watchers) watching.get(hai)!.delete(conversationId);
 }
 
 /** The first wait before trying a wake turn again on a busy conversation, and the longest. */

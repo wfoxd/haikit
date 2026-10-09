@@ -2919,6 +2919,53 @@ async function wakeChecks(make) {
   check("once the model is back, the notice wakes", (await failing.wake(fid, () => {})) === "woke" &&
     same(lastUser(await peek(fid))[0], note("dropped", "DOWN is cheaper.")));
 
+  // ── a turn that fails after a tool ran keeps what happened, and never wakes again
+  {
+    const bookStore = make();
+    let bookings = 0;
+    const book = defineTool({
+      name: "book",
+      description: "d",
+      input: any,
+      inputJsonSchema: { type: "object" },
+      run: (_i, ctx) => (bookings++, ctx.text("Booked.")),
+    });
+    let calls = 0;
+    const flakyModel = {
+      id: "flaky",
+      async generate(req) {
+        const last = req.messages.at(-1).content;
+        const woke = Array.isArray(last) && last.at(-1)?.text?.startsWith("[The user");
+        if (woke) {
+          calls++;
+          return { content: [{ type: "tool_use", id: `tu_book_${calls}`, name: "book", input: {} }], stop_reason: "tool_use" };
+        }
+        if (Array.isArray(last) && last.some((b) => b.type === "tool_result")) throw new Error("model unavailable");
+        return { content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" };
+      },
+    };
+    const bookHai = createHai({ model: flakyModel, store: bookStore, tools: [book], surfaces: [], notices: [dropped], system: "x", maxWakes: { count: 10, perMs: 60_000 } });
+    const c = await bookStore.loadConversation(undefined);
+    await bookHai.send(c, "hi", () => {});
+    c.leaseUntil = null;
+    await bookStore.saveConversation(c);
+    await bookHai.notify(c.id, dropped, { flight: "BOOK" });
+    const outcome = await bookHai.wake(c.id, () => {});
+    const kept = await bookStore.loadConversation(c.id);
+    kept.leaseUntil = null;
+    await bookStore.saveConversation(kept);
+    const blocks = kept.messages.flatMap((m) => (Array.isArray(m.content) ? m.content : []));
+    check(
+      "a wake turn that fails after a tool ran keeps the tool's call and result, and closes",
+      outcome === "failed" && bookings === 1 && blocks.some((b) => b.type === "tool_use" && b.name === "book") &&
+        blocks.some((b) => b.type === "tool_result" && b.content === "Booked.") && kept.status === "idle",
+    );
+    check(
+      "…and its notice never wakes again, so the tool never runs twice",
+      (await bookHai.wake(c.id, () => {})) === "idle" && bookings === 1,
+    );
+  }
+
   // ── a wake turn that outlasts its lease is not run again by a takeover
   {
     const shortStore = make({ leaseMs: 60 });
@@ -3456,6 +3503,28 @@ async function wakeStreamChecks() {
     check(
       "with nobody watching no turn runs; the first browser to connect starts it",
       untouched === asked.length - 1 && finished(connected),
+    );
+
+    // ── every stream on this process hears the turn, not only the one that ran it
+    const shared = await begin();
+    const tabA = stream(`${base}/hai/events?conversationId=${shared}`, (got) => got.some((e) => e.type === "released"), 4_000);
+    const tabB = stream(`${base}/hai/events?conversationId=${shared}`, (got) => got.some((e) => e.type === "released"), 4_000);
+    await wait(150);
+    slow = 600;
+    await hai.notify(shared, dropped, { flight: "TWO" });
+    await wait(200); // the turn is under way
+    const lateTab = stream(`${base}/hai/events?conversationId=${shared}`, (got) => got.some((e) => e.type === "released"), 4_000);
+    const [a, b, late] = await Promise.all([tabA, tabB, lateTab]);
+    slow = 0;
+    const replied = (got) => got.filter((e) => e.type === "text_delta").map((e) => e.text).join("") === "Heads up: cheaper.";
+    check(
+      "two tabs on one conversation both see a wake turn's reply, and both hear it let go",
+      replied(a) && replied(b) && a.some((e) => e.type === "released") && b.some((e) => e.type === "released"),
+    );
+    check(
+      "a tab that connects during a wake turn is told one is running, then that it let go",
+      late.findIndex((e) => e.type === "status" && e.status === "streaming") >= 0 &&
+        late.findIndex((e) => e.type === "status" && e.status === "streaming") < late.findIndex((e) => e.type === "released"),
     );
 
     // ── the client: a message sent during a wake turn waits for it, rather than 409

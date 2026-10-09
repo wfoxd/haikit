@@ -322,20 +322,33 @@ export class Hai {
       await this.config.store.saveConversation(conversation);
       await this.runTurn(conversation, emit);
     } catch (err) {
-      // A turn that fails part way leaves a user message with no reply, and a
-      // status of `streaming`: saved, that would be a history the next message
-      // cannot follow. Put it back as it was, notices unread and able to wake
-      // again; the save on the way out overwrites the commit above. Payloads
-      // the turn stored are left behind, inert, as an overtaken turn's are. A
-      // lost lease needs no undoing: nothing more is saved.
+      // A turn that fails before any tool has run leaves a user message with no
+      // reply, and a status of `streaming`: saved, that would be a history the
+      // next message cannot follow. Put it back as it was, notices unread and
+      // able to wake again; the save on the way out overwrites the commit
+      // above. Payloads the turn stored are left behind, inert, as an
+      // overtaken turn's are. A lost lease needs no undoing: nothing more is
+      // saved.
       if (!isStaleLease(err)) {
-        conversation.messages.length = before.messages;
-        conversation.handles.length = before.handles;
-        conversation.frozen.length = before.frozen;
-        conversation.status = before.status;
-        conversation.pending = null;
-        conversation.noticedThrough = before.noticedThrough;
-        conversation.wokeThrough = before.wokeThrough;
+        // Once a tool has run, undoing would let the notice wake again and run
+        // it again, booking or charging twice. So keep what happened, its call
+        // and result where the model can see them, and close the turn, as a
+        // failed chat turn is kept; the notice never wakes again. Before any
+        // tool has run, nothing has happened that a retry could repeat.
+        const toolRan = conversation.messages
+          .slice(before.messages + 1)
+          .some((m) => m.role === "assistant" && Array.isArray(m.content) && m.content.some((b: any) => b?.type === "tool_use"));
+        if (toolRan) {
+          conversation.status = "idle";
+        } else {
+          conversation.messages.length = before.messages;
+          conversation.handles.length = before.handles;
+          conversation.frozen.length = before.frozen;
+          conversation.status = before.status;
+          conversation.pending = null;
+          conversation.noticedThrough = before.noticedThrough;
+          conversation.wokeThrough = before.wokeThrough;
+        }
       }
       throw err;
     }
