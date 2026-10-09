@@ -2870,6 +2870,14 @@ async function noticeStreamChecks() {
     check("the model's half never reaches the browser", !JSON.stringify(backlog.frames).includes("secret"));
     const resumed = await read(`${base}/hai/events?conversationId=${id}`, { "last-event-id": backlog.frames[0].id }, 1);
     check("Last-Event-ID resumes after the last notice seen", resumed.frames.length === 1 && resumed.frames[0].event.payload.flight === "NH7");
+    // nothing to catch up on: the stream still opens at once, not at the first heartbeat
+    const opening = Date.now();
+    const quiet = await Promise.race([
+      fetch(`${base}/hai/events?conversationId=${id}&after=${backlog.frames[1].id}`),
+      wait(2_000).then(() => null),
+    ]);
+    check(`a stream with nothing to send yet opens at once (${Date.now() - opening}ms)`, quiet?.status === 200);
+    await quiet?.body.cancel();
     const live = read(`${base}/hai/events?conversationId=${id}`, { "last-event-id": backlog.frames[1].id }, 1, 2_000);
     await wait(100);
     await hai.notify(id, held, { flight: "JL1" });

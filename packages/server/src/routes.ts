@@ -142,6 +142,9 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
     "cache-control": "no-cache",
     connection: "keep-alive",
   });
+  // Sent now, not with the first frame: with nothing to catch up on, that is a
+  // heartbeat away, and the browser's request would hang open until then.
+  res.flushHeaders();
   const aborter = new AbortController();
   const { signal } = aborter;
   res.on("close", () => aborter.abort());
