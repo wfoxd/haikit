@@ -89,6 +89,13 @@ export interface SurfaceInstance {
   freeze?(selection?: unknown): void;
   expire?(): void;
   unmount?(): void;
+  /**
+   * The surface was revised in place (a tool's `ctx.update`): these are its
+   * new props. Implement it to keep what the component holds, such as its
+   * scroll, sort or expanded rows. Without it, the runtime mounts the
+   * component again in the same element, losing that.
+   */
+  update?(props: any): void;
 }
 
 /** Your component. `props` is whatever the surface's `props` schema produces. */
@@ -135,6 +142,9 @@ export interface SurfaceRecord {
   instance: SurfaceInstance | null;
   /** The element it was last mounted into. */
   element: HTMLElement | null;
+  /** When it goes out of date, in this browser's clock, or null if never. Its window, in ms. */
+  deadline?: number | null;
+  window?: number;
 }
 
 export interface ChatState {

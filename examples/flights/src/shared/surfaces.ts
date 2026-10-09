@@ -84,6 +84,8 @@ export const seatMap = defineSurface({
         ),
       }),
     ),
+    /** Free seats of this kind are picked out; the rest stay, dimmed. */
+    highlight: z.enum(["window", "legroom"]).optional(),
   }),
   actions: {
     // `inform` enriches the conversation without ever having blocked it.

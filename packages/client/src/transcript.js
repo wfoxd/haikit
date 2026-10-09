@@ -46,6 +46,9 @@ export function renderTranscript(root, chat) {
       el = renderBlock(block, chat);
       // an expanded tool row stays expanded when its status changes
       if (before?.el.open) el.open = true;
+    } else if (block.kind === "ui" && el.dataset.handle !== block.handle) {
+      // a revision moved this surface to a new handle; its element stays
+      el.dataset.handle = block.handle;
     } else if (block.progress !== before.progress) {
       // Progress changes the row in place. Rebuilt for every frame, a row a
       // keyboard user is on would take their focus up to ten times a second.

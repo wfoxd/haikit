@@ -126,7 +126,7 @@ export const registry = {
   seat_map: {
     /**
      * @param {HTMLElement} el
-     * @param {{flightId: string, airline: string, rows: {row: number, seats: {id: string, letter: string, taken: boolean, extraLegroom: boolean, window: boolean}[]}[]}} props
+     * @param {{flightId: string, airline: string, rows: {row: number, seats: {id: string, letter: string, taken: boolean, extraLegroom: boolean, window: boolean}[]}[], highlight?: "window" | "legroom"}} props
      * @param {{handle: string, mode: string, state: string, send: (action: string, value: unknown) => void}} ctx
      */
     mount(el, props, ctx) {
@@ -149,9 +149,11 @@ export const registry = {
           line.append(h("span", "rownum mono", String(row.row)));
           row.seats.forEach((seat, i) => {
             if (i === 3) line.append(h("span", "aisle"));
+            const lit = props.highlight === "window" ? seat.window : props.highlight === "legroom" ? seat.extraLegroom : true;
             const btn = h("button", [
               "seat", seat.taken ? "taken" : "free",
               seat.extraLegroom ? "legroom" : "", picked === seat.id ? "picked" : "",
+              lit ? "" : "dim",
             ].filter(Boolean).join(" "), seat.letter);
             btn.disabled = seat.taken || state !== "live";
             btn.title = `${seat.id}${seat.extraLegroom ? " · extra legroom" : ""}${seat.window ? " · window" : ""}`;
@@ -170,6 +172,10 @@ export const registry = {
       render();
       return {
         freeze() { state = "frozen"; render(); },
+        // Revised in place (highlight_seats): the new props, drawn over what
+        // the user did here. A seat they picked stays picked.
+        /** @param {typeof props} next */
+        update(next) { props = next; render(); },
       };
     },
   },

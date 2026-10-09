@@ -78,4 +78,35 @@ export const showSeatMap = defineTool({
   },
 });
 
-export const tools = [searchFlights, showSeatMap];
+// Revises a seat map already on screen, in place: the user keeps their place
+// in it, and anything they picked stays picked.
+export const highlightSeats = defineTool({
+  name: "highlight_seats",
+  description:
+    "Pick out the free window or extra-legroom seats on a seat map already shown, in place, " +
+    "rather than showing a new one.",
+  input: z.object({ handle: z.string(), flightId: z.string(), kind: z.enum(["window", "legroom"]) }),
+  inputJsonSchema: {
+    type: "object",
+    properties: {
+      handle: { type: "string", description: "the seat map's handle, e.g. ui_02" },
+      flightId: { type: "string" },
+      kind: { type: "string", enum: ["window", "legroom"] },
+    },
+    required: ["handle", "flightId", "kind"],
+    additionalProperties: false,
+  },
+
+  async run(input, ctx) {
+    const flight = FLIGHTS.find((f) => f.id === input.flightId);
+    if (!flight) return ctx.text(`Unknown flight ${input.flightId}.`);
+    return ctx.update(seatMapServer, input.handle, {
+      flightId: flight.id,
+      airline: flight.airline,
+      rows: seatRows(flight.id),
+      highlight: input.kind,
+    });
+  },
+});
+
+export const tools = [searchFlights, showSeatMap, highlightSeats];

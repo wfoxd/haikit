@@ -333,7 +333,18 @@ function remember(shown: WireEvent[], event: WireEvent) {
   } else if (event.type === "ui_open") {
     const copy = { ...event };
     born.set(copy, Date.now() - (event.ageMs ?? 0));
-    shown.push(copy);
+    const replaced = event.replaces === undefined ? -1 : shown.findIndex((e) => e.type === "ui_open" && e.handle === event.replaces);
+    if (replaced < 0) shown.push(copy);
+    else {
+      // A revision of a surface this turn showed takes its place: a stream
+      // joining later sees the surface once, as it is now. Its old props go.
+      delete copy.replaces;
+      shown[replaced] = copy;
+      for (let i = shown.length - 1; i >= 0; i--) {
+        const e = shown[i];
+        if (e.type === "ui_props" && e.handle === event.replaces) shown.splice(i, 1);
+      }
+    }
   } else shown.push(event);
 }
 

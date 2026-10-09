@@ -274,7 +274,7 @@ async function noticeChecks(label, db) {
   // a database migrated before notices existed gains them
   {
     await db.query(
-      `ALTER TABLE haikit_conversations DROP COLUMN notice_seq, DROP COLUMN noticed_through, DROP COLUMN wakes, DROP COLUMN woke_through, DROP COLUMN wake_turns`,
+      `ALTER TABLE haikit_conversations DROP COLUMN notice_seq, DROP COLUMN noticed_through, DROP COLUMN wakes, DROP COLUMN woke_through, DROP COLUMN wake_turns, DROP COLUMN superseded`,
     );
     await db.query(`ALTER TABLE haikit_notices DROP COLUMN kind`);
     await migrate(db);
@@ -283,7 +283,7 @@ async function noticeChecks(label, db) {
     const n = await store.putNotice({ ...notice(a.id), kind: "wake" });
     check(
       "migrating a pre-notices database adds what notices and wake turns need",
-      n.seq === 1 && n.kind === "wake" && a.noticedThrough === 0 && JSON.stringify(a.wakes) === "[]" && a.wokeThrough === 0 && a.wakeTurns === 0,
+      n.seq === 1 && n.kind === "wake" && a.noticedThrough === 0 && JSON.stringify(a.wakes) === "[]" && a.wokeThrough === 0 && a.wakeTurns === 0 && JSON.stringify(a.superseded) === "{}",
     );
   }
 

@@ -126,6 +126,10 @@ export class Hai {
   private readonly tools = new Map<string, Tool>();
   private readonly notices = new Map<string, AnyNoticeImpl>();
   private readonly maxWakes: { count: number; perMs: number };
+  /** The derived `query_ui` tool, which answers about superseded surfaces with a note. */
+  private readonly queryUi: Tool;
+  /** Handles each conversation has a revision of in flight, so two calls can't revise one at once. */
+  private readonly revising = new WeakMap<Conversation, Set<string>>();
   /** What the model gets as its system prompt: the app's, then the scope. */
   readonly system: string;
   private seq = 0;
@@ -157,6 +161,7 @@ export class Hai {
     // that actually exist, and it always exists.
     const queryUi = this.buildQueryUiTool();
     this.tools.set(queryUi.name, queryUi);
+    this.queryUi = queryUi;
 
     if (config.init) {
       if (this.tools.has(config.init.name)) {
@@ -583,7 +588,12 @@ export class Hai {
     if (asked) {
       emit({ type: "block_update", id: toolBlockId, status: "awaiting", ms, result: asked.digest });
       conversation.status = "awaiting";
-      conversation.pending = { toolUseId: call.id, handle: asked.handle, digest: asked.digest, results: [] };
+      conversation.pending = {
+        toolUseId: call.id,
+        handle: currentHandle(conversation, asked.handle),
+        digest: asked.digest,
+        results: [],
+      };
       emit({ type: "status", status: "awaiting" });
       await this.emitContext(conversation, emit);
       return true;
@@ -617,6 +627,11 @@ export class Hai {
     // the handle, yet the row and the browser that mounted it both still exist.
     // Membership of the surviving `handles` is what makes those orphans inert.
     if (!conversation.handles.includes(input.handle)) throw new Error("unknown handle");
+
+    // Revised since the user saw it: what they clicked on is no longer there.
+    if (conversation.superseded?.[input.handle]) {
+      throw new Error(`superseded by ${currentHandle(conversation, input.handle)}`);
+    }
 
     if (conversation.frozen.includes(input.handle)) throw new Error("component is frozen");
 
@@ -756,6 +771,12 @@ export class Hai {
     }
 
     for (const record of records) {
+      // A revised surface's window stops counting; its revision's counts. Safe
+      // because the model has heard the revision before it can act: in a turn
+      // as the tool's result, and from outside one in the message this
+      // request is about to record. (An answered surface can't be revised, so
+      // what the user picked from one still counts.)
+      if (conversation.superseded?.[record.handle]) continue;
       // a surface the code no longer registers has no current window at all,
       // which is not the same as one registered without a window ("never")
       const impl = this.surfaces.get(record.component);
@@ -844,7 +865,9 @@ export class Hai {
       if (parked) {
         // Hold the resolved siblings too — the API is all-or-nothing per batch.
         conversation.status = "awaiting";
-        conversation.pending = { ...parked, results };
+        // At the question's latest revision: a later call in this reply may
+        // have revised it.
+        conversation.pending = { ...parked, handle: currentHandle(conversation, parked.handle), results };
         emit({ type: "status", status: "awaiting" });
         await this.emitContext(conversation, emit);
         return;
@@ -887,7 +910,13 @@ export class Hai {
 
     // Store a surface and send it out: the payload to the browser, the digest
     // back to the tool for the model.
-    const show = async (impl: AnySurfaceImpl, props: unknown, surfaceMode: "display" | "elicit") => {
+    const show = async (
+      impl: AnySurfaceImpl,
+      props: unknown,
+      surfaceMode: "display" | "elicit",
+      // the handle this revises in place, for `update`
+      replaces?: string,
+    ) => {
       // Validate before storing: props may originate outside this process.
       const parsed = impl.surface.props.parse(props);
       const window = windowOf(impl);
@@ -928,6 +957,7 @@ export class Hai {
         ...(window === "never" ? {} : { staleAfterMs: window }),
         // how long ago it was stored: the digest's time, and a replay's wait
         ageMs: Date.now() - storing,
+        ...(replaces === undefined ? {} : { replaces }),
       });
       emit({ type: "ui_props", handle, props: parsed });
 
@@ -977,6 +1007,35 @@ export class Hai {
         throw err;
       } finally {
         settle();
+      }
+    };
+
+    // Revise a surface this conversation shows: a new surface, with a new
+    // handle, that supersedes the old one. Checked before anything is stored,
+    // and claimed before the first await, so two calls can't both revise it.
+    const update = async (impl: AnySurfaceImpl, handle: string, props: unknown): Promise<ToolReturn> => {
+      if (!conversation.handles.includes(handle)) throw new Error(`no surface ${handle} in this conversation`);
+      if (conversation.frozen.includes(handle)) throw new Error(`${handle} was answered, so it can't be revised`);
+      const after = conversation.superseded?.[handle];
+      if (after) throw new Error(`${handle} was revised already: it is ${currentHandle(conversation, handle)} now`);
+      const revising = this.revising.get(conversation) ?? new Set<string>();
+      if (revising.has(handle)) throw new Error(`${handle} is being revised by another call`);
+      revising.add(handle);
+      this.revising.set(conversation, revising);
+      try {
+        const record = await this.config.store.getPayload(handle, conversation.id);
+        if (!record) throw new Error(`no surface ${handle} in this conversation`);
+        if (record.component !== impl.surface.name) {
+          throw new Error(`${handle} is a ${record.component}, not a ${impl.surface.name}`);
+        }
+        const ret = await show(impl, props, record.mode, handle);
+        (conversation.superseded ??= {})[handle] = ret.handle!;
+        // a question waiting on the old surface waits on the new one
+        if (asked?.handle === handle) asked = { handle: ret.handle!, digest: ret.model };
+        if (hop.asking?.handle === handle) hop.asking.handle = ret.handle!;
+        return ret;
+      } finally {
+        revising.delete(handle);
       }
     };
 
@@ -1033,6 +1092,19 @@ export class Hai {
         );
         return shown;
       }) as ToolCtx["render"],
+      update: ((impl: AnySurfaceImpl, handle: string, props: unknown) => {
+        if (done) return Promise.resolve({ model: "Not revised: the tool had already finished." });
+        const revised = update(impl, handle, props);
+        rendering.push(
+          revised.then(
+            () => {},
+            (err) => {
+              if (isStaleLease(err)) lost ??= err;
+            },
+          ),
+        );
+        return revised;
+      }) as ToolCtx["update"],
     };
 
     let input: unknown;
@@ -1063,7 +1135,13 @@ export class Hai {
     if (lost) throw lost;
 
     if (outcome.ok) {
-      const { ret } = outcome;
+      let { ret } = outcome;
+      // A query on a surface since revised answers from what it was, which is
+      // what the model asked about; it is told the surface has moved on.
+      const queried = (input as { handle?: unknown } | null)?.handle;
+      if (tool === this.queryUi && typeof queried === "string" && conversation.superseded?.[queried]) {
+        ret = { ...ret, model: `${ret.model}\n(${queried} has since been revised: it is ${currentHandle(conversation, queried)} now.)` };
+      }
       // The answer goes to the model under the digest of the question this call
       // showed. Anything else the tool returned rides along after it, such as a
       // render it was refused, so the model still hears it.
@@ -1142,6 +1220,17 @@ function strictest(recorded: unknown, current: unknown): number | "never" | unde
 }
 
 const newId = () => globalThis.crypto.randomUUID().replaceAll("-", "").slice(0, 16);
+
+/** The latest revision of a surface: `handle` itself, or what it was superseded by, all the way along. */
+function currentHandle(conversation: Conversation, handle: string): string {
+  const seen = new Set<string>();
+  let at = handle;
+  while (conversation.superseded?.[at] && !seen.has(at)) {
+    seen.add(at);
+    at = conversation.superseded[at];
+  }
+  return at;
+}
 
 interface TextBlock {
   type: "text";

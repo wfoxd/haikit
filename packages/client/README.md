@@ -76,10 +76,19 @@ colour at all.
 The default transcript keeps each block's element for as long as what it
 shows is unchanged, so a surface mounts **once** and keeps its own state — a
 filter, an expanded row, a React tree — while the conversation streams on.
-`mount` may return `{ freeze, expire, unmount }`. `unmount` is called when the
-surface goes away: `chat.reset()` starts a new conversation, `chat.close()`
-ends the chat, or the surface is mounted again. Release there whatever `mount`
-set up.
+`mount` may return `{ freeze, expire, unmount, update }`. `unmount` is called
+when the surface goes away: `chat.reset()` starts a new conversation,
+`chat.close()` ends the chat, or the surface is mounted again. Release there
+whatever `mount` set up.
+
+**A tool can revise a surface in place** (`ctx.update`). The revision arrives
+as a `ui_open` naming the handle it `replaces`. The client moves the surface's
+record and transcript block to the new handle, keeping the same element, and
+hands the new props to `update(props)`. Implement it to keep what the
+component holds, such as its scroll, sort or a row the user picked. Without
+it, the component is mounted again in place. Either way, `ctx.send` names the
+surface's current handle, so a click after a revision reaches the new one.
+Each surface keeps its own deadline, and a replaced surface's stops counting.
 
 `chat.close()` is for good: anything open is aborted, every surface is
 unmounted, and subscribers hear `{ type: "closed" }`. `mountChat` then removes

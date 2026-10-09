@@ -48,13 +48,16 @@ export interface SurfaceProps<S extends AnySurface> {
  *
  * The first render is synchronous, so the surface has its height when the
  * transcript scrolls to it; later ones are React's. It re-renders when the
- * surface freezes or the conversation goes out of date, and its root is
- * unmounted when the surface goes away, so effects clean up after themselves.
+ * surface freezes, is revised in place, or the conversation goes out of date,
+ * and its root is unmounted when the surface goes away, so effects clean up
+ * after themselves. A revision keeps the component's own state.
  */
 export function reactSurface<S extends AnySurface>(Component: ComponentType<SurfaceProps<S>>): ComponentDef<PropsOf<S>> {
   return {
-    mount(element, props, ctx) {
+    mount(element, firstProps, ctx) {
       const root = createRoot(element);
+      // a revision brings new props; the component and its state stay
+      let props = firstProps;
       let state = ctx.state;
       // set when it is mounted already frozen
       let selection = ctx.selection;
@@ -91,6 +94,10 @@ export function reactSurface<S extends AnySurface>(Component: ComponentType<Surf
         },
         unmount() {
           root.unmount();
+        },
+        update(next) {
+          props = next;
+          draw();
         },
       };
     },
