@@ -176,6 +176,41 @@ async function noticeChecks(label, db) {
     check("a store publishes always, and subscribes only with a listener", typeof publisher.publish === "function" &&
       publisher.subscribe === undefined && typeof hearer.subscribe === "function");
     await pubsubChecks(publisher, hearer);
+
+    // Half a message whose other half never comes is not kept: a cleanup is
+    // scheduled with its first piece, and cancelled when the message is whole.
+    const c = await publisher.loadConversation(undefined);
+    c.leaseUntil = null;
+    await publisher.saveConversation(c);
+    const heard = [];
+    const listening = new AbortController();
+    hearer.subscribe(c.id, (m) => heard.push(m), listening.signal);
+    await new Promise((r) => setTimeout(r, 100));
+    // the store's cleanups, seen by wrapping the timer functions for this check
+    const cleanups = new Set();
+    const { setTimeout: realSet, clearTimeout: realClear } = globalThis;
+    globalThis.setTimeout = (fn, ms, ...rest) => {
+      const timer = realSet(fn, ms, ...rest);
+      if (ms === 30_000) cleanups.add(timer);
+      return timer;
+    };
+    globalThis.clearTimeout = (timer) => (cleanups.delete(timer), realClear(timer));
+    const half = (i) => `${c.id} m1 ${i} 2 ${btoa(i === 0 ? "hel" : "lo")}`;
+    let scheduled;
+    try {
+      await db.query(`SELECT pg_notify('haikit_turns', $1)`, [half(0)]);
+      await new Promise((r) => realSet(r, 100));
+      scheduled = cleanups.size;
+      await db.query(`SELECT pg_notify('haikit_turns', $1)`, [half(1)]);
+      await new Promise((r) => realSet(r, 100));
+    } finally {
+      Object.assign(globalThis, { setTimeout: realSet, clearTimeout: realClear });
+    }
+    check(
+      "half a message schedules its own cleanup, cancelled once the rest arrives",
+      scheduled === 1 && cleanups.size === 0 && heard.join() === "hello",
+    );
+    listening.abort();
   }
 
   // a database migrated before notices existed gains them

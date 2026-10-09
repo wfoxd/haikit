@@ -251,19 +251,26 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
   // store are sent one at a time per conversation, each committed before the
   // next starts, so they arrive in the order they were published.
   const hearing = new Map<string, Set<(message: string) => void>>();
-  const partial = new Map<string, { pieces: string[]; got: number; at: number }>();
+  const partial = new Map<string, { pieces: string[]; got: number; expire: ReturnType<typeof setTimeout> }>();
   const sending = new Map<string, Promise<void>>();
 
   const onTurn = (payload: string) => {
     const [conversationId, id, index, count, piece] = payload.split(" ");
     if (!hearing.has(conversationId)) return;
-    const now = Date.now();
-    for (const [key, half] of partial) if (now - half.at > PIECE_TIMEOUT_MS) partial.delete(key);
     const n = Number(count);
-    const entry = partial.get(id) ?? { pieces: new Array<string>(n), got: 0, at: now };
+    let entry = partial.get(id);
+    if (!entry) {
+      // A message whose other pieces never come (a listening connection that
+      // dropped part way) is given up on after a while, whatever else arrives.
+      const expire = setTimeout(() => partial.delete(id), PIECE_TIMEOUT_MS);
+      // and is no reason to keep the process alive
+      (expire as { unref?: () => void }).unref?.();
+      entry = { pieces: new Array<string>(n), got: 0, expire };
+    }
     if (entry.pieces[Number(index)] === undefined) entry.got++;
     entry.pieces[Number(index)] = piece ?? "";
     if (entry.got < n) return void partial.set(id, entry);
+    clearTimeout(entry.expire);
     partial.delete(id);
     const message = new TextDecoder().decode(Uint8Array.from(atob(entry.pieces.join("")), (c) => c.charCodeAt(0)));
     for (const hear of [...(hearing.get(conversationId) ?? [])]) hear(message);
