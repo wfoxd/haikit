@@ -2650,7 +2650,7 @@ async function noticeChecks(make) {
   check("an unregistered notice is refused", await refused(() => hai.notify(id, stray, {})));
   check("a payload that fails its schema is refused", await refused(() => hai.notify(id, held, { flight: 7 })));
   check("a model() that returns neither text nor null is refused", await refused(() => hai.notify(id, broken, {})));
-  check("a handle the conversation never rendered is refused", await refused(() => hai.notify(id, held, { flight: "X" }, { handle: "ui_99" })));
+  check("a handle with no surface stored in the conversation is refused", await refused(() => hai.notify(id, held, { flight: "X" }, { handle: "ui_99" })));
   check("a notice for an unknown conversation is refused", await refused(() => hai.notify("conv_nope", held, { flight: "X" })));
   check("nothing refused was stored", same(await store.getNotices(id, 0), []));
   check("two notices with one name are refused at construction", await refused(async () =>

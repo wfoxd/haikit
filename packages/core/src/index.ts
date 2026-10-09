@@ -298,7 +298,11 @@ export function defineNotice<P>(def: { name: string; version: number; payload: S
 }
 
 export interface NotifyOptions {
-  /** A surface in the conversation the browser shows this notice beside. */
+  /**
+   * A surface the browser shows this notice beside. It must be stored in the
+   * conversation; one left behind by an overtaken turn passes too, since the
+   * handle only places the notice and the model never sees it.
+   */
   handle?: string;
 }
 
