@@ -15,7 +15,7 @@
  */
 
 import { PGlite } from "@electric-sql/pglite";
-import { conform, integration, failureCount } from "../../../scripts/storetest.mjs";
+import { conform, integration, failureCount, pubsubChecks } from "../../../scripts/storetest.mjs";
 import { pgStore, migrate, sweepOrphans } from "../dist/index.js";
 import { isConversationBusy } from "../../core/dist/index.js";
 
@@ -168,10 +168,113 @@ async function noticeChecks(label, db) {
     check("watch ends when its signal aborts", (await steps.next()).done === true);
   }
 
+  // publish / subscribe over NOTIFY: one store publishes, another, listening
+  // on the same database as a second process would, hears it
+  {
+    const publisher = pgStore(db);
+    const hearer = pgStore(db, { listen: db });
+    check("a store publishes always, and subscribes only with a listener", typeof publisher.publish === "function" &&
+      publisher.subscribe === undefined && typeof hearer.subscribe === "function");
+    await pubsubChecks(publisher, hearer);
+
+    // A LISTEN that takes a while to take hold: subscribe resolves only once
+    // it has, so a message published straight after is heard.
+    {
+      const slowListen = {
+        async listen(channel, onNotify) {
+          await new Promise((r) => setTimeout(r, 300));
+          return db.listen(channel, onNotify);
+        },
+      };
+      const slowHearer = pgStore(db, { listen: slowListen });
+      const c = await publisher.loadConversation(undefined);
+      c.leaseUntil = null;
+      await publisher.saveConversation(c);
+      const got = [];
+      const listening = new AbortController();
+      await slowHearer.subscribe(c.id, (m) => got.push(m), listening.signal);
+      await publisher.publish(c.id, "right away");
+      for (let i = 0; i < 50 && !got.length; i++) await new Promise((r) => setTimeout(r, 20));
+      listening.abort();
+      check("subscribe resolves only once LISTEN has taken hold, so a message published straight after is heard", got.join() === "right away");
+    }
+
+    // Half a message whose other half never comes is not kept: a cleanup is
+    // scheduled with its first piece, and cancelled when the message is whole.
+    const c = await publisher.loadConversation(undefined);
+    c.leaseUntil = null;
+    await publisher.saveConversation(c);
+    const heard = [];
+    const listening = new AbortController();
+    hearer.subscribe(c.id, (m) => heard.push(m), listening.signal);
+    await new Promise((r) => setTimeout(r, 100));
+    // the store's cleanups, seen by wrapping the timer functions for this check
+    const cleanups = new Set();
+    const { setTimeout: realSet, clearTimeout: realClear } = globalThis;
+    globalThis.setTimeout = (fn, ms, ...rest) => {
+      const timer = realSet(fn, ms, ...rest);
+      if (ms === 30_000) cleanups.add(timer);
+      return timer;
+    };
+    globalThis.clearTimeout = (timer) => (cleanups.delete(timer), realClear(timer));
+    const half = (i) => `${c.id} m1 ${i} 2 ${btoa(i === 0 ? "hel" : "lo")}`;
+    let scheduled;
+    try {
+      await db.query(`SELECT pg_notify('haikit_turns', $1)`, [half(0)]);
+      await new Promise((r) => realSet(r, 100));
+      scheduled = cleanups.size;
+      await db.query(`SELECT pg_notify('haikit_turns', $1)`, [half(1)]);
+      await new Promise((r) => realSet(r, 100));
+    } finally {
+      Object.assign(globalThis, { setTimeout: realSet, clearTimeout: realClear });
+    }
+    check(
+      "half a message schedules its own cleanup, cancelled once the rest arrives",
+      scheduled === 1 && cleanups.size === 0 && heard.join() === "hello",
+    );
+
+    // Anything may NOTIFY on the channel. What doesn't hold together is
+    // dropped, and a real message after it still arrives.
+    const junk = [
+      "nonsense",
+      `${c.id}`,
+      `${c.id} j1 0 NaN aGk=`,
+      `${c.id} j2 1.5 2 aGk=`,
+      `${c.id} j3 3 2 aGk=`,
+      `${c.id} j4 0 1 %%%not-base64%%%`,
+      `${c.id} j5 0 1 ${btoa("\xff\xfe")}`, // base64, but not UTF-8
+      `${c.id} j6 0 99999999 aGk=`,
+    ];
+    heard.length = 0;
+    let threw = null;
+    try {
+      for (const payload of junk) await db.query(`SELECT pg_notify('haikit_turns', $1)`, [payload]);
+      await publisher.publish(c.id, "still here");
+      for (let i = 0; i < 50 && !heard.length; i++) await new Promise((r) => setTimeout(r, 20));
+    } catch (err) {
+      threw = err;
+    }
+    check("malformed NOTIFY traffic is dropped, and a real message after it arrives", !threw && heard.join() === "still here");
+
+    // past the most one message can be split into: refused, not sent to be dropped
+    const { MAX_PUBLISH_BYTES } = await import("../dist/index.js");
+    let refusal = null;
+    try {
+      await publisher.publish(c.id, "x".repeat(MAX_PUBLISH_BYTES + 1));
+    } catch (err) {
+      refusal = err;
+    }
+    check(
+      `a message past the publish maximum (${Math.round(MAX_PUBLISH_BYTES / 1e6)} MB) is refused, not sent and dropped`,
+      refusal instanceof RangeError,
+    );
+    listening.abort();
+  }
+
   // a database migrated before notices existed gains them
   {
     await db.query(
-      `ALTER TABLE haikit_conversations DROP COLUMN notice_seq, DROP COLUMN noticed_through, DROP COLUMN wakes, DROP COLUMN woke_through`,
+      `ALTER TABLE haikit_conversations DROP COLUMN notice_seq, DROP COLUMN noticed_through, DROP COLUMN wakes, DROP COLUMN woke_through, DROP COLUMN wake_turns`,
     );
     await db.query(`ALTER TABLE haikit_notices DROP COLUMN kind`);
     await migrate(db);
@@ -180,7 +283,7 @@ async function noticeChecks(label, db) {
     const n = await store.putNotice({ ...notice(a.id), kind: "wake" });
     check(
       "migrating a pre-notices database adds what notices and wake turns need",
-      n.seq === 1 && n.kind === "wake" && a.noticedThrough === 0 && JSON.stringify(a.wakes) === "[]" && a.wokeThrough === 0,
+      n.seq === 1 && n.kind === "wake" && a.noticedThrough === 0 && JSON.stringify(a.wakes) === "[]" && a.wokeThrough === 0 && a.wakeTurns === 0,
     );
   }
 

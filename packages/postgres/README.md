@@ -52,11 +52,11 @@ With your own migration tool, apply the new `ALTER TABLE` from `schema` before
 deploying. Rows written before the column existed are held to the window your
 code declares.
 
-**Upgrading to 0.12:** `migrate()` adds `haikit_notices`, and `notice_seq` and
+**Upgrading to 0.13:** `migrate()` adds `haikit_notices`, and `notice_seq` and
 `noticed_through` to `haikit_conversations`, for `hai.notify`. As before, if
 you call `migrate()` at startup there is nothing to do.
 
-**Upgrading to 0.13:** `migrate()` adds `kind` to `haikit_notices`, and
+**Upgrading to 0.14:** `migrate()` adds `kind` to `haikit_notices`, and
 `wakes` and `woke_through` to `haikit_conversations`, for wake notices.
 
 Handles are numbered per conversation, so every conversation's digests start at
@@ -91,6 +91,27 @@ const store = pgStore(pool, {
 
 A notice belongs to its conversation and goes when it does: deleting a
 conversation deletes its notices. `sweepOrphans` never touches them.
+
+## Wake turns across servers
+
+With several app servers, the same `listen` connection carries a wake turn
+from the server running it to the others, so a browser connected to any of
+them sees the reply. `publish` sends each of the turn's frames as `NOTIFY`
+on `haikit_turns`. A frame longer than one `NOTIFY` can hold (just under
+8,000 bytes) goes as several, sent in one statement, and is put back
+together on arrival. Frames are sent one at a time per conversation, each
+committed before the next, so they arrive in order. Every store can publish;
+only one given `listen` hears. A message past `MAX_PUBLISH_BYTES` (about
+52 MB, far beyond any frame) is refused, not sent.
+
+**Upgrading:** `migrate()` adds `wake_turns` to `haikit_conversations`, each
+conversation's count of wake turns, which numbers them so a late frame from
+an older turn can't take over from a newer one.
+
+It is best effort, as `NOTIFY` is: a server whose listening connection is
+down misses those frames, and a tab there sees the reply when it next
+reconnects to a server that has it, or not at all. The frames themselves
+are never stored, so there is nothing of them to clean up.
 
 ## Cleaning up
 

@@ -518,6 +518,12 @@ export interface Conversation {
    * Missing means 0.
    */
   wokeThrough?: number;
+  /**
+   * How many wake turns this conversation has started, failed ones included.
+   * Each one's number, so another process can tell an older turn's late
+   * frames from a newer turn's. Missing means 0.
+   */
+  wakeTurns?: number;
 }
 
 /**
@@ -630,7 +636,12 @@ export type WireEvent =
     }
   | { type: "ui_props"; handle: string; props: unknown }
   | { type: "ui_state"; handle: string; state: "frozen"; selection?: unknown }
-  | { type: "status"; status: ConversationStatus }
+  | {
+      type: "status";
+      status: ConversationStatus;
+      /** On a wake turn's first `streaming`: the turn's number in the conversation. Newer turns are higher. */
+      wake?: number;
+    }
   | { type: "context"; messages: Message[]; modelTokens: number; uiTokens: number }
   | { type: "error"; message: string }
   /**
@@ -851,6 +862,29 @@ export interface StoreAdapter {
    * seconds regardless; this only makes a read sooner.
    */
   watch?(conversationId: string, signal: AbortSignal): AsyncIterable<void>;
+
+  /**
+   * Optional, with `subscribe`: carry a message to every process watching a
+   * conversation, so a wake turn running in one is seen by browsers connected
+   * to the others. Without them, a wake turn reaches only the events streams
+   * of the process that runs it.
+   *
+   * Deliver `message` to every `subscribe`r of this conversation, in every
+   * process, this one included, **in the order it was published** from this
+   * process, and whole. A store may have a maximum length; it must refuse a
+   * longer message, by rejecting, rather than drop it. It is best effort
+   * otherwise: a subscriber that was not listening at the time does not get
+   * it later. The runtime treats the message as opaque text; a store may
+   * carry it however it likes.
+   */
+  publish?(conversationId: string, message: string): Promise<void>;
+  /**
+   * Hear what is published for a conversation, until `signal` aborts. See
+   * `publish`. Resolves once it is listening: anything published after that
+   * reaches `onMessage`. A store that cannot start listening still resolves,
+   * since this is best effort, and hears nothing.
+   */
+  subscribe?(conversationId: string, onMessage: (message: string) => void, signal: AbortSignal): Promise<void>;
 }
 
 /** Rough token estimate. Only used to surface the economics in the UI. */

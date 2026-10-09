@@ -310,9 +310,12 @@ export class Hai {
     // user wrote none of it.
     conversation.messages.push({ role: "user", content: [...unread.blocks, { type: "text", text: WOKEN }] });
     conversation.noticedThrough = unread.through;
+    // Numbered, failed turns included, and committed with the save below, so
+    // a process hearing this turn can tell it from an older one's late frames.
+    conversation.wakeTurns = (conversation.wakeTurns ?? 0) + 1;
     // Said now, before the save below: the browser holds its requests from
     // here, rather than sending one into the lease and being refused.
-    emit({ type: "status", status: "streaming" });
+    emit({ type: "status", status: "streaming", wake: conversation.wakeTurns });
     try {
       // Committed before the model runs, as a click is. A turn can outlast the
       // lease, and a stream retrying meanwhile would take the conversation

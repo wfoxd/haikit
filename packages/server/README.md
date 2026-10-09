@@ -204,8 +204,18 @@ createHai({ /* … */, notices: [fareDroppedServer], maxWakes: { count: 1, perMs
 
 Several wake notices waiting at once start one turn. One held back by
 `maxWakes` never wakes later. Every events stream this process has open for
-the conversation hears the turn, so a second tab shows the reply too; a tab
-connected to another server instance does not.
+the conversation hears the turn, so a second tab shows the reply too.
+
+With several app servers, a tab may be connected to a different one from the
+server running the turn. A store with the optional `publish` and `subscribe`
+methods carries the turn there too: its frames go out through the store, and
+every other server hands them to its own streams, with what the turn has
+shown so far for a tab that joins part way. `pgStore` does this over `NOTIFY`
+when given a `listen` connection; `memoryStore` does it between Hai
+instances sharing it. A store without the methods keeps a turn on its own
+server: there, a tab on another server sees the notice but not the reply.
+The history's whole context is not sent across; another tab gets it with its
+own next request.
 
 A wake turn whose model call fails before any tool has run is undone: the
 history is left as it was and its notices can wake again, though the attempt

@@ -30,6 +30,40 @@ const payload = (conversationId) => ({
   mode: "elicit",
 });
 
+/**
+ * What `publish` and `subscribe` promise, between a store that publishes and
+ * one that hears: the same store, or two sharing a database. Exported for
+ * adapters whose stores only hear with extra wiring.
+ */
+export async function pubsubChecks(from, to) {
+  const a = await from.loadConversation(undefined);
+  const b = await from.loadConversation(undefined);
+  for (const c of [a, b]) {
+    c.leaseUntil = null;
+    await from.saveConversation(c);
+  }
+  const heard = [];
+  const other = [];
+  const listening = new AbortController();
+  // resolved once listening: nothing published after this may be missed
+  await to.subscribe(a.id, (m) => heard.push(m), listening.signal);
+  await to.subscribe(b.id, (m) => other.push(m), listening.signal);
+  const long = `${"wake turn ".repeat(2_500)}— fares, 🛫, 終わり`; // past any one NOTIFY, and not ASCII
+  const sent = ["one", "two", long, "four"];
+  for (const m of sent) await from.publish(a.id, m);
+  const arrived = async (n) => {
+    for (let i = 0; i < 100 && heard.length < n; i++) await new Promise((r) => setTimeout(r, 20));
+  };
+  await arrived(sent.length);
+  check("a published message reaches a subscriber, in the order published", JSON.stringify(heard.slice(0, 2)) === '["one","two"]' && heard[3] === "four");
+  check(`a message far longer than one NOTIFY arrives whole (${long.length} characters, some not ASCII)`, heard[2] === long);
+  check("a message for one conversation reaches no other's subscribers", other.length === 0);
+  listening.abort();
+  await from.publish(a.id, "after");
+  await new Promise((r) => setTimeout(r, 200));
+  check("a subscriber hears nothing once its signal aborts", !heard.includes("after"));
+}
+
 /** @param {() => import("@haikit/core").StoreAdapter} make */
 export async function conform(label, make) {
   console.log(`\n${label}`);
@@ -397,17 +431,21 @@ export async function conform(label, make) {
     check("a read notice is a copy", (await s.getNotices(a.id, 0))[0].payload === "hello");
 
     // taken in on the fenced row, with the history that records it
-    check("a new conversation has started no wake turns", JSON.stringify(a.wakes ?? []) === "[]" && (a.wokeThrough ?? 0) === 0);
+    check(
+      "a new conversation has started no wake turns",
+      JSON.stringify(a.wakes ?? []) === "[]" && (a.wokeThrough ?? 0) === 0 && (a.wakeTurns ?? 0) === 0,
+    );
     a.noticedThrough = put[3].seq;
     a.wakes = [1_700_000_000_000, 1_700_000_060_000];
     a.wokeThrough = put[2].seq;
+    a.wakeTurns = 7;
     a.leaseUntil = null;
     await s.saveConversation(a);
     const reloaded = await s.loadConversation(a.id);
     check("noticedThrough round-trips with the conversation", reloaded.noticedThrough === put[3].seq);
     check(
-      "wakes and wokeThrough round-trip with the conversation",
-      JSON.stringify(reloaded.wakes) === JSON.stringify(a.wakes) && reloaded.wokeThrough === put[2].seq,
+      "wakes, wokeThrough and wakeTurns round-trip with the conversation",
+      JSON.stringify(reloaded.wakes) === JSON.stringify(a.wakes) && reloaded.wokeThrough === put[2].seq && reloaded.wakeTurns === 7,
     );
 
     // a store that can wake the events route does so, and lets go when told
@@ -427,6 +465,12 @@ export async function conform(label, make) {
       const stopped = await Promise.race([ended, new Promise((r) => setTimeout(() => r(false), 2_000))]);
       check("watch ends when its signal aborts", stopped === true);
     }
+  }
+
+  // ── publish / subscribe, when a store offers them ─────────────────────
+  {
+    const s = make();
+    if (s.publish && s.subscribe) await pubsubChecks(s, s);
   }
 
   // ── the rightful holder's save still succeeds ─────────────────────────
@@ -2850,6 +2894,11 @@ async function wakeChecks(make) {
   events.length = 0;
   check("an idle conversation with a wake notice wakes", (await hai.wake(id, watch)) === "woke");
   let c = await peek(id);
+  const firstFrame = events.find((e) => e.type === "status");
+  check(
+    "a wake turn's first frame says it is streaming, with the turn's number in the conversation",
+    firstFrame?.status === "streaming" && firstFrame.wake === 1 && c.wakeTurns === 1,
+  );
   check(
     "the turn's user message carries every unread notice, then says the user wrote none of it",
     same(lastUser(c), [note("held", "AC832 is held."), note("dropped", "AC832 is cheaper."), WOKEN]),
@@ -2916,7 +2965,10 @@ async function wakeChecks(make) {
     failEvents.some((e) => e.type === "error") && failEvents.at(-1)?.type === "released",
   );
   check("…and counts against maxWakes, so an outage can't be retried endlessly", (after.wakes ?? []).length === 1);
-  check("once the model is back, the notice wakes", (await failing.wake(fid, () => {})) === "woke" &&
+  check("…and takes a turn number, so a retry is numbered after it", after.wakeTurns === 1);
+  const retryFrames = [];
+  check("once the model is back, the notice wakes", (await failing.wake(fid, (e) => retryFrames.push(e))) === "woke" &&
+    retryFrames.find((e) => e.type === "status")?.wake === 2 &&
     same(lastUser(await peek(fid))[0], note("dropped", "DOWN is cheaper.")));
 
   // ── a turn that fails after a tool ran keeps what happened, and never wakes again
@@ -3353,9 +3405,14 @@ async function noticeStreamChecks() {
       `each drop waits longer before the next try (${gaps.map((g) => `${(g / 1000).toFixed(1)}s`).join(", ")})`,
       gaps.length === 2 && gaps[0] >= 900 && gaps[1] >= 1_800,
     );
-    // the chat is now waiting out a backoff; closing it ends that wait, timer and all
+    // the chat is now waiting out a backoff (once its timer is set, a moment
+    // after the server saw the attempt); closing it ends that wait, timer and all
     const timers = () => process.getActiveResourcesInfo().filter((r) => r === "Timeout").length;
-    const waiting = timers();
+    const idle = await (async () => {
+      for (let i = 0; i < 200 && timers() < 1; i++) await new Promise((r) => setImmediate(r));
+      return timers();
+    })();
+    const waiting = idle;
     dropping.close();
     await wait(0);
     check(`close() during a backoff lets go of its timer (${waiting} → ${timers()})`, timers() === waiting - 1);
@@ -3682,6 +3739,253 @@ async function wakeStreamChecks() {
     chat.close();
   } finally {
     server.close();
+  }
+}
+
+// ── two processes on one store: a wake turn in one reaches tabs on the other
+// Two Hai instances sharing a store stand in for two app servers behind a
+// load balancer. Only the first registers the wake notice, so the turn always
+// runs there; the second only streams, and relies on publish/subscribe.
+async function crossInstanceChecks() {
+  console.log("\nwake turns across processes");
+  const http = await import("node:http");
+  const { createHai, memoryStore, nodeHandler } = await import("../packages/server/dist/index.js");
+  const { defineNotice } = await import("../packages/core/dist/index.js");
+  const { createChat } = await import("../packages/client/src/index.js");
+  const any = { parse: (v) => v };
+  const dropped = defineNotice({ name: "dropped", version: 1, kind: "wake", payload: any }).implement({ model: (p) => `${p.flight} is cheaper.` });
+  const quiet = defineNotice({ name: "quiet", version: 1, payload: any }).implement({ model: () => null });
+  let slow = 0;
+  const model = {
+    id: "stub",
+    async generate({ messages, onTextDelta }) {
+      const last = messages.at(-1).content;
+      const text = typeof last === "string" ? last : last.at(-1).text;
+      if (!text.startsWith("[The user")) {
+        onTextDelta(`You said ${text}.`);
+        return { content: [{ type: "text", text: `You said ${text}.` }], stop_reason: "end_turn" };
+      }
+      onTextDelta("Heads up: ");
+      await new Promise((r) => setTimeout(r, slow));
+      onTextDelta("cheaper.");
+      return { content: [{ type: "text", text: "Heads up: cheaper." }], stop_reason: "end_turn" };
+    },
+  };
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const until = async (cond, ms = 3_000) => {
+    for (const end = Date.now() + ms; Date.now() < end; await wait(10)) if (cond()) return true;
+    return cond();
+  };
+  async function stream(url, done, ms = 4_000) {
+    const aborter = new AbortController();
+    const got = [];
+    const timer = setTimeout(() => aborter.abort(), ms);
+    try {
+      const res = await fetch(url, { signal: aborter.signal });
+      const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+      let buffer = "";
+      while (!done(got)) {
+        const { value, done: ended } = await reader.read();
+        if (ended) break;
+        buffer += value;
+        let i;
+        while ((i = buffer.indexOf("\n\n")) >= 0) {
+          const line = buffer.slice(0, i).split("\n").find((l) => l.startsWith("data: "));
+          buffer = buffer.slice(i + 2);
+          if (line) got.push(JSON.parse(line.slice(6)));
+        }
+      }
+    } catch {}
+    clearTimeout(timer);
+    aborter.abort();
+    return got;
+  }
+  const released = (got) => got.some((e) => e.type === "released");
+  const reply = (got) => {
+    const opened = got.find((e) => e.type === "block_start" && e.block.kind === "assistant");
+    return (opened?.block.text ?? "") + got.filter((e) => e.type === "text_delta" && e.id === opened?.block.id).map((e) => e.text).join("");
+  };
+
+  // ports of their own each time: fetch keeps connections alive, and a closed
+  // server still answers on one it already had
+  async function pair(store, [first, second]) {
+    const one = createHai({ model, store, tools: [], surfaces: [], notices: [dropped], system: "x" });
+    const two = createHai({ model, store, tools: [], surfaces: [], notices: [quiet], system: "x" });
+    const servers = [];
+    for (const [hai, port] of [[one, first], [two, second]]) {
+      const handler = nodeHandler(hai, "/hai");
+      const server = http.createServer(async (req, res) => {
+        if (!(await handler(req, res))) res.writeHead(404).end();
+      });
+      await new Promise((r) => server.listen(port, "127.0.0.1", r));
+      servers.push(server);
+    }
+    return { one, two, close: () => servers.forEach((s) => s.close()) };
+  }
+  const begin = async (store) => {
+    const c = await store.loadConversation(undefined);
+    c.messages.push({ role: "user", content: "hi" }, { role: "assistant", content: [{ type: "text", text: "hello" }] });
+    c.leaseUntil = null;
+    await store.saveConversation(c);
+    return c.id;
+  };
+
+  // ── with publish/subscribe: tabs on the other process see the turn
+  {
+    const store = memoryStore();
+    const { one, close } = await pair(store, [5384, 5385]);
+    try {
+      const id = await begin(store);
+      const onOther = stream(`http://127.0.0.1:5385/hai/events?conversationId=${id}`, released);
+      const onSame = stream(`http://127.0.0.1:5384/hai/events?conversationId=${id}`, released);
+      await wait(150);
+      slow = 400;
+      await one.notify(id, dropped, { flight: "AC832" });
+      await wait(200); // part way through the reply
+      const late = stream(`http://127.0.0.1:5385/hai/events?conversationId=${id}`, released);
+      const [other, same, joined] = await Promise.all([onOther, onSame, late]);
+      check(
+        "a wake turn running in one process streams to a tab on another, through the store",
+        reply(same) === "Heads up: cheaper." && reply(other) === "Heads up: cheaper." && released(other),
+      );
+      check(
+        "a tab joining on the other process mid-reply gets the reply so far, then the rest",
+        reply(joined) === "Heads up: cheaper." && joined.find((e) => e.type === "block_start")?.block.text === "Heads up: ",
+      );
+      check("the history's whole context isn't sent across", !other.some((e) => e.type === "context"));
+
+      // a chat on the other process waits for the turn instead of meeting a 409
+      const chat = createChat({ endpoint: "http://127.0.0.1:5385/hai", registry: {} });
+      await chat.send("first");
+      // the turn runs where its notice's process has a stream open: another tab, there
+      const watcher = stream(`http://127.0.0.1:5384/hai/events?conversationId=${chat.state.conversationId}`, released, 6_000);
+      await wait(150);
+      slow = 800;
+      await one.notify(chat.state.conversationId, dropped, { flight: "NH7" });
+      const streaming = await until(() => chat.state.status === "streaming");
+      const sent = await chat.send("during");
+      await watcher;
+      check(
+        "a message sent from the other process during the turn waits for it, and goes through",
+        streaming && sent === true && !chat.state.blocks.some((b) => b.kind === "error") &&
+          chat.state.blocks.some((b) => b.kind === "assistant" && b.text === "Heads up: cheaper."),
+      );
+      chat.close();
+    } finally {
+      close();
+    }
+  }
+
+  // ── frames from different processes, out of order between them
+  // One process's turn ends after another's has started; its late `released`
+  // must not end the new one. Frames are published straight into the store,
+  // as two other processes would.
+  {
+    const memory = memoryStore();
+    const hai = createHai({ model, store: memory, tools: [], surfaces: [], notices: [quiet], system: "x" });
+    const handler = nodeHandler(hai, "/hai");
+    const server = http.createServer(async (req, res) => {
+      if (!(await handler(req, res))) res.writeHead(404).end();
+    });
+    await new Promise((r) => server.listen(5388, "127.0.0.1", r));
+    try {
+      const id = await begin(memory);
+      const watching = stream(`http://127.0.0.1:5388/hai/events?conversationId=${id}`, (got) => got.some((e) => e.type === "text_delta" && e.text === "done"), 3_000);
+      await wait(150);
+      const from = (origin, turn, event) => memory.publish(id, JSON.stringify({ origin, turn, event }));
+      await from("A", "t1", { type: "status", status: "streaming" });
+      await from("B", "t2", { type: "status", status: "streaming" });
+      await from("A", "t1", { type: "released" }); // late, from the turn before
+      await from("A", "t1", { type: "block_start", block: { kind: "assistant", id: "old", text: "" } });
+      await from("B", "t2", { type: "block_start", block: { kind: "assistant", id: "new", text: "" } });
+      await from("B", "t2", { type: "text_delta", id: "new", text: "done" });
+      const got = await watching;
+      check(
+        "a turn's late `released` doesn't end the turn that started after it elsewhere",
+        !got.some((e) => e.type === "released") && got.some((e) => e.type === "text_delta" && e.text === "done"),
+      );
+      check("…and an old turn's later frames are dropped", !got.some((e) => e.type === "block_start" && e.block.id === "old"));
+
+      // numbered turns: an older turn's start, arriving after a newer one's, doesn't take over
+      const id2 = await begin(memory);
+      const numbered = stream(`http://127.0.0.1:5388/hai/events?conversationId=${id2}`, (got) => got.some((e) => e.type === "released"), 3_000);
+      await wait(150);
+      const at = (origin, turn, number, event) => memory.publish(id2, JSON.stringify({ origin, turn, number, event }));
+      await at("B", "t4", 4, { type: "status", status: "streaming", wake: 4 });
+      await at("A", "t3", 3, { type: "status", status: "streaming", wake: 3 }); // late, and older
+      await at("B", "t4", 4, { type: "block_start", block: { kind: "assistant", id: "four", text: "" } });
+      await at("B", "t4", 4, { type: "text_delta", id: "four", text: "newer" });
+      await at("A", "t3", 3, { type: "released" });
+      await at("B", "t4", 4, { type: "released" });
+      const ordered = await numbered;
+      check(
+        "an older turn's start that arrives after a newer one's doesn't take over",
+        ordered.filter((e) => e.type === "status" && e.status === "streaming").length === 1 &&
+          ordered.some((e) => e.type === "text_delta" && e.text === "newer") &&
+          ordered.filter((e) => e.type === "released").length === 1 && ordered.at(-1)?.type === "released",
+      );
+    } finally {
+      server.close();
+    }
+  }
+
+  // ── a stream still being set up keeps the subscription it is waiting on
+  // Listening takes a while to start. Two streams wait on it; one leaves
+  // before it is ready. The other must still hear later turns.
+  {
+    const memory = memoryStore();
+    const slowStore = {
+      ...memory,
+      async subscribe(id, onMessage, signal) {
+        await memory.subscribe(id, onMessage, signal);
+        await new Promise((r) => setTimeout(r, 300));
+      },
+    };
+    const hai = createHai({ model, store: slowStore, tools: [], surfaces: [], notices: [quiet], system: "x" });
+    const handler = nodeHandler(hai, "/hai");
+    const server = http.createServer(async (req, res) => {
+      if (!(await handler(req, res))) res.writeHead(404).end();
+    });
+    await new Promise((r) => server.listen(5389, "127.0.0.1", r));
+    try {
+      const id = await begin(memory);
+      const leaving = new AbortController();
+      fetch(`http://127.0.0.1:5389/hai/events?conversationId=${id}`, { signal: leaving.signal }).catch(() => {});
+      const staying = stream(`http://127.0.0.1:5389/hai/events?conversationId=${id}`, released, 3_000);
+      await wait(100);
+      leaving.abort(); // gone while listening is still starting
+      await wait(400); // listening has started; the staying stream is open
+      const from = (event) => memory.publish(id, JSON.stringify({ origin: "elsewhere", turn: "t9", event }));
+      await from({ type: "status", status: "streaming" });
+      await from({ type: "released" });
+      const got = await staying;
+      check("a stream that waited on listening still hears turns, though another left while it waited", released(got));
+    } finally {
+      server.close();
+    }
+  }
+
+  // ── without them: the turn stays on its own process, as before
+  {
+    const memory = memoryStore();
+    const { publish, subscribe, ...store } = memory;
+    void publish, subscribe;
+    const { one, close } = await pair(store, [5386, 5387]);
+    try {
+      const id = await begin(store);
+      const onOther = stream(`http://127.0.0.1:5387/hai/events?conversationId=${id}`, released, 2_500);
+      const onSame = stream(`http://127.0.0.1:5386/hai/events?conversationId=${id}`, released, 2_500);
+      await wait(150);
+      slow = 0;
+      await one.notify(id, dropped, { flight: "JL1" });
+      const [other, same] = await Promise.all([onOther, onSame]);
+      check(
+        "with a store that can't publish, only tabs on the turn's own process see it",
+        reply(same) === "Heads up: cheaper." && reply(other) === "" && other.some((e) => e.type === "notice"),
+      );
+    } finally {
+      close();
+    }
   }
 }
 
@@ -4202,6 +4506,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   await clientChecks();
   await noticeStreamChecks();
   await wakeStreamChecks();
+  await crossInstanceChecks();
   await transcriptChecks();
 
   // Said plainly because a suite that looks exhaustive is worse than one that

@@ -187,7 +187,7 @@ Exported over MCP, tools degrade gracefully: a host without the registry gets th
 - Built Postgres store (`@haikit/postgres`) and fenced turn leases, conformance-tested against a real server.
 - Built Payload staleness. A surface declares `staleAfterMs` (default `"never"`); once any surface passes its window, the conversation closes — every request is refused before the model runs, and the user is offered a new conversation.
 - Built Tool progress. `ctx.progress` updates a running tool's row over the UI channel; the model never sees it.
-- Built Notices. `hai.notify` sends a declared notice outside any request: its payload to the browser over `GET /events`, its required `model` text to the model in the next user message, taken in on the fenced conversation row. A `wake` notice starts a turn of its own, streamed where a browser is watching, at most `maxWakes` per window; a passive one never does.
+- Built Notices. `hai.notify` sends a declared notice outside any request: its payload to the browser over `GET /events`, its required `model` text to the model in the next user message, taken in on the fenced conversation row. A `wake` notice starts a turn of its own, streamed where a browser is watching, at most `maxWakes` per window; a passive one never does. With several servers, a store with `publish`/`subscribe` carries the turn to browsers on the others.
 - Spec The append-only commit invariant, surface versioning.
 - Open `ui_patch` for in-place mutation — patching preserves scroll and sort state; re-rendering destroys it.
 - Open Consuming third-party MCP servers. Their results are single-channel, so a projection layer is needed or the context budget goes with it.
