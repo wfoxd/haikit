@@ -299,9 +299,11 @@ export function defineNotice<P>(def: { name: string; version: number; payload: S
 
 export interface NotifyOptions {
   /**
-   * A surface the browser shows this notice beside. It must be stored in the
-   * conversation; one left behind by an overtaken turn passes too, since the
-   * handle only places the notice and the model never sees it.
+   * A surface the browser shows this notice beside: one from the
+   * conversation's saved history, such as an action handler's `ctx.handle`.
+   * It is checked against the stored surfaces, so one left behind by an
+   * overtaken turn may pass too until a sweep removes it. No promise, just
+   * harmless: the handle only places the notice, and the model never sees it.
    */
   handle?: string;
 }

@@ -162,9 +162,9 @@ export class Hai {
       throw new TypeError(`notice "${name}": model() must return a string or null`);
     }
     // Checked against the stored surfaces, which needs no lease. One left behind
-    // by an overtaken turn passes as well, unlike a click on it: a click
-    // changes the history, and the handle here only says where the browser
-    // shows the notice. The model never sees it.
+    // by an overtaken turn may pass as well, until it is swept, unlike a click
+    // on it: a click changes the history, and the handle here only says where
+    // the browser shows the notice. The model never sees it.
     const { handle } = options;
     if (handle !== undefined && !(await this.config.store.getPayload(handle, conversationId))) {
       throw new Error(`notice "${name}": no surface ${handle} in conversation ${conversationId}`);

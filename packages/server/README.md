@@ -140,10 +140,12 @@ await hai.notify(conversationId, holdConfirmedServer, { flightId: "AC832", refer
 The payload is typed from the contract, and checked against its schema before
 it is stored. A notice that isn't listed in `notices`, a payload that fails its
 schema, or a `handle` with no surface stored in the conversation is refused.
-That check is against the stored surfaces, not the saved history: a surface
-left behind by a turn that was overtaken still passes. That is safe because
-the handle only says where the browser shows the notice. The model never
-sees it, and a notice can't change anything.
+Pass a handle from the conversation's saved history, such as an action
+handler's `ctx.handle`. The check is against the stored surfaces, not that
+history, so a surface left behind by an overtaken turn may also pass, until a
+sweep such as `@haikit/postgres`'s `sweepOrphans` removes it. That is no
+promise, just harmless: the handle only says where the browser shows the
+notice, the model never sees it, and a notice can't change anything.
 
 `notify` takes no lease, so it works while a turn is streaming, while one is
 parked on a question, and with nobody connected. It never touches the history
