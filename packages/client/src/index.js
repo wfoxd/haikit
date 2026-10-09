@@ -394,11 +394,9 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
       return null;
     }
     element.replaceChildren();
-    const instance = definition.mount(element, notice.payload, {
-      seq,
-      version: notice.version,
-      handle: notice.handle,
-    });
+    // a component may return nothing; the promise is an instance or null
+    const instance =
+      definition.mount(element, notice.payload, { seq, version: notice.version, handle: notice.handle }) ?? null;
     noticeMounts.set(seq, instance);
     return instance;
   }

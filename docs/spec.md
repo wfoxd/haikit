@@ -170,7 +170,7 @@ the only thing crossing that line is your contract module.
 | Boundary | Crosses | Never crosses |
 | --- | --- | --- |
 | server → model | messages, digests, capped results | payloads, props, handlers |
-| server → browser | blocks, wire events, full props, notice payloads | binding table, handlers, tool names, notices' model text |
+| server → browser | blocks, wire events, full props, notice payloads | binding table, handlers, tool names |
 | browser → server | {surface, action, value} | any action target or handler ref |
 | shared contract | schemas, action + query names | implementations of either half |
 | server → MCP host | tool defs, digests, query_ui | components, elicit tools, payloads |

@@ -160,7 +160,9 @@ With any notices listed, `hello` tells the browser to open a fourth route,
 each with its sequence number as its SSE `id`, so a browser that reconnects
 with `Last-Event-ID` picks up where it left off. It takes no lease, writes
 nothing, and accepts nothing from the browser but which conversation and where
-to resume. The `model` text never goes out on it. It reads the store every two
+to resume. The `model` text never goes out on it. The browser sees that only
+once a turn has taken it in, as part of the history the `context` event shows
+the inspector, the same as a digest. It reads the store every two
 seconds, and a store with `watch` wakes it the moment a notice lands. The
 two-second read stays even then, so a lost wake-up only delays a notice.
 

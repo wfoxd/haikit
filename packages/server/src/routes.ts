@@ -120,7 +120,8 @@ const PAGE = 100;
  * Stream a conversation's notices: every one after where the browser has got
  * to (`Last-Event-ID` on a reconnect, else `?after=`), then each as it lands.
  * Takes no lease and writes nothing. Each notice goes out as its payload; its
- * model text never leaves the server.
+ * model text is not in it: that reaches the browser only as part of the
+ * history, in the `context` event, once a turn has taken it in.
  *
  * Bounded both ways. The store is read a page at a time, so a conversation
  * with years of notices is never held in memory at once, and nothing more is

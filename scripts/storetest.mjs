@@ -2867,7 +2867,7 @@ async function noticeStreamChecks() {
         backlog.frames[0].event.type === "notice" && backlog.frames[0].event.handle === handle &&
         backlog.frames[0].event.payload.flight === "AC832" && backlog.frames[0].event.name === "held",
     );
-    check("the model's half never reaches the browser", !JSON.stringify(backlog.frames).includes("secret"));
+    check("the model's half is not on the events stream", !JSON.stringify(backlog.frames).includes("secret"));
     const resumed = await read(`${base}/hai/events?conversationId=${id}`, { "last-event-id": backlog.frames[0].id }, 1);
     check("Last-Event-ID resumes after the last notice seen", resumed.frames.length === 1 && resumed.frames[0].event.payload.flight === "NH7");
     // nothing to catch up on: the stream still opens at once, not at the first heartbeat
@@ -2920,7 +2920,8 @@ async function noticeStreamChecks() {
     check("…and lets go of it when it leaves", await until(() => streams.size === 0));
 
     // ── the client
-    const client = createChat({ endpoint: `${base}/hai`, registry: {}, notices: {} });
+    // a notice component that returns nothing from mount
+    const client = createChat({ endpoint: `${base}/hai`, registry: {}, notices: { held: { mount() {} } } });
     shown = false; // its first turn shows a card too
     await client.send("hello again"); // joins no conversation: a new one
     const cid = client.state.conversationId;
@@ -2929,6 +2930,11 @@ async function noticeStreamChecks() {
     await hai.notify(cid, held, { flight: "UA9" });
     await hai.notify(cid, held, { flight: "DL5" }, { handle: ch });
     check("notices arrive in the client's state", await until(() => client.state.notices.length === 2));
+    const slot = { textContent: "", className: "", replaceChildren() {} };
+    check(
+      "mountNotice() answers null, not undefined, for a component that returns nothing",
+      client.mountNotice(client.state.notices[0].seq, slot) === null,
+    );
     const kinds = client.state.blocks.map((b) => (b.kind === "notice" ? `notice:${b.payload.flight}` : b.kind));
     const ui = kinds.indexOf("ui");
     check(

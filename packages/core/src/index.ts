@@ -505,7 +505,11 @@ export interface NoticeRecord {
   version: number;
   /** The payload, validated. Returned exactly as given. */
   payload: unknown;
-  /** What the model hears of it, computed when it was sent. Never sent to the browser. */
+  /**
+   * What the model hears of it, computed when it was sent. Never on the events
+   * stream. Once a turn takes it in, it is part of the history, and the
+   * `context` event shows it to the browser's inspector, as it does digests.
+   */
   model: string | null;
   /** A surface the browser shows it beside. */
   handle?: string;
@@ -563,8 +567,9 @@ export type WireEvent =
       events?: true;
     }
   /**
-   * A notice, on the events stream only. Its `model` half never reaches the
-   * browser; that goes to the model, in the next user message.
+   * A notice, on the events stream only. Its `model` half is not in it: that
+   * goes to the model, in the next user message, and the browser sees it only
+   * as part of the history, in the `context` event's inspector view.
    */
   | { type: "notice"; seq: number; name: string; version: number; payload: unknown; handle?: string }
   | { type: "block_start"; block: Block }
