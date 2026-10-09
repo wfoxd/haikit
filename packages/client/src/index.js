@@ -146,6 +146,12 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
       await new Promise((r) => setTimeout(r, 150));
       // the deadline can pass during the wait, and reset() or close() come
       if (gen !== generation || closed()) return;
+      // A wake turn may be what holds it, and have said so meanwhile: wait it
+      // out, as if it had said so before this request went.
+      while (remote) {
+        await remote;
+        if (gen !== generation || closed()) return;
+      }
       res = await post(path, body, signal); // rejects at once if reset() aborted it meanwhile
     }
     // A wake turn this client lost sight of holds the conversation until it

@@ -3347,9 +3347,17 @@ async function wakeStreamChecks() {
   // fail the save that ends a wake turn
   let slowSave = 0;
   let failWakeSave = false;
+  let onLoad = null; // called once by the next conversation load
   const memory = memoryStore();
   const store = {
     ...memory,
+    async loadConversation(id) {
+      const c = await memory.loadConversation(id);
+      const call = onLoad;
+      onLoad = null;
+      call?.();
+      return c;
+    },
     async saveConversation(c) {
       if (slowSave) await new Promise((r) => setTimeout(r, slowSave));
       const woke = c.messages.at(-1)?.role === "assistant" && c.messages.at(-2)?.content?.at?.(-1)?.text?.startsWith("[The user");
@@ -3513,6 +3521,22 @@ async function wakeStreamChecks() {
       "a message sent after the events connection drops mid-turn keeps trying until the turn ends",
       afterDrop === true && posts.some((p) => p.status === 409) && posts.at(-1).status === 200 &&
         asked.at(-1) === "after the drop" && !chat.state.blocks.some((b) => b.kind === "error"),
+    );
+
+    // The server takes the conversation a moment before the wake turn can
+    // stream anything. A message sent in that moment waits for the turn too,
+    // however long the save before the model takes.
+    await until(() => streams.size === 1, 4_000); // reconnected
+    const taken = new Promise((resolve) => (onLoad = resolve));
+    slowSave = 400;
+    await hai.notify(cid, dropped, { flight: "EARLY" });
+    await taken; // the wake turn holds the conversation now
+    posts.length = 0;
+    const early = await chat.send("as it wakes");
+    slowSave = 0;
+    check(
+      "a message sent the moment a wake turn takes the conversation waits for it, and goes through",
+      early === true && asked.at(-1) === "as it wakes" && !chat.state.blocks.some((b) => b.kind === "error"),
     );
 
     // a wake whose final save fails is reported once, by the route

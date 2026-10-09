@@ -197,7 +197,11 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
       } while (again && !signal.aborted);
     })()
       .catch((err) => emit({ type: "error", message: (err as Error).message }))
-      .finally(() => (waking = null));
+      .finally(() => {
+        waking = null;
+        // a notice that asked between the loop's last look and now
+        if (again) wake();
+      });
   };
 
   // Everything after `after`, a page at a time, until a page comes back short.
