@@ -65,7 +65,8 @@ run: async (input, ctx) => {
 Every field is optional. Frames go out at most every 100 ms, so a tool can
 report every row; the last one always goes out, before the row says the call
 has finished. A call after the tool has returned does nothing, and a field
-that isn't what its type says is dropped rather than failing the tool.
+that isn't what its type says is dropped rather than failing the tool:
+`done` must be zero or more, and `total` more than zero.
 
 **`init` runs a tool at the start of every conversation**, before the user
 types anything. The runtime makes the call, not the model, so it can't be

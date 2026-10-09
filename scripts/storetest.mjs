@@ -657,6 +657,14 @@ async function clientChecks() {
       if (["expiring", "server-refuses", "split", "slow-render", "surface"].includes(mode)) {
         picker(mode === "slow-render" ? 200 : mode === "surface" ? undefined : 120).forEach(frame);
       }
+      if (mode === "progress") {
+        // a running tool reporting twice, each frame naming only some fields,
+        // and a frame for a block this client never saw
+        frame({ type: "block_start", block: { kind: "tool", id: "b1", name: "search", input: {}, status: "running" } });
+        frame({ type: "progress", toolId: "b1", message: "Checking fare sources", done: 0, total: 4 });
+        frame({ type: "progress", toolId: "b1", done: 2 });
+        frame({ type: "progress", toolId: "b9", done: 7 });
+      }
       if (mode === "answered") {
         picker(undefined).forEach(frame);
         frame({ type: "ui_state", handle: "ui_01", state: "frozen", selection: "he" });
@@ -719,6 +727,20 @@ async function clientChecks() {
     received.length = 0;
     const again = await opening.start();
     check("start() does nothing once the conversation has begun", again === false && received.length === 0);
+
+    // ── progress frames merge into the tool's block
+    mode = "progress";
+    const searching = createChat({ endpoint: "http://127.0.0.1:5378/hai", registry: {} });
+    await searching.send("search");
+    const searchRow = searching.state.blocks.find((b) => b.id === "b1");
+    check(
+      "a progress frame updates only the fields it names, and keeps no envelope",
+      JSON.stringify(searchRow?.progress) === JSON.stringify({ message: "Checking fare sources", done: 2, total: 4 }),
+    );
+    check(
+      "a frame for a block the client never saw changes nothing",
+      searching.state.blocks.filter((b) => b.progress).length === 1,
+    );
 
     // ── a tab left open closes the conversation on time, by itself
     const endpoint = "http://127.0.0.1:5378/hai";

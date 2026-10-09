@@ -279,7 +279,7 @@ export interface Progress {
   message?: string;
   /** Steps finished so far. */
   done?: number;
-  /** Steps in all, when the tool knows. With `done`, the browser draws a bar. */
+  /** Steps in all, when the tool knows: more than zero. With it, the browser draws a bar. */
   total?: number;
 }
 

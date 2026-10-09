@@ -866,17 +866,18 @@ const PROGRESS_MS = 100;
  * The fields of a `ctx.progress` call worth sending, or null if none are.
  * Checked at runtime because JavaScript callers never see the type, and a
  * progress report is not worth failing a tool over: a field that isn't what
- * its type says is dropped, not thrown on. A count must be a finite number,
- * zero or more.
+ * its type says is dropped, not thrown on. `done` must be a finite number,
+ * zero or more, and `total` a finite number more than zero: there is no bar
+ * to draw for a workload of nothing.
  */
 function progressFields(progress: unknown): Progress | null {
   if (!progress || typeof progress !== "object") return null;
   const { message, done, total } = progress as Record<string, unknown>;
-  const count = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n) && n >= 0;
+  const finite = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n);
   const fields: Progress = {};
   if (typeof message === "string") fields.message = message;
-  if (count(done)) fields.done = done;
-  if (count(total)) fields.total = total;
+  if (finite(done) && done >= 0) fields.done = done;
+  if (finite(total) && total > 0) fields.total = total;
   return Object.keys(fields).length ? fields : null;
 }
 
