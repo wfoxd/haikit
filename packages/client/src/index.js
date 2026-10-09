@@ -190,6 +190,17 @@ export function createChat({ endpoint = "/hai", registry }) {
         break;
       }
 
+      // A frame carries only the fields its call named, so it is merged: a
+      // tool says what it is doing once, then counts.
+      case "progress": {
+        const block = state.blocks.find((b) => b.id === event.toolId);
+        if (block?.kind === "tool") {
+          const { type, toolId, ...fields } = event;
+          block.progress = { ...block.progress, ...fields };
+        }
+        break;
+      }
+
       case "ui_open":
         state.surfaces.set(event.handle, {
           handle: event.handle,

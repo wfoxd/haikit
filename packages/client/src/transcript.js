@@ -116,6 +116,45 @@ const STATUS_TEXT = {
   error: (ms) => `failed · ${ms} ms`,
 };
 
+/** "2/4", or "2" when the tool hasn't said how many in all. */
+function progressCount({ done, total }) {
+  return total !== undefined ? `${done ?? 0}/${total}` : done !== undefined ? String(done) : "";
+}
+
+/** "Checking fare sources · 2/4" */
+function progressText(progress) {
+  return [progress.message, progressCount(progress)].filter(Boolean).join(" · ");
+}
+
+/**
+ * A running tool's status from its progress, or null if it has reported none.
+ * The message gives way first on a narrow row, so the count stays readable.
+ */
+function progressStatus(progress) {
+  if (!progress) return null;
+  const el = h("span", "hai-tstatus hai-tprogress");
+  const count = progressCount(progress);
+  if (progress.message) el.append(h("span", "hai-tmessage", progress.message));
+  if (progress.message && count) el.append(" · ");
+  if (count) el.append(h("span", "hai-tcount", count));
+  return el;
+}
+
+/** A thin bar along the row's bottom edge, once the tool has said how many steps in all. */
+function progressBar(progress) {
+  const total = progress?.total;
+  if (!total) return null;
+  const done = Math.min(progress.done ?? 0, total);
+  const bar = h("span", "hai-tbar");
+  bar.setAttribute("role", "progressbar");
+  bar.setAttribute("aria-valuemin", "0");
+  bar.setAttribute("aria-valuemax", String(total));
+  bar.setAttribute("aria-valuenow", String(done));
+  if (progress.message) bar.setAttribute("aria-valuetext", progressText(progress));
+  bar.style.setProperty("--hai-progress", `${(done / total) * 100}%`);
+  return bar;
+}
+
 function statusMark(status) {
   const mark = h("span", "hai-ticon");
   if (status === "running") mark.append(h("span", "hai-spinner"));
@@ -287,9 +326,14 @@ function renderBlock(block, chat) {
         statusMark(status),
         h("span", "hai-tname", block.name),
         h("span", "hai-targs", JSON.stringify(block.input)),
-        h("span", "hai-tstatus", (STATUS_TEXT[status] ?? ((ms) => `${ms} ms`))(block.ms)),
+        (status === "running" && progressStatus(block.progress)) ||
+          h("span", "hai-tstatus", (STATUS_TEXT[status] ?? ((ms) => `${ms} ms`))(block.ms)),
         icon("chevron", "hai-icon hai-chevron"),
       );
+      if (status === "running") {
+        const bar = progressBar(block.progress);
+        if (bar) summary.append(bar);
+      }
       el.append(summary);
       const detail = h("div", "hai-tool-detail");
       detail.append(

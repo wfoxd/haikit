@@ -199,6 +199,7 @@ Each tool call gets a row saying where it stands:
 | The row says | When |
 | --- | --- |
 | `running…` | The tool is executing. |
+| `Checking fare sources · 2/4` | The tool is executing and has reported progress with `ctx.progress`. A thin bar along the bottom of the row fills once it gives a `total`. |
 | `awaiting you` | The turn is parked on the question this tool asked. The row and its surface are outlined in amber. |
 | `resolved` | The question was answered, or the user typed something else instead. |
 | `out of date` | The conversation expired before the question was answered. |
@@ -379,6 +380,7 @@ These hooks are stable if you need to style around a surface:
 | `.hai-surface[data-expired]` | a surface in an out-of-date conversation |
 | `.hai-tool` | a tool row |
 | `.hai-tool.hai-status-awaiting` | a tool row by status: also `running`, `resolved`, `expired`, `ok` and `error` |
+| `.hai-tbar` | a running tool's progress bar. Its fill is `--hai-progress`, a percentage |
 | `.hai-status[data-status="awaiting"]` | the status line by conversation status: also `streaming` and `idle` |
 
 ## Lifecycle

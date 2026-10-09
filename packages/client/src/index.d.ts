@@ -12,11 +12,28 @@ export type ConversationStatus = "idle" | "streaming" | "awaiting";
 export type SurfaceMode = "display" | "elicit";
 export type SurfaceState = "live" | "frozen";
 
+/** How far a running tool has got, as its `ctx.progress` calls said. */
+export interface Progress {
+  message?: string;
+  done?: number;
+  total?: number;
+}
+
 /** Blocks the server emits, plus the three the client synthesises locally. */
 export type Block =
   | { kind: "user"; id: string; text: string }
   | { kind: "assistant"; id: string; text: string }
-  | { kind: "tool"; id: string; name: string; input: unknown; status: string; ms?: number; result?: string }
+  | {
+      kind: "tool";
+      id: string;
+      name: string;
+      input: unknown;
+      status: string;
+      ms?: number;
+      result?: string;
+      /** What the tool's `ctx.progress` calls have said so far, merged. */
+      progress?: Progress;
+    }
   | { kind: "interaction"; id: string; handle: string; label: string }
   /** synthesised from `ui_open` — the slot a surface mounts into */
   | { kind: "ui"; id: string; handle: string; toolId: string }

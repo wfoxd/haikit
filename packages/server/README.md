@@ -47,6 +47,26 @@ call that asks and then throws has its question withdrawn, so another call in
 the same reply can ask instead. Every render a tool starts finishes before its
 call is decided, and a render after the tool has returned shows nothing.
 
+**A slow tool can say how far it has got.** `ctx.progress` sends the browser
+a frame for the tool's row, and nothing else: it isn't stored, and the model
+never sees it.
+
+```ts
+run: async (input, ctx) => {
+  ctx.progress({ message: "Checking fare sources", done: 0, total: sources.length });
+  for (const [i, source] of sources.entries()) {
+    rows.push(...(await source.search(input)));
+    ctx.progress({ done: i + 1 }); // a call updates only the fields it names
+  }
+  return ctx.render(flightTableServer, { ...input, flights: rows }, { mode: "elicit" });
+};
+```
+
+Every field is optional. Frames go out at most every 100 ms, so a tool can
+report every row; the last one always goes out, before the row says the call
+has finished. A call after the tool has returned does nothing, and a field
+that isn't what its type says is dropped rather than failing the tool.
+
 **`init` runs a tool at the start of every conversation**, before the user
 types anything. The runtime makes the call, not the model, so it can't be
 skipped: the call and its result go into the history as if the model had made

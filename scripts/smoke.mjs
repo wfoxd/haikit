@@ -66,6 +66,7 @@ const CASES = [
     value: "AC832",
     expectInResolution: /Selected: Air Canada AC832/,
     staleAfterMs: 15 * 60_000,
+    progress: 4, // fare sources search_flights reports, one by one
   },
 ];
 
@@ -152,6 +153,19 @@ for (const c of CASES) {
     const status = turn.filter((e) => e.type === "status").at(-1);
 
     toolBlock?.block.name === c.tool ? ok(`calls ${c.tool}`) : bad(`expected ${c.tool}`);
+    if (c.progress) {
+      // UI channel only: on the tool's row, before its surface, never in context
+      const frames = turn.filter((e) => e.type === "progress");
+      const at = (e) => turn.indexOf(e);
+      frames.length && frames.every((f) => f.toolId === toolBlock?.block.id && at(f) > at(toolBlock) && at(f) < at(uiOpen))
+        ? ok(`${frames.length} progress frames reach the tool row before its surface`)
+        : bad("no progress frames between the tool row and its surface");
+      frames.at(-1)?.done === c.progress ? ok("the last progress frame goes out") : bad(`last frame was ${JSON.stringify(frames.at(-1))}`);
+      const seen = JSON.stringify(turn.filter((e) => e.type === "context").map((e) => e.messages));
+      frames[0]?.message && !seen.includes(frames[0].message)
+        ? ok("progress never reaches the model")
+        : bad("progress is in the model's context");
+    }
     uiOpen?.component === c.component && uiOpen.mode === "elicit"
       ? ok(`renders ${c.component} as elicit`)
       : bad(`expected ${c.component} in elicit mode`);
@@ -253,6 +267,66 @@ for (const c of CASES) {
     }
   } finally {
     child.kill("SIGKILL");
+  }
+}
+
+// ── progress is throttled, and only what its type says goes out ─────────
+// The flights case shows frames arriving. This one reports faster than the
+// throttle allows, and passes what a JavaScript caller might: the frames
+// merge, the last always goes out, and anything after the tool returns is
+// dropped.
+{
+  console.log("\nprogress");
+  const http = await import("node:http");
+  const { defineTool } = await import("../packages/core/dist/index.js");
+  const { createHai, memoryStore, nodeHandler } = await import("../packages/server/dist/index.js");
+
+  const count = defineTool({
+    name: "count",
+    description: "Count to 50.",
+    input: { parse: (v) => v },
+    inputJsonSchema: { type: "object", properties: {} },
+    async run(_input, ctx) {
+      ctx.progress({ message: "Counting", done: 0, total: 50 });
+      for (let done = 1; done <= 50; done++) ctx.progress({ done });
+      ctx.progress({ message: 7, done: -1, total: Infinity }); // nothing here is what its type says
+      ctx.progress(null);
+      setTimeout(() => ctx.progress({ done: 99 }), 0); // after it has returned
+      return ctx.text("Counted to 50.");
+    },
+  });
+  const model = {
+    id: "counter",
+    async generate({ messages }) {
+      return typeof messages.at(-1).content === "string"
+        ? { stop_reason: "tool_use", content: [{ type: "tool_use", id: "t1", name: "count", input: {} }] }
+        : // open past the throttle window, so a late frame would have been seen
+          new Promise((r) => setTimeout(() => r({ stop_reason: "end_turn", content: [{ type: "text", text: "done" }] }), 250));
+    },
+  };
+  const handler = nodeHandler(createHai({ model, store: memoryStore(), tools: [count], surfaces: [], system: "" }), "/hai");
+  const server = http.createServer(async (req, res) => {
+    if (!(await handler(req, res))) res.writeHead(404).end();
+  });
+  await new Promise((r) => server.listen(5279, "127.0.0.1", r));
+
+  try {
+    const turn = await sse("http://127.0.0.1:5279/hai/chat", { message: "count" });
+    const frames = turn.filter((e) => e.type === "progress");
+    const finished = turn.findIndex((e) => e.type === "block_update");
+    frames.length === 2
+      ? ok("52 calls in one tick send 2 frames")
+      : bad(`expected 2 frames, got ${frames.length}: ${JSON.stringify(frames)}`);
+    JSON.stringify(frames.map(({ type, toolId, ...f }) => f)) ===
+    JSON.stringify([{ message: "Counting", done: 0, total: 50 }, { done: 50 }])
+      ? ok("the last frame carries the latest count, and fields of the wrong type are dropped")
+      : bad(`frames were ${JSON.stringify(frames)}`);
+    frames.every((f) => turn.indexOf(f) < finished)
+      ? ok("every frame goes out before the row says the call finished")
+      : bad("a frame came after the call finished");
+    !frames.some((f) => f.done === 99) ? ok("a call after the tool returned sends nothing") : bad("a late call sent a frame");
+  } finally {
+    server.close();
   }
 }
 

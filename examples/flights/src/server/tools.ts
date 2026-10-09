@@ -11,6 +11,8 @@ import { z } from "zod";
 import { FLIGHTS, seatRows } from "./data.ts";
 import { flightTableServer, seatMapServer } from "./surfaces.ts";
 
+const FARE_SOURCES = 4;
+
 const SearchInput = z.object({
   origin: z.string(),
   destination: z.string(),
@@ -35,6 +37,15 @@ export const searchFlights = defineTool({
   },
 
   async run(input, ctx) {
+    // Stands in for asking several fare sources in turn, so the tool row has
+    // progress to show. The flights are the same seeded set either way; only
+    // the wait is made up.
+    ctx.progress({ message: "Checking fare sources", done: 0, total: FARE_SOURCES });
+    for (let done = 1; done <= FARE_SOURCES; done++) {
+      await new Promise((r) => setTimeout(r, 150));
+      ctx.progress({ done });
+    }
+
     const flights = FLIGHTS;
     return ctx.render(
       flightTableServer,
