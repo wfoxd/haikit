@@ -3989,6 +3989,140 @@ async function crossInstanceChecks() {
   }
 }
 
+// ── a surface replayed to a stream that joins part way carries its age ──
+// The browser counts a surface's freshness from when it sent the request that
+// rendered it. A stream joining a wake turn sent no such request, and gets the
+// surface late: the age says how late, with no clocks compared.
+async function surfaceAgeChecks() {
+  console.log("\nsurface age");
+  const http = await import("node:http");
+  const { createHai, memoryStore, nodeHandler } = await import("../packages/server/dist/index.js");
+  const { defineNotice, defineSurface, defineTool } = await import("../packages/core/dist/index.js");
+  const { createChat } = await import("../packages/client/src/index.js");
+  const any = { parse: (v) => v };
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const dropped = defineNotice({ name: "dropped", version: 1, kind: "wake", payload: any }).implement({ model: () => "cheaper" });
+  const fare = defineSurface({ name: "fare", version: 1, props: any }).implement({
+    // a digest that takes a while: the surface is stored before it runs
+    digest: () => {
+      for (const end = Date.now() + 300; Date.now() < end; );
+      return "a fare";
+    },
+    actions: {},
+    queries: {},
+    staleAfterMs: 60_000,
+  });
+  const show = defineTool({ name: "show", description: "d", input: any, inputJsonSchema: { type: "object" }, run: (_i, ctx) => ctx.render(fare, { price: 302 }) });
+  const model = {
+    id: "stub",
+    async generate({ messages }) {
+      const last = messages.at(-1).content;
+      if (Array.isArray(last) && last.at(-1)?.text?.startsWith("[The user")) {
+        return { content: [{ type: "tool_use", id: "tu_show", name: "show", input: {} }], stop_reason: "tool_use" };
+      }
+      if (Array.isArray(last) && last.some((b) => b.type === "tool_result")) await wait(1_000); // the turn runs on after showing it
+      return { content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" };
+    },
+  };
+  const store = memoryStore();
+  const hai = createHai({ model, store, tools: [show], surfaces: [fare], notices: [dropped], system: "x" });
+  const handler = nodeHandler(hai, "/hai");
+  const server = http.createServer(async (req, res) => {
+    if (!(await handler(req, res))) res.writeHead(404).end();
+  });
+  await new Promise((r) => server.listen(5390, "127.0.0.1", r));
+  async function stream(url, done, ms = 4_000) {
+    const aborter = new AbortController();
+    const got = [];
+    const timer = setTimeout(() => aborter.abort(), ms);
+    let headers = null;
+    try {
+      const res = await fetch(url, { signal: aborter.signal });
+      headers = res.headers;
+      const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+      let buffer = "";
+      while (!done(got)) {
+        const { value, done: ended } = await reader.read();
+        if (ended) break;
+        buffer += value;
+        let i;
+        while ((i = buffer.indexOf("\n\n")) >= 0) {
+          const line = buffer.slice(0, i).split("\n").find((l) => l.startsWith("data: "));
+          buffer = buffer.slice(i + 2);
+          if (line) got.push(JSON.parse(line.slice(6)));
+        }
+      }
+    } catch {}
+    clearTimeout(timer);
+    aborter.abort();
+    return { got, headers };
+  }
+  const released = (got) => got.some((e) => e.type === "released");
+
+  try {
+    const c = await store.loadConversation(undefined);
+    c.messages.push({ role: "user", content: "hi" }, { role: "assistant", content: [{ type: "text", text: "hello" }] });
+    c.leaseUntil = null;
+    await store.saveConversation(c);
+    const first = stream(`http://127.0.0.1:5390/hai/events?conversationId=${c.id}`, released);
+    await wait(150);
+    await hai.notify(c.id, dropped, {});
+    await wait(500); // the surface is shown, and the turn runs on
+    const late = await stream(`http://127.0.0.1:5390/hai/events?conversationId=${c.id}`, released);
+    const watched = await first;
+    const live = watched.got.find((e) => e.type === "ui_open");
+    const replayed = late.got.find((e) => e.type === "ui_open");
+    check(
+      `a surface streamed as it is shown is aged from when it was stored, its digest's time included (${live?.ageMs} ms)`,
+      typeof live?.ageMs === "number" && live.ageMs >= 290 && live.ageMs < 2_000,
+    );
+    check(
+      `a surface replayed to a stream that joins later carries its age, the wait included (${replayed?.ageMs} ms)`,
+      typeof replayed?.ageMs === "number" && replayed.ageMs >= live.ageMs + 150 && replayed.ageMs < 4_000,
+    );
+    check(
+      "the events stream asks proxies not to buffer or transform it",
+      watched.headers?.get("x-accel-buffering") === "no" && /no-transform/.test(watched.headers?.get("cache-control") ?? ""),
+    );
+  } finally {
+    server.close();
+  }
+
+  // ── the client counts a replayed surface's freshness from its age
+  // A server that replays a wake turn's surface, 700 ms old, good for 1 s.
+  const fake = http.createServer((req, res) => {
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    const frame = (e) => res.write(`data: ${JSON.stringify(e)}\n\n`);
+    if (req.url.includes("/events")) {
+      frame({ type: "status", status: "streaming", wake: 1 });
+      frame({ type: "ui_open", handle: "ui_01", toolId: "b1", component: "fare", version: 1, mode: "display", staleAfterMs: 1_000, ageMs: 700 });
+      frame({ type: "ui_props", handle: "ui_01", props: {} });
+      return; // and stays open, as a turn still running does
+    }
+    req.resume();
+    req.on("end", () => {
+      frame({ type: "hello", conversationId: "conv_age", model: "m", events: true });
+      res.end(`data: ${JSON.stringify({ type: "status", status: "idle" })}\n\n`);
+    });
+  });
+  await new Promise((r) => fake.listen(5391, "127.0.0.1", r));
+  const chat = createChat({ endpoint: "http://127.0.0.1:5391/hai", registry: {} });
+  try {
+    await chat.send("hi");
+    const sent = Date.now();
+    for (let i = 0; i < 200 && !chat.state.surfaces.has("ui_01"); i++) await wait(10);
+    const arrived = Date.now();
+    const deadline = chat.state.expiresAt;
+    check(
+      "a replayed surface's deadline counts from when it was stored, by its age, not from when it arrived",
+      typeof deadline === "number" && deadline <= arrived - 700 + 1_000 && deadline >= sent - 700 + 1_000 - 200,
+    );
+  } finally {
+    chat.close();
+    fake.close();
+  }
+}
+
 // ── the transcript follows new content, and keeps a reader's place ──────
 // Surfaces mount a microtask after the render that creates them, and only then
 // have height. A transcript that scrolls before that, or decides whether to
@@ -4507,6 +4641,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   await noticeStreamChecks();
   await wakeStreamChecks();
   await crossInstanceChecks();
+  await surfaceAgeChecks();
   await transcriptChecks();
 
   // Said plainly because a suite that looks exhaustive is worse than one that

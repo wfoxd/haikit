@@ -158,7 +158,11 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
 
   res.writeHead(200, {
     "content-type": "text/event-stream",
-    "cache-control": "no-cache",
+    // A proxy that buffers or transforms the stream holds frames back, and a
+    // surface's freshness is counted from when it arrives: ask it not to.
+    // (`x-accel-buffering` is nginx's.)
+    "cache-control": "no-cache, no-transform",
+    "x-accel-buffering": "no",
     connection: "keep-alive",
   });
   // Sent now, not with the first frame: with nothing to catch up on, that is a
@@ -194,7 +198,9 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
   // Joining while a wake turn runs: what it has shown so far, starting with
   // its `streaming` status, so the browser holds requests until it lets go,
   // and the reply's later text has a block to land in.
-  if (watchers.live) for (const event of watchers.shown) emit(event);
+  // A surface it shows is sent with its age, so the browser counts its
+  // freshness from when the surface was stored, not from now.
+  if (watchers.live) for (const event of watchers.shown) emit(aged(event));
 
   // Wake turns run beside the notice loop, so a notice never waits behind a
   // turn, nor behind the retries while another request holds the
@@ -324,7 +330,24 @@ function remember(shown: WireEvent[], event: WireEvent) {
     const { type, toolId, ...fields } = event;
     const b = block(toolId);
     if (b?.kind === "tool") b.progress = { ...b.progress, ...fields };
+  } else if (event.type === "ui_open") {
+    const copy = { ...event };
+    born.set(copy, Date.now() - (event.ageMs ?? 0));
+    shown.push(copy);
   } else shown.push(event);
+}
+
+/**
+ * When each remembered surface was stored, by this process's clock: from the
+ * age its frame came with, so a slow digest counts. For a turn heard from
+ * another process, the time on the wire between them does not.
+ */
+const born = new WeakMap<WireEvent, number>();
+
+/** A remembered frame as it goes out now: a surface with how long ago it was stored. */
+function aged(event: WireEvent): WireEvent {
+  const at = born.get(event);
+  return at === undefined || event.type !== "ui_open" ? event : { ...event, ageMs: Math.max(0, Date.now() - at) };
 }
 
 const watching = new WeakMap<Hai, Map<string, Watchers>>();
@@ -499,7 +522,11 @@ async function* wakeups(watch: AsyncIterable<void> | undefined, signal: AbortSig
 function openSSE(res: ServerResponse): Emit {
   res.writeHead(200, {
     "content-type": "text/event-stream",
-    "cache-control": "no-cache",
+    // A proxy that buffers or transforms the stream holds frames back, and a
+    // surface's freshness is counted from when it arrives: ask it not to.
+    // (`x-accel-buffering` is nginx's.)
+    "cache-control": "no-cache, no-transform",
+    "x-accel-buffering": "no",
     connection: "keep-alive",
   });
   return (event: WireEvent) => {
