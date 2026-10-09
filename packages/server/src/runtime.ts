@@ -182,7 +182,9 @@ export class Hai {
    * the conversation records.
    *
    * Takes no lease, so it works while a turn is streaming, while one is
-   * parked, and with nobody connected. It never starts a turn.
+   * parked, and with nobody connected. It never runs a turn itself: a passive
+   * notice waits for the user, and a `wake` notice's turn is started later, by
+   * the events route, where a browser is watching (see `wake`).
    */
   readonly notify: Notify = async (conversationId, notice, payload, options = {}) => {
     const name = notice?.notice?.name;
@@ -256,8 +258,10 @@ export class Hai {
       try {
         if (!superseded) await this.config.store.saveConversation(conversation);
       } catch (err) {
-        emit({ type: "error", message: (err as Error).message });
-        if (!isStaleLease(err)) saveFailed = err;
+        // A lost lease is told here, since it isn't thrown. Any other failure
+        // is thrown, after `released`, and told by whoever called.
+        if (isStaleLease(err)) emit({ type: "error", message: (err as Error).message });
+        else saveFailed = err;
       }
       // Only now may the browser send again: until the save above, the lease
       // was still held. Sent even when that save failed, or the browser would

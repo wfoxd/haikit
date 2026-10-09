@@ -79,6 +79,12 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
    */
   let remote = null;
   let endRemote = () => {};
+  /**
+   * Set when the events connection dropped while a wake turn ran. That turn
+   * still holds the conversation on the server, and its `released` is lost
+   * with the connection, so the next request is given longer to get in.
+   */
+  let cutOff = false;
   /** seq → the mounted notice's instance and element */
   const noticeMounts = new Map();
 
@@ -142,6 +148,18 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
       if (gen !== generation || closed()) return;
       res = await post(path, body, signal); // rejects at once if reset() aborted it meanwhile
     }
+    // A wake turn this client lost sight of holds the conversation until it
+    // ends, which may be a while: keep trying, backing off, for as long as a
+    // turn can hold it before its lease lapses.
+    if (res.status === 409 && cutOff) {
+      const giveUp = Date.now() + CUT_OFF_MS;
+      for (let wait = 250; res.status === 409 && Date.now() < giveUp; wait = Math.min(wait * 2, 2_000)) {
+        await new Promise((r) => setTimeout(r, wait));
+        if (gen !== generation || closed()) return;
+        res = await post(path, body, signal);
+      }
+    }
+    if (res.status !== 409) cutOff = false;
     // Anything but a second 409 means the server took the request up itself —
     // even an error — unless the stream says `expired` below. A 409 means it
     // turned the message away unread.
@@ -369,7 +387,9 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
       } catch {
         if (signal.aborted) return finishRemote();
       }
-      // a turn cut off with its connection is over, as far as waiting goes
+      // A turn cut off with its connection runs on, but nothing will say when
+      // it ends: stop waiting for it, and give the next request longer instead.
+      if (remote) cutOff = true;
       finishRemote();
       if (delivered || Date.now() - opened >= HEALTHY_MS) wait = 1_000;
       // Dropped, refused, or the network went away: try again, backing off.
@@ -589,6 +609,7 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
     aborter.abort();
     aborter = new AbortController();
     stopListening();
+    cutOff = false;
     clearTimeout(timer);
     for (const surface of state.surfaces.values()) unmount(surface);
     for (const seq of [...noticeMounts.keys()]) unmountNotice(seq);
@@ -644,6 +665,13 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
     },
   };
 }
+
+/**
+ * How long a request keeps trying a conversation held by a wake turn whose
+ * events connection dropped: the default lease, the longest that turn can
+ * hold it.
+ */
+const CUT_OFF_MS = 120_000;
 
 /** An events connection that stays up this long was healthy, whatever it delivered. */
 const HEALTHY_MS = 30_000;

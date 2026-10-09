@@ -2970,8 +2970,8 @@ async function wakeChecks(make) {
       threw = true;
     }
     check(
-      "a wake whose final save fails says so, still tells the browser it may send, and reports the failure",
-      threw && sent.includes("error") && sent.at(-1) === "released",
+      "a wake whose final save fails still tells the browser it may send, then throws for its caller to report",
+      threw && sent.at(-1) === "released" && !sent.includes("error"),
     );
   }
 
@@ -3343,20 +3343,29 @@ async function wakeStreamChecks() {
       return { content: [{ type: "text", text: reply }], stop_reason: "end_turn" };
     },
   };
-  // set to make each save take this long, as a slow database would
+  // set to make each save take this long, as a slow database would, or to
+  // fail the save that ends a wake turn
   let slowSave = 0;
+  let failWakeSave = false;
   const memory = memoryStore();
   const store = {
     ...memory,
     async saveConversation(c) {
       if (slowSave) await new Promise((r) => setTimeout(r, slowSave));
+      const woke = c.messages.at(-1)?.role === "assistant" && c.messages.at(-2)?.content?.at?.(-1)?.text?.startsWith("[The user");
+      if (failWakeSave && woke) throw new Error("database away");
       return memory.saveConversation(c);
     },
   };
   const hai = createHai({ model, store, tools: [], surfaces: [], notices: [dropped], system: "x", maxWakes: { count: 100, perMs: 60_000 } });
   const handler = nodeHandler(hai, "/hai");
   const posts = []; // every POST, and how it was answered
+  const streams = new Set(); // events responses still open
   const server = http.createServer(async (req, res) => {
+    if (req.url.includes("/events")) {
+      streams.add(res);
+      res.on("close", () => streams.delete(res));
+    }
     if (req.method === "POST") {
       const at = posts.push({ path: req.url, status: null }) - 1;
       res.on("finish", () => (posts[at].status = res.statusCode));
@@ -3478,6 +3487,35 @@ async function wakeStreamChecks() {
       "a message sent as a wake turn goes idle waits for its save, and goes through",
       tail === true && released.length === 1 && posts.every((p) => p.status !== 409) &&
         !chat.state.blocks.some((b) => b.kind === "error"),
+    );
+
+    // The events connection drops mid-turn. The turn runs on, holding the
+    // conversation, and its `released` is lost: a message sent now must keep
+    // trying until the turn lets go, not give up after one retry.
+    slow = 800;
+    await hai.notify(cid, dropped, { flight: "CUT" });
+    await until(() => chat.state.status === "streaming");
+    for (const res of streams) res.destroy();
+    posts.length = 0;
+    const afterDrop = await chat.send("after the drop");
+    slow = 0;
+    check(
+      "a message sent after the events connection drops mid-turn keeps trying until the turn ends",
+      afterDrop === true && posts.some((p) => p.status === 409) && posts.at(-1).status === 200 &&
+        asked.at(-1) === "after the drop" && !chat.state.blocks.some((b) => b.kind === "error"),
+    );
+
+    // a wake whose final save fails is reported once, by the route
+    await until(() => streams.size === 1, 4_000); // reconnected
+    const errorsBefore = chat.state.blocks.filter((b) => b.kind === "error").length;
+    failWakeSave = true;
+    await hai.notify(cid, dropped, { flight: "LOST" });
+    await until(() => chat.state.blocks.filter((b) => b.kind === "error").length > errorsBefore, 3_000);
+    await wait(300);
+    failWakeSave = false;
+    check(
+      "a wake whose final save fails shows one error, not two",
+      chat.state.blocks.filter((b) => b.kind === "error").length === errorsBefore + 1,
     );
     chat.close();
   } finally {
