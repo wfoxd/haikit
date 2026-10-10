@@ -8,7 +8,7 @@
   ],
   "scripts": {
     "build": "tsc -b packages/core packages/server packages/anthropic packages/postgres packages/react",
-    "typecheck": "npm run build && tsc -p examples/flights --noEmit && tsc -p examples/flights/tsconfig.browser.json && tsc -p examples/hello --noEmit && tsc -p examples/hello-notices --noEmit && tsc -p examples/hello-react --noEmit && tsc -p examples/hello-react/tsconfig.client.json && tsc -p packages/react/tsconfig.test.json",
+    "typecheck": "npm run build && tsc -p examples/flights --noEmit && tsc -p examples/flights/tsconfig.browser.json && tsc -p examples/hello --noEmit && tsc -p examples/hello-notices --noEmit && tsc -p examples/hello-notices/tsconfig.browser.json && tsc -p examples/hello-react --noEmit && tsc -p examples/hello-react/tsconfig.client.json && tsc -p packages/react/tsconfig.test.json",
     "typetest": "node scripts/typetest.mjs",
     "smoke": "node scripts/smoke.mjs",
     "storetest": "node scripts/storetest.mjs",

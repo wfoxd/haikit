@@ -255,7 +255,7 @@ export const notices = {                                  // 2
 };
 ```
 
-**1** The payload's type, read from the contract, as the first tutorial does for `Greeting`. Rename a field in step 02 and this file stops compiling.
+**1** The payload's type, read from the contract, as the first tutorial does for `Greeting`. Rename a field in step 02 and this file stops compiling, once `tsc` checks it: a `tsconfig.browser.json` with `allowJs`, `checkJs` and the `dom` library, as `examples/hello-notices` in the haikit repo has.
 
 **2** A separate export, so the two allowlists never mix. A notice can't be mounted as a surface, or a surface as a notice.
 
@@ -460,6 +460,8 @@ And a component for it, beside the first:
 
 ```js
   reply_received: {
+    // with `/** @typedef {import("@haikit/core").Infer<typeof import("../src/shared/notices.ts").replyReceived.payload>} Reply */` beside `Delivered`
+    /** @param {HTMLElement} el @param {Reply} payload */
     mount(el, payload) {
       const line = h("div", "notice-line");
       const text = h("span", "greeting", payload.text);
@@ -575,7 +577,7 @@ if (shown.handle) addTranslationSoon(ctx.conversationId, shown.handle, GREETINGS
 return shown;
 ```
 
-**1** Sent while this request still holds the conversation. `hai.update` waits for the turn to let go, up to 30 seconds by default, then revises.
+**1** Only schedules the update. The timer fires six seconds later, by when this request has normally let the conversation go. If a turn holds it then, `hai.update` waits for that turn to finish, up to 30 seconds by default, then revises.
 
 Turn updates on, and connect the translators:
 
