@@ -525,11 +525,12 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
   /**
    * Where a notice for the surface at `at` goes: after the notices already
    * beside it, which may name an earlier revision of it, so they keep the
-   * order they arrived in.
+   * order they arrived in. A notice that names no surface sits at the end,
+   * not beside one, and isn't counted among them.
    */
   function afterNotices(at) {
     let i = at + 1;
-    while (state.blocks[i]?.kind === "notice") i++;
+    while (state.blocks[i]?.kind === "notice" && state.blocks[i].handle !== undefined) i++;
     return i;
   }
 
