@@ -92,7 +92,8 @@ export function scripted(): ModelAdapter {
       // typed is the last block.
       const typed = typeof last?.content === "string" ? last.content : (last?.content as any[] | undefined)?.at(-1)?.text;
       const text = String(typed ?? "").toLowerCase();
-      const handle = JSON.stringify(messages).match(/ui_\d+/)?.[0];
+      // the picker as it is now: the latest digest of one, a revision's included
+      const handle = [...JSON.stringify(messages).matchAll(/translations in \d+ scripts\.[^"]*?Rendered as (ui_\d+)/g)].at(-1)?.[1];
       // The latest notice of this name the history has taken in: its model text.
       const latest = (name: string) => {
         const prefix = `[App notification: ${name}] `;

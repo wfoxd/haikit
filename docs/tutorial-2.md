@@ -643,6 +643,23 @@ What happens, in order. `hai.update` takes the conversation's lease, as a reques
 
 From then on the old handle is gone. A click on it is refused as *superseded by ui_02*, which the browser never sends, since the picker's `send` follows it to the new handle. `query_ui` on the old handle still answers, from what it was, and says what it is now.
 
+<details>
+<summary>The scripted model, for revisions</summary>
+
+The first tutorial's scripted model queries the first handle in the history, which after a revision is the old picker. A real model is told to move on to the new handle; teach the scripted one the same.
+
+**`src/server/scripted.ts`** — *edit*
+
+```ts
+// replace the line that finds the handle to query
+// the picker as it is now: the latest digest of one, a revision's included
+const handle = [...JSON.stringify(messages).matchAll(/translations in \d+ scripts\.[^"]*?Rendered as (ui_\d+)/g)].at(-1)?.[1];  // 1
+```
+
+**1** Every picker digest, the update text's *Now:* included, ends with `Rendered as` its handle. The last one is the picker on screen. A query on the old handle would still answer, from what the picker was.
+
+</details>
+
 | | `ctx.update` | `hai.update` |
 | --- | --- | --- |
 | Called from | a tool, inside a turn | your code, any time |

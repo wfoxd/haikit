@@ -1,5 +1,5 @@
 import { estTokens, type Cap } from "@haikit/core";
-import type { Block, Term } from "../shared/surfaces.ts";
+import type { Block, CourseMapProps, Term } from "../shared/surfaces.ts";
 import { checkpoint, courseMap, lesson, nextLesson, tutorialStep, welcomeScreen } from "../shared/surfaces.ts";
 import { CHECKS, OPTION_IDS, lessonProps } from "./course/index.ts";
 import { tutorialPage } from "./tutorial.ts";
@@ -99,7 +99,10 @@ export const courseMapServer = courseMap.implement({
     open(id, { props }) {
       const found = props.parts.flatMap((p) => p.lessons).find((l) => l.id === id);
       if (found) return `Opened lesson ${found.id} ${quote(found.title)}.`;
-      const page = props.tutorials.flatMap((t) => t.pages).find((p) => p.id === id);
+      // A version 2 map, still live from before the second tutorial, has its one tutorial as `tutorial`.
+      const legacy = (props as { tutorial?: CourseMapProps["tutorials"][number] }).tutorial;
+      const tutorials = props.tutorials ?? (legacy ? [legacy] : []);
+      const page = tutorials.flatMap((t) => t.pages).find((p) => p.id === id);
       if (page) return `Opened tutorial step ${page.id} ${quote(page.title)}.`;
       // Throwing refuses the click and leaves the map live.
       throw new Error(`no lesson ${id}`);

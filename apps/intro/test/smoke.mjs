@@ -282,6 +282,19 @@ try {
       propsOf(fromMap, opened(fromMap).find((e) => e.component === "tutorial_step")?.handle)?.id === "07"
         ? ok("the course map opens tutorial step 07")
         : bad("the map did not open step 07");
+      // A version 2 map, stored before the second tutorial, has one `tutorial`;
+      // a click on it is handled by today's code, from its stored props.
+      const { courseMapServer } = await import("../src/server/surfaces.ts");
+      const { tutorials: [firstTutorial], ...rest } = propsOf(map, mapUi?.handle) ?? { tutorials: [] };
+      let opensOld = "";
+      try {
+        opensOld = await courseMapServer.impl.actions.open("07", { props: { ...rest, tutorial: firstTutorial }, handle: "ui_old", conversationId: id });
+      } catch (err) {
+        opensOld = `threw: ${err.message}`;
+      }
+      /^Opened tutorial step 07/.test(opensOld)
+        ? ok("a version 2 map, with its one tutorial, still opens a tutorial page")
+        : bad(`a version 2 map's click: ${opensOld}`);
 
       // every page renders: the steps by number, then the last page by Next
       const broken = [];
