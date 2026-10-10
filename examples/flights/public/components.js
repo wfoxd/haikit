@@ -119,6 +119,13 @@ export const registry = {
           selected = typeof sel === "string" ? sel : null;
           render();
         },
+        // A revision, such as the airline repricing a fare: new rows, and the
+        // sort and expansion the user chose stay as they were.
+        /** @param {{origin: string, destination: string, date: string, flights: Flight[]}} next */
+        update(next) {
+          props = next;
+          render();
+        },
       };
     },
   },

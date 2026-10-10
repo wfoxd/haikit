@@ -14,6 +14,8 @@ import {
   type Tool,
   type ToolCtx,
   type ToolReturn,
+  type Update,
+  type UpdateOptions,
   type WireEvent,
 } from "@haikit/core";
 
@@ -65,6 +67,12 @@ export interface HaiConfig {
    * browser still shows it at once.
    */
   maxWakes?: { count: number; perMs: number };
+  /**
+   * Set when app code revises surfaces with `hai.update`. The browser then
+   * opens the events stream, which is how a revision reaches it, as notices
+   * do. Not needed when `notices` lists any: the stream is open already.
+   */
+  updates?: boolean;
 }
 
 /**
@@ -120,6 +128,26 @@ interface Hop {
   } | null;
 }
 
+/** A `hai.update` write, and every call it answers. */
+interface UpdateJob {
+  props: unknown;
+  model: string | undefined;
+  wake: boolean;
+  timeoutMs: number;
+  waiters: { resolve: (written: { handle: string }) => void; reject: (err: unknown) => void }[];
+}
+
+/** The `hai.update` calls for one surface: the next to write, once the one writing is done. */
+interface UpdateQueue {
+  next: UpdateJob | null;
+}
+
+/** How long `hai.update` waits for a turn to let the conversation go, by default. */
+const UPDATE_TIMEOUT_MS = 30_000;
+/** The first wait before `hai.update` tries a busy conversation again, and the longest. */
+const UPDATE_RETRY_MS = 100;
+const UPDATE_RETRY_MAX_MS = 2_000;
+
 /** An elicit surface a tool call showed, and the digest its answer goes out under. */
 interface Question {
   handle: string;
@@ -136,6 +164,8 @@ export class Hai {
   private readonly queryUi: Tool;
   /** Handles each conversation has a revision of in flight, so two calls can't revise one at once. */
   private readonly revising = new WeakMap<Conversation, Set<string>>();
+  /** `hai.update` calls by conversation and handle: one writing, and the newest waiting behind it. */
+  private readonly updating = new Map<string, UpdateQueue>();
   /** What the model gets as its system prompt: the app's, then the scope. */
   readonly system: string;
   private seq = 0;
@@ -177,14 +207,20 @@ export class Hai {
     }
   }
 
-  /** Whether this app sends notices, so the browser should open the events stream. */
+  /**
+   * Whether this app sends notices, `hai.update`'s included, so the browser
+   * should open the events stream.
+   */
   get sendsNotices(): boolean {
-    return this.notices.size > 0;
+    return this.notices.size > 0 || this.config.updates === true;
   }
 
-  /** Whether any of its notices are `wake` notices, which the events route starts turns for. */
+  /**
+   * Whether any of its notices may be `wake` notices, which the events route
+   * starts turns for: a registered one, or an update sent with `wake`.
+   */
   get wakes(): boolean {
-    return [...this.notices.values()].some((n) => n.notice.kind === "wake");
+    return this.config.updates === true || [...this.notices.values()].some((n) => n.notice.kind === "wake");
   }
 
   /**
@@ -230,6 +266,198 @@ export class Hai {
     });
     return { seq: record.seq };
   };
+
+  /**
+   * Revise a surface from outside any turn: a webhook, a job, a price feed.
+   * The revision is stored and attached as `ctx.update` does, under the
+   * conversation's lease, so a click can never act on props the server doesn't
+   * hold. Then an *update notice* tells both sides: the events stream sends
+   * the browser the revision, which it swaps into the component on screen,
+   * and the model hears which handle replaced which, with the new digest, in
+   * the next user message (or at once, with `wake`).
+   *
+   * `handle` may be any handle the surface has had: the revision replaces the
+   * latest. It throws if that one was answered, if the conversation is out of
+   * date, and, after waiting `timeoutMs` for a turn to let the conversation
+   * go, with `ConversationBusy`. A question waiting on the surface waits on
+   * the revision.
+   *
+   * One write per surface is in flight at a time. A call made meanwhile
+   * replaces any still waiting behind it, and every call it replaced resolves
+   * to the handle it writes; a wake any of them asked for still wakes.
+   */
+  readonly update: Update = (conversationId, surface, handle, props, options = {}) => {
+    const impl = surface as AnySurfaceImpl;
+    const name = impl?.surface?.name;
+    if (this.surfaces.get(name) !== impl) {
+      return Promise.reject(new Error(`surface "${name}" is not registered: list it in createHai({ surfaces })`));
+    }
+    if (!this.sendsNotices) {
+      return Promise.reject(new Error("hai.update needs the events stream to reach the browser: set createHai({ updates: true })"));
+    }
+    const { timeoutMs = UPDATE_TIMEOUT_MS, model, wake } = options as UpdateOptions;
+    if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs < 0) {
+      return Promise.reject(new RangeError(`timeoutMs must be a finite number of milliseconds, zero or more (got ${String(timeoutMs)})`));
+    }
+    if (model !== undefined && typeof model !== "string") return Promise.reject(new TypeError("model must be a string"));
+    let parsed: unknown;
+    try {
+      // Validated before anything waits: props may come from outside this process.
+      parsed = impl.surface.props.parse(props);
+    } catch (err) {
+      return Promise.reject(err);
+    }
+
+    return new Promise((resolve, reject) => {
+      const key = `${conversationId}\u0000${handle}`;
+      const waiter = { resolve, reject };
+      const queue = this.updating.get(key);
+      if (queue) {
+        const behind = queue.next;
+        queue.next = {
+          props: parsed,
+          model,
+          wake: wake === true || behind?.wake === true,
+          timeoutMs,
+          waiters: [...(behind?.waiters ?? []), waiter],
+        };
+        return;
+      }
+      const fresh: UpdateQueue = { next: { props: parsed, model, wake: wake === true, timeoutMs, waiters: [waiter] } };
+      this.updating.set(key, fresh);
+      void (async () => {
+        for (let job = fresh.next; job; job = fresh.next) {
+          fresh.next = null;
+          try {
+            const written = await this.revise(conversationId, impl, handle, job);
+            for (const w of job.waiters) w.resolve(written);
+          } catch (err) {
+            for (const w of job.waiters) w.reject(err);
+          }
+        }
+        this.updating.delete(key);
+      })();
+    });
+  };
+
+  /** One `hai.update` write: take the lease, revise, let the conversation go. */
+  private async revise(conversationId: string, impl: AnySurfaceImpl, handle: string, job: UpdateJob): Promise<{ handle: string }> {
+    const { store } = this.config;
+    // Loading an unknown id would start a new conversation, so make sure it
+    // exists first, with the cheapest read there is.
+    if ((await store.getNotices(conversationId, Number.MAX_SAFE_INTEGER, 1)) === null) {
+      throw new Error(`no conversation ${conversationId}`);
+    }
+    // A turn in progress lands first: wait for it, backing off, up to the timeout.
+    const deadline = Date.now() + job.timeoutMs;
+    let conversation: Conversation | null = null;
+    for (let wait = UPDATE_RETRY_MS; !conversation; wait = Math.min(wait * 2, UPDATE_RETRY_MAX_MS)) {
+      try {
+        conversation = await store.loadConversation(conversationId);
+      } catch (err) {
+        const left = deadline - Date.now();
+        if (!isConversationBusy(err) || left <= 0) throw err;
+        await new Promise((r) => setTimeout(r, Math.min(wait, left)));
+      }
+    }
+
+    let failure: unknown = null;
+    let written: { handle: string } | null = null;
+    try {
+      written = await this.reviseHeld(conversation, impl, handle, job);
+    } catch (err) {
+      failure = err;
+    }
+    // As a route does at the end of a request: let the conversation go, with
+    // the token kept so the save can prove this is still the rightful holder.
+    conversation.leaseUntil = null;
+    if (!isStaleLease(failure)) {
+      try {
+        await store.saveConversation(conversation);
+      } catch (err) {
+        failure ??= err;
+      }
+    }
+    if (failure) throw failure;
+    return written!;
+  }
+
+  private async reviseHeld(
+    conversation: Conversation,
+    impl: AnySurfaceImpl,
+    handle: string,
+    job: UpdateJob,
+  ): Promise<{ handle: string }> {
+    const { store } = this.config;
+    if (!conversation.handles.includes(handle)) throw new Error(`no surface ${handle} in conversation ${conversation.id}`);
+    // the surface as it is now: updates queued one behind another each revise the last
+    const current = currentHandle(conversation, handle);
+    if (conversation.frozen.includes(current)) throw new Error(`${current} was answered, so it can't be revised`);
+    const record = await store.getPayload(current, conversation.id);
+    if (!record) throw new Error(`no surface ${current} in conversation ${conversation.id}`);
+    if (record.component !== impl.surface.name) throw new Error(`${current} is a ${record.component}, not a ${impl.surface.name}`);
+    // After the reads, right before the write, as for `ctx.update`: a revision
+    // must not bring an out-of-date conversation back by superseding the
+    // surface that closed it.
+    if (await this.refuseIfExpired(conversation, () => {})) {
+      throw new Error("this conversation is out of date; nothing more can be revised in it");
+    }
+
+    const next = await store.putPayload(
+      {
+        conversationId: conversation.id,
+        component: impl.surface.name,
+        version: impl.surface.version,
+        props: job.props,
+        mode: record.mode,
+        staleAfterMs: windowOf(impl),
+      },
+      conversation.leaseToken,
+    );
+    const digest = impl.impl.digest(job.props, { handle: next });
+    // …and once more as it takes effect: the write and the digest take a while too
+    const window = strictest(record.staleAfterMs, windowOf(impl));
+    if (window !== "never" && !(Number.isFinite(record.createdAt) && window !== undefined && record.createdAt + window > Date.now())) {
+      throw new Error("this conversation went out of date while the revision was made; it was not applied");
+    }
+
+    const before = {
+      handles: conversation.handles.length,
+      superseded: conversation.superseded && { ...conversation.superseded },
+      pending: conversation.pending,
+    };
+    conversation.handles.push(next);
+    (conversation.superseded ??= {})[current] = next;
+    // A question waiting on the surface waits on its revision. Its digest stays
+    // as the model was shown it: the update's text rides in the same message as
+    // the answer, after it, saying what changed.
+    if (conversation.pending?.handle === current) conversation.pending = { ...conversation.pending, handle: next };
+    // Committed before the notice goes out, which proves the lease is still
+    // held: a notice for a revision the history lost would show the browser a
+    // surface every click on is refused.
+    await store.saveConversation(conversation);
+    try {
+      await store.putNotice({
+        conversationId: conversation.id,
+        name: impl.surface.name,
+        version: impl.surface.version,
+        payload: null,
+        model: `${job.model ? `${job.model} ` : ""}${current} was replaced by ${next}; its earlier digest is out of date. Now: ${digest}`,
+        handle: next,
+        replaces: current,
+        ...(job.wake ? { kind: "wake" as const } : {}),
+      });
+    } catch (err) {
+      // Undone, and the save on the way out records that. Kept, the model would
+      // never hear of a revision whose window now counts in place of the one
+      // it was shown, and the browser would never show it.
+      conversation.handles.length = before.handles;
+      conversation.superseded = before.superseded;
+      conversation.pending = before.pending;
+      throw err;
+    }
+    return { handle: next };
+  }
 
   /**
    * Start a turn for the `wake` notices this conversation hasn't taken in, if
@@ -379,11 +607,13 @@ export class Hai {
     conversation: Conversation,
   ): Promise<{ blocks: TextBlock[]; through: number; wake: number }> {
     const through = conversation.noticedThrough ?? 0;
-    if (!this.notices.size) return { blocks: [], through, wake: 0 };
+    if (!this.sendsNotices) return { blocks: [], through, wake: 0 };
     const fresh = (await this.config.store.getNotices(conversation.id, through)) ?? [];
     return {
       blocks: fresh.flatMap((n) =>
-        n.model === null ? [] : [{ type: "text" as const, text: `[App notification: ${n.name}] ${n.model}` }],
+        n.model === null
+          ? []
+          : [{ type: "text" as const, text: n.replaces === undefined ? `[App notification: ${n.name}] ${n.model}` : `[UI update] ${n.model}` }],
       ),
       through: fresh.at(-1)?.seq ?? through,
       // the newest unread wake notice, or 0

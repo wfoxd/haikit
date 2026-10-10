@@ -10,6 +10,7 @@ import { defineTool } from "@haikit/core";
 import { z } from "zod";
 import { FLIGHTS, seatRows } from "./data.ts";
 import { flightTableServer, seatMapServer } from "./surfaces.ts";
+import { watchFares } from "./airline.ts";
 
 const FARE_SOURCES = 4;
 
@@ -47,11 +48,14 @@ export const searchFlights = defineTool({
     }
 
     const flights = FLIGHTS;
-    return ctx.render(
+    const shown = await ctx.render(
       flightTableServer,
       { ...input, flights },
       { mode: "elicit" }, // compiles only because flight_table declares `select: resolve(...)`
     );
+    // fares move while the user looks: the airline revises this table in place
+    if (shown.handle) watchFares(ctx.conversationId, shown.handle, { ...input, flights });
+    return shown;
   },
 });
 

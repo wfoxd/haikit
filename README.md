@@ -191,9 +191,6 @@ Working, and honest about what isn't done.
   state; lose `pending` and that conversation can never be sent again. Ship
   with [`@haikit/postgres`](packages/postgres), or implement the five-method
   `StoreAdapter` for your own database.
-- **Revisions come from tools only, for now.** A tool can revise a surface in
-  place with `ctx.update`; changing one from outside a turn (`hai.update`)
-  is #65's second half.
 - **No approval gates**, though they are structurally identical to elicit with
   a two-button surface.
 - **No MCP export.** Tools would degrade gracefully (the digest is a complete

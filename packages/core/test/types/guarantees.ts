@@ -9,11 +9,12 @@
  * wrong owner: delete the example and the regression test goes with it.
  */
 
-import { defineSurface, inform, type Notify, type Schema, type ToolCtx } from "../../src/index.js";
+import { defineSurface, inform, type Notify, type Schema, type ToolCtx, type Update } from "../../src/index.js";
 import { card, cardImpl, droppedNotice, heldNotice, heldNoticeImpl, picker, pickerImpl, type Row } from "./fixture.js";
 
 declare const ctx: ToolCtx;
 declare const notify: Notify;
+declare const update: Update;
 declare const props: { rows: Row[] };
 
 const str: Schema<string> = { parse: (v) => v as string };
@@ -91,6 +92,16 @@ picker.implement({
 // @ts-expect-error  'rows' is missing
 await ctx.render(pickerImpl, { wrong: true }, { mode: "elicit" });
 
+// ── a revision's props are too, in a turn or out of one ────────────────
+// @ts-expect-error  'rows' is missing
+await ctx.update(pickerImpl, "ui_01", { wrong: true });
+
+// @ts-expect-error  'rows' is missing
+await update("conv_1", pickerImpl, "ui_01", { wrong: true });
+
+// @ts-expect-error  wake is a boolean
+await update("conv_1", cardImpl, "ui_01", props, { wake: "yes" });
+
 // ── a notice's payload is typed from its contract ──────────────────────
 // @ts-expect-error  'flight' is missing
 await notify("conv_1", heldNoticeImpl, { fare: 343 });
@@ -107,6 +118,8 @@ await notify("conv_1", droppedImpl, { flight: "AC832" });
 await notify("conv_1", heldNoticeImpl, { flight: "AC832" });
 const { seq }: { seq: number } = await notify("conv_1", heldNoticeImpl, { flight: "AC832" }, { handle: "ui_01" });
 void seq;
+const { handle: revised }: { handle: string } = await update("conv_1", cardImpl, "ui_01", props, { model: "Fares moved.", wake: true, timeoutMs: 1_000 });
+await ctx.update(cardImpl, revised, props);
 // no window declared: it defaults to "never", so code written before
 // freshness windows existed still compiles
 picker.implement({

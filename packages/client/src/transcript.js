@@ -102,19 +102,20 @@ function toolStatus(block, chat) {
   if (block.status !== "awaiting") return block.status;
   const { blocks, surfaces, expired } = chat.state;
   // Found once per row and kept: every answered question keeps its row
-  // `awaiting`, and this runs for each of them on every streamed event.
-  let handle = questions.get(block);
-  if (handle === undefined) {
-    handle = blocks.find(
+  // `awaiting`, and this runs for each of them on every streamed event. The
+  // surface's block is kept, not its handle, which a revision moves on.
+  let question = questions.get(block);
+  if (question === undefined) {
+    question = blocks.find(
       (b) => b.kind === "ui" && b.toolId === block.id && surfaces.get(b.handle)?.mode === "elicit",
-    )?.handle;
-    if (handle !== undefined) questions.set(block, handle);
+    );
+    if (question !== undefined) questions.set(block, question);
   }
-  if (surfaces.get(handle)?.state === "frozen") return "resolved";
+  if (surfaces.get(question?.handle)?.state === "frozen") return "resolved";
   return expired ? "expired" : "awaiting";
 }
 
-/** A tool row's block → the handle of the question it asked, once seen. */
+/** A tool row's block → the block of the question it asked, once seen. */
 const questions = new WeakMap();
 
 const STATUS_TEXT = {

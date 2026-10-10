@@ -59,6 +59,9 @@ you call `migrate()` at startup there is nothing to do.
 **Upgrading to 0.14:** `migrate()` adds `kind` to `haikit_notices`, and
 `wakes` and `woke_through` to `haikit_conversations`, for wake notices.
 
+**Upgrading to 0.18:** `migrate()` adds `replaces` to `haikit_notices`, for
+`hai.update`'s update notices.
+
 Handles are numbered per conversation, so every conversation's digests start at
 `ui_01`.
 

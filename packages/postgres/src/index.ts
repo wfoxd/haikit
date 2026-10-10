@@ -127,9 +127,12 @@ export const schema: readonly string[] = [
      handle          text,
      -- 'wake', or NULL for a passive notice
      kind            text,
+     -- on an update notice, the surface its handle replaced
+     replaces        text,
      PRIMARY KEY (conversation_id, seq)
    )`,
   `ALTER TABLE haikit_notices ADD COLUMN IF NOT EXISTS kind text`,
+  `ALTER TABLE haikit_notices ADD COLUMN IF NOT EXISTS replaces text`,
   // Write-once. Nothing about a payload changes after insert — everything that
   // does lives on the fenced conversation row (see Conversation.frozen).
   `CREATE TABLE IF NOT EXISTS haikit_payloads (
@@ -172,7 +175,7 @@ const CONVERSATION_COLUMNS = `
   (extract(epoch FROM lease_until) * 1000)::float8 AS lease_until_ms`;
 
 const NOTICE_COLUMNS = `
-  conversation_id, seq, name, version, payload::text AS payload, model, handle, kind,
+  conversation_id, seq, name, version, payload::text AS payload, model, handle, kind, replaces,
   (extract(epoch FROM created_at) * 1000)::float8 AS created_at_ms`;
 
 // The window is read as text too: 'Infinity' is how "never" is stored, and
@@ -210,6 +213,7 @@ const toNotice = (row: any): NoticeRecord => ({
   model: row.model,
   ...(row.handle == null ? {} : { handle: row.handle }),
   ...(row.kind === "wake" ? { kind: "wake" as const } : {}),
+  ...(row.replaces == null ? {} : { replaces: row.replaces }),
 });
 
 const toPayload = (row: any): PayloadRecord => ({
@@ -548,8 +552,8 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
             WHERE id = $1::text
             RETURNING notice_seq
          ), stored AS (
-           INSERT INTO haikit_notices (conversation_id, seq, name, version, payload, model, handle, kind)
-           SELECT $1::text, notice_seq, $2::text, $3::integer, $4::jsonb, $5::text, $6::text, $7::text FROM next
+           INSERT INTO haikit_notices (conversation_id, seq, name, version, payload, model, handle, kind, replaces)
+           SELECT $1::text, notice_seq, $2::text, $3::integer, $4::jsonb, $5::text, $6::text, $7::text, $8::text FROM next
            RETURNING ${NOTICE_COLUMNS}
          )
          SELECT stored.*, pg_notify('${NOTICE_CHANNEL}', $1::text) FROM stored`,
@@ -561,6 +565,7 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
           record.model,
           record.handle ?? null,
           record.kind === "wake" ? "wake" : null,
+          record.replaces ?? null,
         ],
       );
       if (!rows.length) throw new Error(`conversation ${record.conversationId} does not exist`);

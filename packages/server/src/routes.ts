@@ -232,6 +232,31 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
       });
   };
 
+  // An update notice goes out as the revision it announces: the surface, with
+  // how long ago it was stored, and its props. Only the last frame carries the
+  // notice's id, so a stream cut off between the two resumes with both. A
+  // revision whose payload is gone, swept with an old conversation's, is
+  // passed over.
+  const sendRevision = async (handle: string, replaces: string, seq: number) => {
+    const record = await store.getPayload(handle, conversationId);
+    if (!record || signal.aborted) return;
+    const window = typeof record.staleAfterMs === "number" ? record.staleAfterMs : undefined;
+    const open: WireEvent = {
+      type: "ui_open",
+      handle,
+      // no tool call made it: the browser keeps the row of the one it replaces
+      toolId: "",
+      component: record.component,
+      version: record.version,
+      mode: record.mode,
+      ...(window === undefined ? {} : { staleAfterMs: window }),
+      ageMs: Math.max(0, Date.now() - record.createdAt),
+      replaces,
+    };
+    await write(`data: ${JSON.stringify(open)}\n\n`);
+    await write(`id: ${seq}\ndata: ${JSON.stringify({ type: "ui_props", handle, props: record.props } satisfies WireEvent)}\n\n`);
+  };
+
   // Everything after `after`, a page at a time, until a page comes back short.
   // A conversation deleted since the stream opened ends it: there is nothing
   // more to wait for, and the browser's reconnect is then refused.
@@ -243,6 +268,12 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
       for (const n of records) {
         if (signal.aborted) return;
         if (n.seq <= after) continue;
+        if (n.replaces !== undefined && n.handle !== undefined) {
+          await sendRevision(n.handle, n.replaces, n.seq);
+          after = n.seq;
+          woken ||= n.kind === "wake";
+          continue;
+        }
         const event: WireEvent = {
           type: "notice",
           seq: n.seq,
