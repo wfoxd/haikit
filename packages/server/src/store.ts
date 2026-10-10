@@ -109,6 +109,7 @@ export function memoryStore(options: MemoryStoreOptions = {}): StoreAdapter {
         wokeThrough: 0,
         wakeTurns: 0,
         superseded: {},
+        announcing: null,
       };
       conversations.set(conversation.id, conversation);
       return copy(conversation);

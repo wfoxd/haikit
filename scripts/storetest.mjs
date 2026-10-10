@@ -396,7 +396,7 @@ export async function conform(label, make) {
     const shapes = ["hello", "", 42, true, null, [1, "two"], { nested: { deep: ["x"] } }];
     const put = [];
     for (const payload of shapes) put.push(await s.putNotice(notice(a.id, { payload })));
-    put.push(await s.putNotice(notice(a.id, { model: null, handle: "ui_01", name: "other", version: 3 })));
+    put.push(await s.putNotice(notice(a.id, { model: null, handle: "ui_01", replaces: "ui_00", name: "other", version: 3 })));
     put.push(await s.putNotice(notice(a.id, { kind: "wake" })));
     await s.putNotice(notice(b.id));
     const after = Date.now();
@@ -417,6 +417,7 @@ export async function conform(label, make) {
       other.model === null && other.handle === "ui_01" && other.name === "other" && other.version === 3 && !("handle" in all[0]),
     );
     check("a wake notice's kind round-trips; a passive one has none", all.at(-1).kind === "wake" && !("kind" in all[0]));
+    check("an update notice's replaces round-trips; an absent one stays absent", other.replaces === "ui_00" && !("replaces" in all[0]));
     const slack = 60_000;
     check(
       "a notice's createdAt is epoch milliseconds from when it was written",
@@ -440,10 +441,15 @@ export async function conform(label, make) {
     a.wokeThrough = put[2].seq;
     a.wakeTurns = 7;
     a.superseded = { ui_01: "ui_02", ui_02: "ui_05" };
+    check("a new conversation owes no update notice", a.announcing == null);
+    a.announcing = { conversationId: a.id, name: "card", version: 2, payload: null, model: "ui_02 was replaced", handle: "ui_05", replaces: "ui_02", kind: "wake" };
     a.leaseUntil = null;
     await s.saveConversation(a);
     const reloaded = await s.loadConversation(a.id);
     check("noticedThrough round-trips with the conversation", reloaded.noticedThrough === put[3].seq);
+    // jsonb keeps its own key order, so compared key by key
+    const keyed = (v) => JSON.stringify(Object.entries(v ?? {}).sort(([x], [y]) => x.localeCompare(y)));
+    check("the update notice it owes round-trips with the conversation", keyed(reloaded.announcing) === keyed(a.announcing));
     check(
       "wakes, wokeThrough and wakeTurns round-trip with the conversation",
       JSON.stringify(reloaded.wakes) === JSON.stringify(a.wakes) && reloaded.wokeThrough === put[2].seq && reloaded.wakeTurns === 7,
@@ -515,6 +521,7 @@ export async function integration(label, make) {
   await noticeChecks(make);
   await wakeChecks(make);
   await updateChecks(make);
+  await outsideUpdateChecks(make);
   return failures;
 }
 
@@ -3400,6 +3407,501 @@ async function updateChecks(make) {
 // ── the events stream, and the client that follows it ──────────────────
 // Real parts end to end: a Hai with notices behind nodeHandler, read first with
 // plain fetches, then by createChat.
+// ── hai.update: revising a surface from outside any turn ──────────────
+// Stored and attached under the lease, as ctx.update is; the model hears of
+// it as an update notice, the browser through the events stream.
+async function outsideUpdateChecks(make) {
+  const { createHai } = await import("../packages/server/dist/index.js");
+  const { defineNotice, defineSurface, defineTool, resolve, inform, isConversationBusy } = await import("../packages/core/dist/index.js");
+  const any = { parse: (v) => v };
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const base = make();
+  // set to make the next update notice fail to store
+  let failNotice = false;
+  // set to hold every payload write this long once it has written
+  let slowPut = 0;
+  const store = {
+    ...base,
+    putNotice: (record) => (failNotice && record.replaces ? Promise.reject(new Error("notice store down")) : base.putNotice(record)),
+    putPayload: async (record, token) => {
+      const handle = await base.putPayload(record, token);
+      if (slowPut) await wait(slowPut);
+      return handle;
+    },
+  };
+  const priced = (name, staleAfterMs) =>
+    defineSurface({
+      name,
+      version: 1,
+      props: { parse: (v) => { if (typeof v?.price !== "number") throw new Error("price must be a number"); return v; } },
+      actions: { note: inform(any) },
+    }).implement({
+      digest: (p, { handle }) => `card ${p.price} as ${handle}`,
+      actions: { note: (v, { props }) => `noted ${v} at ${props.price}` },
+      queries: {},
+      staleAfterMs,
+    });
+  // a window no run of this suite outlasts, however slow the machine
+  const card = priced("card", 60_000);
+  // and one that the expiry checks wait out
+  const brief = priced("brief", 1_000);
+  const picker = defineSurface({ name: "pick", version: 1, props: any, actions: { choose: resolve(any) } }).implement({
+    digest: (p, { handle }) => `pick ${p.v} as ${handle}`,
+    actions: { choose: (v, { props }) => `chose ${v} from ${props.v}` },
+    queries: {},
+  });
+  const stray = defineSurface({ name: "stray", version: 1, props: any }).implement({ digest: () => "stray", actions: {}, queries: {} });
+  const tool = defineTool({
+    name: "t",
+    description: "d",
+    input: any,
+    inputJsonSchema: { type: "object" },
+    run: (i, ctx) =>
+      i.op === "ask"
+        ? ctx.render(picker, { v: i.v }, { mode: "elicit" })
+        : ctx.render(i.op === "brief" ? brief : card, { price: i.price }),
+  });
+  const next = [];
+  const heard = []; // every message list the model was given
+  const model = {
+    id: "stub",
+    async generate({ messages }) {
+      heard.push(JSON.stringify(messages));
+      const last = messages.at(-1).content;
+      const replying = Array.isArray(last) && last.some((b) => b.type === "tool_result");
+      if (!replying && next.length) {
+        return { content: [{ type: "tool_use", id: `tu_${Math.random()}`, name: "t", input: next.shift() }], stop_reason: "tool_use" };
+      }
+      return { content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" };
+    },
+  };
+  const hai = createHai({ model, store, tools: [tool], surfaces: [card, brief, picker], system: "x", updates: true });
+  async function request(id, act) {
+    const c = await store.loadConversation(id);
+    const events = [];
+    let error = null;
+    try {
+      await act(c, (e) => events.push(e));
+    } catch (err) {
+      error = err;
+    }
+    c.leaseUntil = null;
+    await store.saveConversation(c);
+    return { c, events, error };
+  }
+  const say = (text) => (c, emit) => hai.send(c, text, emit);
+  const click = (handle, action, value) => (c, emit) => hai.interact(c, { handle, action, value }, emit);
+  // the conversation as stored, without keeping its lease
+  const peek = async (id) => {
+    const c = await store.loadConversation(id);
+    c.leaseUntil = null;
+    await store.saveConversation(c);
+    return c;
+  };
+  const updates = async (id) => (await store.getNotices(id, 0)).filter((n) => n.replaces !== undefined);
+  const failed = async (p) => {
+    try {
+      await p;
+      return null;
+    } catch (err) {
+      return err;
+    }
+  };
+
+  // ── a revision from outside: stored, attached, and announced
+  next.push({ price: 343 });
+  const shown = await request(undefined, say("show it"));
+  const id = shown.c.id;
+  const first = shown.c.handles[0];
+  const { handle: second } = await hai.update(id, card, first, { price: 389 });
+  let c = await peek(id);
+  check(
+    "hai.update stores a revision that supersedes the surface, and resolves to its handle",
+    second !== first && c.handles.at(-1) === second && c.superseded?.[first] === second,
+  );
+  const [notice] = await updates(id);
+  check(
+    "…and appends an update notice naming both handles, with the new digest for the model",
+    notice?.handle === second && notice.replaces === first && notice.kind === undefined &&
+      notice.model === `${first} was replaced by ${second}; its earlier digest is out of date. Now: card 389 as ${second}`,
+  );
+  check("…and lets the conversation go, owing nothing", (c.leaseUntil === null || c.leaseUntil < Date.now()) && c.announcing == null);
+  const stale = await request(id, click(first, "note", "x"));
+  check(`a click on the replaced handle is refused (${stale.error?.message})`, stale.error?.message === `superseded by ${second}`);
+  const acted = await request(id, click(second, "note", "x"));
+  check(
+    "a click on the revision acts on its props, and the model hears the update first",
+    !acted.error && heard.at(-1).includes(`[UI update] ${first} was replaced by ${second}`) &&
+      heard.at(-1).indexOf("[UI update]") < heard.at(-1).indexOf("noted x at 389"),
+  );
+
+  // ── an earlier handle names the surface as it is now; the app's sentence goes first
+  const { handle: third } = await hai.update(id, card, first, { price: 401 }, { model: "Fares moved." });
+  c = await peek(id);
+  check("an update naming an earlier handle revises the latest", c.superseded?.[second] === third && c.superseded?.[first] === second);
+  check(
+    "the app's sentence goes before what the model always hears",
+    (await updates(id)).at(-1).model === `Fares moved. ${second} was replaced by ${third}; its earlier digest is out of date. Now: card 401 as ${third}`,
+  );
+
+  // ── a turn in progress lands first; past the timeout, ConversationBusy
+  const held = await store.loadConversation(id);
+  const waited = failed(hai.update(id, card, third, { price: 402 }));
+  await wait(150);
+  held.leaseUntil = null;
+  await store.saveConversation(held);
+  const after = await waited;
+  c = await peek(id);
+  check("an update waits for a turn holding the conversation, then lands", after === null && c.superseded?.[third] === c.handles.at(-1));
+  const fourth = c.handles.at(-1);
+  const holding = await store.loadConversation(id);
+  const started = Date.now();
+  const busy = await failed(hai.update(id, card, fourth, { price: 403 }, { timeoutMs: 200 }));
+  check(
+    `…and past its timeoutMs throws ConversationBusy (${busy?.name}, ${Date.now() - started}ms)`,
+    isConversationBusy(busy) && Date.now() - started >= 200 && Date.now() - started < 2_000,
+  );
+  check("…having changed nothing", (await updates(id)).length === 3 && !holding.superseded?.[fourth]);
+
+  // ── bursts coalesce: one write in flight, the newest waiting behind it
+  const burst = Promise.allSettled([
+    hai.update(id, card, fourth, { price: 501 }),
+    hai.update(id, card, fourth, { price: 502 }, { wake: true }),
+    hai.update(id, card, fourth, { price: 503 }),
+  ]);
+  await wait(150);
+  holding.leaseUntil = null;
+  await store.saveConversation(holding);
+  const written = (await burst).map((r) => r.value ?? { handle: r.reason?.message });
+  c = await peek(id);
+  const burstNotices = (await updates(id)).slice(3);
+  const last = await store.getPayload(c.handles.at(-1), id);
+  check(
+    `a burst writes the one in flight and the newest, not every call (${burstNotices.length} writes)`,
+    burstNotices.length === 2 && last.props.price === 503 && (await store.getPayload(written[0].handle, id)).props.price === 501,
+  );
+  check(
+    "…and the call the newest replaced resolves to what it wrote",
+    written[1].handle === written[2].handle && written[2].handle === c.handles.at(-1) && written[0].handle !== written[1].handle,
+  );
+  check("…and a wake any of them asked for still wakes", burstNotices[1].kind === "wake" && burstNotices[0].kind === undefined);
+  // it wakes as a wake notice does
+  const woke = [];
+  const outcome = await hai.wake(id, (e) => woke.push(e));
+  c = await peek(id);
+  check(
+    `an update sent with wake starts a turn whose message carries the update (${outcome})`,
+    outcome === "woke" && heard.at(-1).includes(`was replaced by ${written[2].handle}`) && heard.at(-1).includes("The user has not said anything"),
+  );
+
+  // ── refusals, before anything is written
+  const writes = (await store.getNotices(id, 0)).length;
+  check("an unregistered surface is refused", /not registered/.test((await failed(hai.update(id, stray, first, {})))?.message ?? ""));
+  check("props that fail the surface's schema are refused", /price must be a number/.test((await failed(hai.update(id, card, first, { price: "x" })))?.message ?? ""));
+  check("a handle the conversation never showed is refused", /no surface ui_nope/.test((await failed(hai.update(id, card, "ui_nope", { price: 1 })))?.message ?? ""));
+  check("a surface of another contract is refused", /is a card, not a pick/.test((await failed(hai.update(id, picker, first, { v: 1 })))?.message ?? ""));
+  const unknown = await failed(hai.update("conv_nope", card, first, { price: 1 }));
+  check("an unknown conversation is refused, and not created", /no conversation conv_nope/.test(unknown?.message ?? "") && (await store.getNotices("conv_nope", 0)) === null);
+  check("a negative timeoutMs is refused", (await failed(hai.update(id, card, first, { price: 1 }, { timeoutMs: -1 }))) instanceof RangeError);
+  const plain = createHai({ model, store, tools: [tool], surfaces: [card], system: "x" });
+  check(
+    "an app that didn't say it sends updates is refused: no browser would hear them",
+    /updates: true/.test((await failed(plain.update(id, card, first, { price: 1 })))?.message ?? ""),
+  );
+  // its events stream is open, but nothing would start the turn a wake update asks for
+  const passive = defineNotice({ name: "passive", version: 1, payload: any }).implement({ model: () => null });
+  const noticesOnly = createHai({ model, store, tools: [tool], surfaces: [card], notices: [passive], system: "x" });
+  check(
+    "…and so is one that only lists passive notices",
+    !noticesOnly.wakes && /updates: true/.test((await failed(noticesOnly.update(id, card, first, { price: 1 })))?.message ?? ""),
+  );
+  check("…and none of those wrote anything", (await store.getNotices(id, 0)).length === writes);
+
+  // ── calls naming the surface's first handle and its latest share a queue
+  const latest = c.handles.at(-1);
+  const blocking = await store.loadConversation(id);
+  const mixed = Promise.allSettled([
+    hai.update(id, card, first, { price: 701 }),
+    hai.update(id, card, latest, { price: 702 }),
+    hai.update(id, card, first, { price: 703 }),
+  ]);
+  await wait(150);
+  blocking.leaseUntil = null;
+  await store.saveConversation(blocking);
+  const mixedWritten = (await mixed).map((r) => r.value?.handle ?? r.reason?.message);
+  const mixedNotices = (await updates(id)).slice(5);
+  check(
+    `a burst naming the first handle and the latest writes twice, not three times (${mixedNotices.length} writes)`,
+    mixedNotices.length === 2 && mixedWritten[1] === mixedWritten[2] && mixedWritten[0] !== mixedWritten[1],
+  );
+
+  // ── a notice that can't be stored is still owed, and goes out first next time
+  const unheard = heard.length;
+  failNotice = true;
+  const lost = await failed(hai.update(id, card, first, { price: 600 }));
+  failNotice = false;
+  c = await peek(id);
+  const owedHandle = c.handles.at(-1);
+  check(
+    `a revision whose notice can't be stored stands, with the notice owed on the conversation (${lost?.message})`,
+    /is saved, but its update notice could not be stored yet/.test(lost?.message ?? "") &&
+      c.announcing?.handle === owedHandle && (await store.getPayload(owedHandle, id)).props.price === 600 &&
+      !(await updates(id)).some((n) => n.handle === owedHandle),
+  );
+  await request(id, say("anything new?"));
+  c = await peek(id);
+  check(
+    "…and the next request appends it before the model runs, once",
+    (await updates(id)).filter((n) => n.handle === owedHandle).length === 1 && c.announcing == null &&
+      heard.length > unheard && heard.at(-1).includes(`was replaced by ${owedHandle}`),
+  );
+  // a holder that appended it, then lost its save, left it owed: not appended twice
+  const again = await store.loadConversation(id);
+  const { seq: _seq, createdAt: _at, ...appended } = (await updates(id)).find((n) => n.handle === owedHandle);
+  again.announcing = appended;
+  again.noticedThrough = (await store.getNotices(id, 0)).find((n) => n.handle === owedHandle).seq - 1;
+  again.leaseUntil = null;
+  await store.saveConversation(again);
+  await request(id, say("still there?"));
+  check(
+    "a notice already appended by a holder whose save then failed isn't appended again",
+    (await updates(id)).filter((n) => n.handle === owedHandle).length === 1 && (await peek(id)).announcing == null,
+  );
+
+  // ── a question waiting on the surface waits on its revision
+  next.push({ op: "ask", v: "B" });
+  const asking = await request(undefined, say("ask"));
+  const qid = asking.c.id;
+  const question = asking.c.pending?.handle;
+  const { handle: revisedQuestion } = await hai.update(qid, picker, question, { v: "C" });
+  c = await peek(qid);
+  check("a question waiting on the surface waits on its revision", c.pending?.handle === revisedQuestion && c.status === "awaiting");
+  const answered = await request(qid, click(revisedQuestion, "choose", "C"));
+  const answer = JSON.stringify(answered.c.messages.at(-2)?.content ?? "");
+  check(
+    "…and its answer goes out under the digest the model saw, with the update after it",
+    !answered.error && answer.includes(`pick B as ${question}\\nchose C from C`) &&
+      answer.indexOf("chose C from C") < answer.indexOf(`[UI update] ${question} was replaced by ${revisedQuestion}`),
+  );
+  check("an answered surface can't be revised", /was answered/.test((await failed(hai.update(qid, picker, question, { v: "D" })))?.message ?? ""));
+
+  // ── an out-of-date conversation stays out of date
+  next.push({ op: "brief", price: 10 });
+  const short = await request(undefined, say("show"));
+  await wait(1_050);
+  const expired = await failed(hai.update(short.c.id, brief, short.c.handles[0], { price: 11 }));
+  c = await peek(short.c.id);
+  check(
+    `a revision can't bring an out-of-date conversation back (${expired?.message})`,
+    expired?.message === "this conversation is out of date; nothing more can be revised in it" && !c.superseded?.[short.c.handles[0]],
+  );
+  // …nor one that goes out of date while the revision is made
+  next.push({ op: "brief", price: 20 });
+  const lapsing = await request(undefined, say("show"));
+  slowPut = 1_050; // the write outlasts the window that was open when the update began
+  const slow = await failed(hai.update(lapsing.c.id, brief, lapsing.c.handles[0], { price: 21 }));
+  slowPut = 0;
+  c = await peek(lapsing.c.id);
+  check(
+    `a revision whose surface goes out of date while it is made is not applied (${slow?.message})`,
+    /went out of date while the revision was made/.test(slow?.message ?? "") && !c.superseded?.[lapsing.c.handles[0]] &&
+      c.handles.length === 1 && (await updates(lapsing.c.id)).length === 0,
+  );
+}
+
+// ── hai.update reaches the browser through the events stream ───────────
+async function updateStreamChecks() {
+  console.log("\nupdates on the events stream");
+  const http = await import("node:http");
+  const { createHai, memoryStore, nodeHandler } = await import("../packages/server/dist/index.js");
+  const { defineSurface, defineTool } = await import("../packages/core/dist/index.js");
+  const { createChat } = await import("../packages/client/src/index.js");
+  const any = { parse: (v) => v };
+  const card = defineSurface({ name: "card", version: 1, props: any }).implement({
+    digest: (p, { handle }) => `card ${p.price} as ${handle}`,
+    actions: {},
+    queries: {},
+    staleAfterMs: 60_000,
+  });
+  const show = defineTool({ name: "show", description: "d", input: any, inputJsonSchema: { type: "object" }, run: (_i, ctx) => ctx.render(card, { price: 343 }) });
+  let replies = 0;
+  const model = {
+    id: "stub",
+    async generate({ messages, onTextDelta }) {
+      const last = messages.at(-1).content;
+      if (typeof last === "string" && last === "show") {
+        return { content: [{ type: "tool_use", id: `tu_${Math.random()}`, name: "show", input: {} }], stop_reason: "tool_use" };
+      }
+      replies++;
+      onTextDelta(`reply ${replies}`);
+      return { content: [{ type: "text", text: `reply ${replies}` }], stop_reason: "end_turn" };
+    },
+  };
+  const memory = memoryStore();
+  const hidden = new Set(); // payloads read back as gone, as if swept
+  const store = { ...memory, getPayload: (h, id) => (hidden.has(h) ? Promise.resolve(null) : memory.getPayload(h, id)) };
+  const hai = createHai({ model, store, tools: [show], surfaces: [card], system: "x", updates: true });
+  const handler = nodeHandler(hai, "/hai");
+  const streams = new Set();
+  const resumes = []; // each events request's Last-Event-ID
+  const server = http.createServer(async (req, res) => {
+    if (req.url.includes("/events")) {
+      resumes.push(req.headers["last-event-id"]);
+      streams.add(res);
+      res.on("close", () => streams.delete(res));
+    }
+    if (!(await handler(req, res))) res.writeHead(404).end();
+  });
+  await new Promise((r) => server.listen(5393, "127.0.0.1", r));
+  const base = "http://127.0.0.1:5393";
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const until = async (cond, ms = 3_000) => {
+    for (const end = Date.now() + ms; Date.now() < end; await wait(10)) if (cond()) return true;
+    return cond();
+  };
+  async function read(url, headers = {}, enough = Infinity, ms = 600) {
+    const aborter = new AbortController();
+    // once more if a kept-alive socket was closed under it
+    const res = await fetch(url, { headers, signal: aborter.signal }).catch(() => fetch(url, { headers, signal: aborter.signal }));
+    const frames = [];
+    const timer = setTimeout(() => aborter.abort(), ms);
+    try {
+      const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+      let buffer = "";
+      while (frames.length < enough) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += value;
+        let i;
+        while ((i = buffer.indexOf("\n\n")) >= 0) {
+          const lines = buffer.slice(0, i).split("\n");
+          buffer = buffer.slice(i + 2);
+          const data = lines.find((l) => l.startsWith("data: "));
+          const id = lines.find((l) => l.startsWith("id: "))?.slice(4);
+          // an id alone, with no event, still moves the browser's place on
+          if (data || id) frames.push({ id, event: data ? JSON.parse(data.slice(6)) : null });
+        }
+      }
+    } catch {}
+    clearTimeout(timer);
+    aborter.abort();
+    return frames;
+  }
+  const el = () => ({ replaceChildren() {}, dataset: {}, textContent: "", className: "" });
+  const mounts = [];
+  const updated = [];
+  const registry = { card: { mount: (_el, props) => (mounts.push(props), { update: (p) => updated.push(p), unmount() {} }) } };
+
+  try {
+    // ── the route
+    const chat = await fetch(`${base}/hai/chat`, { method: "POST", body: JSON.stringify({ message: "show" }) }).then((r) => r.text());
+    const hello = JSON.parse(chat.split("\n").find((l) => l.startsWith("data: ")).slice(6));
+    check("an app that sends updates tells the browser to open the events stream", hello.events === true);
+    const id = hello.conversationId;
+    const first = JSON.parse(chat.split("\n").filter((l) => l.startsWith("data: ")).map((l) => l.slice(6)).find((l) => l.includes('"ui_open"'))).handle;
+    const madeAt = Date.now();
+    const { handle: second } = await hai.update(id, card, first, { price: 389 });
+    const frames = await read(`${base}/hai/events?conversationId=${id}`, {}, 2);
+    const [open, props] = frames;
+    const [notice] = await store.getNotices(id, 0);
+    check(
+      "an update notice goes out as the revision's ui_open, saying what it replaces, and its props",
+      frames.length === 2 && open.event.type === "ui_open" && open.event.handle === second && open.event.replaces === first &&
+        open.event.component === "card" && open.event.mode === "display" && open.event.staleAfterMs === 60_000 &&
+        props.event.type === "ui_props" && props.event.handle === second && props.event.props.price === 389,
+    );
+    check(
+      `…with how long ago it was stored (${open.event.ageMs}ms), and no model text`,
+      typeof open.event.ageMs === "number" && open.event.ageMs >= 0 && open.event.ageMs <= Date.now() - madeAt &&
+        !JSON.stringify(frames).includes("replaced by"),
+    );
+    check("…and only its last frame carries the notice's id", open.id === undefined && props.id === String(notice.seq));
+    const resumed = await read(`${base}/hai/events?conversationId=${id}`, { "last-event-id": props.id }, 1, 300);
+    check("a stream resuming after it doesn't send it again", resumed.length === 0);
+    const { handle: third } = await hai.update(id, card, second, { price: 390 });
+    hidden.add(third);
+    const swept = await read(`${base}/hai/events?conversationId=${id}`, { "last-event-id": props.id }, 1, 300);
+    hidden.delete(third);
+    const sweptSeq = (await store.getNotices(id, 0)).at(-1).seq;
+    check(
+      "a revision whose payload is gone is passed over, with its id alone, so a browser resumes after it",
+      swept.length === 1 && swept[0].event === null && swept[0].id === String(sweptSeq),
+    );
+
+    // ── the client
+    const client = createChat({ endpoint: `${base}/hai`, registry });
+    await client.send("show");
+    const cid = client.state.conversationId;
+    const shownHandle = [...client.state.surfaces.keys()][0];
+    client.mount(shownHandle, el());
+    const record = client.state.surfaces.get(shownHandle);
+    await until(() => streams.size === 1);
+    await wait(300); // the deadline of a revision must not count from this request
+    const sent = Date.now();
+    const { handle: revised } = await hai.update(cid, card, shownHandle, { price: 401 });
+    check("the client swaps the revision into the surface on screen", await until(() => client.state.surfaces.get(revised) === record));
+    check(
+      "…through its update, mounted once, with the transcript's block moved on",
+      mounts.length === 1 && updated.length === 1 && updated[0].price === 401 &&
+        client.state.blocks.filter((b) => b.kind === "ui").map((b) => b.handle).join() === revised,
+    );
+    check(
+      `…its deadline counted from when it was stored, not from the last request (${record.deadline - sent - 60_000}ms)`,
+      record.deadline >= sent + 60_000 - 50,
+    );
+    const seq = (await store.getNotices(cid, 0)).at(-1).seq;
+    resumes.length = 0;
+    for (const res of streams) res.destroy();
+    const reconnected = await until(() => resumes.length > 0, 10_000);
+    check(
+      `a reconnect resumes after the update notice, which isn't a notice frame (${resumes[0]})`,
+      reconnected && resumes[0] === String(seq),
+    );
+
+    // ── an update with wake starts a turn where the browser is watching
+    await until(() => streams.size === 1);
+    const before = replies;
+    await hai.update(cid, card, revised, { price: 402 }, { wake: true });
+    check(
+      "an update sent with wake starts a turn the watching browser shows",
+      await until(() => client.state.blocks.some((b) => b.kind === "assistant" && b.text === `reply ${before + 1}`)),
+    );
+    client.close();
+
+    // ── an update that loses the conversation part way leaves no notice behind
+    const lapsing = memoryStore({ leaseMs: 200 });
+    let slowPut = false;
+    const slowStore = {
+      ...lapsing,
+      putPayload: async (record, token) => {
+        const handle = await lapsing.putPayload(record, token);
+        if (slowPut) await wait(300); // long enough for the lease to lapse and be taken
+        return handle;
+      },
+    };
+    const lapsingHai = createHai({ model, store: slowStore, tools: [show], surfaces: [card], system: "x", updates: true });
+    const c = await slowStore.loadConversation(undefined);
+    await lapsingHai.send(c, "show", () => {});
+    c.leaseUntil = null;
+    await slowStore.saveConversation(c);
+    slowPut = true;
+    const losing = lapsingHai.update(c.id, card, c.handles[0], { price: 999 }).then(() => null, (err) => err);
+    await wait(250);
+    const taker = await slowStore.loadConversation(c.id); // takes the lapsed lease over
+    const lostErr = await losing;
+    slowPut = false;
+    taker.leaseUntil = null;
+    await slowStore.saveConversation(taker);
+    check(
+      `an update overtaken before it commits throws StaleLease, and appends no notice (${lostErr?.name})`,
+      lostErr?.name === "StaleLease" && (await slowStore.getNotices(c.id, 0)).length === 0 && !taker.superseded?.[c.handles[0]],
+    );
+  } finally {
+    for (const res of streams) res.destroy();
+    server.close();
+  }
+}
+
 async function noticeStreamChecks() {
   console.log("\nnotice stream");
   const http = await import("node:http");
@@ -4657,6 +5159,38 @@ async function revisionClientChecks() {
       `notices naming any earlier handle of the surface go beside it as it is now, in order (${order()})`,
       order() === "ui:ui_11 n1 n2 n3 ui:ui_22 n4 n5 n6 n7 ui:ui_30 n8",
     );
+
+    // a revision hai.update made, arriving while a wake turn is running, is
+    // dated by its age, not by when that turn started
+    streams.push([helloE, open("ui_40", "card", 10_000), { type: "ui_props", handle: "ui_40", props: {} }, idle]);
+    await telling.send("show a fare");
+    frame({ type: "status", status: "streaming", wake: 1 });
+    await wait(300);
+    const arrived = Date.now();
+    frame(open("ui_41", "card", 10_000, { replaces: "ui_40", toolId: "", ageMs: 0 }));
+    frame({ type: "ui_props", handle: "ui_41", props: {} });
+    for (let i = 0; i < 100 && !telling.state.surfaces.has("ui_41"); i++) await wait(10);
+    const outsideDeadline = telling.state.surfaces.get("ui_41")?.deadline ?? 0;
+    check(
+      `a revision from outside any turn, arriving during one, counts from its age, not the turn's start (${outsideDeadline - arrived - 10_000}ms)`,
+      outsideDeadline >= arrived + 10_000 - 50,
+    );
+    frame({ type: "released" });
+    await wait(50);
+
+    // a revision that overtakes the request showing the original
+    frame(open("ui_51", "card", undefined, { replaces: "ui_50", toolId: "" }));
+    frame({ type: "ui_props", handle: "ui_51", props: { price: 2 } });
+    for (let i = 0; i < 100 && !telling.state.surfaces.has("ui_51"); i++) await wait(10);
+    streams.push([helloE, open("ui_50", "card", undefined, { toolId: "b50" }), { type: "ui_props", handle: "ui_50", props: { price: 1 } }, idle]);
+    await telling.send("held back");
+    const late = telling.state.blocks.filter((b) => b.kind === "ui" && (b.handle === "ui_50" || b.handle === "ui_51"));
+    check(
+      `an original arriving after the revision that replaced it isn't shown beside it (${late.map((b) => b.handle).join(" ")})`,
+      late.length === 1 && late[0].handle === "ui_51" && !telling.state.surfaces.has("ui_50") &&
+        telling.state.surfaces.get("ui_51").props.price === 2,
+    );
+    check("…and the revision takes the original's tool row", late[0].toolId === "b50");
   } finally {
     telling.close();
     events?.destroy();
@@ -5028,6 +5562,17 @@ async function transcriptChecks() {
     freeze("q-late", "he");
     check("a question that arrives after a lookup found nothing is still found", says(late) === "hai-status-resolved resolved");
 
+    const revised = call("t-revised", "awaiting");
+    shown("q-v1", "t-revised", "elicit");
+    says(revised);
+    // revised in place, as the client does: the record and the block move to the new handle
+    asking.state.surfaces.set("q-v2", asking.state.surfaces.get("q-v1"));
+    asking.state.surfaces.delete("q-v1");
+    asking.state.blocks.find((b) => b.kind === "ui" && b.handle === "q-v1").handle = "q-v2";
+    check("a question revised after its row found it is still awaiting", says(revised) === "hai-status-awaiting awaiting you");
+    freeze("q-v2", "he");
+    check("…and its row resolves when the revision is answered", says(revised) === "hai-status-resolved resolved");
+
     const unanswered = call("t-open", "awaiting");
     shown("q-open", "t-open", "elicit");
     says(unanswered);
@@ -5207,6 +5752,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   await crossInstanceChecks();
   await surfaceAgeChecks();
   await revisionClientChecks();
+  await updateStreamChecks();
   await transcriptChecks();
 
   // Said plainly because a suite that looks exhaustive is worse than one that

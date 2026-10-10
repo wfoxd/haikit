@@ -258,6 +258,66 @@ wakes again, so no tool runs twice. When a turn ends, the stream sends
 that before it sends anything. `hai.wake(conversationId, emit)` is what the
 route calls, if you serve the events stream yourself.
 
+**App code can revise a surface too, outside any turn.** A price feed moving
+a fare, an airline repricing a table: `hai.update` is `ctx.update` for code
+that isn't a tool.
+
+```ts
+const hai = createHai({ model, store, tools, surfaces, system, updates: true });
+
+// anywhere, whenever
+const { handle } = await hai.update(conversationId, flightTableServer, "ui_03", { ...props, flights: repriced }, {
+  model: "Fares moved: AC832 is now $389 (was $343).", // optional
+  wake: true, // optional: have the model tell the user now
+});
+```
+
+`hai.update` refuses without `updates: true`, even in an app that lists
+`notices`. The flag opens the events stream, which is how a revision reaches
+the browser, and has the events route start the turn an update sent with
+`wake` asks for. The props are typed from the surface's contract and checked
+against its schema before anything else happens.
+
+It takes the conversation's lease, as a request does, and writes the revision
+through the same fenced path as `ctx.update`, so a click can never act on
+props the server doesn't hold. While a turn holds the conversation it waits,
+backing off, for up to `timeoutMs` (default 30 s), then throws
+`ConversationBusy`: a reprice during a model reply lands when the reply ends.
+The rules are `ctx.update`'s: a click on the old handle is refused, its window
+stops counting, an out-of-date conversation stays out of date, and an answered
+surface can't be revised. `handle` may be any handle the surface has had; the
+revision replaces the latest. A question waiting on the surface waits on the
+revision, and its answer goes out under the digest the model saw, with the
+update after it.
+
+Then it appends an *update notice*, which tells both sides:
+
+- The events stream sends the browser the revision, as the `ui_open` (with
+  `replaces`) and `ui_props` a tool's revision sends, and the browser swaps
+  the new props into the component on screen. Delivery is the notice log's:
+  in order, resumed with `Last-Event-ID`, and across servers.
+- The model hears it in the next user message, or at once with `wake`, under
+  the rules a `wake` notice follows:
+  `[UI update] Fares moved: AC832 is now $389 (was $343). ui_03 was replaced by ui_05; its earlier digest is out of date. Now: <the new digest>`.
+  Your `model` sentence is optional; the rest is always there.
+
+The revision and the notice it owes commit together, in one fenced save on the
+conversation row (`Conversation.announcing`), before the notice is appended.
+If appending it fails, `hai.update` throws, saying so, and the notice stays
+owed: whoever holds the conversation next, a request, a wake or another
+update, appends it before doing anything else, so the model hears of the
+revision before it runs again. Delivery is at least once: a notice already
+appended by a holder whose save then failed isn't appended again, but an
+append that stalls past the lease while the next holder sends it can land
+twice. The browser shows the revision once either way; the model reads its
+text twice.
+
+One write per surface is in flight at a time. A call made meanwhile replaces
+any still waiting behind it, and every call it replaced resolves to the handle
+it writes, so a feed ticking ten times a second writes as often as the lease
+allows. Calls naming the surface's first handle or its latest share the
+queue. A `wake` any of them asked for still wakes.
+
 **A conversation closes once any of its surfaces passes its `staleAfterMs`.**
 From then on both routes answer with an `expired` event and the model is not
 called, so a picker left open over a weekend cannot resolve against last week's

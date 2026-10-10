@@ -27,6 +27,8 @@ const hai = createHai({
   tools,
   surfaces: [flightTableServer, seatMapServer],
   notices: [holdConfirmedServer, fareDroppedServer],
+  // the airline revises the flight table with hai.update
+  updates: true,
   system: `You are a flight assistant embedded in a UI that renders tool results as interactive components.
 
 Tools return a short DIGEST into your context. The full dataset goes to the user's browser and is
@@ -41,9 +43,10 @@ Rules:
   [App notification: hold_confirmed]. Until one has, do not say the fare is held.
 - Notifications can arrive with no message from the user. Then tell the user, in one sentence,
   what changed for them.
+- A [UI update] means a component was revised: its new handle and digest replace the old ones.
 - Keep replies to one or two sentences.`,
 });
-connectAirline(hai.notify);
+connectAirline(hai.notify, hai.update);
 
 const handleHai = nodeHandler(hai, "/hai");
 

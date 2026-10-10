@@ -100,6 +100,12 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
    * a buffering proxy holds the stream back.
    */
   let sentAt = 0;
+  /**
+   * The last notice the events stream finished sending, by its id: where a
+   * reconnect resumes. Update notices arrive as surface frames, not notices,
+   * so `state.notices` alone would miss them.
+   */
+  let resumeAfter = 0;
 
   // ── transport: SSE over POST (EventSource cannot POST) ──────────────
   function enqueue(path, body) {
@@ -216,7 +222,11 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
     }
   }
 
-  function apply(event) {
+  /**
+   * `from`: when a surface in this event was rendered, at the latest, by this
+   * browser's clock, for one that no request of its own asked for.
+   */
+  function apply(event, from = sentAt) {
     switch (event.type) {
       case "hello":
         state.conversationId = event.conversationId;
@@ -276,6 +286,15 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
 
       case "ui_open": {
         if (state.surfaces.has(event.handle)) break; // shown already: a rejoin's catch-up
+        // Replaced already: a revision on the events stream overtook the
+        // request that showed the original, held back on its way here. The
+        // surface it became stands, and takes the original's tool row; the
+        // original isn't shown beside it, and its props go nowhere.
+        if (replacedBy.has(event.handle)) {
+          const now = state.blocks.find((b) => b.kind === "ui" && b.handle === current(event.handle));
+          if (now && !now.toolId) now.toolId = event.toolId;
+          break;
+        }
         // A revision of a surface on screen takes over its record in place:
         // its component, element and state stay, its handle moves on, and its
         // props stay until the new ones arrive, so the transcript keeps the
@@ -331,8 +350,8 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
         // whichever is earlier. A revision brings its own, and the one it
         // replaced stops counting.
         if (typeof event.staleAfterMs === "number") {
-          const from = typeof event.ageMs === "number" ? Math.min(sentAt, Date.now() - event.ageMs) : sentAt;
-          surface.deadline = from + event.staleAfterMs;
+          const stored = typeof event.ageMs === "number" ? Math.min(from, Date.now() - event.ageMs) : from;
+          surface.deadline = stored + event.staleAfterMs;
           surface.window = event.staleAfterMs;
         } else {
           surface.deadline = null;
@@ -416,7 +435,7 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
       const opened = Date.now();
       let delivered = false;
       try {
-        const last = state.notices.at(-1)?.seq ?? 0;
+        const last = Math.max(resumeAfter, state.notices.at(-1)?.seq ?? 0);
         const res = await fetch(`${endpoint}/events?conversationId=${encodeURIComponent(conversationId)}`, {
           headers: last ? { "last-event-id": String(last) } : {},
           signal,
@@ -435,13 +454,21 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
               if (gen !== generation) return;
               const frame = buffer.slice(0, i);
               buffer = buffer.slice(i + 2);
-              const line = frame.split("\n").find((l) => l.startsWith("data: "));
+              const lines = frame.split("\n");
+              const line = lines.find((l) => l.startsWith("data: "));
               if (line) {
                 const event = JSON.parse(line.slice(6));
                 followTurn(event);
-                apply(event);
+                // A revision `hai.update` made comes outside any turn, even
+                // while one is running, so no request of this browser's
+                // dates it: only its age does. No tool call made it.
+                const outside = event.type === "ui_open" && event.toolId === "";
+                apply(event, remote && !outside ? sentAt : Date.now());
                 delivered = true;
               }
+              // the notice this frame finished, revisions' included
+              const id = Number(lines.find((l) => l.startsWith("id: "))?.slice(4));
+              if (Number.isSafeInteger(id) && id > resumeAfter) resumeAfter = id;
             }
           }
         }
@@ -704,6 +731,7 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
     aborter = new AbortController();
     stopListening();
     cutOff = false;
+    resumeAfter = 0;
     clearTimeout(timer);
     for (const surface of state.surfaces.values()) unmount(surface);
     for (const seq of [...noticeMounts.keys()]) unmountNotice(seq);

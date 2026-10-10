@@ -89,6 +89,9 @@ component holds, such as its scroll, sort or a row the user picked. Without
 it, the component is mounted again in place. Either way, `ctx.send` names the
 surface's current handle, so a click after a revision reaches the new one.
 Each surface keeps its own deadline, and a replaced surface's stops counting.
+A revision app code makes from outside a turn (`hai.update`) arrives the same
+way, on the events stream, and its deadline counts from when the server
+stored it.
 
 `chat.close()` is for good: anything open is aborted, every surface is
 unmounted, and subscribers hear `{ type: "closed" }`. `mountChat` then removes

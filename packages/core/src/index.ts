@@ -341,6 +341,41 @@ export type Notify = <P, K extends NoticeKind>(
   options?: NotifyOptions,
 ) => Promise<{ seq: number }>;
 
+export interface UpdateOptions {
+  /**
+   * A sentence for the model about why the surface changed, such as "Fares
+   * moved: AC832 is now $389 (was $343)." It goes before what the model always
+   * hears of an update: which handle replaced which, and the new digest.
+   */
+  model?: string;
+  /**
+   * Start a turn so the model can tell the user, as a `wake` notice does, and
+   * under the same rules: `maxWakes`, no turn while a question waits, and only
+   * where a browser is watching. Otherwise the model hears of the update with
+   * the user's next message.
+   */
+  wake?: boolean;
+  /**
+   * How long to wait for a turn in progress to let the conversation go, in
+   * milliseconds, before throwing `ConversationBusy`. Default 30,000.
+   */
+  timeoutMs?: number;
+}
+
+/**
+ * Revise a surface from outside any turn, such as when a price feed moves a
+ * fare: the browser swaps the new props into the component on screen, and
+ * the model hears of it as a notice. Typed from the surface's contract, like
+ * `ctx.update`, and resolves to the revision's handle.
+ */
+export type Update = <P, A extends ActionMap, Q extends QueryMap>(
+  conversationId: string,
+  surface: SurfaceImpl<P, A, Q>,
+  handle: string,
+  props: NoInfer<P>,
+  options?: UpdateOptions,
+) => Promise<{ handle: string }>;
+
 // ─────────────────────────────────────── GUARANTEE 3: elicit safety
 
 type ResolveKeys<A extends ActionMap> = {
@@ -552,6 +587,14 @@ export interface Conversation {
    * frames from a newer turn's. Missing means 0.
    */
   wakeTurns?: number;
+  /**
+   * The update notice `hai.update` owes this conversation: committed on this
+   * row with the revision it announces, so the two can't come apart, and
+   * cleared once the notice is appended. Whoever holds the conversation next
+   * appends one still owed before doing anything else. Missing or null means
+   * none.
+   */
+  announcing?: Omit<NoticeRecord, "seq" | "createdAt"> | null;
 }
 
 /**
@@ -582,6 +625,12 @@ export interface NoticeRecord {
   model: string | null;
   /** A surface the browser shows it beside. */
   handle?: string;
+  /**
+   * Set on an *update notice*, which `hai.update` appends: `handle` is the
+   * revision, and this the surface it replaced. The events route sends such a
+   * notice as the revision's `ui_open` and `ui_props`, not as a notice.
+   */
+  replaces?: string;
 }
 
 /**
