@@ -8,7 +8,7 @@ import type {
   WelcomeProps,
 } from "../../shared/surfaces.ts";
 import { excerpt } from "../excerpts.ts";
-import { tutorialRefs } from "../tutorial.ts";
+import { TUTORIALS, tutorialRefs, tutorialSteps } from "../tutorial.ts";
 import { part1 } from "./part1.ts";
 import { part2 } from "./part2.ts";
 import type { BlockDef, Check, LessonDef, PartDef } from "./types.ts";
@@ -249,7 +249,20 @@ const LINKS: WelcomeProps["links"] = [
 const TUTORIAL_PANEL: WelcomeProps["tutorial"] = {
   title: "Build your first HaiKIT app",
   lead: "Hello, World! in whichever language the world picks: ten steps, annotated line by line, about 150 lines in all. Read it right here.",
-  steps: tutorialRefs().filter((page) => /^\d+$/.test(page.id)),
+  steps: tutorialSteps(1),
+  // the second tutorial, which carries on with the same app
+  next: {
+    title: "Tell them later",
+    lead: "The same app, speaking up after the request is over: progress, notices, a turn the model starts, and a picker that changes while you look at it.",
+    first: tutorialRefs(2)[0]!,
+    steps: tutorialSteps(2).length,
+  },
+};
+
+/** How the course map and the menu name each tutorial, and what it builds. */
+const TUTORIAL_NAMES: Record<number, { title: string; blurb: string }> = {
+  1: { title: TUTORIAL_PANEL.title, blurb: "Build a Hello, World! app with HaiKIT, step by step, read right here." },
+  2: { title: TUTORIAL_PANEL.next!.title, blurb: "Teach the same app to speak up later: progress, notices, wake turns and live updates." },
 };
 
 export const welcomeProps = (): WelcomeProps => ({
@@ -270,19 +283,20 @@ export const welcomeProps = (): WelcomeProps => ({
 });
 
 /**
- * What the header's menu lists: every lesson by part, and the tutorial's
+ * What the header's menu lists: every lesson by part, and each tutorial's
  * numbered steps. Served as /menu.json; the menu is navigation, not a surface,
  * so it reaches the conversation the way typing does.
  */
 export const menu = () => ({
   lessons: PARTS.map((p) => ({ part: p.n, title: p.title, lessons: p.lessons.map((l) => ({ id: l.id, title: l.title })) })),
-  tutorial: tutorialRefs()
-    .filter((page) => /^\d+$/.test(page.id))
-    .map(({ id, title }) => ({ id, title })),
+  tutorials: TUTORIALS.map((t) => ({
+    title: TUTORIAL_NAMES[t.n]!.title,
+    steps: tutorialSteps(t.n).map(({ id, title }) => ({ id, title })),
+  })),
 });
 
 export const courseMapProps = (): CourseMapProps => ({
   glossary: GLOSSARY,
   parts: PARTS.map((p) => ({ n: p.n, title: p.title, blurb: p.blurb, lessons: p.lessons.map(ref) })),
-  tutorial: { title: TUTORIAL_PANEL.title, pages: tutorialRefs() },
+  tutorials: TUTORIALS.map((t) => ({ ...TUTORIAL_NAMES[t.n]!, pages: tutorialRefs(t.n) })),
 });

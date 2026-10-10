@@ -1,10 +1,12 @@
 /**
- * HaiKIT's tutorial, built into this app.
+ * HaiKIT's tutorials, built into this app.
  *
- * content/tutorial.md is a copy of docs/tutorial.md from the haikit
- * repository; `npm run tutorial:update` refreshes it. It is parsed here once,
- * when the server starts, into the pages the browser shows: the introduction,
- * the ten steps, and where to go next.
+ * content/tutorial.md and content/tutorial-2.md are copies of docs/tutorial.md
+ * and docs/tutorial-2.md from the haikit repository; `npm run tutorial:update`
+ * refreshes them. Each is parsed here once, when the server starts, into the
+ * pages the browser shows: its introduction, its steps, and where to go next.
+ * The second tutorial's page ids carry a `2-` prefix ("2-intro", "2-01"), so
+ * every page has an id of its own.
  *
  * The parser knows the Markdown the tutorial actually uses: headings,
  * paragraphs, lists, tables, fenced code under a **`file`** — *action* label,
@@ -23,7 +25,7 @@ type Prose = { kind: "p"; text: string } | { kind: "list"; items: string[] };
 type CodeBlock = Extract<Block, { kind: "code" }>;
 
 export interface TutorialPage {
-  /** "intro", "01" … "10", or "next-steps". */
+  /** "intro", "01" … "10", or "next-steps"; in the second tutorial, "2-intro", "2-01" … */
   id: string;
   /** "Introduction", "Step 01", "Where to go next". */
   label: string;
@@ -36,12 +38,20 @@ export interface TutorialPage {
 }
 
 export interface Tutorial {
+  /** 1 or 2. */
+  n: number;
   title: string;
   lead: string;
   pages: TutorialPage[];
 }
 
-const SOURCE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../content/tutorial.md");
+const CONTENT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../content");
+
+/** The tutorials, in reading order: each one's file, and the prefix its page ids carry. */
+const SOURCES = [
+  { n: 1, file: "tutorial.md", prefix: "" },
+  { n: 2, file: "tutorial-2.md", prefix: "2-" },
+];
 
 const FENCE = /^(\s*)```(\w*)\s*$/;
 const FILE = /^\*\*`([^`]+)`\*\* — \*(.+)\*\s*$/;
@@ -52,10 +62,13 @@ const ITEM = /^(\s*)- (.*)$/;
 const LANGS = ["ts", "tsx", "js", "json", "css", "html", "bash", "text"] as const;
 
 class TutorialError extends Error {
-  constructor(what: string, line: number) {
-    super(`content/tutorial.md, line ${line}: ${what}. Update src/server/tutorial.ts to read it.`);
+  constructor(what: string, line: number, file = reading) {
+    super(`content/${file}, line ${line}: ${what}. Update src/server/tutorial.ts to read it.`);
   }
 }
+
+/** The file being parsed, for the errors that name it. */
+let reading = "tutorial.md";
 
 /** A code block, its `// n` marks lifted off the lines they number. */
 function codeBlock(lang: string, body: string[], file: { file: string; action: string } | null): CodeBlock {
@@ -250,7 +263,7 @@ function parseBlocks(lines: string[], first: number): Block[] {
   return blocks;
 }
 
-export function parseTutorial(markdown: string): Tutorial {
+export function parseTutorial(markdown: string, { n = 1, prefix = "" } = {}): Tutorial {
   const lines = markdown.replace(/\r\n/g, "\n").split("\n");
   const title = lines[0]?.match(/^# (.+)$/)?.[1];
   if (!title) throw new TutorialError("no # title on the first line", 1);
@@ -270,15 +283,16 @@ export function parseTutorial(markdown: string): Tutorial {
     else sections.at(-1)?.lines.push(line);
   }
 
-  const pages = sections.map((section, n): TutorialPage => {
+  const pages = sections.map((section, at): TutorialPage => {
     const step = section.heading.match(/^(\d{2}) · (.+)$/);
     const meta = step
       ? { id: step[1]!, label: `Step ${step[1]}`, title: step[2]! }
-      : n === 0
+      : at === 0
         ? { id: "intro", label: "Introduction", title: section.heading }
         : /^where to go next$/i.test(section.heading)
           ? { id: "next-steps", label: "After the tutorial", title: section.heading }
           : { id: section.heading.toLowerCase().replace(/[^a-z0-9]+/g, "-"), label: section.heading, title: section.heading };
+    meta.id = prefix + meta.id;
     const blocks = parseBlocks(section.lines, section.line);
     const lead = blocks.find((b) => b.kind === "p")?.text ?? "";
     const files = [
@@ -289,13 +303,28 @@ export function parseTutorial(markdown: string): Tutorial {
     return { ...meta, lead, files, blocks };
   });
 
-  return { title, lead: lead.join(" "), pages };
+  return { n, title, lead: lead.join(" "), pages };
 }
 
-/** The tutorial, read once at startup. */
-export const TUTORIAL = parseTutorial(fs.readFileSync(SOURCE, "utf8"));
+/** The tutorials, read once at startup. */
+export const TUTORIALS: Tutorial[] = SOURCES.map(({ n, file, prefix }) => {
+  reading = file;
+  return parseTutorial(fs.readFileSync(path.join(CONTENT, file), "utf8"), { n, prefix });
+});
 
-export const tutorialPage = (id: string) => TUTORIAL.pages.find((p) => p.id === id) ?? null;
+/** The first tutorial, which the welcome screen opens on. */
+export const TUTORIAL = TUTORIALS[0]!;
 
-/** Each page's id, label and title, in order. */
-export const tutorialRefs = () => TUTORIAL.pages.map(({ id, label, title }) => ({ id, label, title }));
+export const tutorialPage = (id: string) => TUTORIALS.flatMap((t) => t.pages).find((p) => p.id === id) ?? null;
+
+/** Which tutorial a page belongs to. */
+export const tutorialOf = (id: string) => TUTORIALS.find((t) => t.pages.some((p) => p.id === id)) ?? null;
+
+/** Each page's id, label and title, in order: one tutorial's, or every page of both, read on from one to the next. */
+export const tutorialRefs = (n?: number) =>
+  TUTORIALS.filter((t) => n === undefined || t.n === n)
+    .flatMap((t) => t.pages)
+    .map(({ id, label, title }) => ({ id, label, title }));
+
+/** A tutorial's numbered steps, as the welcome screen and the menu list them. */
+export const tutorialSteps = (n: number) => tutorialRefs(n).filter((page) => /^(\d+-)?\d+$/.test(page.id));

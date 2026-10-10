@@ -203,6 +203,16 @@
 .welcome-tutorial-steps button:disabled { cursor: default; color: var(--hai-dim); }
 .welcome-tutorial-steps button.picked { background: var(--hai-selected); color: var(--hai-fg); }
 .welcome-tutorial-n { font: 600 12.5px var(--mono); color: var(--hai-accent); font-variant-numeric: tabular-nums; }
+.welcome-tutorial-next { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--hai-line); }
+.welcome-tutorial-next-open {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%;
+  background: none; border: none; padding: 0; color: inherit; text-align: left; cursor: pointer;
+}
+.welcome-tutorial-next-open:disabled { cursor: default; }
+.welcome-tutorial-next-title { font: 600 16px/1.25 var(--display); }
+.welcome-tutorial-next-open:not(:disabled):hover .welcome-tutorial-next-title { text-decoration: underline; text-underline-offset: 2px; }
+.welcome-tutorial-next-open.picked .welcome-tutorial-next-title { color: var(--hai-accent); }
+.welcome-tutorial-next-lead { margin: 4px 0 0; font: 14px/1.5 var(--serif); color: var(--hai-dim); }
 a.choice-btn { display: inline-flex; align-items: center; align-self: flex-start; text-decoration: none; }
 
 /* the section illustrations: the same channels, the same colours */

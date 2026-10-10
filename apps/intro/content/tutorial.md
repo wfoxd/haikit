@@ -1150,6 +1150,10 @@ export const registry = { greeting_picker: reactSurface(GreetingPicker) };
 
 `send("choose", g.code)` compiles. `send("delete", …)` doesn't, because the contract never declared it, and neither does a value of the wrong type. The transcript mounts each surface once, so `useState` survives the conversation streaming on. React needs a bundler: `examples/hello-react` is this tutorial's app with Vite, running inside the same node server.
 
+### Tell the user things later
+
+Everything in this tutorial happens inside a request. *Tell them later*, the second tutorial (`docs/tutorial-2.md`), teaches this same app to speak up afterwards: progress while a tool works, a notice when a job finishes, a turn the model starts by itself, and a picker that changes while the user looks at it.
+
 ### Things that will tempt you
 
 **A `render_ui(component, props)` tool** so the model can compose interface freely. It feels flexible and it dissolves every guarantee in step 10 — the registry stops being typed, reviewable, or bounded. Tools owning their rendering contract is the constraint that makes the rest work.

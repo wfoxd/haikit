@@ -47,6 +47,10 @@ export const welcomeServer = welcomeScreen.implement({
       `Beside the place to start, HaiKIT's tutorial, built into this app: ${quote(props.tutorial.title)}, ` +
       `steps ${props.tutorial.steps[0]?.id}–${props.tutorial.steps.at(-1)?.id}; show_tutorial_step opens a page ` +
       `(intro, a step, or next-steps). ` +
+      (props.tutorial.next
+        ? `Then the second tutorial: ${quote(props.tutorial.next.title)}, pages ${props.tutorial.next.first.id} and ` +
+          `steps 2-01–2-${String(props.tutorial.next.steps).padStart(2, "0")}, then 2-next-steps. `
+        : "") +
       `The course: ${parts}. It asks where to begin: lesson ${props.first.id} ` +
       `${quote(props.first.title)}, or the course map (show_course_map), which lists ` +
       `every lesson and holds the glossary.`
@@ -79,13 +83,13 @@ export const courseMapServer = courseMap.implement({
     const parts = props.parts.map(
       (p) => `Part ${p.n}, ${quote(p.title)}: ${p.lessons.map((l) => `${l.id} ${quote(l.title)}`).join(", ")}.`,
     );
-    const tutorial = `Tutorial, ${quote(props.tutorial.title)}: ${props.tutorial.pages
-      .map((p) => `${p.id} ${quote(p.title)}`)
-      .join(", ")} (show_tutorial_step).`;
+    const tutorials = props.tutorials.map(
+      (t, i) => `Tutorial ${i + 1}, ${quote(t.title)}: ${t.pages.map((p) => `${p.id} ${quote(p.title)}`).join(", ")} (show_tutorial_step).`,
+    );
     return [
       `Course map: ${props.parts.length} parts, ${lessons} lessons.`,
       ...parts,
-      tutorial,
+      ...tutorials,
       `Glossary of ${props.glossary.length} terms, searchable with query_ui (course_map.glossary).`,
       `Rendered as ${handle}.`,
     ].join(" ");
@@ -95,7 +99,7 @@ export const courseMapServer = courseMap.implement({
     open(id, { props }) {
       const found = props.parts.flatMap((p) => p.lessons).find((l) => l.id === id);
       if (found) return `Opened lesson ${found.id} ${quote(found.title)}.`;
-      const page = props.tutorial.pages.find((p) => p.id === id);
+      const page = props.tutorials.flatMap((t) => t.pages).find((p) => p.id === id);
       if (page) return `Opened tutorial step ${page.id} ${quote(page.title)}.`;
       // Throwing refuses the click and leaves the map live.
       throw new Error(`no lesson ${id}`);
@@ -215,11 +219,11 @@ export const tutorialStepServer = tutorialStep.implement({
       ),
     ];
     return [
-      `Tutorial page ${props.id} ${quote(props.title)} is on screen as ${handle}`,
+      `Tutorial page ${props.id} ${quote(props.title)}, of ${quote(props.tutorial)}, is on screen as ${handle}`,
       `(page ${props.position.index} of ${props.position.total}; about ${estTokens(props).toLocaleString("en")} tokens that stay in the browser).`,
       lead ? `It opens: ${lead.length > 220 ? `${lead.slice(0, 219)}…` : lead}` : "",
       files.length ? `Files: ${files.join(", ")}.` : "",
-      props.next ? `Next: tutorial step ${props.next.id} ${quote(props.next.title)}.` : "It is the tutorial's last page.",
+      props.next ? `Next: tutorial step ${props.next.id} ${quote(props.next.title)}.` : "It is the last page of the tutorials.",
       "The reader moves on with its buttons; query_ui find answers questions about it.",
     ]
       .filter(Boolean)
