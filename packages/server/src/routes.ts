@@ -195,6 +195,8 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
   // turn, not only the one whose attempt won the lease: another tab shows the
   // reply too, and holds its requests until the turn lets go.
   watchers.streams.add(emit);
+  // Signals from here on, starting with each one's latest; and it counts as present.
+  const closeStream = hai.streamOpened(conversationId, emit);
   // Joining while a wake turn runs: what it has shown so far, starting with
   // its `streaming` status, so the browser holds requests until it lets go,
   // and the reply's later text has a block to land in.
@@ -314,6 +316,7 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
   } finally {
     clearInterval(heartbeat);
     aborter.abort();
+    closeStream();
     watchers.streams.delete(emit);
     if (!watchers.streams.size) forgetWatchers(hai, conversationId, watchers);
     await wakes.return?.();

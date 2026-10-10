@@ -3902,6 +3902,211 @@ async function updateStreamChecks() {
   }
 }
 
+// ── signals: short-lived broadcasts, and presence ──────────────────────
+async function signalChecks() {
+  console.log("\nsignals and presence");
+  const http = await import("node:http");
+  const { createHai, memoryStore, nodeHandler } = await import("../packages/server/dist/index.js");
+  const { defineSignal } = await import("../packages/core/dist/index.js");
+  const { createChat } = await import("../packages/client/src/index.js");
+  const online = defineSignal({
+    name: "online",
+    version: 1,
+    payload: { parse: (v) => { if (typeof v?.count !== "number") throw new Error("count must be a number"); return v; } },
+  });
+  const status = defineSignal({ name: "status", version: 2, payload: { parse: (v) => v } });
+  const stray = defineSignal({ name: "stray", version: 1, payload: { parse: (v) => v } });
+  const heard = []; // every message list the model was given
+  const model = {
+    id: "stub",
+    async generate({ messages }) {
+      heard.push(JSON.stringify(messages));
+      return { content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" };
+    },
+  };
+  const store = memoryStore();
+  const presence = { graceMs: 1_000, heartbeatMs: 200 };
+  const hai = createHai({ model, store, tools: [], surfaces: [], system: "x", signals: [online, status], presence });
+  const other = createHai({ model, store, tools: [], surfaces: [], system: "x", signals: [online, status], presence });
+  const servers = [];
+  const listen = (h, port) =>
+    new Promise((r) => {
+      const handler = nodeHandler(h, "/hai");
+      const server = http.createServer(async (req, res) => {
+        if (!(await handler(req, res))) res.writeHead(404).end();
+      });
+      servers.push(server);
+      server.listen(port, "127.0.0.1", r);
+    });
+  await listen(hai, 5395);
+  await listen(other, 5396);
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const until = async (cond, ms = 8_000) => {
+    for (const end = Date.now() + ms; Date.now() < end; await wait(10)) if (cond()) return true;
+    return cond();
+  };
+  const conversation = async () => {
+    const c = await store.loadConversation(undefined);
+    c.leaseUntil = null;
+    await store.saveConversation(c);
+    return c.id;
+  };
+  // An events stream held open: every frame it gets, with its id, until closed.
+  const open = (port, id) => {
+    const aborter = new AbortController();
+    const frames = [];
+    const done = fetch(`http://127.0.0.1:${port}/hai/events?conversationId=${id}`, { signal: aborter.signal })
+      .then(async (res) => {
+        const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+        let buffer = "";
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += value;
+          let i;
+          while ((i = buffer.indexOf("\n\n")) >= 0) {
+            const lines = buffer.slice(0, i).split("\n");
+            buffer = buffer.slice(i + 2);
+            const data = lines.find((l) => l.startsWith("data: "));
+            if (data) frames.push({ id: lines.find((l) => l.startsWith("id: "))?.slice(4), event: JSON.parse(data.slice(6)) });
+          }
+        }
+      })
+      .catch(() => {});
+    return { frames, close: () => (aborter.abort(), done), signals: () => frames.filter((f) => f.event.type === "signal") };
+  };
+  const counts = [];
+  const stop = hai.onPresence((n) => counts.push(n));
+
+  try {
+    // ── refusals
+    let refused = null;
+    try {
+      hai.signal(stray, {});
+    } catch (err) {
+      refused = err.message;
+    }
+    check(`a signal not listed in signals is refused (${refused})`, /not registered/.test(refused ?? ""));
+    refused = null;
+    try {
+      hai.signal(online, { count: "many" });
+    } catch (err) {
+      refused = err.message;
+    }
+    check("a payload that fails the signal's schema is refused", /count must be a number/.test(refused ?? ""));
+    check("presence is heard at once, nought with nobody watching", counts.length === 1 && counts[0] === 0);
+
+    // ── the browser opens the events stream for an app that only sends signals
+    const chat = await fetch("http://127.0.0.1:5395/hai/chat", { method: "POST", body: JSON.stringify({ message: "hi" }) }).then((r) => r.text());
+    check("an app that sends signals tells the browser to open the events stream", chat.includes('"events":true'));
+
+    // ── every open stream hears a signal, and a late one its latest value
+    const a = open(5395, await conversation());
+    const b = open(5395, await conversation());
+    await until(() => counts.at(-1) === 2);
+    check(`presence counts each conversation with a stream open (${counts.join(" ")})`, counts.at(-1) === 2);
+    const notices = (await store.getNotices((await conversation()), 0)).length;
+    hai.signal(online, { count: 2 });
+    hai.signal(status, { up: true });
+    await until(() => a.signals().length === 2 && b.signals().length === 2);
+    const got = a.signals()[0];
+    check(
+      "a signal reaches every open stream, as its name, version and validated payload",
+      got?.event.name === "online" && got.event.version === 1 && got.event.payload.count === 2 && b.signals()[1]?.event.version === 2,
+    );
+    check("…with no id: it is never stored, so a reconnect doesn't ask for it", a.signals().every((f) => f.id === undefined));
+    hai.signal(online, { count: 3 });
+    const late = open(5395, await conversation());
+    await until(() => late.signals().length >= 2);
+    const replayed = late.signals().map((f) => `${f.event.name}:${JSON.stringify(f.event.payload)}`);
+    check(
+      `a stream that opens later is sent each signal's latest payload first (${replayed.join(" ")})`,
+      replayed.length === 2 && replayed.includes('online:{"count":3}') && replayed.includes('status:{"up":true}'),
+    );
+
+    // ── never stored, never the model's
+    const chatId = JSON.parse(chat.split("\n").find((l) => l.startsWith("data: ")).slice(6)).conversationId;
+    await fetch("http://127.0.0.1:5395/hai/chat", { method: "POST", body: JSON.stringify({ conversationId: chatId, message: "again" }) }).then((r) => r.text());
+    check(
+      "a signal is never stored as a notice, nor reaches the model",
+      notices === 0 && (await store.getNotices(chatId, 0)).length === 0 && !heard.at(-1).includes("count"),
+    );
+
+    // ── presence: a closed stream counts through the grace, and a reconnect doesn't flicker
+    const before = counts.length;
+    const bId = await conversation();
+    const c = open(5395, bId);
+    await until(() => counts.at(-1) === 4);
+    await c.close();
+    await wait(100);
+    const reopened = open(5395, bId);
+    await wait(1_300);
+    check(
+      `a stream that reconnects within the grace never drops out of the count (${counts.slice(before).join(" ")})`,
+      counts.slice(before).every((n) => n === 4),
+    );
+    await reopened.close();
+    await late.close();
+    await wait(100);
+    check(`…a closed one still counts during the grace (${counts.at(-1)})`, counts.at(-1) === 4);
+    await until(() => counts.at(-1) === 2);
+    check(`…and stops counting once it has passed (${counts.at(-1)})`, counts.at(-1) === 2);
+
+    // ── another server sharing the store
+    const remote = open(5396, await conversation());
+    await until(() => counts.at(-1) === 3);
+    check(`presence counts streams on the other servers sharing the store (${counts.at(-1)})`, counts.at(-1) === 3);
+    hai.signal(online, { count: 3 });
+    await until(() => remote.signals().some((f) => f.event.payload?.count === 3 && f.event.name === "online"));
+    check("a signal reaches streams on the other servers", remote.signals().some((f) => f.event.payload?.count === 3));
+    const remoteLate = open(5396, await conversation());
+    await until(() => remoteLate.signals().length >= 2);
+    check(
+      "…and the other server keeps its latest value for a stream that opens there later",
+      remoteLate.signals().some((f) => f.event.name === "online" && f.event.payload.count === 3),
+    );
+    await remote.close();
+    await remoteLate.close();
+    await until(() => counts.at(-1) === 2);
+    check(`…and stops counting them once they close (${counts.at(-1)})`, counts.at(-1) === 2);
+    // a server that goes quiet without saying so stops counting after three missed beats
+    await store.publish("haikit:signals", JSON.stringify({ origin: "gone-server", kind: "presence", count: 5 }));
+    await until(() => counts.at(-1) === 7);
+    const peak = counts.at(-1);
+    await until(() => counts.at(-1) === 2);
+    check(`a server not heard from for three beats stops counting (${peak} → ${counts.at(-1)})`, peak === 7 && counts.at(-1) === 2);
+
+    // ── the client
+    const seen = [];
+    const client = createChat({
+      endpoint: "http://127.0.0.1:5395/hai",
+      registry: {},
+      signals: { online: (payload, ctx) => seen.push({ payload, ctx }) },
+    });
+    const events = [];
+    client.subscribe((_s, e) => e.type === "signal" && events.push(e.name));
+    await client.send("hello");
+    await until(() => seen.length >= 1);
+    check(
+      "the client hands a signal to its handler, its latest value first, with its version",
+      seen[0]?.payload.count === 3 && seen[0].ctx.version === 1 && client.state.signals.online?.count === 3,
+    );
+    hai.signal(online, { count: 9 });
+    await until(() => seen.length >= 2);
+    check(
+      "…and each new one as it comes, kept in state.signals, and subscribers hear it",
+      seen.at(-1)?.payload.count === 9 && client.state.signals.online.count === 9 && events.includes("online") && events.includes("status"),
+    );
+    check("a signal adds nothing to the transcript", !client.state.blocks.some((b) => b.kind === "notice" || JSON.stringify(b).includes('"count"')));
+    client.close();
+    await a.close();
+    await b.close();
+  } finally {
+    stop();
+    for (const server of servers) server.close();
+  }
+}
+
 async function noticeStreamChecks() {
   console.log("\nnotice stream");
   const http = await import("node:http");
@@ -5753,6 +5958,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   await surfaceAgeChecks();
   await revisionClientChecks();
   await updateStreamChecks();
+  await signalChecks();
   await transcriptChecks();
 
   // Said plainly because a suite that looks exhaustive is worse than one that

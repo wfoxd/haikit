@@ -40,6 +40,11 @@ when the model needn't hear it. `hai.notify` types the payload from the
 contract. A notice declared with `kind: "wake"` also starts a turn, so its
 `model` must return text: `null` is a compile error.
 
+A signal, declared with `defineSignal`, is a broadcast to every open browser,
+such as how many people are online. It belongs to no conversation and never
+reaches the model, so it has no server half: `hai.signal` types the payload
+from the contract alone.
+
 `npm run typetest` at the repo root compiles those tests twice — once with their
 `@ts-expect-error` directives (must be clean) and once stripped (every marked
 line must error). A guarantee that silently stops working fails CI.

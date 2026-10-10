@@ -9,12 +9,14 @@
  * wrong owner: delete the example and the regression test goes with it.
  */
 
-import { defineSurface, inform, type Notify, type Schema, type ToolCtx, type Update } from "../../src/index.js";
+import { defineSignal, defineSurface, inform, type Notify, type Schema, type SendSignal, type ToolCtx, type Update } from "../../src/index.js";
 import { card, cardImpl, droppedNotice, heldNotice, heldNoticeImpl, picker, pickerImpl, type Row } from "./fixture.js";
 
 declare const ctx: ToolCtx;
 declare const notify: Notify;
 declare const update: Update;
+declare const signal: SendSignal;
+const online = defineSignal({ name: "online", version: 1, payload: { parse: (v) => v as { count: number } } });
 declare const props: { rows: Row[] };
 
 const str: Schema<string> = { parse: (v) => v as string };
@@ -102,6 +104,13 @@ await update("conv_1", pickerImpl, "ui_01", { wrong: true });
 // @ts-expect-error  wake is a boolean
 await update("conv_1", cardImpl, "ui_01", props, { wake: "yes" });
 
+// ── a signal's payload is typed from its contract ──────────────────────
+// @ts-expect-error  'count' is a number
+signal(online, { count: "many" });
+
+// @ts-expect-error  'count' is missing
+signal(online, {});
+
 // ── a notice's payload is typed from its contract ──────────────────────
 // @ts-expect-error  'flight' is missing
 await notify("conv_1", heldNoticeImpl, { fare: 343 });
@@ -120,6 +129,7 @@ const { seq }: { seq: number } = await notify("conv_1", heldNoticeImpl, { flight
 void seq;
 const { handle: revised }: { handle: string } = await update("conv_1", cardImpl, "ui_01", props, { model: "Fares moved.", wake: true, timeoutMs: 1_000 });
 await ctx.update(cardImpl, revised, props);
+signal(online, { count: 12 });
 // no window declared: it defaults to "never", so code written before
 // freshness windows existed still compiles
 picker.implement({
