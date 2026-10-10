@@ -40,7 +40,7 @@ async function reply(
 }
 
 /** What the guide can know, read from the history the way a model reads it. */
-function read(messages: ModelRequest["messages"]) {
+function read(messages: ModelRequest["messages"], system = "") {
   const blocks = messages.flatMap((m) => (Array.isArray(m.content) ? (m.content as any[]) : []));
   const results: string[] = blocks
     .filter((b) => b?.type === "tool_result")
@@ -83,7 +83,11 @@ function read(messages: ModelRequest["messages"]) {
     `${prefix}next-steps`,
   ];
   const range = all.match(/built into this app: "[^"]+", steps (\d+)–(\d+)/);
-  const second = all.match(/Then the second tutorial: "[^"]+", pages 2-intro and steps 2-(\d+)–2-(\d+)/);
+  // A conversation saved before the second tutorial has a welcome digest
+  // without it; the system prompt, always today's, lists its pages too.
+  const second =
+    all.match(/Then the second tutorial: "[^"]+", pages 2-intro and steps 2-(\d+)–2-(\d+)/) ??
+    system.match(/\(2-intro, 2-(\d+) to 2-(\d+), 2-next-steps\)/);
   const pages = [...(range ? span("", range[1]!, range[2]!) : []), ...(second ? span("2-", second[1]!, second[2]!) : [])];
   // The tutorial page on screen, if one was shown after the last lesson.
   const lastUse = (name: string) => uses.findLastIndex((b) => b.name === name);
@@ -99,8 +103,8 @@ export function scripted(): ModelAdapter {
   return {
     id: "scripted guide",
 
-    async generate({ messages, onTextDelta }: ModelRequest): Promise<ModelResponse> {
-      const { lessons, mapHandle, current, pages, page } = read(messages);
+    async generate({ messages, system, onTextDelta }: ModelRequest): Promise<ModelResponse> {
+      const { lessons, mapHandle, current, pages, page } = read(messages, system);
       const find = (id: string) => lessons.find((l) => l.id === id);
       const after = (id: string | undefined) => lessons[lessons.findIndex((l) => l.id === id) + 1];
 

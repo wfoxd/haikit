@@ -360,6 +360,28 @@ try {
       broken.length ? bad(`second tutorial pages that did not render: ${broken.join(", ")}`) : ok("all 11 pages of the second tutorial render");
     }
 
+    // 7b3 · a conversation saved before the second tutorial: its welcome digest
+    //       doesn't mention it, so the scripted guide finds it in today's prompt
+    {
+      const { scripted } = await import("../src/server/scripted.ts");
+      const system = readFileSync(path.join(APP, "src/server/main.ts"), "utf8").match(/const SYSTEM = `([\s\S]*?)`;/)?.[1] ?? "";
+      const oldWelcome =
+        'Welcome screen on display as ui_01: … Beside the place to start, HaiKIT\'s tutorial, built into this app: "Build your first HaiKIT app", ' +
+        "steps 01–10; show_tutorial_step opens a page (intro, a step, or next-steps). The course: …";
+      const messages = [
+        { role: "user", content: "[conversation started]" },
+        { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "welcome", input: {} }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: oldWelcome }] },
+        { role: "assistant", content: [{ type: "text", text: "Welcome." }] },
+        { role: "user", content: "Open tutorial step 2-03" },
+      ];
+      const said = await scripted().generate({ system, tools: [], messages, onTextDelta() {} });
+      const call = said.content.find((b) => b.type === "tool_use");
+      call?.name === "show_tutorial_step" && call.input?.id === "2-03"
+        ? ok("a conversation from before the second tutorial still opens its pages, from today's prompt")
+        : bad(`an old conversation's "Open tutorial step 2-03": ${JSON.stringify(said.content)}`);
+    }
+
     // 7c · the header menu: what it lists, and what each kind of choice opens
     {
       const menu = await get(`${BASE}/menu.json`).then((r) => r.json());
