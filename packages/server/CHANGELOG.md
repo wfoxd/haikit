@@ -1,5 +1,26 @@
 # @haikit/server
 
+## 0.18.0
+
+### Minor Changes
+
+- 9ebd013: App code can now revise a surface from outside any turn, closing #65. `hai.update(conversationId, surface, handle, props, { model?, wake?, timeoutMs? })` is `ctx.update` for code that isn't a tool, such as a price feed moving a fare. It's typed from the surface's contract, takes the conversation's lease, and writes the revision through the same fenced path, under the same rules. While a turn holds the conversation, it waits up to `timeoutMs` (default 30 s), then throws `ConversationBusy`. `handle` may be any handle the surface has had; the revision replaces the latest. A question waiting on the surface waits on the revision. Bursts for one surface coalesce: one write in flight, and the newest call waiting behind it, which every call it replaced resolves with.
+
+  It then appends an _update notice_ (`NoticeRecord.replaces`). The events stream sends that notice to the browser as the revision's `ui_open` (with `replaces`) and `ui_props`, and the browser swaps the new props into the component on screen. The model hears, in the next user message, which handle replaced which, with the new digest, after the app's optional `model` sentence. With `wake: true` it hears at once, in a turn started under the wake-notice rules. It needs `createHai({ updates: true })`, which opens the events stream and lets an update wake.
+
+  The client resumes the events stream from the last frame id it saw, update notices included, and counts a revision's deadline from when the server stored it. A tool row whose question was revised now resolves when the revision is answered.
+
+  The revision and the update notice it owes commit together on the conversation row (`Conversation.announcing`). If appending the notice fails, the next request, wake or update appends it first; delivery is at least once.
+
+  **For custom stores:** a `NoticeRecord` may carry `replaces`, and a `Conversation` may carry `announcing` (an update notice, or null). A store must return both as given. `@haikit/postgres`'s `migrate()` adds the columns.
+
+### Patch Changes
+
+- f64eeb2: Revisions (`ctx.update`) are rechecked for freshness before they're stored, so a turn that outlasts a surface's window can't bring an out-of-date conversation back by superseding that surface. A question revised by a later call in the same reply now goes to the model under the revision's digest, with anything the asking call said after its question kept (even when the asking call revised it itself first), and an empty digest kept as given. A wake turn's snapshot keeps a revision's `replaces` and the original's tool row, and lists the surface's earlier handles in a new `ui_open.alsoReplaces`, so a browser that reconnects mid-turn swaps the surface in place, even after several revisions, rather than showing it twice. A notice naming any earlier handle of a revised surface, including one the browser never saw, is shown beside the surface as it is now.
+- Updated dependencies [9ebd013]
+- Updated dependencies [f64eeb2]
+  - @haikit/core@0.18.0
+
 ## 0.17.0
 
 ### Minor Changes
