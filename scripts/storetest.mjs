@@ -4004,6 +4004,14 @@ async function signalChecks() {
       refused = err.message;
     }
     check("a payload that fails the signal's schema is refused", /count must be a number/.test(refused ?? ""));
+    // past Node's longest timer, a timer fires at once: a grace would end immediately
+    let tooLong = null;
+    try {
+      createHai({ model, store, tools: [], surfaces: [], system: "x", presence: { graceMs: 2 ** 31 } });
+    } catch (err) {
+      tooLong = err;
+    }
+    check(`a presence timer longer than Node can keep is refused (${tooLong?.message})`, tooLong instanceof RangeError);
     check("presence is heard at once, nought with nobody watching", counts.length === 1 && counts[0] === 0);
     let thrown = 0;
     let threw = false;

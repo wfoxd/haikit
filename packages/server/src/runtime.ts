@@ -160,6 +160,9 @@ interface UpdateQueue {
   next: UpdateJob | null;
 }
 
+/** The longest delay a Node timer keeps; past it, one fires after about a millisecond. */
+const MAX_TIMER_MS = 2_147_483_647;
+
 /** How long `hai.update` waits for a turn to let the conversation go, by default. */
 const UPDATE_TIMEOUT_MS = 30_000;
 /** How many conversations `hai.update` remembers its surfaces' handles for. */
@@ -229,8 +232,12 @@ export class Hai {
     }
     const { graceMs = 5_000, heartbeatMs = 10_000 } = config.presence ?? {};
     for (const [name, ms] of [["graceMs", graceMs], ["heartbeatMs", heartbeatMs]] as const) {
-      if (typeof ms !== "number" || !Number.isFinite(ms) || ms <= 0) {
-        throw new RangeError(`presence.${name} must be a positive, finite number of milliseconds (got ${String(ms)})`);
+      // Past the longest timer Node keeps, it fires after about a millisecond:
+      // a grace would end at once, and a heartbeat would spin.
+      if (typeof ms !== "number" || !Number.isFinite(ms) || ms <= 0 || ms > MAX_TIMER_MS) {
+        throw new RangeError(
+          `presence.${name} must be a positive number of milliseconds, at most ${MAX_TIMER_MS} (got ${String(ms)})`,
+        );
       }
     }
     this.broadcast = new Broadcast(config.store, graceMs, heartbeatMs);
@@ -343,6 +350,12 @@ export class Hai {
    * tell. `listener` hears the count now and whenever it changes. A stream
    * that closes still counts for `presence.graceMs`, so a reconnect doesn't
    * flicker it. Returns a function that stops listening.
+   *
+   * Each server counts its own and the totals are summed, so a conversation
+   * counts once per server it has a stream on: one that reconnects to another
+   * server counts on both until the grace runs out, and one with streams on
+   * two servers at once counts twice. (The client opens one stream per
+   * conversation, so the second doesn't happen with it.)
    *
    * Only the number leaves a server: no conversation ids, and nothing the
    * model sees. An app with no notices, updates or signals opens no events

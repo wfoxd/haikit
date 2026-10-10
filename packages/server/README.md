@@ -353,6 +353,10 @@ hai.onPresence((count) => hai.signal(online, { count }));
 
 A stream that closes still counts for `presence.graceMs` (default 5 s), so a
 browser that drops its connection and reconnects doesn't flicker the count.
+Each server counts its own conversations, and the totals are summed: a
+conversation that reconnects to a different server counts on both until the
+grace runs out, so the count can run one high for a few seconds. It's for a
+"how many are here" number, not an exact head count.
 Servers sharing a store tell each other their counts every
 `presence.heartbeatMs` (default 10 s), and one not heard from for three beats
 stops counting. Only numbers travel: no conversation ids, and nothing the
