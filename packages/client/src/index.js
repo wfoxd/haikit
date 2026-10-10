@@ -230,11 +230,7 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
         // beside its surface — after any notices already there — or at the end
         const at = event.handle === undefined ? -1 : state.blocks.findIndex((b) => b.kind === "ui" && b.handle === event.handle);
         if (at < 0) state.blocks.push(block);
-        else {
-          let i = at + 1;
-          while (state.blocks[i]?.kind === "notice" && state.blocks[i].handle === event.handle) i++;
-          state.blocks.splice(i, 0, block);
-        }
+        else state.blocks.splice(afterNotices(at), 0, block);
         break;
       }
 
@@ -305,7 +301,9 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
         // take for a new conversation's.
         const early = state.blocks.filter((b) => b.kind === "notice" && b.handle === event.handle);
         for (const notice of early) state.blocks.splice(state.blocks.indexOf(notice), 1);
-        state.blocks.splice(state.blocks.findIndex((b) => b.kind === "ui" && b.handle === event.handle) + 1, 0, ...early);
+        const at = state.blocks.findIndex((b) => b.kind === "ui" && b.handle === event.handle);
+        if (at >= 0) state.blocks.splice(afterNotices(at), 0, ...early);
+        else state.blocks.push(...early);
         // Each surface keeps its own deadline: from when the request that
         // rendered it was sent or, by its age, from when it was stored,
         // whichever is earlier. A revision brings its own, and the one it
@@ -524,6 +522,17 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
         `${duration(closingWindow)}. Start a new conversation for current results.`,
     });
 
+  /**
+   * Where a notice for the surface at `at` goes: after the notices already
+   * beside it, which may name an earlier revision of it, so they keep the
+   * order they arrived in.
+   */
+  function afterNotices(at) {
+    let i = at + 1;
+    while (state.blocks[i]?.kind === "notice") i++;
+    return i;
+  }
+
   /** The earliest deadline among the surfaces showing, and which window set it. */
   function refreshDeadline() {
     let soonest = null;
@@ -581,7 +590,10 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
     element.replaceChildren();
     surface.element = element;
     surface.instance = definition.mount(element, surface.props, {
-      handle,
+      // the surface as it is now, as `send` below: a revision moves it on
+      get handle() {
+        return surface.handle;
+      },
       mode: surface.mode,
       state: surface.state,
       selection: surface.selection,

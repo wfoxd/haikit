@@ -63,7 +63,8 @@ export type WireEvent = { type: string } & Record<string, any>;
  * tool name, never a handler.
  */
 export interface MountCtx {
-  handle: string;
+  /** The surface's handle as it is now: a revision in place (`update`) moves it on. */
+  readonly handle: string;
   mode: SurfaceMode;
   state: SurfaceState;
   /** What the user picked, when the surface is mounted already frozen. */

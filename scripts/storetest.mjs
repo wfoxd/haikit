@@ -4376,7 +4376,14 @@ async function revisionClientChecks() {
   // Each chat request answers with the next stream in line.
   const streams = [];
   const posts = [];
+  let events = null; // the open events stream, written to when a test says
   const server = http.createServer((req, res) => {
+    if (req.url.includes("/events")) {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.flushHeaders();
+      events = res;
+      return;
+    }
     let raw = "";
     req.on("data", (c) => (raw += c));
     req.on("end", () => {
@@ -4397,12 +4404,14 @@ async function revisionClientChecks() {
   const mounts = [];
   const updates = [];
   let sendFrom = null;
+  let mountedCtx = null;
   const registry = {
     // keeps what it holds through a revision
     card: {
       mount(_el, props, ctx) {
         mounts.push({ component: "card", props });
         sendFrom = ctx.send;
+        mountedCtx = ctx;
         return { update: (next) => updates.push(next), unmount() {} };
       },
     },
@@ -4436,6 +4445,7 @@ async function revisionClientChecks() {
     posts.length = 0;
     await sendFrom("note", "x");
     check("a click after the revision names the new handle", posts[0]?.body.handle === "ui_02");
+    check("…and the component's ctx.handle has moved on with it", mountedCtx?.handle === "ui_02");
     check(
       "the deadline is the revision's: the surface it replaced stops counting",
       chat.state.expiresAt > firstDeadline && chat.state.expiresAt >= sentAt + 60_000 - 50,
@@ -4451,6 +4461,33 @@ async function revisionClientChecks() {
     check("a component without update is mounted again, with the revision's props", plain.length === 2 && plain[1].props.v === 2);
   } finally {
     chat.close();
+  }
+
+  // notices beside a revised surface keep the order they arrived in
+  const telling = createChat({ endpoint: "http://127.0.0.1:5392/hai", registry: {} });
+  const helloE = { ...hello, conversationId: "conv_rev2", events: true };
+  const notice = (seq, handle) => ({ type: "notice", seq, name: "n", version: 1, payload: {}, handle });
+  const frame = (e) => events.write(`data: ${JSON.stringify(e)}\n\n`);
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const order = () =>
+    telling.state.blocks.filter((b) => b.kind === "ui" || b.kind === "notice").map((b) => (b.kind === "ui" ? `ui:${b.handle}` : `n${b.seq}`)).join(" ");
+  try {
+    events = null;
+    streams.push([helloE, open("ui_10", "card", undefined), { type: "ui_props", handle: "ui_10", props: {} }, idle]);
+    await telling.send("show");
+    for (let i = 0; i < 100 && !events; i++) await wait(10);
+    frame(notice(1, "ui_10"));
+    frame(notice(2, "ui_11")); // for the revision, before it has arrived
+    for (let i = 0; i < 100 && telling.state.notices.length < 2; i++) await wait(10);
+    streams.push([helloE, open("ui_11", "card", undefined, { replaces: "ui_10" }), { type: "ui_props", handle: "ui_11", props: {} }, idle]);
+    await telling.send("revise");
+    check(`a notice that arrived before its revision goes after those already beside the surface (${order()})`, order() === "ui:ui_11 n1 n2");
+    frame(notice(3, "ui_11"));
+    for (let i = 0; i < 100 && telling.state.notices.length < 3; i++) await wait(10);
+    check(`…and one that arrives after it goes after them all (${order()})`, order() === "ui:ui_11 n1 n2 n3");
+  } finally {
+    telling.close();
+    events?.destroy();
     server.close();
   }
 }

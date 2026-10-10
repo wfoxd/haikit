@@ -149,7 +149,8 @@ export const registry = {
           line.append(h("span", "rownum mono", String(row.row)));
           row.seats.forEach((seat, i) => {
             if (i === 3) line.append(h("span", "aisle"));
-            const lit = props.highlight === "window" ? seat.window : props.highlight === "legroom" ? seat.extraLegroom : true;
+            // with a highlight, only free seats of that kind stay lit
+            const lit = !props.highlight || (!seat.taken && (props.highlight === "window" ? seat.window : seat.extraLegroom));
             const btn = h("button", [
               "seat", seat.taken ? "taken" : "free",
               seat.extraLegroom ? "legroom" : "", picked === seat.id ? "picked" : "",

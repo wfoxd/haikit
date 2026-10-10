@@ -96,7 +96,8 @@ export function scripted(): ModelAdapter {
       }
 
       // A seat map already on screen is revised in place, not shown again.
-      const seatMap = [...JSON.stringify(messages).matchAll(/Seat map for \S+ ([A-Z]{2}\d{2,4}) rendered as (ui_\d+)/g)].at(-1);
+      // the airline may be more than one word: "Air Canada AC832"
+      const seatMap = [...JSON.stringify(messages).matchAll(/Seat map for [^"]+? ([A-Z]{2}\d{2,4}) rendered as (ui_\d+)/g)].at(-1);
       if (seatMap && /window|legroom|leg room/.test(text)) {
         const kind = /window/.test(text) ? "window" : "legroom";
         onTextDelta(`Picking out the ${kind} seats.`);
