@@ -3102,7 +3102,11 @@ async function updateChecks(make) {
   const store = make();
   const card = defineSurface({ name: "card", version: 1, props: any, actions: { note: inform(any) }, queries: { price: query(any, "the price", { type: "object", properties: {} }) } })
     .implement({
-      digest: (p, { handle }) => `card ${p.price} as ${handle}`,
+      digest: (p, { handle }) => {
+        // a price of 7 makes for a slow digest
+        if (p.price === 7) for (const end = Date.now() + 300; Date.now() < end; );
+        return `card ${p.price} as ${handle}`;
+      },
       actions: { note: (v, { props }) => `noted ${v} at ${props.price}` },
       queries: { price: (_a, { props, cap }) => cap([props.price], (x) => `price ${x}`) },
       staleAfterMs: 400,
@@ -3147,7 +3151,7 @@ async function updateChecks(make) {
       }
       if (i.op === "try") {
         try {
-          await ctx.update(card, i.handle, { price: 1 });
+          await ctx.update(card, i.handle, { price: i.price ?? 1 });
           return ctx.text("revised");
         } catch (err) {
           errors.push(err.message);
@@ -3341,6 +3345,20 @@ async function updateChecks(make) {
       /out of date/.test(errors[0] ?? "") && !c.superseded?.[showing.c.handles[0]],
     );
   }
+
+  // ── …nor by one that runs out while the revision is stored and digested
+  next.push([{ op: "card", price: 8 }]);
+  const digesting = await request(undefined, say("show"));
+  await new Promise((r) => setTimeout(r, 200)); // fresh, with 200 ms of its 400 left
+  errors.length = 0;
+  next.push([{ op: "try", handle: digesting.c.handles[0], price: 7 }]); // its digest takes 300 ms
+  const slowDigest = await request(digesting.c.id, say("revise it"));
+  check(
+    "a window that runs out while the revision is digested is caught before it takes effect",
+    /went out of date while the revision was made/.test(errors[0] ?? "") &&
+      !slowDigest.c.superseded?.[digesting.c.handles[0]] && slowDigest.c.handles.length === 1 &&
+      !slowDigest.events.some((e) => e.type === "ui_open"),
+  );
 
   // ── a revision an overtaken turn made is inert
   next.push([{ op: "card", price: 1 }]);

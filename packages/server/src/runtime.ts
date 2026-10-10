@@ -933,6 +933,9 @@ export class Hai {
       surfaceMode: "display" | "elicit",
       // the handle this revises in place, for `update`
       replaces?: string,
+      // last word before the surface is attached and sent: throwing leaves the
+      // stored payload unreferenced, inert as an overtaken turn's
+      beforeAttach?: () => void,
     ) => {
       // Validate before storing: props may originate outside this process.
       const parsed = impl.surface.props.parse(props);
@@ -958,6 +961,7 @@ export class Hai {
 
       // The split, in two lines. Digest -> model. Payload -> browser.
       const digest = impl.impl.digest(parsed, { handle });
+      beforeAttach?.();
       // Recorded only once the digest is in hand. A surface that fails here is
       // never shown, and a handle in the history counts toward its freshness,
       // so it could otherwise close the conversation over something unseen.
@@ -1053,7 +1057,17 @@ export class Hai {
         if (await this.refuseIfExpired(conversation, () => {})) {
           throw new Error("this conversation is out of date; nothing more can be revised in it");
         }
-        const ret = await show(impl, props, record.mode, handle);
+        // …and once more as it takes effect: the write and the digest above can
+        // take a while too, and the browser closes the conversation at the old
+        // surface's deadline whether or not a revision is on its way.
+        const window = strictest(record.staleAfterMs, windowOf(impl));
+        const stillFresh = () => {
+          if (window === "never") return;
+          if (!(Number.isFinite(record.createdAt) && window !== undefined && record.createdAt + window > Date.now())) {
+            throw new Error("this conversation went out of date while the revision was made; it was not applied");
+          }
+        };
+        const ret = await show(impl, props, record.mode, handle, stillFresh);
         (conversation.superseded ??= {})[handle] = ret.handle!;
         // a question waiting on the old surface waits on the new one
         if (asked?.handle === handle) asked = { handle: ret.handle!, digest: ret.model };
