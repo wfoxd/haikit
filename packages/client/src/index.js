@@ -33,8 +33,11 @@ export function createChat({ endpoint = "/hai", registry, notices = {}, signals 
     expired: null,
     /** Notices the server has sent this conversation, in the order they were sent. */
     notices: [],
-    /** Each signal's latest payload, by name, since the events stream opened. */
-    signals: {},
+    /**
+     * Each signal's latest payload, by name, since the events stream opened.
+     * No prototype, so a signal can be named anything, `__proto__` included.
+     */
+    signals: Object.create(null),
   };
 
   const notify = (event) => listeners.forEach((fn) => fn(state, event));
@@ -257,7 +260,8 @@ export function createChat({ endpoint = "/hai", registry, notices = {}, signals 
       // to resume: its latest value is kept, and its handler hears it.
       case "signal": {
         state.signals[event.name] = event.payload;
-        const handler = signals[event.name];
+        // the app's own handlers only, never one an object inherits, such as `toString`
+        const handler = Object.hasOwn(signals, event.name) ? signals[event.name] : undefined;
         if (typeof handler === "function") attempt(() => handler(event.payload, { version: event.version }));
         break;
       }
@@ -754,7 +758,7 @@ export function createChat({ endpoint = "/hai", registry, notices = {}, signals 
       expiresAt: null,
       expired: null,
       notices: [],
-      signals: {},
+      signals: Object.create(null),
     });
     state.surfaces.clear();
     replacedBy.clear();

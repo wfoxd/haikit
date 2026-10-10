@@ -31,6 +31,11 @@ export class Broadcast {
   /** The local count other servers last heard from this one. */
   private told = 0;
   private started = false;
+  /** Settles once this server hears the others: before then, what they send is missed. */
+  private hearing: Promise<void> = Promise.resolve();
+  /** A publish to the other servers in flight, and what waits behind it: the latest of each kind only. */
+  private publishing = false;
+  private readonly unsent = new Map<string, object>();
   readonly origin = globalThis.crypto.randomUUID();
 
   constructor(
@@ -54,7 +59,13 @@ export class Broadcast {
   opened(conversationId: string, emit: Emit): () => void {
     this.start();
     this.streams.add(emit);
-    for (const event of this.latest.values()) emit(event);
+    let closed = false;
+    // Each signal's latest, once this server hears the others, so one they
+    // sent is among them. A live one may come first; the latest is still the
+    // latest, so at worst one arrives twice.
+    void this.hearing.then(() => {
+      if (!closed) for (const event of this.latest.values()) emit(event);
+    });
 
     const wasLeaving = this.leaving.get(conversationId);
     if (wasLeaving !== undefined) {
@@ -66,7 +77,6 @@ export class Broadcast {
     this.open.set(conversationId, before + 1);
     if (before === 0 && wasLeaving === undefined) this.changed();
 
-    let closed = false;
     return () => {
       if (closed) return;
       closed = true;
@@ -101,13 +111,18 @@ export class Broadcast {
     return this.open.size + this.leaving.size;
   }
 
-  /** Start hearing the other servers, and telling them this one's count, once. */
-  private start() {
+  /**
+   * Start hearing the other servers, and telling them this one's count, once.
+   * A Hai that sends signals starts as it is created, so it has the others'
+   * latest values before its first stream opens; any other, when one does.
+   */
+  start() {
     if (this.started) return;
     this.started = true;
     // For as long as this Hai lives. A store that can't listen still resolves,
     // and hears nothing: signals and presence then stay on this server.
-    this.store.subscribe?.(SIGNAL_CHANNEL, (message) => this.hear(message), new AbortController().signal)?.catch(() => {});
+    const subscribed = this.store.subscribe?.(SIGNAL_CHANNEL, (message) => this.hear(message), new AbortController().signal);
+    if (subscribed) this.hearing = Promise.resolve(subscribed).catch(() => {});
     const beat = setInterval(() => this.beat(), this.heartbeatMs);
     beat.unref?.();
   }
@@ -123,12 +138,14 @@ export class Broadcast {
     if (heard.kind === "signal" && heard.event?.type === "signal" && typeof heard.event.name === "string") {
       this.latest.set(heard.event.name, heard.event);
       for (const send of this.streams) send(heard.event);
-    } else if (heard.kind === "presence" && typeof heard.count === "number" && heard.count >= 0) {
+    } else if (heard.kind === "presence" && Number.isSafeInteger(heard.count) && heard.count! >= 0) {
+      // a count is a number of conversations: a whole number, never Infinity
       const known = this.peers.has(heard.origin);
-      if (heard.count > 0) this.peers.set(heard.origin, { count: heard.count, heard: Date.now() });
+      const count = heard.count!;
+      if (count > 0) this.peers.set(heard.origin, { count, heard: Date.now() });
       else this.peers.delete(heard.origin);
       // a server it hadn't heard from yet hasn't heard from it either
-      if (!known && heard.count > 0 && this.local > 0) this.publish({ kind: "presence", count: this.local });
+      if (!known && count > 0 && this.local > 0) this.publish({ kind: "presence", count: this.local });
       this.recount();
     }
   }
@@ -168,9 +185,29 @@ export class Broadcast {
     }
   }
 
+  /**
+   * Tell the other servers. One publish is in flight at a time, and only the
+   * latest of each signal, and of this server's count, waits behind it: a
+   * burst of signals can't queue every obsolete payload in the store.
+   */
   private publish(body: { kind: "signal"; event: SignalEvent } | { kind: "presence"; count: number }) {
-    this.store.publish?.(SIGNAL_CHANNEL, JSON.stringify({ origin: this.origin, ...body })).catch(() => {
-      // best effort: the other servers miss this one, and the next beat corrects presence
-    });
+    if (!this.store.publish) return;
+    this.unsent.delete(body.kind === "signal" ? `signal:${body.event.name}` : "presence");
+    this.unsent.set(body.kind === "signal" ? `signal:${body.event.name}` : "presence", body);
+    if (!this.publishing) void this.flush();
+  }
+
+  private async flush() {
+    this.publishing = true;
+    while (this.unsent.size) {
+      const [key, body] = this.unsent.entries().next().value!;
+      this.unsent.delete(key);
+      try {
+        await this.store.publish!(SIGNAL_CHANNEL, JSON.stringify({ origin: this.origin, ...body }));
+      } catch {
+        // best effort: the other servers miss this one, and the next beat corrects presence
+      }
+    }
+    this.publishing = false;
   }
 }

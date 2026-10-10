@@ -3916,6 +3916,9 @@ async function signalChecks() {
   });
   const status = defineSignal({ name: "status", version: 2, payload: { parse: (v) => v } });
   const stray = defineSignal({ name: "stray", version: 1, payload: { parse: (v) => v } });
+  // names an object would otherwise take for its own machinery
+  const proto = defineSignal({ name: "__proto__", version: 1, payload: { parse: (v) => v } });
+  const toStr = defineSignal({ name: "toString", version: 1, payload: { parse: (v) => v } });
   const heard = []; // every message list the model was given
   const model = {
     id: "stub",
@@ -3925,9 +3928,11 @@ async function signalChecks() {
     },
   };
   const store = memoryStore();
-  const presence = { graceMs: 1_000, heartbeatMs: 200 };
-  const hai = createHai({ model, store, tools: [], surfaces: [], system: "x", signals: [online, status], presence });
+  const presence = { graceMs: 2_000, heartbeatMs: 200 };
+  const hai = createHai({ model, store, tools: [], surfaces: [], system: "x", signals: [online, status, proto, toStr], presence });
   const other = createHai({ model, store, tools: [], surfaces: [], system: "x", signals: [online, status], presence });
+  // a server that has had no stream open yet
+  const quiet = createHai({ model, store, tools: [], surfaces: [], system: "x", signals: [online, status], presence });
   const servers = [];
   const eventsResponses = []; // the server's side of every events stream, newest last
   const listen = (h, port) =>
@@ -3942,6 +3947,7 @@ async function signalChecks() {
     });
   await listen(hai, 5395);
   await listen(other, 5396);
+  await listen(quiet, 5397);
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const until = async (cond, ms = 8_000) => {
     for (const end = Date.now() + ms; Date.now() < end; await wait(10)) if (cond()) return true;
@@ -4042,7 +4048,7 @@ async function signalChecks() {
     await c.close();
     await wait(100);
     const reopened = open(5395, bId);
-    await wait(1_300);
+    await wait(2_300);
     check(
       `a stream that reconnects within the grace never drops out of the count (${counts.slice(before).join(" ")})`,
       counts.slice(before).every((n) => n === 4),
@@ -4071,6 +4077,22 @@ async function signalChecks() {
     await remoteLate.close();
     await until(() => counts.at(-1) === 2);
     check(`…and stops counting them once they close (${counts.at(-1)})`, counts.at(-1) === 2);
+    // a count that isn't a whole number of conversations is ignored
+    await store.publish("haikit:signals", '{"origin":"odd-server","kind":"presence","count":1e309}');
+    await store.publish("haikit:signals", JSON.stringify({ origin: "odd-server-2", kind: "presence", count: 1.5 }));
+    await wait(300);
+    check(`a peer's count that isn't a whole number, such as Infinity, is ignored (${counts.at(-1)})`, counts.at(-1) === 2 && !counts.includes(Infinity));
+    // a server with no stream yet still hears the others' signals, for its first stream
+    hai.signal(online, { count: 42 });
+    await wait(50);
+    const first = open(5397, await conversation());
+    await until(() => first.signals().some((f) => f.event.name === "online"));
+    check(
+      "a server hears the others' signals before its first stream opens, and sends that stream their latest",
+      first.signals().find((f) => f.event.name === "online")?.event.payload.count === 42,
+    );
+    await first.close();
+    await until(() => counts.at(-1) === 2);
     // a server that goes quiet without saying so stops counting after three missed beats
     await store.publish("haikit:signals", JSON.stringify({ origin: "gone-server", kind: "presence", count: 5 }));
     await until(() => counts.at(-1) === 7);
@@ -4110,7 +4132,7 @@ async function signalChecks() {
     await until(() => seen.length >= 1);
     check(
       "the client hands a signal to its handler, its latest value first, with its version",
-      seen[0]?.payload.count === 3 && seen[0].ctx.version === 1 && client.state.signals.online?.count === 3,
+      seen[0]?.payload.count === 42 && seen[0].ctx.version === 1 && client.state.signals.online?.count === 42,
     );
     hai.signal(online, { count: 9 });
     await until(() => seen.length >= 2);
@@ -4119,6 +4141,14 @@ async function signalChecks() {
       seen.at(-1)?.payload.count === 9 && client.state.signals.online.count === 9 && events.includes("online") && events.includes("status"),
     );
     check("a signal adds nothing to the transcript", !client.state.blocks.some((b) => b.kind === "notice" || JSON.stringify(b).includes('"count"')));
+    hai.signal(proto, { x: 1 });
+    hai.signal(toStr, { y: 2 });
+    await until(() => client.state.signals.toString?.y === 2);
+    check(
+      "a signal named like an object's own machinery is kept as itself: __proto__ and toString",
+      Object.hasOwn(client.state.signals, "__proto__") && client.state.signals.__proto__.x === 1 &&
+        Object.getPrototypeOf(client.state.signals) === null && client.state.signals.toString.y === 2,
+    );
     client.close();
     await a.close();
     await b.close();
@@ -4126,6 +4156,19 @@ async function signalChecks() {
     stop();
     for (const server of servers) server.close();
   }
+
+  // ── a burst of signals queues only the latest of each for the other servers
+  const published = [];
+  const base = memoryStore();
+  const slow = { ...base, publish: async (id, message) => (published.push(JSON.parse(message)), await wait(30)) };
+  const bursting = createHai({ model, store: slow, tools: [], surfaces: [], system: "x", signals: [online] });
+  for (let i = 0; i < 100; i++) bursting.signal(online, { count: i });
+  await wait(300);
+  const sent = published.filter((m) => m.kind === "signal");
+  check(
+    `a burst of 100 signals publishes the one in flight and the latest, not all 100 (${sent.length} published)`,
+    sent.length <= 3 && sent.at(-1)?.event.payload.count === 99,
+  );
 }
 
 async function noticeStreamChecks() {

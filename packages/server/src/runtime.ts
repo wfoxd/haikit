@@ -234,6 +234,8 @@ export class Hai {
       }
     }
     this.broadcast = new Broadcast(config.store, graceMs, heartbeatMs);
+    // hear the other servers' signals from now, so a stream that opens later gets their latest
+    if (this.signals.size) this.broadcast.start();
     // query_ui is DERIVED, never authored. It cannot drift from the surfaces
     // that actually exist, and it always exists.
     const queryUi = this.buildQueryUiTool();
