@@ -47,6 +47,21 @@
       // messages, so it needs only the chat and the list of what to offer.
       const menu = await fetch("/menu.json").then((r) => r.json()).catch(() => null);
       if (menu) mountMenu(document.querySelector("#app"), chat, menu);
+
+      // How many people are reading now: the server's `online` signal, a
+      // broadcast to every open tab. It never enters the transcript or the
+      // guide's context; a chip in the header shows the latest count.
+      const reading = document.createElement("span");
+      reading.className = "online-chip";
+      reading.hidden = true;
+      document.querySelector("#app .hai-actions")?.prepend(reading);
+      chat.subscribe((state, event) => {
+        if (event.type !== "signal" || event.name !== "online") return;
+        const count = /** @type {{ count?: number } | undefined} */ (state.signals.online)?.count ?? 0;
+        reading.hidden = count < 1;
+        reading.textContent = `${count} reading now`;
+        reading.title = count === 1 ? "You're the only one here right now" : `${count} people have the introduction open`;
+      });
     </script>
   </body>
 </html>

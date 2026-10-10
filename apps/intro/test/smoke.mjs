@@ -410,6 +410,39 @@ try {
         : bad("the menu's Home choice did not show the welcome screen");
     }
 
+    // 7d · how many people are reading now: the online signal, on the events stream
+    {
+      const fresh = await sse("/hai/start", {});
+      const id = fresh.find((e) => e.type === "hello")?.conversationId;
+      fresh.find((e) => e.type === "hello")?.events === true
+        ? ok("hello opens the events stream, for the online count")
+        : bad("hello did not open the events stream");
+      const aborter = new AbortController();
+      const timer = setTimeout(() => aborter.abort(), 8_000);
+      let signal = null;
+      try {
+        const res = await fetch(`${BASE}/hai/events?conversationId=${id}`, { signal: aborter.signal });
+        const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+        let buffer = "";
+        while (!signal) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += value;
+          for (const frame of buffer.split("\n\n").slice(0, -1)) {
+            const data = frame.split("\n").find((l) => l.startsWith("data: "));
+            const event = data ? JSON.parse(data.slice(6)) : null;
+            if (event?.type === "signal" && event.name === "online" && event.payload.count >= 1) signal = event;
+          }
+          buffer = buffer.slice(buffer.lastIndexOf("\n\n") + 2);
+        }
+      } catch {}
+      clearTimeout(timer);
+      aborter.abort();
+      signal
+        ? ok(`an open tab hears the online count (${signal.payload.count} reading now)`)
+        : bad("no online signal on the events stream");
+    }
+
     // 8 · a definition before any map exists: the guide shows the map first
     {
       const fresh = await sse("/hai/start", {});

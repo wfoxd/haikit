@@ -35,6 +35,18 @@ such as “Open lesson 1.3”, and the guide shows what was asked for. The menu'
 contents come from `/menu.json`, built from the course and the tutorials when
 the server starts.
 
+## Who's reading
+
+The header shows how many people have the introduction open right now:
+*12 reading now*. It's HaiKIT's presence and signals at work. The server
+hears the count from `hai.onPresence`, which counts conversations with an
+events stream open, on every server sharing the store. It sends the count at
+most every few seconds, as the `online` signal (`src/shared/signals.ts`), to
+every open tab. A signal is never stored and never reaches the guide's
+context or the transcript: the page reads it with `chat.subscribe` and shows
+the latest count. A tab that closes still counts for a few seconds, so a
+reconnect doesn't make the number flicker.
+
 ## The tutorials
 
 HaiKIT's two tutorials are built in:
@@ -229,6 +241,7 @@ If the deployment runs the app as a service in a Compose file, run
 ```
 src/shared/surfaces.ts     the contract: welcome, course_map, lesson, checkpoint, next_lesson,
                            tutorial_step
+src/shared/signals.ts      the online signal: how many people are reading now
 src/server/surfaces.ts     digests, the action handlers, the glossary query
 src/server/tools.ts        welcome (init), show_welcome, show_course_map, show_lesson,
                            ask_checkpoint, offer_next_lesson, show_tutorial_step

@@ -17,6 +17,7 @@ import {
   tutorialStepServer,
   welcomeServer,
 } from "./surfaces.ts";
+import { online } from "../shared/signals.ts";
 
 const PORT = Number(process.env.PORT) || 5180;
 // No key, or HAI_SCRIPTED=1: the scripted guide. Anyone can take the course
@@ -91,10 +92,26 @@ const hai = createHai({
   surfaces: [welcomeServer, courseMapServer, lessonServer, checkpointServer, nextLessonServer, tutorialStepServer],
   system: SYSTEM,
   scope: SCOPE,
+  signals: [online], // the header's count of people reading now
 });
 
 const handleHai = nodeHandler(hai, "/hai");
 // #endregion create-hai
+
+// People reading now, for the header. Presence counts each open tab, on every
+// server sharing the store; the header hears it at most every few seconds,
+// and only when it has changed.
+const ONLINE_EVERY_MS = 3_000;
+let latest = 0;
+let sent = -1;
+let waiting: ReturnType<typeof setTimeout> | null = null;
+hai.onPresence((count) => {
+  latest = count;
+  waiting ??= setTimeout(() => {
+    waiting = null;
+    if (latest !== sent) hai.signal(online, { count: (sent = latest) });
+  }, ONLINE_EVERY_MS);
+});
 
 // ─────────────────────────────────────────────────── static files
 
