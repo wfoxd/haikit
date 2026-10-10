@@ -152,6 +152,78 @@ Without `DATABASE_URL` the course uses `memoryStore()`, which is meant for
 development: conversations are lost on restart and never evicted, and every
 page view starts one. For a public deployment, give it a database.
 
+## Redeploy
+
+How to ship a new version to a server that runs the image with Docker, beside
+a Postgres container. The names below are examples. Use your own server, and
+the folder and Docker network your deployment already uses. Here the app lives
+in `/opt/haikit-intro`, and its database is a container on the network
+`haikit-intro_default`.
+
+**1. Prepare the release**, on your machine, in this folder. Move to the newest
+haikit, and pick up the latest tutorials if they changed. Each command runs
+`npm test` when it finishes; commit what changes.
+
+```bash
+npm run haikit:update
+npm run tutorial:update
+```
+
+**2. Copy the folder to the server.** `node_modules` is installed in the image,
+and the server keeps its own `.env`, so leave both out. `--delete` removes
+files deleted here, but never the ones excluded, so the server's `.env` stays.
+
+```bash
+rsync -avz --delete --exclude node_modules --exclude .env ./ user@your-server:/opt/haikit-intro/
+```
+
+**3. Rebuild the image and replace the container.** Tag the running image
+first, so a bad release can be rolled back. The conversations are in Postgres,
+so replacing the container keeps them.
+
+```bash
+cd /opt/haikit-intro
+docker tag haikit-intro haikit-intro:previous
+docker build -t haikit-intro .
+docker rm -f haikit-intro
+docker run -d --name haikit-intro --network haikit-intro_default --restart unless-stopped --env-file .env -p 8080:8080 haikit-intro
+```
+
+**4. Check it.** The startup line names the haikit version, the model and the
+store, and should end with `store=postgres`. `/healthz` answers `ok`, and
+`/version.json` has the version the server is running.
+
+```bash
+docker logs haikit-intro
+curl -s http://127.0.0.1:8080/healthz
+```
+
+To roll back, run the same `docker run` with `haikit-intro:previous` as the
+image, after `docker rm -f haikit-intro`.
+
+### The server's `.env`
+
+The settings in the table above live in `/opt/haikit-intro/.env`, one
+`NAME=value` per line, and reach the app through `--env-file`. The app doesn't
+read `.env` itself, so a container started without `--env-file` runs the
+scripted guide on `memoryStore()`.
+
+- **`DATABASE_URL`** names the database by its container or Compose service
+  name on the shared network, such as `postgres://intro:<password>@db:5432/intro`,
+  not `localhost`: inside the app's container, `localhost` is the app itself.
+  The app container must join that network (`--network`).
+- **`--env-file` doesn't expand `${…}`.** Write each value out in full, the
+  database password in `DATABASE_URL` included.
+- **Keep each value on one line.** A key broken across two lines is read only
+  up to the break.
+- **It holds secrets**: the API key and the database password. Keep it out of
+  the repository, and don't print it to share a problem. Check a setting is
+  there with `grep -c '^DATABASE_URL=' .env`, which prints a count, not the value.
+
+If the deployment runs the app as a service in a Compose file, run
+`docker compose up -d --build` in its folder instead of step 3's `docker rm` and
+`docker run`.
+
 ## Layout
 
 ```
