@@ -111,7 +111,13 @@ interface Hop {
    * so two renders at once cannot both ask; the handle is known once it shows,
    * and `settled` resolves when its render has shown it or failed.
    */
-  asking: { handle: string | null; settled: Promise<void> } | null;
+  asking: {
+    handle: string | null;
+    settled: Promise<void>;
+    /** The digest it was asked under, and its latest, once a later call in the reply has revised it. */
+    question?: string;
+    digest?: string;
+  } | null;
 }
 
 /** An elicit surface a tool call showed, and the digest its answer goes out under. */
@@ -757,8 +763,9 @@ export class Hai {
    */
   private async refuseIfExpired(conversation: Conversation, emit: Emit): Promise<boolean> {
     if (!conversation.handles.length) return false;
-    const now = Date.now();
     const records = await this.config.store.getPayloads(conversation.handles, conversation.id);
+    // after the read, so a window that ran out while it was in flight counts
+    const now = Date.now();
 
     // the surface that went out of date first is the one that closed it
     let first: { expiredAt: number; age: number; window: number | undefined } | null = null;
@@ -866,8 +873,18 @@ export class Hai {
         // Hold the resolved siblings too — the API is all-or-nothing per batch.
         conversation.status = "awaiting";
         // At the question's latest revision: a later call in this reply may
-        // have revised it.
-        conversation.pending = { ...parked, handle: currentHandle(conversation, parked.handle), results };
+        // have revised it, and then its answer goes out under the revision's
+        // digest, not the original's.
+        // Only the question's part is replaced: anything the asking call said
+        // after it rides along as before.
+        const handle = currentHandle(conversation, parked.handle);
+        const asking = hop.asking;
+        let digest = parked.digest;
+        if (handle !== parked.handle && asking?.handle === handle && asking.digest !== undefined) {
+          const asked = asking.question;
+          digest = asked !== undefined && parked.digest.startsWith(asked) ? asking.digest + parked.digest.slice(asked.length) : asking.digest;
+        }
+        conversation.pending = { ...parked, handle, digest, results };
         emit({ type: "status", status: "awaiting" });
         await this.emitContext(conversation, emit);
         return;
@@ -916,6 +933,9 @@ export class Hai {
       surfaceMode: "display" | "elicit",
       // the handle this revises in place, for `update`
       replaces?: string,
+      // last word before the surface is attached and sent: throwing leaves the
+      // stored payload unreferenced, inert as an overtaken turn's
+      beforeAttach?: () => void,
     ) => {
       // Validate before storing: props may originate outside this process.
       const parsed = impl.surface.props.parse(props);
@@ -941,6 +961,7 @@ export class Hai {
 
       // The split, in two lines. Digest -> model. Payload -> browser.
       const digest = impl.impl.digest(parsed, { handle });
+      beforeAttach?.();
       // Recorded only once the digest is in hand. A surface that fails here is
       // never shown, and a handle in the history counts toward its freshness,
       // so it could otherwise close the conversation over something unseen.
@@ -1000,6 +1021,7 @@ export class Hai {
       try {
         const ret = await show(impl, props, "elicit");
         claim.handle = ret.handle;
+        claim.question = ret.model;
         asked = { handle: ret.handle, digest: ret.model };
         return ret;
       } catch (err) {
@@ -1028,11 +1050,33 @@ export class Hai {
         if (record.component !== impl.surface.name) {
           throw new Error(`${handle} is a ${record.component}, not a ${impl.surface.name}`);
         }
-        const ret = await show(impl, props, record.mode, handle);
+        // Freshness again, last, right before the write: a long turn can
+        // outlast a window that was open when it began, and so can the reads
+        // above. A revision must not bring an out-of-date conversation back
+        // by superseding the surface that closed it.
+        if (await this.refuseIfExpired(conversation, () => {})) {
+          throw new Error("this conversation is out of date; nothing more can be revised in it");
+        }
+        // …and once more as it takes effect: the write and the digest above can
+        // take a while too, and the browser closes the conversation at the old
+        // surface's deadline whether or not a revision is on its way.
+        const window = strictest(record.staleAfterMs, windowOf(impl));
+        const stillFresh = () => {
+          if (window === "never") return;
+          if (!(Number.isFinite(record.createdAt) && window !== undefined && record.createdAt + window > Date.now())) {
+            throw new Error("this conversation went out of date while the revision was made; it was not applied");
+          }
+        };
+        const ret = await show(impl, props, record.mode, handle, stillFresh);
         (conversation.superseded ??= {})[handle] = ret.handle!;
-        // a question waiting on the old surface waits on the new one
-        if (asked?.handle === handle) asked = { handle: ret.handle!, digest: ret.model };
-        if (hop.asking?.handle === handle) hop.asking.handle = ret.handle!;
+        // a question waiting on the old surface waits on the new one; when this
+        // call asked it, its result starts with the revision's digest now, so
+        // that is the part a later call's revision replaces
+        const mine = asked?.handle === handle;
+        if (mine) asked = { handle: ret.handle!, digest: ret.model };
+        if (hop.asking?.handle === handle) {
+          Object.assign(hop.asking, { handle: ret.handle!, digest: ret.model }, mine ? { question: ret.model } : {});
+        }
         return ret;
       } finally {
         revising.delete(handle);
