@@ -1,0 +1,18 @@
+{
+  "name": "hello-notices",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "npm --prefix ../.. run build",
+    "start": "node src/server/main.ts",
+    "dev": "npm run build && npm start",
+    "mock": "npm run build && HAI_SCRIPTED=1 node src/server/main.ts"
+  },
+  "dependencies": {
+    "@haikit/core": "*",
+    "@haikit/server": "*",
+    "@haikit/client": "*",
+    "@haikit/anthropic": "*",
+    "zod": "^4.0.0"
+  }
+}

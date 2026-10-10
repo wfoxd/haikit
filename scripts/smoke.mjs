@@ -56,6 +56,26 @@ const CASES = [
     },
   },
   {
+    // tutorial 2's app: hello, telling the user things after the request is over
+    name: "hello-notices",
+    entry: "examples/hello-notices/src/server/main.ts",
+    port: 5274,
+    message: "greet me",
+    tool: "list_greetings",
+    component: "greeting_picker",
+    action: "choose",
+    value: "es",
+    expectInResolution: /Chose Spanish.*Posted it to Sam as a postcard/,
+    staleAfterMs: undefined,
+    progress: 4, // translator batches list_greetings reports
+    // choosing posts a postcard, whose delivery is confirmed later as a notice
+    notice: { name: "postcard_delivered", ask: "did my postcard arrive?", expectInReply: /^Yes\. The postcard to Sam was delivered/ },
+    // …and the pen pal's reply is a wake notice, so the model speaks unasked
+    wake: { name: "reply_received", expectInReply: /^Heads up: Sam replied to the postcard, in Spanish/ },
+    // the translators add a language to a picker still waiting, with hai.update
+    outside: { component: "greeting_picker", within: 10_000, adds: "cy" },
+  },
+  {
     name: "flights",
     entry: "examples/flights/src/server/main.ts",
     port: 5273,
@@ -318,6 +338,29 @@ for (const c of CASES) {
       called === c.revise.tool && replacing?.replaces === map?.handle && replacing.handle !== map?.handle
         ? ok(`${c.revise.tool} revises the ${c.revise.component} in place: ${map?.handle} → ${replacing?.handle}`)
         : bad(`expected ${c.revise.tool} to replace ${map?.handle}, got ${called} / ${JSON.stringify(replacing)}`);
+    }
+
+    // 3d · app code revises a surface from outside any turn (hai.update), and
+    //      the events stream carries the revision to the browser
+    if (c.outside) {
+      const fresh = await sse(`${base}/hai/chat`, { message: c.message });
+      const freshId = fresh.find((e) => e.type === "hello")?.conversationId;
+      const shownNow = fresh.find((e) => e.type === "ui_open" && e.component === c.outside.component);
+      const seen = await eventsUntil(
+        `${base}/hai/events?conversationId=${freshId}`,
+        (got) => got.some((e) => e.type === "ui_props" && e.handle !== shownNow?.handle),
+        c.outside.within,
+      );
+      const opened = seen.find((e) => e.type === "ui_open");
+      const props = seen.find((e) => e.type === "ui_props" && e.handle === opened?.handle)?.props;
+      opened?.replaces === shownNow?.handle && JSON.stringify(props ?? {}).includes(`"code":"${c.outside.adds}"`)
+        ? ok(`app code revises the ${c.outside.component} from outside any turn: ${shownNow?.handle} → ${opened?.handle}`)
+        : bad(`expected a revision of ${shownNow?.handle} on the events stream, got ${JSON.stringify(seen.slice(0, 3))}`);
+      const told = await sse(`${base}/hai/chat`, { conversationId: freshId, message: "anything new?" });
+      const carried = told.filter((e) => e.type === "context").at(-1)?.messages.findLast((m) => m.role === "user")?.content;
+      Array.isArray(carried) && carried.some((b) => b?.text?.startsWith(`[UI update] `) && b.text.includes(`was replaced by ${opened?.handle}`))
+        ? ok("the next message tells the model which handle replaced which")
+        : bad(`the next user message was ${JSON.stringify(carried)}`);
     }
 
     // 4 · a resolved surface cannot be re-resolved
