@@ -286,6 +286,15 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
 
       case "ui_open": {
         if (state.surfaces.has(event.handle)) break; // shown already: a rejoin's catch-up
+        // Replaced already: a revision on the events stream overtook the
+        // request that showed the original, held back on its way here. The
+        // surface it became stands, and takes the original's tool row; the
+        // original isn't shown beside it, and its props go nowhere.
+        if (replacedBy.has(event.handle)) {
+          const now = state.blocks.find((b) => b.kind === "ui" && b.handle === current(event.handle));
+          if (now && !now.toolId) now.toolId = event.toolId;
+          break;
+        }
         // A revision of a surface on screen takes over its record in place:
         // its component, element and state stay, its handle moves on, and its
         // props stay until the new ones arrive, so the transcript keeps the

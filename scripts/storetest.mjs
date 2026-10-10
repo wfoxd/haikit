@@ -5177,6 +5177,20 @@ async function revisionClientChecks() {
     );
     frame({ type: "released" });
     await wait(50);
+
+    // a revision that overtakes the request showing the original
+    frame(open("ui_51", "card", undefined, { replaces: "ui_50", toolId: "" }));
+    frame({ type: "ui_props", handle: "ui_51", props: { price: 2 } });
+    for (let i = 0; i < 100 && !telling.state.surfaces.has("ui_51"); i++) await wait(10);
+    streams.push([helloE, open("ui_50", "card", undefined, { toolId: "b50" }), { type: "ui_props", handle: "ui_50", props: { price: 1 } }, idle]);
+    await telling.send("held back");
+    const late = telling.state.blocks.filter((b) => b.kind === "ui" && (b.handle === "ui_50" || b.handle === "ui_51"));
+    check(
+      `an original arriving after the revision that replaced it isn't shown beside it (${late.map((b) => b.handle).join(" ")})`,
+      late.length === 1 && late[0].handle === "ui_51" && !telling.state.surfaces.has("ui_50") &&
+        telling.state.surfaces.get("ui_51").props.price === 2,
+    );
+    check("…and the revision takes the original's tool row", late[0].toolId === "b50");
   } finally {
     telling.close();
     events?.destroy();
