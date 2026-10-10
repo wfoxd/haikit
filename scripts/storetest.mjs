@@ -3314,6 +3314,34 @@ async function updateChecks(make) {
   const after = await request(lapsing.c.id, say("and now?"));
   check("…and the conversation stays out of date", after.events.some((e) => e.type === "expired"));
 
+  // ── …nor by a window that runs out while the revision reads the surface
+  {
+    let slowRead = false;
+    const slowStore = {
+      ...store,
+      async getPayload(...args) {
+        if (slowRead) await new Promise((r) => setTimeout(r, 300));
+        return store.getPayload(...args);
+      },
+    };
+    const slowHai = createHai({ model, store: slowStore, tools: [tool], surfaces: [card, other, picker], system: "x" });
+    next.push([{ op: "card", price: 6 }]);
+    const showing = await request(undefined, say("show"));
+    await new Promise((r) => setTimeout(r, 200)); // fresh, with 200 ms of its 400 left
+    errors.length = 0;
+    slowRead = true; // the revision's read takes 300 ms: the window runs out during it
+    next.push([{ op: "try", handle: showing.c.handles[0] }]);
+    const c = await slowStore.loadConversation(showing.c.id);
+    await slowHai.send(c, "revise it", () => {});
+    slowRead = false;
+    c.leaseUntil = null;
+    await store.saveConversation(c);
+    check(
+      "a window that runs out while the revision reads the surface is caught before the write",
+      /out of date/.test(errors[0] ?? "") && !c.superseded?.[showing.c.handles[0]],
+    );
+  }
+
   // ── a revision an overtaken turn made is inert
   next.push([{ op: "card", price: 1 }]);
   const base = await request(undefined, say("show"));

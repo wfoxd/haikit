@@ -763,8 +763,9 @@ export class Hai {
    */
   private async refuseIfExpired(conversation: Conversation, emit: Emit): Promise<boolean> {
     if (!conversation.handles.length) return false;
-    const now = Date.now();
     const records = await this.config.store.getPayloads(conversation.handles, conversation.id);
+    // after the read, so a window that ran out while it was in flight counts
+    const now = Date.now();
 
     // the surface that went out of date first is the one that closed it
     let first: { expiredAt: number; age: number; window: number | undefined } | null = null;
@@ -1040,16 +1041,17 @@ export class Hai {
       revising.add(handle);
       this.revising.set(conversation, revising);
       try {
-        // Freshness again, here: a long turn can outlast a window that was open
-        // when it began, and a revision must not bring an out-of-date
-        // conversation back by superseding the surface that closed it.
-        if (await this.refuseIfExpired(conversation, () => {})) {
-          throw new Error("this conversation is out of date; nothing more can be revised in it");
-        }
         const record = await this.config.store.getPayload(handle, conversation.id);
         if (!record) throw new Error(`no surface ${handle} in this conversation`);
         if (record.component !== impl.surface.name) {
           throw new Error(`${handle} is a ${record.component}, not a ${impl.surface.name}`);
+        }
+        // Freshness again, last, right before the write: a long turn can
+        // outlast a window that was open when it began, and so can the reads
+        // above. A revision must not bring an out-of-date conversation back
+        // by superseding the surface that closed it.
+        if (await this.refuseIfExpired(conversation, () => {})) {
+          throw new Error("this conversation is out of date; nothing more can be revised in it");
         }
         const ret = await show(impl, props, record.mode, handle);
         (conversation.superseded ??= {})[handle] = ret.handle!;
