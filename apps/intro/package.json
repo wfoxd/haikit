@@ -16,11 +16,11 @@
     "tutorial:update": "node scripts/update-tutorial.mjs && npm test"
   },
   "dependencies": {
-    "@haikit/anthropic": "^0.11.0",
-    "@haikit/client": "^0.11.0",
-    "@haikit/core": "^0.11.0",
-    "@haikit/postgres": "^0.11.0",
-    "@haikit/server": "^0.11.0",
+    "@haikit/anthropic": "^0.18.0",
+    "@haikit/client": "^0.18.0",
+    "@haikit/core": "^0.18.0",
+    "@haikit/postgres": "^0.18.0",
+    "@haikit/server": "^0.18.0",
     "pg": "^8.23.0",
     "zod": "^4.0.0"
   },
