@@ -441,10 +441,15 @@ export async function conform(label, make) {
     a.wokeThrough = put[2].seq;
     a.wakeTurns = 7;
     a.superseded = { ui_01: "ui_02", ui_02: "ui_05" };
+    check("a new conversation owes no update notice", a.announcing == null);
+    a.announcing = { conversationId: a.id, name: "card", version: 2, payload: null, model: "ui_02 was replaced", handle: "ui_05", replaces: "ui_02", kind: "wake" };
     a.leaseUntil = null;
     await s.saveConversation(a);
     const reloaded = await s.loadConversation(a.id);
     check("noticedThrough round-trips with the conversation", reloaded.noticedThrough === put[3].seq);
+    // jsonb keeps its own key order, so compared key by key
+    const keyed = (v) => JSON.stringify(Object.entries(v ?? {}).sort(([x], [y]) => x.localeCompare(y)));
+    check("the update notice it owes round-trips with the conversation", keyed(reloaded.announcing) === keyed(a.announcing));
     check(
       "wakes, wokeThrough and wakeTurns round-trip with the conversation",
       JSON.stringify(reloaded.wakes) === JSON.stringify(a.wakes) && reloaded.wokeThrough === put[2].seq && reloaded.wakeTurns === 7,
@@ -3520,7 +3525,7 @@ async function outsideUpdateChecks(make) {
     notice?.handle === second && notice.replaces === first && notice.kind === undefined &&
       notice.model === `${first} was replaced by ${second}; its earlier digest is out of date. Now: card 389 as ${second}`,
   );
-  check("…and lets the conversation go", c.leaseUntil === null || c.leaseUntil < Date.now());
+  check("…and lets the conversation go, owing nothing", (c.leaseUntil === null || c.leaseUntil < Date.now()) && c.announcing == null);
   const stale = await request(id, click(first, "note", "x"));
   check(`a click on the replaced handle is refused (${stale.error?.message})`, stale.error?.message === `superseded by ${second}`);
   const acted = await request(id, click(second, "note", "x"));
@@ -3612,16 +3617,55 @@ async function outsideUpdateChecks(make) {
   );
   check("…and none of those wrote anything", (await store.getNotices(id, 0)).length === writes);
 
-  // ── a notice that can't be stored undoes the revision
-  c = await peek(id);
-  const before = { handles: c.handles.length, superseded: JSON.stringify(c.superseded) };
+  // ── calls naming the surface's first handle and its latest share a queue
+  const latest = c.handles.at(-1);
+  const blocking = await store.loadConversation(id);
+  const mixed = Promise.allSettled([
+    hai.update(id, card, first, { price: 701 }),
+    hai.update(id, card, latest, { price: 702 }),
+    hai.update(id, card, first, { price: 703 }),
+  ]);
+  await wait(150);
+  blocking.leaseUntil = null;
+  await store.saveConversation(blocking);
+  const mixedWritten = (await mixed).map((r) => r.value?.handle ?? r.reason?.message);
+  const mixedNotices = (await updates(id)).slice(5);
+  check(
+    `a burst naming the first handle and the latest writes twice, not three times (${mixedNotices.length} writes)`,
+    mixedNotices.length === 2 && mixedWritten[1] === mixedWritten[2] && mixedWritten[0] !== mixedWritten[1],
+  );
+
+  // ── a notice that can't be stored is still owed, and goes out first next time
+  const unheard = heard.length;
   failNotice = true;
   const lost = await failed(hai.update(id, card, first, { price: 600 }));
   failNotice = false;
   c = await peek(id);
+  const owedHandle = c.handles.at(-1);
   check(
-    `a revision whose notice can't be stored is undone, and the conversation let go (${lost?.message})`,
-    lost?.message === "notice store down" && c.handles.length === before.handles && JSON.stringify(c.superseded) === before.superseded,
+    `a revision whose notice can't be stored stands, with the notice owed on the conversation (${lost?.message})`,
+    /is saved, but its update notice could not be stored yet/.test(lost?.message ?? "") &&
+      c.announcing?.handle === owedHandle && (await store.getPayload(owedHandle, id)).props.price === 600 &&
+      !(await updates(id)).some((n) => n.handle === owedHandle),
+  );
+  await request(id, say("anything new?"));
+  c = await peek(id);
+  check(
+    "…and the next request appends it before the model runs, once",
+    (await updates(id)).filter((n) => n.handle === owedHandle).length === 1 && c.announcing == null &&
+      heard.length > unheard && heard.at(-1).includes(`was replaced by ${owedHandle}`),
+  );
+  // a holder that appended it, then lost its save, left it owed: not appended twice
+  const again = await store.loadConversation(id);
+  const { seq: _seq, createdAt: _at, ...appended } = (await updates(id)).find((n) => n.handle === owedHandle);
+  again.announcing = appended;
+  again.noticedThrough = (await store.getNotices(id, 0)).find((n) => n.handle === owedHandle).seq - 1;
+  again.leaseUntil = null;
+  await store.saveConversation(again);
+  await request(id, say("still there?"));
+  check(
+    "a notice already appended by a holder whose save then failed isn't appended again",
+    (await updates(id)).filter((n) => n.handle === owedHandle).length === 1 && (await peek(id)).announcing == null,
   );
 
   // ── a question waiting on the surface waits on its revision

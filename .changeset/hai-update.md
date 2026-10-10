@@ -11,4 +11,6 @@ It then appends an *update notice* (`NoticeRecord.replaces`). The events stream 
 
 The client resumes the events stream from the last frame id it saw, update notices included, and counts a revision's deadline from when the server stored it. A tool row whose question was revised now resolves when the revision is answered.
 
-**For custom stores:** a `NoticeRecord` may carry `replaces`. A store must return it as given. `@haikit/postgres`'s `migrate()` adds the column.
+The revision and the update notice it owes commit together on the conversation row (`Conversation.announcing`). If appending the notice fails, the next request, wake or update appends it first.
+
+**For custom stores:** a `NoticeRecord` may carry `replaces`, and a `Conversation` may carry `announcing` (an update notice, or null). A store must return both as given. `@haikit/postgres`'s `migrate()` adds the columns.

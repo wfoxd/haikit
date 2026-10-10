@@ -145,6 +145,8 @@ interface UpdateQueue {
 
 /** How long `hai.update` waits for a turn to let the conversation go, by default. */
 const UPDATE_TIMEOUT_MS = 30_000;
+/** How many conversations `hai.update` remembers its surfaces' handles for. */
+const UPDATE_NAMES_KEPT = 10_000;
 /** The first wait before `hai.update` tries a busy conversation again, and the longest. */
 const UPDATE_RETRY_MS = 100;
 const UPDATE_RETRY_MAX_MS = 2_000;
@@ -165,8 +167,15 @@ export class Hai {
   private readonly queryUi: Tool;
   /** Handles each conversation has a revision of in flight, so two calls can't revise one at once. */
   private readonly revising = new WeakMap<Conversation, Set<string>>();
-  /** `hai.update` calls by conversation and handle: one writing, and the newest waiting behind it. */
+  /** `hai.update` calls by conversation and surface: one writing, and the newest waiting behind it. */
   private readonly updating = new Map<string, UpdateQueue>();
+  /**
+   * The surfaces `hai.update` has revised, by conversation: each one's first
+   * handle and its latest, both mapped to the first, so calls naming either
+   * share a queue. Kept for the most recent conversations only; one let go of
+   * costs coalescing, never correctness, since every write revises the latest.
+   */
+  private readonly surfaceNames = new Map<string, Map<string, string>>();
   /** What the model gets as its system prompt: the app's, then the scope. */
   readonly system: string;
   private seq = 0;
@@ -312,7 +321,9 @@ export class Hai {
     }
 
     return new Promise((resolve, reject) => {
-      const key = `${conversationId}\u0000${handle}`;
+      // the surface's first handle, when it is one `hai.update` has revised here
+      const first = this.surfaceNames.get(conversationId)?.get(handle) ?? handle;
+      const key = `${conversationId}\u0000${first}`;
       const waiter = { resolve, reject };
       const queue = this.updating.get(key);
       if (queue) {
@@ -332,7 +343,8 @@ export class Hai {
         for (let job = fresh.next; job; job = fresh.next) {
           fresh.next = null;
           try {
-            const written = await this.revise(conversationId, impl, handle, job);
+            const { replaced, ...written } = await this.revise(conversationId, impl, handle, job);
+            this.name(conversationId, first, replaced, written.handle);
             for (const w of job.waiters) w.resolve(written);
           } catch (err) {
             for (const w of job.waiters) w.reject(err);
@@ -343,8 +355,39 @@ export class Hai {
     });
   };
 
+  /** Record that `first`'s surface went from `replaced` to `latest`, for the next call's queue. */
+  private name(conversationId: string, first: string, replaced: string, latest: string) {
+    const names = this.surfaceNames.get(conversationId) ?? new Map<string, string>();
+    // only the first and the latest are kept: what a caller is likely to hold
+    if (replaced !== first) names.delete(replaced);
+    names.set(first, first).set(latest, first);
+    // most recently revised last, so the oldest conversation goes first
+    this.surfaceNames.delete(conversationId);
+    this.surfaceNames.set(conversationId, names);
+    if (this.surfaceNames.size > UPDATE_NAMES_KEPT) this.surfaceNames.delete(this.surfaceNames.keys().next().value!);
+  }
+
+  /**
+   * Append the update notice this conversation owes, if any, before anything
+   * else is done with it: a revision whose own attempt to append it failed.
+   * One a holder appended before its save failed is not appended again.
+   */
+  private async announce(conversation: Conversation): Promise<void> {
+    const owed = conversation.announcing;
+    if (!owed) return;
+    // The model hasn't taken it in either way: that commits with clearing this.
+    const unread = (await this.config.store.getNotices(conversation.id, conversation.noticedThrough ?? 0)) ?? [];
+    if (!unread.some((n) => n.handle === owed.handle && n.replaces === owed.replaces)) await this.config.store.putNotice(owed);
+    conversation.announcing = null;
+  }
+
   /** One `hai.update` write: take the lease, revise, let the conversation go. */
-  private async revise(conversationId: string, impl: AnySurfaceImpl, handle: string, job: UpdateJob): Promise<{ handle: string }> {
+  private async revise(
+    conversationId: string,
+    impl: AnySurfaceImpl,
+    handle: string,
+    job: UpdateJob,
+  ): Promise<{ handle: string; replaced: string }> {
     const { store } = this.config;
     // Loading an unknown id would start a new conversation, so make sure it
     // exists first, with the cheapest read there is.
@@ -365,8 +408,10 @@ export class Hai {
     }
 
     let failure: unknown = null;
-    let written: { handle: string } | null = null;
+    let written: { handle: string; replaced: string } | null = null;
     try {
+      // one an earlier update still owes goes first, in order
+      await this.announce(conversation);
       written = await this.reviseHeld(conversation, impl, handle, job);
     } catch (err) {
       failure = err;
@@ -390,7 +435,7 @@ export class Hai {
     impl: AnySurfaceImpl,
     handle: string,
     job: UpdateJob,
-  ): Promise<{ handle: string }> {
+  ): Promise<{ handle: string; replaced: string }> {
     const { store } = this.config;
     if (!conversation.handles.includes(handle)) throw new Error(`no surface ${handle} in conversation ${conversation.id}`);
     // the surface as it is now: updates queued one behind another each revise the last
@@ -424,42 +469,37 @@ export class Hai {
       throw new Error("this conversation went out of date while the revision was made; it was not applied");
     }
 
-    const before = {
-      handles: conversation.handles.length,
-      superseded: conversation.superseded && { ...conversation.superseded },
-      pending: conversation.pending,
-    };
     conversation.handles.push(next);
     (conversation.superseded ??= {})[current] = next;
     // A question waiting on the surface waits on its revision. Its digest stays
     // as the model was shown it: the update's text rides in the same message as
     // the answer, after it, saying what changed.
     if (conversation.pending?.handle === current) conversation.pending = { ...conversation.pending, handle: next };
-    // Committed before the notice goes out, which proves the lease is still
-    // held: a notice for a revision the history lost would show the browser a
-    // surface every click on is refused.
+    // The notice it owes commits with it, in one fenced save, so the revision
+    // and its notice can't come apart. Saved before the notice is appended,
+    // which proves the lease is still held: a notice for a revision the history
+    // lost would show the browser a surface every click on is refused.
+    const notice = {
+      conversationId: conversation.id,
+      name: impl.surface.name,
+      version: impl.surface.version,
+      payload: null,
+      model: `${job.model ? `${job.model} ` : ""}${current} was replaced by ${next}; its earlier digest is out of date. Now: ${digest}`,
+      handle: next,
+      replaces: current,
+      ...(job.wake ? { kind: "wake" as const } : {}),
+    };
+    conversation.announcing = notice;
     await store.saveConversation(conversation);
     try {
-      await store.putNotice({
-        conversationId: conversation.id,
-        name: impl.surface.name,
-        version: impl.surface.version,
-        payload: null,
-        model: `${job.model ? `${job.model} ` : ""}${current} was replaced by ${next}; its earlier digest is out of date. Now: ${digest}`,
-        handle: next,
-        replaces: current,
-        ...(job.wake ? { kind: "wake" as const } : {}),
-      });
+      await store.putNotice(notice);
     } catch (err) {
-      // Undone, and the save on the way out records that. Kept, the model would
-      // never hear of a revision whose window now counts in place of the one
-      // it was shown, and the browser would never show it.
-      conversation.handles.length = before.handles;
-      conversation.superseded = before.superseded;
-      conversation.pending = before.pending;
-      throw err;
+      // Still owed, and appended by whoever holds the conversation next, before
+      // anything else: the model hears of the revision before it runs again.
+      throw new Error(`${next} is saved, but its update notice could not be stored yet: it goes out with the conversation's next request (${(err as Error).message})`);
     }
-    return { handle: next };
+    conversation.announcing = null;
+    return { handle: next, replaced: current };
   }
 
   /**
@@ -516,6 +556,7 @@ export class Hai {
   }
 
   private async wakeTurn(conversation: Conversation, emit: Emit): Promise<WakeOutcome> {
+    await this.announce(conversation);
     // a load of an unknown id starts a new conversation, which has not begun either
     if (!conversation.messages.length || conversation.status === "awaiting") return "idle";
     if (await this.refuseIfExpired(conversation, () => {})) return "idle";
@@ -713,6 +754,7 @@ export class Hai {
   // ─────────────────────────────────────────────────── public API
 
   async send(conversation: Conversation, text: string, emit: Emit): Promise<void> {
+    await this.announce(conversation);
     if (await this.refuseIfExpired(conversation, emit)) return;
 
     // The first message is the one that starts the conversation.
@@ -762,6 +804,7 @@ export class Hai {
    */
   async start(conversation: Conversation, emit: Emit): Promise<void> {
     if (!this.config.init || conversation.messages.length > 0) return;
+    await this.announce(conversation);
     const unread = await this.unreadNotices(conversation);
     if (await this.runInit(conversation, withText(unread.blocks, STARTED), emit, unread.through)) return; // parked on its surface
     conversation.status = "idle";
@@ -858,6 +901,7 @@ export class Hai {
     input: { handle: string; action: string; value: unknown },
     emit: Emit,
   ): Promise<void> {
+    await this.announce(conversation);
     if (await this.refuseIfExpired(conversation, emit)) return;
 
     // The payload row carries a conversation id, but that alone is not enough.

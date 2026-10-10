@@ -301,14 +301,19 @@ Then it appends an *update notice*, which tells both sides:
   `[UI update] Fares moved: AC832 is now $389 (was $343). ui_03 was replaced by ui_05; its earlier digest is out of date. Now: <the new digest>`.
   Your `model` sentence is optional; the rest is always there.
 
-The revision is committed before the notice is appended, and undone if the
-notice can't be stored, so neither side hears of a revision the other doesn't
-have.
+The revision and the notice it owes commit together, in one fenced save on the
+conversation row (`Conversation.announcing`), before the notice is appended.
+If appending it fails, `hai.update` throws, saying so, and the notice stays
+owed: whoever holds the conversation next, a request, a wake or another
+update, appends it before doing anything else, so the model hears of the
+revision before it runs again. A notice already appended by a holder whose
+save then failed isn't appended twice.
 
 One write per surface is in flight at a time. A call made meanwhile replaces
 any still waiting behind it, and every call it replaced resolves to the handle
 it writes, so a feed ticking ten times a second writes as often as the lease
-allows. A `wake` any of them asked for still wakes.
+allows. Calls naming the surface's first handle or its latest share the
+queue. A `wake` any of them asked for still wakes.
 
 **A conversation closes once any of its surfaces passes its `staleAfterMs`.**
 From then on both routes answer with an `expired` event and the model is not

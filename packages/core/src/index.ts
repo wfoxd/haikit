@@ -587,6 +587,14 @@ export interface Conversation {
    * frames from a newer turn's. Missing means 0.
    */
   wakeTurns?: number;
+  /**
+   * The update notice `hai.update` owes this conversation: committed on this
+   * row with the revision it announces, so the two can't come apart, and
+   * cleared once the notice is appended. Whoever holds the conversation next
+   * appends one still owed before doing anything else. Missing or null means
+   * none.
+   */
+  announcing?: Omit<NoticeRecord, "seq" | "createdAt"> | null;
 }
 
 /**

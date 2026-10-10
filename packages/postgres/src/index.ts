@@ -105,6 +105,8 @@ export const schema: readonly string[] = [
      wake_turns      integer NOT NULL DEFAULT 0,
      -- surfaces revised in place: superseded handle → its replacement
      superseded      jsonb NOT NULL DEFAULT '{}',
+     -- the update notice a revision committed here still owes, or NULL
+     announcing      jsonb,
      updated_at   timestamptz NOT NULL DEFAULT now()
    )`,
   // a table created before notices existed gains the columns
@@ -114,6 +116,7 @@ export const schema: readonly string[] = [
   `ALTER TABLE haikit_conversations ADD COLUMN IF NOT EXISTS woke_through integer NOT NULL DEFAULT 0`,
   `ALTER TABLE haikit_conversations ADD COLUMN IF NOT EXISTS wake_turns integer NOT NULL DEFAULT 0`,
   `ALTER TABLE haikit_conversations ADD COLUMN IF NOT EXISTS superseded jsonb NOT NULL DEFAULT '{}'`,
+  `ALTER TABLE haikit_conversations ADD COLUMN IF NOT EXISTS announcing jsonb`,
   // Append-only, and never an orphan: a notice belongs to a conversation that
   // exists, and goes when it does.
   `CREATE TABLE IF NOT EXISTS haikit_notices (
@@ -172,6 +175,7 @@ const CONVERSATION_COLUMNS = `
   id, status, messages::text AS messages, handles::text AS handles,
   frozen::text AS frozen, pending::text AS pending, lease_token, noticed_through,
   wakes::text AS wakes, woke_through, wake_turns, superseded::text AS superseded,
+  announcing::text AS announcing,
   (extract(epoch FROM lease_until) * 1000)::float8 AS lease_until_ms`;
 
 const NOTICE_COLUMNS = `
@@ -201,6 +205,7 @@ const toConversation = (row: any): Conversation => ({
   wokeThrough: Number(row.woke_through ?? 0),
   wakeTurns: Number(row.wake_turns ?? 0),
   superseded: row.superseded == null ? {} : json(row.superseded),
+  announcing: row.announcing == null ? null : json(row.announcing),
 });
 
 const toNotice = (row: any): NoticeRecord => ({
@@ -453,6 +458,7 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
                 woke_through = $11::integer,
                 wake_turns  = $12::integer,
                 superseded  = $13::jsonb,
+                announcing  = $14::jsonb,
                 updated_at  = now()
           WHERE id = $1 AND lease_token = $2
           RETURNING id`,
@@ -471,6 +477,7 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
           conversation.wokeThrough ?? 0,
           conversation.wakeTurns ?? 0,
           JSON.stringify(conversation.superseded ?? {}),
+          conversation.announcing == null ? null : JSON.stringify(conversation.announcing),
         ],
       );
       if (!rows.length) await stale(conversation.id);
