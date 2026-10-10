@@ -667,6 +667,12 @@ export type WireEvent =
        */
       replaces?: string;
       /**
+       * Earlier handles of the same surface, before `replaces`: set on a
+       * revision replayed to a stream that joins part way, for a browser that
+       * last saw one of those and missed the revisions between.
+       */
+      alsoReplaces?: string[];
+      /**
        * How long ago the server stored this surface, measured as the frame was
        * written: the time its digest took, and, for a frame replayed to a
        * stream that joins a wake turn part way, how long it waited. Absent

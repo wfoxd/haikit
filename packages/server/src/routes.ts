@@ -341,7 +341,12 @@ function remember(shown: WireEvent[], event: WireEvent) {
       // It keeps `replaces`, so a browser that did see the old one swaps it in
       // place rather than adding a second, and the old one's tool row, which
       // the browser keeps through a revision too.
-      copy.toolId = (shown[replaced] as Extract<WireEvent, { type: "ui_open" }>).toolId;
+      const before = shown[replaced] as Extract<WireEvent, { type: "ui_open" }>;
+      copy.toolId = before.toolId;
+      // and every handle the surface had before, for a browser that last saw
+      // one of those and missed the revisions between
+      const earlier = [...(before.alsoReplaces ?? []), ...(before.replaces === undefined ? [] : [before.replaces])];
+      if (earlier.length) copy.alsoReplaces = earlier;
       shown[replaced] = copy;
       for (let i = shown.length - 1; i >= 0; i--) {
         const e = shown[i];

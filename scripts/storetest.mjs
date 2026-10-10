@@ -3109,7 +3109,8 @@ async function updateChecks(make) {
     });
   const other = defineSurface({ name: "other", version: 1, props: any }).implement({ digest: () => "other", actions: {}, queries: {} });
   const picker = defineSurface({ name: "pick", version: 1, props: any, actions: { choose: resolve(any) }, queries: {} })
-    .implement({ digest: (p, { handle }) => `pick ${p.v} as ${handle}`, actions: { choose: (v, { props }) => `chose ${v} from ${props.v}` }, queries: {} });
+    // a digest may be anything, "" included
+    .implement({ digest: (p, { handle }) => (p.v === "EMPTY" ? "" : `pick ${p.v} as ${handle}`), actions: { choose: (v, { props }) => `chose ${v} from ${props.v}` }, queries: {} });
 
   const errors = [];
   let lastAsked = null; // the question the tool last showed, for a revision in the same reply
@@ -3127,6 +3128,12 @@ async function updateChecks(make) {
         const ret = await ctx.render(picker, { v: i.v }, { mode: "elicit" });
         lastAsked = ret.handle;
         return ret;
+      }
+      if (i.op === "ask-extra") {
+        // asks, then says something more, which rides after the question's digest
+        const ret = await ctx.render(picker, { v: i.v }, { mode: "elicit" });
+        lastAsked = ret.handle;
+        return ctx.text("also: a note");
       }
       if (i.op === "late-try") {
         await new Promise((r) => setTimeout(r, i.wait));
@@ -3263,6 +3270,17 @@ async function updateChecks(make) {
     /superseded/.test(oldAnswer.error?.message ?? "") && !newAnswer.error &&
       newAnswer.c.messages.some((m) => JSON.stringify(m.content).includes("chose C from C")),
   );
+  // the asking call said more after its question: that stays
+  next.push([{ op: "ask-extra", v: "B2" }, { op: "update-asked", v: "C2" }]);
+  const extra = await request(id, say("ask, add a note, then revise it"));
+  check(
+    "a revised question keeps what its asking call said after it",
+    extra.c.pending?.digest === `pick C2 as ${extra.c.pending?.handle}\nalso: a note`,
+  );
+  // a revision whose digest is empty is still the revision's
+  next.push([{ op: "ask", v: "B3" }, { op: "update-asked", v: "EMPTY" }]);
+  const empty = await request(id, say("ask, then revise it to nothing"));
+  check("a revision's empty digest is kept, not mistaken for none", empty.c.pending?.digest === "");
   check(
     "…and its answer goes to the model under the revision's digest, not the original's",
     twice.c.pending?.digest === `pick C as ${waitingOn}` &&
@@ -4261,7 +4279,17 @@ async function surfaceAgeChecks() {
       return ret;
     },
   });
-  const revise = defineTool({ name: "revise", description: "d", input: any, inputJsonSchema: { type: "object" }, run: (_i, ctx) => ctx.update(fare, shownHandle, { price: 289 }) });
+  let reviseTwice = false; // and revises it again
+  const revise = defineTool({
+    name: "revise",
+    description: "d",
+    input: any,
+    inputJsonSchema: { type: "object" },
+    async run(_i, ctx) {
+      const once = await ctx.update(fare, shownHandle, { price: 289 });
+      return reviseTwice ? ctx.update(fare, once.handle, { price: 279 }) : once;
+    },
+  });
   const model = {
     id: "stub",
     async generate({ messages }) {
@@ -4360,6 +4388,29 @@ async function surfaceAgeChecks() {
     check(
       "…still marked as replacing the original, under the original's tool row, as a browser that saw it keeps it",
       opens[0]?.replaces === liveOpens[0]?.handle && opens[0]?.toolId === liveOpens[0]?.toolId,
+    );
+
+    // revised twice: the replay names the handle before, and the original too
+    reviseToo = true;
+    reviseTwice = true;
+    const c3 = await store.loadConversation(undefined);
+    c3.messages.push({ role: "user", content: "hi" }, { role: "assistant", content: [{ type: "text", text: "hello" }] });
+    c3.leaseUntil = null;
+    await store.saveConversation(c3);
+    const watching3 = stream(`http://127.0.0.1:5390/hai/events?conversationId=${c3.id}`, released);
+    await wait(150);
+    await hai.notify(c3.id, dropped, {});
+    await wait(700);
+    const joined3 = await stream(`http://127.0.0.1:5390/hai/events?conversationId=${c3.id}`, released);
+    const live3 = (await watching3).got.filter((e) => e.type === "ui_open");
+    reviseToo = false;
+    reviseTwice = false;
+    const [a, b, cc] = live3.map((e) => e.handle);
+    const replay3 = joined3.got.filter((e) => e.type === "ui_open");
+    check(
+      `a surface revised twice is replayed once, naming every handle it had (${a} → ${b} → ${cc})`,
+      replay3.length === 1 && replay3[0].handle === cc && replay3[0].replaces === b &&
+        JSON.stringify(replay3[0].alsoReplaces) === JSON.stringify([a]),
     );
   } finally {
     server.close();
@@ -4517,6 +4568,17 @@ async function revisionClientChecks() {
     frame(notice(3, "ui_11"));
     for (let i = 0; i < 100 && telling.state.notices.length < 3; i++) await wait(10);
     check(`…and one that arrives after it goes after them all (${order()})`, order() === "ui:ui_11 n1 n2 n3");
+
+    // a replayed revision several steps on, to a browser that saw only the first
+    streams.push([helloE, open("ui_20", "card", undefined), { type: "ui_props", handle: "ui_20", props: {} }, idle]);
+    await telling.send("show again");
+    streams.push([helloE, open("ui_22", "card", undefined, { replaces: "ui_21", alsoReplaces: ["ui_20"] }), { type: "ui_props", handle: "ui_22", props: {} }, idle]);
+    await telling.send("replayed");
+    const handles = telling.state.blocks.filter((b) => b.kind === "ui").map((b) => b.handle);
+    check(
+      `a revision replayed past one this browser missed swaps in from the handle it did see (${handles.join(" ")})`,
+      handles.join(" ") === "ui_11 ui_22" && !telling.state.surfaces.has("ui_20"),
+    );
   } finally {
     telling.close();
     events?.destroy();

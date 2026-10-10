@@ -114,7 +114,8 @@ interface Hop {
   asking: {
     handle: string | null;
     settled: Promise<void>;
-    /** Its latest digest, once a later call in the reply has revised it. */
+    /** The digest it was asked under, and its latest, once a later call in the reply has revised it. */
+    question?: string;
     digest?: string;
   } | null;
 }
@@ -873,8 +874,15 @@ export class Hai {
         // At the question's latest revision: a later call in this reply may
         // have revised it, and then its answer goes out under the revision's
         // digest, not the original's.
+        // Only the question's part is replaced: anything the asking call said
+        // after it rides along as before.
         const handle = currentHandle(conversation, parked.handle);
-        const digest = handle !== parked.handle && hop.asking?.handle === handle && hop.asking.digest ? hop.asking.digest : parked.digest;
+        const asking = hop.asking;
+        let digest = parked.digest;
+        if (handle !== parked.handle && asking?.handle === handle && asking.digest !== undefined) {
+          const asked = asking.question;
+          digest = asked !== undefined && parked.digest.startsWith(asked) ? asking.digest + parked.digest.slice(asked.length) : asking.digest;
+        }
         conversation.pending = { ...parked, handle, digest, results };
         emit({ type: "status", status: "awaiting" });
         await this.emitContext(conversation, emit);
@@ -1008,6 +1016,7 @@ export class Hai {
       try {
         const ret = await show(impl, props, "elicit");
         claim.handle = ret.handle;
+        claim.question = ret.model;
         asked = { handle: ret.handle, digest: ret.model };
         return ret;
       } catch (err) {

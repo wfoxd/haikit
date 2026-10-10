@@ -273,13 +273,19 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
         // its component, element and state stay, its handle moves on, and its
         // props stay until the new ones arrive, so the transcript keeps the
         // same element rather than mounting afresh.
-        const old = event.replaces === undefined ? undefined : state.surfaces.get(event.replaces);
+        // `replaces`, or, for a revision replayed after several, an earlier
+        // handle of the same surface: whichever this browser last saw
+        const old = [event.replaces, ...(event.alsoReplaces ?? [])]
+          .filter((h) => h !== undefined)
+          .map((h) => state.surfaces.get(h))
+          .find(Boolean);
         let surface;
         if (old) {
-          state.surfaces.delete(old.handle);
+          const was = old.handle;
+          state.surfaces.delete(was);
           Object.assign(old, { handle: event.handle, component: event.component, version: event.version, revising: true });
           state.surfaces.set(event.handle, (surface = old));
-          const block = state.blocks.find((b) => b.kind === "ui" && b.handle === event.replaces);
+          const block = state.blocks.find((b) => b.kind === "ui" && b.handle === was);
           if (block) block.handle = event.handle;
         } else {
           surface = {
