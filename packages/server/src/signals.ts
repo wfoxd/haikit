@@ -179,7 +179,8 @@ export class Broadcast {
       if (peer.heard < stale) this.peers.delete(origin);
       else others += peer.count;
     }
-    const total = this.local + others;
+    // a sum of whole counts, kept a safe integer however large the peers claim to be
+    const total = Math.min(this.local + others, Number.MAX_SAFE_INTEGER);
     if (total === this.total) return;
     this.total = total;
     for (const listener of [...this.listeners]) {

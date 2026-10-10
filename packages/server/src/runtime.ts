@@ -234,9 +234,11 @@ export class Hai {
     for (const [name, ms] of [["graceMs", graceMs], ["heartbeatMs", heartbeatMs]] as const) {
       // Past the longest timer Node keeps, it fires after about a millisecond:
       // a grace would end at once, and a heartbeat would spin.
-      if (typeof ms !== "number" || !Number.isFinite(ms) || ms <= 0 || ms > MAX_TIMER_MS) {
+      // Whole milliseconds, as timers count them: a fractional one would be
+      // scheduled shorter than the staleness arithmetic assumes.
+      if (typeof ms !== "number" || !Number.isInteger(ms) || ms <= 0 || ms > MAX_TIMER_MS) {
         throw new RangeError(
-          `presence.${name} must be a positive number of milliseconds, at most ${MAX_TIMER_MS} (got ${String(ms)})`,
+          `presence.${name} must be a whole number of milliseconds, from 1 to ${MAX_TIMER_MS} (got ${String(ms)})`,
         );
       }
     }

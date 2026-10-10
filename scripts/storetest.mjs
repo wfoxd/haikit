@@ -4012,6 +4012,13 @@ async function signalChecks() {
       tooLong = err;
     }
     check(`a presence timer longer than Node can keep is refused (${tooLong?.message})`, tooLong instanceof RangeError);
+    let fractional = null;
+    try {
+      createHai({ model, store, tools: [], surfaces: [], system: "x", presence: { heartbeatMs: 0.5 } });
+    } catch (err) {
+      fractional = err;
+    }
+    check("…and so is one that isn't whole milliseconds, as timers count them", fractional instanceof RangeError);
     check("presence is heard at once, nought with nobody watching", counts.length === 1 && counts[0] === 0);
     let thrown = 0;
     let threw = false;
@@ -4108,6 +4115,12 @@ async function signalChecks() {
     await store.publish("haikit:signals", JSON.stringify({ origin: "odd-server-2", kind: "presence", count: 1.5 }));
     await wait(300);
     check(`a peer's count that isn't a whole number, such as Infinity, is ignored (${counts.at(-1)})`, counts.at(-1) === 2 && !counts.includes(Infinity));
+    // two peers each claiming the largest safe count can't push the total past it
+    await store.publish("haikit:signals", JSON.stringify({ origin: "huge-1", kind: "presence", count: Number.MAX_SAFE_INTEGER }));
+    await store.publish("haikit:signals", JSON.stringify({ origin: "huge-2", kind: "presence", count: Number.MAX_SAFE_INTEGER }));
+    await until(() => counts.at(-1) === Number.MAX_SAFE_INTEGER);
+    check(`peers' counts sum to a safe integer at most (${counts.at(-1)})`, counts.every((n) => Number.isSafeInteger(n)));
+    await until(() => counts.at(-1) === 2);
     // a server with no stream yet still hears the others' signals, for its first stream
     hai.signal(online, { count: 42 });
     await wait(50);
