@@ -14,7 +14,7 @@
  */
 
 /** @typedef {import("@haikit/client").Chat} Chat */
-/** @typedef {{ lessons: { part: number, title: string, lessons: { id: string, title: string }[] }[], tutorial: { id: string, title: string }[] }} MenuData */
+/** @typedef {{ lessons: { part: number, title: string, lessons: { id: string, title: string }[] }[], tutorials: { title: string, steps: { id: string, title: string }[] }[] }} MenuData */
 /** @typedef {{ n?: string, label: string, message: string }} Item */
 /** @typedef {{ heading?: string, items: Item[] }} Group */
 /** @typedef {{ label: string, icon: keyof typeof ICONS, groups: Group[] }} Section */
@@ -69,7 +69,11 @@ const sectionsOf = (data) => [
   {
     label: "Tutorial",
     icon: "tutorial",
-    groups: [{ items: data.tutorial.map((s) => ({ n: s.id, label: s.title, message: `Open tutorial step ${s.id}` })) }],
+    // one group per tutorial; a step's number drops the second tutorial's prefix
+    groups: data.tutorials.map((t) => ({
+      heading: t.title,
+      items: t.steps.map((s) => ({ n: s.id.replace(/^\d+-/, ""), label: s.title, message: `Open tutorial step ${s.id}` })),
+    })),
   },
   {
     label: "Lesson",

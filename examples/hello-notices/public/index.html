@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>hello, later — built on HaiKIT</title>
+    <link rel="stylesheet" href="/hai-client/hai.css" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module">
+      import { mountChat } from "/hai-client/app.js";
+      import { notices, registry } from "./components.js";
+
+      mountChat({
+        root: document.querySelector("#app"),
+        registry,
+        notices,
+        title: "hello",
+        subtitle: "the server speaks up after the request is over",
+        emptyText:
+          "Pick a greeting and it goes out as a postcard. Its delivery, the reply, and new translations arrive later, on their own.",
+        suggestions: ["greet me", "did my postcard arrive?"],
+      });
+    </script>
+  </body>
+</html>

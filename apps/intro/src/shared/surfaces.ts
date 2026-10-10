@@ -99,7 +99,7 @@ export const LessonRef = z.object({
 });
 export type LessonRef = z.infer<typeof LessonRef>;
 
-/** A page of the tutorial: "intro", "01" … "10", "next-steps". */
+/** A page of a tutorial: "intro", "01" … "10", "next-steps", or the second's "2-intro", "2-01" … */
 export const TutorialRef = z.object({ id: z.string(), label: z.string(), title: z.string() });
 export type TutorialRef = z.infer<typeof TutorialRef>;
 
@@ -141,8 +141,9 @@ export const WelcomeSection = z.object({
 export const welcomeScreen = defineSurface({
   name: "welcome",
   // 2 added the diagram, 3 the sections, 4 their illustrations, 5 a source
-  // link, 6 the links list, 7 a tutorial panel of links, 8 the tutorial in-app
-  version: 8,
+  // link, 6 the links list, 7 a tutorial panel of links, 8 the tutorial in-app,
+  // 9 the second tutorial beside it
+  version: 9,
   props: z.object({
     /** A short introduction, one paragraph per entry. The first is the lede. */
     intro: z.array(z.string()),
@@ -160,7 +161,13 @@ export const welcomeScreen = defineSurface({
     /** Why HaiKIT, for the people deciding; what the LLM brings; what HaiKIT gives you. */
     sections: z.array(WelcomeSection),
     /** HaiKIT's tutorial, built into this app, shown beside the place to start. */
-    tutorial: z.object({ title: z.string(), lead: z.string(), steps: z.array(TutorialRef) }),
+    tutorial: z.object({
+      title: z.string(),
+      lead: z.string(),
+      steps: z.array(TutorialRef),
+      /** The tutorial that carries on from this one: its first page, and how many steps it has. */
+      next: z.object({ title: z.string(), lead: z.string(), first: TutorialRef, steps: z.number() }).optional(),
+    }),
     /** Each part's range of lessons, so the model knows which lessons exist. */
     parts: z.array(
       z.object({ n: z.number(), title: z.string(), first: z.string(), last: z.string(), lessons: z.number(), minutes: z.number() }),
@@ -171,7 +178,7 @@ export const welcomeScreen = defineSurface({
   actions: {
     // Its buttons are the question this screen asks: where to begin.
     begin: resolve(z.enum(["first-lesson", "course-map"])),
-    tutorial: resolve(z.string()), // or a page of the tutorial, by id
+    tutorial: resolve(z.string()), // or a page of a tutorial, by id
   },
 });
 // #endregion welcome
@@ -179,7 +186,7 @@ export const welcomeScreen = defineSurface({
 // #region course-map
 export const courseMap = defineSurface({
   name: "course_map",
-  version: 2, // 2 lists the tutorial's pages
+  version: 3, // 2 lists the tutorial's pages, 3 both tutorials'
   props: z.object({
     // First array prop on purpose: query_ui reports "N of TOTAL match" using
     // the first array in the props, and the glossary is what gets queried.
@@ -187,11 +194,11 @@ export const courseMap = defineSurface({
     parts: z.array(
       z.object({ n: z.number(), title: z.string(), blurb: z.string(), lessons: z.array(LessonRef) }),
     ),
-    tutorial: z.object({ title: z.string(), pages: z.array(TutorialRef) }),
+    tutorials: z.array(z.object({ title: z.string(), blurb: z.string(), pages: z.array(TutorialRef) })),
   }),
 
   actions: {
-    open: resolve(z.string()), // a lesson id, such as "1.2", or a tutorial page, such as "03"
+    open: resolve(z.string()), // a lesson id, such as "1.2", or a tutorial page, such as "03" or "2-03"
   },
 
   queries: {

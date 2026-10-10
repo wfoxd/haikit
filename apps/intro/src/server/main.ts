@@ -45,12 +45,14 @@ addressable by the handle in each digest (e.g. ui_01).
   is no next lesson, show_course_map.
 - When the learner chooses to continue to a lesson, teach it.
 - The header has a menu. Its choices arrive as messages: "Open lesson 1.3",
-  "Open tutorial step 04", "Show the welcome screen". Show what they name;
-  show_welcome shows the welcome screen.
-- HaiKIT's tutorial is built in: show_tutorial_step shows a page (intro, 01 to
-  10, next-steps), and each page waits for the reader's Previous, Next or
-  Course map click. When they move, show the page they chose. To answer a
-  question about a page, use query_ui find on its handle.
+  "Open tutorial step 04", "Open tutorial step 2-03", "Show the welcome
+  screen". Show what they name; show_welcome shows the welcome screen.
+- HaiKIT's two tutorials are built in: show_tutorial_step shows a page. The
+  first builds a Hello, World! app (intro, 01 to 10, next-steps); the second
+  teaches the same app notifications (2-intro, 2-01 to 2-09, 2-next-steps).
+  Each page waits for the reader's Previous, Next or Course map click. When
+  they move, show the page they chose. To answer a question about a page, use
+  query_ui find on its handle.
 - Define haikit terms only from the course glossary: query_ui on the course
   map's handle with the glossary query. If the map hasn't been shown yet, call
   show_course_map first. The framework may be newer than what you know, so do
@@ -63,7 +65,7 @@ addressable by the handle in each digest (e.g. ui_01).
 // HaiKIT are the course, help with the learner's own app is not.
 const SCOPE = `${DEFAULT_SCOPE}
 - Questions about HaiKIT are in scope. Answer them from the lessons, the
-  tutorial and the glossary, or show the lesson or tutorial page that covers
+  tutorials and the glossary, or show the lesson or tutorial page that covers
   them.
 - Don't write or debug code for the learner's own app. Point them at the
   tutorial step that covers what they're building.

@@ -448,9 +448,10 @@ function siteLink(link) {
 
 /**
  * HaiKIT's tutorial as a panel: a button to start it, and its steps, each a
- * button that opens that step here. Choosing one answers the welcome screen's
- * question, through its declared `tutorial` action.
- * @param {{ title: string, lead: string, steps: { id: string, label: string, title: string }[] }} tutorial
+ * button that opens that step here, then the tutorial that carries on from it.
+ * Choosing one answers the welcome screen's question, through its declared
+ * `tutorial` action.
+ * @param {WelcomeProps["tutorial"]} tutorial
  * @param {{ live: boolean, picked: unknown, choose: (id: string) => void }} at
  */
 function tutorialPanel(tutorial, at) {
@@ -478,6 +479,19 @@ function tutorialPanel(tutorial, at) {
   start.disabled = !at.live;
   start.onclick = () => at.choose("intro");
   panel.append(steps, start);
+
+  // The second tutorial, which carries on with the same app.
+  const next = tutorial.next;
+  if (next) {
+    const more = h("div", "welcome-tutorial-next");
+    const open = h("button", `welcome-tutorial-next-open${at.picked === next.first.id ? " picked" : ""}`);
+    open.type = "button";
+    open.disabled = !at.live;
+    open.onclick = () => at.choose(next.first.id);
+    open.append(h("span", "welcome-tutorial-label", "Then"), h("span", "welcome-tutorial-next-title", next.title));
+    more.append(open, inline(h("p", "welcome-tutorial-next-lead"), `${next.lead} ${next.steps} steps.`));
+    panel.append(more);
+  }
   return panel;
 }
 
@@ -610,6 +624,7 @@ export const registry = {
             picked === "first-lesson" ? `You started with lesson ${props.first.id}.`
             : picked === "course-map" ? "You opened the course map."
             : picked === "intro" ? "You started the tutorial."
+            : props.tutorial?.next && picked === props.tutorial.next.first.id ? `You started ${props.tutorial.next.title}.`
             : typeof picked === "string" ? `You opened step ${picked} of the tutorial.`
             : "Closed when you typed instead of choosing.";
           start.append(h("p", "welcome-closed", done));
@@ -691,28 +706,36 @@ export const registry = {
           root.append(section);
         }
 
-        // The tutorial's pages, in the same rows: opening one is the same
-        // declared `open` action. A version 1 map has no tutorial.
-        if (props.tutorial) {
+        // The tutorials' pages, in the same rows: opening one is the same
+        // declared `open` action. A version 1 map has no tutorial, and a
+        // version 2 map has the first only.
+        /** @type {CourseMapProps["tutorials"]} */
+        const legacy = /** @type {any} */ (props).tutorial
+          ? [{ blurb: "Build a Hello, World! app with HaiKIT, step by step, read right here.", .../** @type {any} */ (props).tutorial }]
+          : [];
+        const tutorials = props.tutorials ?? legacy;
+        tutorials.forEach((tutorial, i) => {
           const section = h("section", "map-part");
           const title = h("h3", "map-part-title");
-          title.append(h("span", "map-part-n", "Tutorial"), props.tutorial.title);
-          section.append(title, h("p", "map-blurb", "Build a Hello, World! app with HaiKIT, step by step, read right here."));
+          title.append(h("span", "map-part-n", tutorials.length > 1 ? `Tutorial ${i + 1}` : "Tutorial"), tutorial.title);
+          section.append(title, h("p", "map-blurb", tutorial.blurb));
           const ol = h("ol", "map-lessons");
-          for (const page of props.tutorial.pages) {
+          for (const page of tutorial.pages) {
             const li = h("li");
             const row = h(live ? "button" : "div", `map-lesson${page.id === picked ? " picked" : ""}`);
             if (row instanceof HTMLButtonElement) {
               row.type = "button";
               row.onclick = () => void ctx.send("open", page.id);
             }
-            row.append(h("span", "map-id", /^\d+$/.test(page.id) ? page.id : ""), h("span", "map-ltitle", page.title));
+            // the step's number, without the second tutorial's prefix
+            const n = page.id.match(/^(?:\d+-)?(\d+)$/)?.[1] ?? "";
+            row.append(h("span", "map-id", n), h("span", "map-ltitle", page.title));
             li.append(row);
             ol.append(li);
           }
           section.append(ol);
           root.append(section);
-        }
+        });
 
         // Opening this is local: the contract declares no action for it.
         const glossary = h("details", "map-glossary");
@@ -728,8 +751,8 @@ export const registry = {
           const what =
             typeof picked !== "string" ? null
             : /\./.test(picked) ? `lesson ${picked}`
-            : picked === "intro" || picked === "next-steps" ? "a page of the tutorial"
-            : `step ${picked} of the tutorial`;
+            : /^(\d+-)?(intro|next-steps)$/.test(picked) ? "a page of a tutorial"
+            : `step ${picked} of a tutorial`;
           root.append(h("p", "map-closed", what ? `You opened ${what}.` : "Closed when you typed instead of picking."));
         }
         el.append(root);

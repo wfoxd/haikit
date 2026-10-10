@@ -2,7 +2,7 @@ import { defineTool } from "@haikit/core";
 import { z } from "zod";
 import { checkpointProps, courseMapProps, lessonIds, lessonProps, lessonRef, welcomeProps } from "./course/index.ts";
 import { checkpointServer, courseMapServer, lessonServer, nextLessonServer, tutorialStepServer, welcomeServer } from "./surfaces.ts";
-import { TUTORIAL, tutorialRefs } from "./tutorial.ts";
+import { tutorialOf, tutorialRefs } from "./tutorial.ts";
 
 const LessonInput = z.object({ id: z.string() });
 const lessonInputSchema = {
@@ -115,21 +115,25 @@ export const offerNextLesson = defineTool({
 export const showTutorialStep = defineTool({
   name: "show_tutorial_step",
   description:
-    "Show a page of HaiKIT's tutorial, built into this app: intro, a step from 01 to 10, " +
-    "or next-steps. BLOCKS until the reader clicks Previous, Next or Course map on it.",
+    "Show a page of HaiKIT's tutorials, built into this app. The first, building a Hello, World! app: " +
+    "intro, a step from 01 to 10, or next-steps. The second, on notifications: 2-intro, a step from " +
+    "2-01 to 2-09, or 2-next-steps. BLOCKS until the reader clicks Previous, Next or Course map on it.",
   input: z.object({ id: z.string() }),
   inputJsonSchema: {
     type: "object",
-    properties: { id: { type: "string", description: "intro, 01 … 10, or next-steps" } },
+    properties: { id: { type: "string", description: "intro, 01 … 10, next-steps; or 2-intro, 2-01 … 2-09, 2-next-steps" } },
     required: ["id"],
     additionalProperties: false,
   },
 
   async run({ id }, ctx) {
+    // Previous and Next read on from one tutorial into the next.
     const refs = tutorialRefs();
     const at = refs.findIndex((r) => r.id === id);
-    if (at < 0) return ctx.text(`No tutorial page ${id}. Pages: ${refs.map((r) => r.id).join(", ")}.`);
-    const page = TUTORIAL.pages[at]!;
+    const tutorial = tutorialOf(id);
+    if (at < 0 || !tutorial) return ctx.text(`No tutorial page ${id}. Pages: ${refs.map((r) => r.id).join(", ")}.`);
+    const index = tutorial.pages.findIndex((p) => p.id === id);
+    const page = tutorial.pages[index]!;
     return ctx.render(
       tutorialStepServer,
       {
@@ -137,8 +141,8 @@ export const showTutorialStep = defineTool({
         id: page.id,
         label: page.label,
         title: page.title,
-        tutorial: TUTORIAL.title,
-        position: { index: at + 1, total: refs.length },
+        tutorial: tutorial.title,
+        position: { index: index + 1, total: tutorial.pages.length },
         prev: refs[at - 1] ?? null,
         next: refs[at + 1] ?? null,
       },

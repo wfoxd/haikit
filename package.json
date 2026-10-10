@@ -8,7 +8,7 @@
   ],
   "scripts": {
     "build": "tsc -b packages/core packages/server packages/anthropic packages/postgres packages/react",
-    "typecheck": "npm run build && tsc -p examples/flights --noEmit && tsc -p examples/flights/tsconfig.browser.json && tsc -p examples/hello --noEmit && tsc -p examples/hello-react --noEmit && tsc -p examples/hello-react/tsconfig.client.json && tsc -p packages/react/tsconfig.test.json",
+    "typecheck": "npm run build && tsc -p examples/flights --noEmit && tsc -p examples/flights/tsconfig.browser.json && tsc -p examples/hello --noEmit && tsc -p examples/hello-notices --noEmit && tsc -p examples/hello-notices/tsconfig.browser.json && tsc -p examples/hello-react --noEmit && tsc -p examples/hello-react/tsconfig.client.json && tsc -p packages/react/tsconfig.test.json",
     "typetest": "node scripts/typetest.mjs",
     "smoke": "node scripts/smoke.mjs",
     "storetest": "node scripts/storetest.mjs",
@@ -18,6 +18,7 @@
     "prepublish-check": "npm run test && npm run packtest",
     "example:flights": "npm run build && HAI_SCRIPTED=1 node examples/flights/src/server/main.ts",
     "example:hello": "npm run build && HAI_SCRIPTED=1 node examples/hello/src/server/main.ts",
+    "example:hello-notices": "npm run build && HAI_SCRIPTED=1 node examples/hello-notices/src/server/main.ts",
     "example:hello-react": "npm run build && HAI_SCRIPTED=1 node examples/hello-react/src/server/main.ts",
     "clean": "rm -rf packages/*/dist packages/*/*.tsbuildinfo",
     "release": "npm run build && npx changeset publish",
