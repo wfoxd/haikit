@@ -3128,6 +3128,16 @@ async function updateChecks(make) {
         lastAsked = ret.handle;
         return ret;
       }
+      if (i.op === "late-try") {
+        await new Promise((r) => setTimeout(r, i.wait));
+        try {
+          await ctx.update(card, i.handle, { price: 2 });
+          return ctx.text("revised");
+        } catch (err) {
+          errors.push(err.message);
+          return ctx.text(`refused: ${err.message}`);
+        }
+      }
       if (i.op === "try") {
         try {
           await ctx.update(card, i.handle, { price: 1 });
@@ -3253,6 +3263,11 @@ async function updateChecks(make) {
     /superseded/.test(oldAnswer.error?.message ?? "") && !newAnswer.error &&
       newAnswer.c.messages.some((m) => JSON.stringify(m.content).includes("chose C from C")),
   );
+  check(
+    "…and its answer goes to the model under the revision's digest, not the original's",
+    twice.c.pending?.digest === `pick C as ${waitingOn}` &&
+      newAnswer.c.messages.some((m) => JSON.stringify(m.content).includes(`pick C as ${waitingOn}\\nchose C from C`)),
+  );
 
   // ── freshness: a revised surface's window stops counting
   next.push([{ op: "card", price: 10 }]);
@@ -3267,6 +3282,19 @@ async function updateChecks(make) {
   await new Promise((r) => setTimeout(r, 300));
   const expired = await request(bid, say("now?"));
   check("…and the revision's window still closes it in time", expired.events.some((e) => e.type === "expired"));
+
+  // ── a turn that outlasts a surface's window can't revive it by revising it
+  next.push([{ op: "card", price: 5 }]);
+  const lapsing = await request(undefined, say("show"));
+  errors.length = 0;
+  next.push([{ op: "late-try", handle: lapsing.c.handles[0], wait: 500 }]); // fresh when the turn begins, not by the revision
+  const lapsed = await request(lapsing.c.id, say("revise it, slowly"));
+  check(
+    "a revision is refused once the conversation has gone out of date during the turn",
+    /out of date/.test(errors[0] ?? "") && !lapsed.c.superseded?.[lapsing.c.handles[0]],
+  );
+  const after = await request(lapsing.c.id, say("and now?"));
+  check("…and the conversation stays out of date", after.events.some((e) => e.type === "expired"));
 
   // ── a revision an overtaken turn made is inert
   next.push([{ op: "card", price: 1 }]);
@@ -4321,13 +4349,17 @@ async function surfaceAgeChecks() {
     await hai.notify(c2.id, dropped, {});
     await wait(700); // shown, revised, and the turn runs on
     const joined = await stream(`http://127.0.0.1:5390/hai/events?conversationId=${c2.id}`, released);
-    await watching;
+    const liveOpens = (await watching).got.filter((e) => e.type === "ui_open");
     reviseToo = false;
     const opens = joined.got.filter((e) => e.type === "ui_open");
     const props = joined.got.filter((e) => e.type === "ui_props");
     check(
       "a stream joining after a wake turn revised its surface sees it once, as revised",
-      opens.length === 1 && !("replaces" in opens[0]) && props.length === 1 && props[0].props.price === 289 && props[0].handle === opens[0].handle,
+      opens.length === 1 && props.length === 1 && props[0].props.price === 289 && props[0].handle === opens[0].handle,
+    );
+    check(
+      "…still marked as replacing the original, under the original's tool row, as a browser that saw it keeps it",
+      opens[0]?.replaces === liveOpens[0]?.handle && opens[0]?.toolId === liveOpens[0]?.toolId,
     );
   } finally {
     server.close();

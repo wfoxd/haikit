@@ -338,7 +338,10 @@ function remember(shown: WireEvent[], event: WireEvent) {
     else {
       // A revision of a surface this turn showed takes its place: a stream
       // joining later sees the surface once, as it is now. Its old props go.
-      delete copy.replaces;
+      // It keeps `replaces`, so a browser that did see the old one swaps it in
+      // place rather than adding a second, and the old one's tool row, which
+      // the browser keeps through a revision too.
+      copy.toolId = (shown[replaced] as Extract<WireEvent, { type: "ui_open" }>).toolId;
       shown[replaced] = copy;
       for (let i = shown.length - 1; i >= 0; i--) {
         const e = shown[i];

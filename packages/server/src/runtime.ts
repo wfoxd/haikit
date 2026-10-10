@@ -111,7 +111,12 @@ interface Hop {
    * so two renders at once cannot both ask; the handle is known once it shows,
    * and `settled` resolves when its render has shown it or failed.
    */
-  asking: { handle: string | null; settled: Promise<void> } | null;
+  asking: {
+    handle: string | null;
+    settled: Promise<void>;
+    /** Its latest digest, once a later call in the reply has revised it. */
+    digest?: string;
+  } | null;
 }
 
 /** An elicit surface a tool call showed, and the digest its answer goes out under. */
@@ -866,8 +871,11 @@ export class Hai {
         // Hold the resolved siblings too — the API is all-or-nothing per batch.
         conversation.status = "awaiting";
         // At the question's latest revision: a later call in this reply may
-        // have revised it.
-        conversation.pending = { ...parked, handle: currentHandle(conversation, parked.handle), results };
+        // have revised it, and then its answer goes out under the revision's
+        // digest, not the original's.
+        const handle = currentHandle(conversation, parked.handle);
+        const digest = handle !== parked.handle && hop.asking?.handle === handle && hop.asking.digest ? hop.asking.digest : parked.digest;
+        conversation.pending = { ...parked, handle, digest, results };
         emit({ type: "status", status: "awaiting" });
         await this.emitContext(conversation, emit);
         return;
@@ -1023,6 +1031,12 @@ export class Hai {
       revising.add(handle);
       this.revising.set(conversation, revising);
       try {
+        // Freshness again, here: a long turn can outlast a window that was open
+        // when it began, and a revision must not bring an out-of-date
+        // conversation back by superseding the surface that closed it.
+        if (await this.refuseIfExpired(conversation, () => {})) {
+          throw new Error("this conversation is out of date; nothing more can be revised in it");
+        }
         const record = await this.config.store.getPayload(handle, conversation.id);
         if (!record) throw new Error(`no surface ${handle} in this conversation`);
         if (record.component !== impl.surface.name) {
@@ -1032,7 +1046,7 @@ export class Hai {
         (conversation.superseded ??= {})[handle] = ret.handle!;
         // a question waiting on the old surface waits on the new one
         if (asked?.handle === handle) asked = { handle: ret.handle!, digest: ret.model };
-        if (hop.asking?.handle === handle) hop.asking.handle = ret.handle!;
+        if (hop.asking?.handle === handle) Object.assign(hop.asking, { handle: ret.handle!, digest: ret.model });
         return ret;
       } finally {
         revising.delete(handle);
