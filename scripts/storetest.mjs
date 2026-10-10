@@ -3407,7 +3407,7 @@ async function updateChecks(make) {
 // it as an update notice, the browser through the events stream.
 async function outsideUpdateChecks(make) {
   const { createHai } = await import("../packages/server/dist/index.js");
-  const { defineSurface, defineTool, resolve, inform, isConversationBusy } = await import("../packages/core/dist/index.js");
+  const { defineNotice, defineSurface, defineTool, resolve, inform, isConversationBusy } = await import("../packages/core/dist/index.js");
   const any = { parse: (v) => v };
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const base = make();
@@ -3603,6 +3603,13 @@ async function outsideUpdateChecks(make) {
     "an app that didn't say it sends updates is refused: no browser would hear them",
     /updates: true/.test((await failed(plain.update(id, card, first, { price: 1 })))?.message ?? ""),
   );
+  // its events stream is open, but nothing would start the turn a wake update asks for
+  const passive = defineNotice({ name: "passive", version: 1, payload: any }).implement({ model: () => null });
+  const noticesOnly = createHai({ model, store, tools: [tool], surfaces: [card], notices: [passive], system: "x" });
+  check(
+    "…and so is one that only lists passive notices",
+    !noticesOnly.wakes && /updates: true/.test((await failed(noticesOnly.update(id, card, first, { price: 1 })))?.message ?? ""),
+  );
   check("…and none of those wrote anything", (await store.getNotices(id, 0)).length === writes);
 
   // ── a notice that can't be stored undoes the revision
@@ -3726,7 +3733,9 @@ async function updateStreamChecks() {
           const lines = buffer.slice(0, i).split("\n");
           buffer = buffer.slice(i + 2);
           const data = lines.find((l) => l.startsWith("data: "));
-          if (data) frames.push({ id: lines.find((l) => l.startsWith("id: "))?.slice(4), event: JSON.parse(data.slice(6)) });
+          const id = lines.find((l) => l.startsWith("id: "))?.slice(4);
+          // an id alone, with no event, still moves the browser's place on
+          if (data || id) frames.push({ id, event: data ? JSON.parse(data.slice(6)) : null });
         }
       }
     } catch {}
@@ -3769,7 +3778,11 @@ async function updateStreamChecks() {
     hidden.add(third);
     const swept = await read(`${base}/hai/events?conversationId=${id}`, { "last-event-id": props.id }, 1, 300);
     hidden.delete(third);
-    check("a revision whose payload is gone is passed over", swept.length === 0);
+    const sweptSeq = (await store.getNotices(id, 0)).at(-1).seq;
+    check(
+      "a revision whose payload is gone is passed over, with its id alone, so a browser resumes after it",
+      swept.length === 1 && swept[0].event === null && swept[0].id === String(sweptSeq),
+    );
 
     // ── the client
     const client = createChat({ endpoint: `${base}/hai`, registry });

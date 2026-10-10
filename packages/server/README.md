@@ -272,10 +272,11 @@ const { handle } = await hai.update(conversationId, flightTableServer, "ui_03", 
 });
 ```
 
-`updates: true` opens the events stream, which is how a revision reaches the
-browser; an app that lists `notices` has it open already. The props are typed
-from the surface's contract and checked against its schema before anything
-else happens.
+`hai.update` refuses without `updates: true`, even in an app that lists
+`notices`. The flag opens the events stream, which is how a revision reaches
+the browser, and has the events route start the turn an update sent with
+`wake` asks for. The props are typed from the surface's contract and checked
+against its schema before anything else happens.
 
 It takes the conversation's lease, as a request does, and writes the revision
 through the same fenced path as `ctx.update`, so a click can never act on

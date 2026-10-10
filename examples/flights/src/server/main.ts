@@ -27,6 +27,8 @@ const hai = createHai({
   tools,
   surfaces: [flightTableServer, seatMapServer],
   notices: [holdConfirmedServer, fareDroppedServer],
+  // the airline revises the flight table with hai.update
+  updates: true,
   system: `You are a flight assistant embedded in a UI that renders tool results as interactive components.
 
 Tools return a short DIGEST into your context. The full dataset goes to the user's browser and is

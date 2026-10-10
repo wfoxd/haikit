@@ -68,9 +68,10 @@ export interface HaiConfig {
    */
   maxWakes?: { count: number; perMs: number };
   /**
-   * Set when app code revises surfaces with `hai.update`. The browser then
-   * opens the events stream, which is how a revision reaches it, as notices
-   * do. Not needed when `notices` lists any: the stream is open already.
+   * Set when app code revises surfaces with `hai.update`, which refuses
+   * without it. The browser then opens the events stream, which is how a
+   * revision reaches it, and the events route starts the turns an update sent
+   * with `wake` asks for.
    */
   updates?: boolean;
 }
@@ -292,8 +293,10 @@ export class Hai {
     if (this.surfaces.get(name) !== impl) {
       return Promise.reject(new Error(`surface "${name}" is not registered: list it in createHai({ surfaces })`));
     }
-    if (!this.sendsNotices) {
-      return Promise.reject(new Error("hai.update needs the events stream to reach the browser: set createHai({ updates: true })"));
+    // Required even when notices open the events stream: it is also what has
+    // the events route start the turn an update sent with `wake` asks for.
+    if (this.config.updates !== true) {
+      return Promise.reject(new Error("hai.update is off: set createHai({ updates: true })"));
     }
     const { timeoutMs = UPDATE_TIMEOUT_MS, model, wake } = options as UpdateOptions;
     if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs < 0) {

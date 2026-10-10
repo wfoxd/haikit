@@ -236,10 +236,12 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
   // how long ago it was stored, and its props. Only the last frame carries the
   // notice's id, so a stream cut off between the two resumes with both. A
   // revision whose payload is gone, swept with an old conversation's, is
-  // passed over.
+  // passed over with its id alone, so a browser resumes after it rather than
+  // being sent it again on every reconnect.
   const sendRevision = async (handle: string, replaces: string, seq: number) => {
     const record = await store.getPayload(handle, conversationId);
-    if (!record || signal.aborted) return;
+    if (signal.aborted) return;
+    if (!record) return write(`id: ${seq}\n\n`);
     const window = typeof record.staleAfterMs === "number" ? record.staleAfterMs : undefined;
     const open: WireEvent = {
       type: "ui_open",
