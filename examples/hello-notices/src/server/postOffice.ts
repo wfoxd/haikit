@@ -16,6 +16,7 @@ const THANKS: Record<string, string> = {
   ar: "شكراً على البطاقة!",
   ja: "はがきをありがとう！",
   he: "תודה על הגלויה!",
+  cy: "Diolch am y cerdyn post!", // the language the translators add
 };
 
 let notify: Notify | null = null;

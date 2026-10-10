@@ -243,12 +243,10 @@ export const notices = {                                  // 2
   postcard_delivered: {                                   // 3
     /** @param {HTMLElement} el @param {Delivered} payload */
     mount(el, payload) {                                  // 4
+      const text = h("span", "greeting", payload.text);   // 5
+      text.dir = "auto";                                  // 6
       const line = h("div", "notice-line");
-      line.append(
-        h("span", null, `Delivered to ${payload.to}: `),
-        h("span", "greeting", payload.text),              // 5
-        h("span", "lang", payload.reference),
-      );
+      line.append(h("span", null, `Delivered to ${payload.to}: `), text, h("span", "lang", payload.reference));
       el.append(line);
     },
   },
@@ -264,6 +262,8 @@ export const notices = {                                  // 2
 **4** Called once, when the notice arrives, with its validated payload. `mount` may return `{ unmount() }` if it sets up anything that outlives the element.
 
 **5** `textContent` again, through `h`. A notice's payload came from outside your process; it never becomes markup.
+
+**6** The greeting may read right to left, and the payload doesn't say. `dir="auto"` lets the browser decide from the text, so Arabic and Hebrew lay out correctly.
 
 The transcript draws the frame: a label saying which notice it is, and a body your component fills. Give the line a little room:
 
@@ -441,6 +441,7 @@ const THANKS: Record<string, string> = {
   ar: "شكراً على البطاقة!",
   ja: "はがきをありがとう！",
   he: "תודה על הגלויה!",
+  cy: "Diolch am y cerdyn post!", // the language the translators add
 };
 
 // in sendPostcard, after the delivery timer
@@ -472,7 +473,7 @@ And a component for it, beside the first:
   },
 ```
 
-**1** The reply is in the postcard's language, which may read right to left. `dir="auto"` lets the browser decide from the text.
+**1** The reply is in the postcard's language, which may read right to left, so it gets `dir="auto"` too.
 
 Nothing else changes. The turn runs where a browser is watching: the events stream, holding the conversation's connection, takes the lease and streams the turn down that same connection. The user message it records carries every unread notice, then a line saying the user hasn't said anything:
 

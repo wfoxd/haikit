@@ -85,12 +85,10 @@ export const notices = {
   postcard_delivered: {
     /** @param {HTMLElement} el @param {Delivered} payload */
     mount(el, payload) {
+      const text = h("span", "greeting", payload.text);
+      text.dir = "auto"; // the greeting may read right to left
       const line = h("div", "notice-line");
-      line.append(
-        h("span", null, `Delivered to ${payload.to}: `),
-        h("span", "greeting", payload.text),
-        h("span", "lang", payload.reference),
-      );
+      line.append(h("span", null, `Delivered to ${payload.to}: `), text, h("span", "lang", payload.reference));
       el.append(line);
     },
   },
