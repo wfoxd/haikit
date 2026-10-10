@@ -1069,9 +1069,14 @@ export class Hai {
         };
         const ret = await show(impl, props, record.mode, handle, stillFresh);
         (conversation.superseded ??= {})[handle] = ret.handle!;
-        // a question waiting on the old surface waits on the new one
-        if (asked?.handle === handle) asked = { handle: ret.handle!, digest: ret.model };
-        if (hop.asking?.handle === handle) Object.assign(hop.asking, { handle: ret.handle!, digest: ret.model });
+        // a question waiting on the old surface waits on the new one; when this
+        // call asked it, its result starts with the revision's digest now, so
+        // that is the part a later call's revision replaces
+        const mine = asked?.handle === handle;
+        if (mine) asked = { handle: ret.handle!, digest: ret.model };
+        if (hop.asking?.handle === handle) {
+          Object.assign(hop.asking, { handle: ret.handle!, digest: ret.model }, mine ? { question: ret.model } : {});
+        }
         return ret;
       } finally {
         revising.delete(handle);

@@ -3139,6 +3139,13 @@ async function updateChecks(make) {
         lastAsked = ret.handle;
         return ctx.text("also: a note");
       }
+      if (i.op === "ask-revise-extra") {
+        // asks, revises its own question, then says something more
+        const ret = await ctx.render(picker, { v: i.v }, { mode: "elicit" });
+        const revised = await ctx.update(picker, ret.handle, { v: i.then });
+        lastAsked = revised.handle;
+        return ctx.text("also: a note");
+      }
       if (i.op === "late-try") {
         await new Promise((r) => setTimeout(r, i.wait));
         try {
@@ -3280,6 +3287,13 @@ async function updateChecks(make) {
   check(
     "a revised question keeps what its asking call said after it",
     extra.c.pending?.digest === `pick C2 as ${extra.c.pending?.handle}\nalso: a note`,
+  );
+  // …and so it does when the asking call revised its question itself first
+  next.push([{ op: "ask-revise-extra", v: "B4", then: "C4" }, { op: "update-asked", v: "D4" }]);
+  const own = await request(id, say("ask, revise it, add a note, then revise it again"));
+  check(
+    `a question its own call revised, then a later call revised again, keeps that call's extra text (${JSON.stringify(own.c.pending?.digest)})`,
+    own.c.pending?.digest === `pick D4 as ${own.c.pending?.handle}\nalso: a note`,
   );
   // a revision whose digest is empty is still the revision's
   next.push([{ op: "ask", v: "B3" }, { op: "update-asked", v: "EMPTY" }]);
