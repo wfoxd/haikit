@@ -318,6 +318,54 @@ it writes, so a feed ticking ten times a second writes as often as the lease
 allows. Calls naming the surface's first handle or its latest share the
 queue. A `wake` any of them asked for still wakes.
 
+**A signal is a broadcast to every open browser.** Something everyone should
+see now and nobody needs later, such as how many people are online, isn't a
+notice: it belongs to no conversation, and the model has no use for it.
+Declare it once, beside your notices, and send it with `hai.signal`:
+
+```ts
+// shared/signals.ts — imported by both halves
+export const online = defineSignal({ name: "online", version: 1, payload: z.object({ count: z.number() }) });
+
+// server
+const hai = createHai({ model, store, tools, surfaces, system, signals: [online] });
+hai.signal(online, { count: 12 });
+```
+
+It goes to every open events stream at once, on this server and, through a
+store with `publish` and `subscribe`, on the others. It is not stored or
+numbered, never reaches the model, and is never drawn in the transcript: the
+browser hands it to a handler of the app's. The payload is typed from the
+contract and checked against its schema; a signal not listed in `signals`,
+or a payload that fails, throws. Each signal's latest payload is kept, and a
+stream that opens later is sent it first, so a browser that arrives late
+still has the current value. Listing any signal opens the events stream, as
+notices do.
+
+**Presence counts who is watching.** `hai.onPresence(listener)` hears how many
+conversations have an events stream open, on every server sharing the store:
+a tab with the app open, as near as the server can tell. It hears the count
+at once and whenever it changes:
+
+```ts
+hai.onPresence((count) => hai.signal(online, { count }));
+```
+
+A stream that closes still counts for `presence.graceMs` (default 5 s), so a
+browser that drops its connection and reconnects doesn't flicker the count.
+Each server counts its own conversations, and the totals are summed: a
+conversation that reconnects to a different server counts on both until the
+grace runs out, so the count can run one high for a few seconds. It's for a
+"how many are here" number, not an exact head count.
+Servers sharing a store tell each other their counts every
+`presence.heartbeatMs` (default 10 s), and one not heard from for three beats
+stops counting. Only numbers travel: no conversation ids, and nothing the
+model sees. An app opens no events stream until a conversation has begun, so
+a visitor counts from their first message, or from page load with an `init`
+tool. If you serve the events stream yourself, call
+`hai.streamOpened(conversationId, emit)` when one opens and the function it
+returns when it closes.
+
 **A conversation closes once any of its surfaces passes its `staleAfterMs`.**
 From then on both routes answer with an `expired` event and the model is not
 called, so a picker left open over a weekend cannot resolve against last week's

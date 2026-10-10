@@ -341,6 +341,36 @@ export type Notify = <P, K extends NoticeKind>(
   options?: NotifyOptions,
 ) => Promise<{ seq: number }>;
 
+// ───────────────────────────────────────────── signals: broadcasts
+
+/**
+ * A short-lived broadcast: something every open browser should see now and
+ * nobody needs later, such as how many people are online. Unlike a notice it
+ * belongs to no conversation, is never stored, and never reaches the model or
+ * the transcript: it goes to every open events stream, on every server, and
+ * the browser hands it to a handler of the app's.
+ *
+ * The contract is shared, like a notice's, so the payload is typed on both
+ * sides. There is no server half: nothing about a signal is for the model.
+ */
+export interface Signal<P> {
+  readonly name: string;
+  readonly version: number;
+  readonly payload: Schema<P>;
+}
+
+export function defineSignal<P>(def: { name: string; version: number; payload: Schema<P> }): Signal<P> {
+  return { name: def.name, version: def.version, payload: def.payload };
+}
+
+/**
+ * Send a signal to every open events stream. The payload is typed from the
+ * signal's contract and checked against its schema. Each signal's latest
+ * payload is kept, and sent to a stream when it opens, so a browser that
+ * arrives late still has the current value.
+ */
+export type SendSignal = <P>(signal: Signal<P>, payload: NoInfer<P>) => void;
+
 export interface UpdateOptions {
   /**
    * A sentence for the model about why the surface changed, such as "Fares
@@ -690,6 +720,12 @@ export type WireEvent =
    * as part of the history, in the `context` event's inspector view.
    */
   | { type: "notice"; seq: number; name: string; version: number; payload: unknown; handle?: string }
+  /**
+   * On the events stream: a signal, sent to every open stream. Never stored,
+   * so it carries no id and a reconnect doesn't ask for it again; a stream
+   * that opens is sent each signal's latest payload instead.
+   */
+  | { type: "signal"; name: string; version: number; payload: unknown }
   /**
    * On the events stream, after a wake turn: the server has saved the
    * conversation and let it go, so the browser may send again. Its `status`
