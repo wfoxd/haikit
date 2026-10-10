@@ -195,8 +195,32 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
   // turn, not only the one whose attempt won the lease: another tab shows the
   // reply too, and holds its requests until the turn lets go.
   watchers.streams.add(emit);
-  // Signals from here on, starting with each one's latest; and it counts as present.
-  const closeStream = hai.streamOpened(conversationId, emit);
+  // Signals from here on, starting with each one's latest; and it counts as
+  // present. A signal only matters as its latest value, so a reader that has
+  // fallen behind is sent just the newest of each once it catches up: a
+  // stalled socket holds at most one per signal, never every one sent.
+  const behind = new Map<string, WireEvent>();
+  let draining = false;
+  const flush = () => {
+    draining = false;
+    const pending = [...behind.values()];
+    behind.clear();
+    for (const event of pending) emitSignal(event);
+  };
+  const emitSignal: Emit = (event) => {
+    if (event.type !== "signal") return emit(event);
+    if (signal.aborted || res.writableEnded) return;
+    if (res.writableNeedDrain || behind.size) {
+      behind.set(event.name, event);
+      if (!draining) {
+        draining = true;
+        res.once("drain", flush);
+      }
+      return;
+    }
+    res.write(`data: ${JSON.stringify(event)}\n\n`);
+  };
+  const closeStream = hai.streamOpened(conversationId, emitSignal);
   // Joining while a wake turn runs: what it has shown so far, starting with
   // its `streaming` status, so the browser holds requests until it lets go,
   // and the reply's later text has a block to land in.

@@ -3929,10 +3929,12 @@ async function signalChecks() {
   const hai = createHai({ model, store, tools: [], surfaces: [], system: "x", signals: [online, status], presence });
   const other = createHai({ model, store, tools: [], surfaces: [], system: "x", signals: [online, status], presence });
   const servers = [];
+  const eventsResponses = []; // the server's side of every events stream, newest last
   const listen = (h, port) =>
     new Promise((r) => {
       const handler = nodeHandler(h, "/hai");
       const server = http.createServer(async (req, res) => {
+        if (req.url.includes("/events")) eventsResponses.push(res);
         if (!(await handler(req, res))) res.writeHead(404).end();
       });
       servers.push(server);
@@ -4075,6 +4077,25 @@ async function signalChecks() {
     const peak = counts.at(-1);
     await until(() => counts.at(-1) === 2);
     check(`a server not heard from for three beats stops counting (${peak} → ${counts.at(-1)})`, peak === 7 && counts.at(-1) === 2);
+
+    // ── a reader that stops reading can't make the server buffer every signal
+    const stalled = new AbortController();
+    const unread = await fetch(`http://127.0.0.1:5395/hai/events?conversationId=${await conversation()}`, { signal: stalled.signal });
+    const backedUp = eventsResponses.at(-1);
+    const bulk = "x".repeat(64 * 1024);
+    let buffered = 0;
+    for (let i = 0; i < 200; i++) {
+      hai.signal(status, { i, bulk });
+      buffered = Math.max(buffered, backedUp.writableLength);
+      await wait(2);
+    }
+    for (let i = 0; i < 20; i++, await wait(10)) buffered = Math.max(buffered, backedUp.writableLength);
+    check(
+      `a stalled reader holds little, however many signals go out (${Math.round(buffered / 1024)} KiB of 12.5 MiB sent)`,
+      buffered < 1024 * 1024,
+    );
+    stalled.abort();
+    void unread;
 
     // ── the client
     const seen = [];
