@@ -102,7 +102,13 @@ export class Broadcast {
   onPresence(listener: (count: number) => void): () => void {
     this.start();
     this.listeners.add(listener);
-    listener(this.total);
+    try {
+      listener(this.total);
+    } catch (err) {
+      // never handed its way to stop, so it must not stay
+      this.listeners.delete(listener);
+      throw err;
+    }
     return () => void this.listeners.delete(listener);
   }
 

@@ -251,11 +251,20 @@ export class Hai {
   }
 
   /**
-   * Whether this app sends notices, `hai.update`'s included, so the browser
-   * should open the events stream.
+   * Whether this app sends notices, `hai.update`'s included: what the
+   * conversation's history may have unread, and the events stream may have to
+   * deliver.
    */
   get sendsNotices(): boolean {
-    return this.notices.size > 0 || this.config.updates === true || this.signals.size > 0;
+    return this.notices.size > 0 || this.config.updates === true;
+  }
+
+  /**
+   * Whether the browser should open the events stream: for notices, or for
+   * signals, which travel on it too.
+   */
+  get streamsEvents(): boolean {
+    return this.sendsNotices || this.signals.size > 0;
   }
 
   /**

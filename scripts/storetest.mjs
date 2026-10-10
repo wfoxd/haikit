@@ -3927,7 +3927,9 @@ async function signalChecks() {
       return { content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" };
     },
   };
-  const store = memoryStore();
+  const memory = memoryStore();
+  let noticeReads = 0; // how often anything reads the notices table
+  const store = { ...memory, getNotices: (...args) => (noticeReads++, memory.getNotices(...args)) };
   const presence = { graceMs: 2_000, heartbeatMs: 200 };
   const hai = createHai({ model, store, tools: [], surfaces: [], system: "x", signals: [online, status, proto, toStr], presence });
   const other = createHai({ model, store, tools: [], surfaces: [], system: "x", signals: [online, status], presence });
@@ -4003,6 +4005,16 @@ async function signalChecks() {
     }
     check("a payload that fails the signal's schema is refused", /count must be a number/.test(refused ?? ""));
     check("presence is heard at once, nought with nobody watching", counts.length === 1 && counts[0] === 0);
+    let thrown = 0;
+    let threw = false;
+    try {
+      hai.onPresence(() => {
+        thrown++;
+        throw new Error("listener broke");
+      });
+    } catch {
+      threw = true;
+    }
 
     // ── the browser opens the events stream for an app that only sends signals
     const chat = await fetch("http://127.0.0.1:5395/hai/chat", { method: "POST", body: JSON.stringify({ message: "hi" }) }).then((r) => r.text());
@@ -4013,6 +4025,7 @@ async function signalChecks() {
     const b = open(5395, await conversation());
     await until(() => counts.at(-1) === 2);
     check(`presence counts each conversation with a stream open (${counts.join(" ")})`, counts.at(-1) === 2);
+    check("a presence listener that throws when first called isn't left registered", threw && thrown === 1);
     const notices = (await store.getNotices((await conversation()), 0)).length;
     hai.signal(online, { count: 2 });
     hai.signal(status, { up: true });
@@ -4034,7 +4047,12 @@ async function signalChecks() {
 
     // ── never stored, never the model's
     const chatId = JSON.parse(chat.split("\n").find((l) => l.startsWith("data: ")).slice(6)).conversationId;
+    noticeReads = 0;
     await fetch("http://127.0.0.1:5395/hai/chat", { method: "POST", body: JSON.stringify({ conversationId: chatId, message: "again" }) }).then((r) => r.text());
+    check(`an app that sends only signals reads no notices when a message is sent (${noticeReads} reads)`, noticeReads === 0);
+    noticeReads = 0;
+    await wait(2_500);
+    check(`…nor while its events streams stay open: there is nothing stored to poll for (${noticeReads} reads)`, noticeReads === 0);
     check(
       "a signal is never stored as a notice, nor reaches the model",
       notices === 0 && (await store.getNotices(chatId, 0)).length === 0 && !heard.at(-1).includes("count"),
