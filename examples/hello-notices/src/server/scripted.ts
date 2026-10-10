@@ -111,8 +111,13 @@ export function scripted(): ModelAdapter {
       }
 
       if (/arrive|deliver|postcard/.test(text)) {
+        // the latest postcard posted, and whether its own delivery has arrived
+        const posted = [...JSON.stringify(messages).matchAll(/reference (PC-\d+); delivery is not confirmed/g)].at(-1)?.[1];
         const delivered = latest("postcard_delivered");
-        return say(delivered ? `Yes. ${delivered}` : "Not yet. I'll tell you when it's delivered.", onTextDelta);
+        return say(
+          delivered && (!posted || delivered.includes(posted)) ? `Yes. ${delivered}` : "Not yet. I'll tell you when it's delivered.",
+          onTextDelta,
+        );
       }
 
       // An `inform` action would arrive as a plain user turn — check it before

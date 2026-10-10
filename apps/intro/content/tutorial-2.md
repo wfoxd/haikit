@@ -344,8 +344,13 @@ const latest = (name: string) => {
 };
 
 if (/arrive|deliver|postcard/.test(text)) {               // 3
+  // the latest postcard posted, and whether its own delivery has arrived
+  const posted = [...JSON.stringify(messages).matchAll(/reference (PC-\d+); delivery is not confirmed/g)].at(-1)?.[1];  // 4
   const delivered = latest("postcard_delivered");
-  return say(delivered ? `Yes. ${delivered}` : "Not yet. I'll tell you when it's delivered.", onTextDelta);
+  return say(
+    delivered && (!posted || delivered.includes(posted)) ? `Yes. ${delivered}` : "Not yet. I'll tell you when it's delivered.",
+    onTextDelta,
+  );
 }
 ```
 
@@ -354,6 +359,8 @@ if (/arrive|deliver|postcard/.test(text)) {               // 3
 **2** The label haikit puts in front of every notice's text, with the notice's name in it.
 
 **3** Put this before the keyword branches, as the first tutorial does with `[ui interaction]`, so the question can't trigger a tool.
+
+**4** Post a second card and ask before it's delivered, and the first card's notice is still in the history. Matching the reference `choose` returned keeps the answer about the card just posted.
 
 And mention the postcard when greeting, from what `choose` returned:
 
@@ -524,7 +531,7 @@ The last kind of news isn't a new thing to show; it's a change to something alre
 > [!NOTE]
 > **Needs HaiKIT 0.18 or later**
 >
-> `hai.update` arrived in 0.18. If your project installed an older release, update first: `npm install @haikit/core@latest @haikit/server@latest @haikit/client@latest`.
+> `hai.update` arrived in 0.18. If your project installed an older release, update first: `npm install @haikit/core@latest @haikit/server@latest @haikit/client@latest @haikit/anthropic@latest`. Upgrade all four together, so they share one copy of `@haikit/core`.
 
 **`src/server/translators.ts`** — *new file*
 
