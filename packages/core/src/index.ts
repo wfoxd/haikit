@@ -416,6 +416,26 @@ export interface ToolCtx {
     props: P,
     options?: { mode?: "display" },
   ): Promise<ToolReturn>;
+
+  /**
+   * Revise a surface this conversation already shows, in place: the browser
+   * swaps the new props into the component on screen, keeping its scroll and
+   * sort if it implements `update`. Typed and digested like `render`, and it
+   * resolves the same way, with the new digest for the model.
+   *
+   * Stored as a new surface with a new handle, which supersedes `handle`: a
+   * click on the old one is refused from then on, and its freshness window
+   * stops counting. The revision keeps the old surface's mode; a question
+   * waiting on it waits on the new one.
+   *
+   * `handle` must be a surface of the same contract in this conversation,
+   * neither answered (frozen) nor superseded already. Otherwise this throws.
+   */
+  update<P, A extends ActionMap, Q extends QueryMap>(
+    surface: SurfaceImpl<P, A, Q>,
+    handle: string,
+    props: P,
+  ): Promise<ToolReturn>;
 }
 
 export interface Tool<I = any> {
@@ -483,6 +503,14 @@ export interface Conversation {
    * halves commit together or not at all.
    */
   frozen: string[];
+  /**
+   * Surfaces revised in place: each superseded handle → the handle that
+   * replaced it. A click on a superseded handle is refused, and its window
+   * stops counting. On the fenced row with `handles` and `frozen`, so a
+   * revision an overtaken turn made is as inert as its payloads. Missing
+   * means none.
+   */
+  superseded?: Record<string, string>;
   pending: Pending | null;
   /** Turn lease expiry. A dead process leaves this in the past. */
   leaseUntil: number | null;
@@ -633,6 +661,11 @@ export type WireEvent =
       mode: string;
       /** The surface's freshness window. Absent when it never goes out of date. */
       staleAfterMs?: number;
+      /**
+       * The handle this surface revises, in place: the browser swaps it into
+       * the component already showing that one, and the old handle is gone.
+       */
+      replaces?: string;
       /**
        * How long ago the server stored this surface, measured as the frame was
        * written: the time its digest took, and, for a frame replayed to a

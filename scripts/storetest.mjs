@@ -439,6 +439,7 @@ export async function conform(label, make) {
     a.wakes = [1_700_000_000_000, 1_700_000_060_000];
     a.wokeThrough = put[2].seq;
     a.wakeTurns = 7;
+    a.superseded = { ui_01: "ui_02", ui_02: "ui_05" };
     a.leaseUntil = null;
     await s.saveConversation(a);
     const reloaded = await s.loadConversation(a.id);
@@ -446,6 +447,11 @@ export async function conform(label, make) {
     check(
       "wakes, wokeThrough and wakeTurns round-trip with the conversation",
       JSON.stringify(reloaded.wakes) === JSON.stringify(a.wakes) && reloaded.wokeThrough === put[2].seq && reloaded.wakeTurns === 7,
+    );
+    check(
+      "superseded round-trips with the conversation, and a new one has none",
+      JSON.stringify(reloaded.superseded) === JSON.stringify(a.superseded) &&
+        JSON.stringify((await s.loadConversation(undefined)).superseded ?? {}) === "{}",
     );
 
     // a store that can wake the events route does so, and lets go when told
@@ -508,6 +514,7 @@ export async function integration(label, make) {
   await oneQuestionChecks(make);
   await noticeChecks(make);
   await wakeChecks(make);
+  await updateChecks(make);
   return failures;
 }
 
@@ -3083,6 +3090,207 @@ async function wakeChecks(make) {
   check("an out-of-date conversation does not wake", (await waitingHai.wake(id, watch)) === "idle" && (await peek(id)).messages.length === staleAt);
 }
 
+// ── a tool revises a surface in place: ctx.update ──────────────────────
+// A revision is a new surface, with a new handle, that supersedes the old
+// one: clicks on the old are refused, its window stops counting, and the
+// model hears the new digest as the tool's result.
+async function updateChecks(make) {
+  console.log("\nsurface revisions");
+  const { createHai } = await import("../packages/server/dist/index.js");
+  const { defineSurface, defineTool, resolve, inform, query, StaleLease } = await import("../packages/core/dist/index.js");
+  const any = { parse: (v) => v };
+  const store = make();
+  const card = defineSurface({ name: "card", version: 1, props: any, actions: { note: inform(any) }, queries: { price: query(any, "the price", { type: "object", properties: {} }) } })
+    .implement({
+      digest: (p, { handle }) => `card ${p.price} as ${handle}`,
+      actions: { note: (v, { props }) => `noted ${v} at ${props.price}` },
+      queries: { price: (_a, { props, cap }) => cap([props.price], (x) => `price ${x}`) },
+      staleAfterMs: 400,
+    });
+  const other = defineSurface({ name: "other", version: 1, props: any }).implement({ digest: () => "other", actions: {}, queries: {} });
+  const picker = defineSurface({ name: "pick", version: 1, props: any, actions: { choose: resolve(any) }, queries: {} })
+    .implement({ digest: (p, { handle }) => `pick ${p.v} as ${handle}`, actions: { choose: (v, { props }) => `chose ${v} from ${props.v}` }, queries: {} });
+
+  const errors = [];
+  let lastAsked = null; // the question the tool last showed, for a revision in the same reply
+  const tool = defineTool({
+    name: "t",
+    description: "d",
+    input: any,
+    inputJsonSchema: { type: "object" },
+    async run(i, ctx) {
+      if (i.op === "card") return ctx.render(card, { price: i.price });
+      if (i.op === "other") return ctx.render(other, {});
+      if (i.op === "update") return ctx.update(card, i.handle, { price: i.price });
+      if (i.op === "update-asked") return ctx.update(picker, lastAsked, { v: i.v });
+      if (i.op === "ask") {
+        const ret = await ctx.render(picker, { v: i.v }, { mode: "elicit" });
+        lastAsked = ret.handle;
+        return ret;
+      }
+      if (i.op === "try") {
+        try {
+          await ctx.update(card, i.handle, { price: 1 });
+          return ctx.text("revised");
+        } catch (err) {
+          errors.push(err.message);
+          return ctx.text(`refused: ${err.message}`);
+        }
+      }
+      return ctx.text("?");
+    },
+  });
+  const next = []; // the tool calls the model makes next, one reply at a time
+  const model = {
+    id: "stub",
+    async generate({ messages }) {
+      const last = messages.at(-1).content;
+      const replying = Array.isArray(last) && last.some((b) => b.type === "tool_result");
+      if (!replying && next.length) {
+        const calls = next.shift();
+        return {
+          content: calls.map((input, i) => ({
+            type: "tool_use",
+            id: `tu_${Math.random()}_${i}`,
+            name: input.query ? "query_ui" : "t",
+            input,
+          })),
+          stop_reason: "tool_use",
+        };
+      }
+      return { content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" };
+    },
+  };
+  const hai = createHai({ model, store, tools: [tool], surfaces: [card, other, picker], system: "x" });
+  async function request(id, act) {
+    const c = await store.loadConversation(id);
+    const events = [];
+    let error = null;
+    try {
+      await act(c, (e) => events.push(e));
+    } catch (err) {
+      error = err;
+    }
+    c.leaseUntil = null;
+    await store.saveConversation(c);
+    return { c, events, error };
+  }
+  const say = (text) => (c, emit) => hai.send(c, text, emit);
+  const click = (handle, action, value) => (c, emit) => hai.interact(c, { handle, action, value }, emit);
+  const results = (c) => c.messages.flatMap((m) => (Array.isArray(m.content) ? m.content : [])).filter((b) => b.type === "tool_result").map((b) => b.content);
+
+  // ── revise a card shown in an earlier turn
+  next.push([{ op: "card", price: 343 }]);
+  const shown = await request(undefined, say("show it"));
+  const id = shown.c.id;
+  const first = shown.c.handles[0];
+  next.push([{ op: "update", handle: first, price: 389 }]);
+  const revised = await request(id, say("reprice it"));
+  const second = revised.c.handles.at(-1);
+  const opened = revised.events.find((e) => e.type === "ui_open");
+  check(
+    "ctx.update stores a new surface that supersedes the old, and says which it replaces",
+    second !== first && revised.c.superseded?.[first] === second && opened?.handle === second && opened.replaces === first,
+  );
+  check("the model hears the revision's digest as the tool's result", results(revised.c).at(-1) === `card 389 as ${second}`);
+
+  // ── clicks: the old handle is refused, the new one acts on the new props
+  const stale = await request(id, click(first, "note", "x"));
+  check(`a click on the superseded handle is refused (${stale.error?.message})`, stale.error?.message === `superseded by ${second}`);
+  const fresh = await request(id, click(second, "note", "x"));
+  check("a click on the revision acts on its props", !fresh.error && fresh.c.messages.some((m) => JSON.stringify(m.content).includes("noted x at 389")));
+
+  // ── query_ui on the old handle answers from what it was, and says it moved on
+  next.push([{ handle: first, query: "price", args: {} }]);
+  const queried = await request(id, say("what was the price?"));
+  const answer = results(queried.c).at(-1) ?? "";
+  check(
+    "query_ui on a superseded handle answers from its data, and says what it is now",
+    answer.includes("price 343") && answer.includes(`${first} has since been revised: it is ${second} now`),
+  );
+
+  // ── what can't be revised
+  next.length = 0;
+  next.push([{ op: "other" }]);
+  const withOther = await request(id, say("other"));
+  const otherHandle = withOther.c.handles.at(-1);
+  errors.length = 0;
+  next.push([{ op: "try", handle: first }]);
+  await request(id, say("again"));
+  next.push([{ op: "try", handle: otherHandle }]);
+  await request(id, say("wrong contract"));
+  next.push([{ op: "try", handle: "ui_999" }]);
+  await request(id, say("unknown"));
+  check(
+    "a superseded handle, a different contract, and an unknown handle are refused",
+    errors[0] === `${first} was revised already: it is ${second} now` && /is a other, not a card/.test(errors[1] ?? "") &&
+      /no surface ui_999/.test(errors[2] ?? ""),
+  );
+
+  // ── an answered surface can't be revised
+  next.push([{ op: "ask", v: "A" }]);
+  const asking = await request(id, say("ask"));
+  const asked = asking.c.pending.handle;
+  await request(id, click(asked, "choose", "A"));
+  errors.length = 0;
+  next.push([{ op: "try", handle: asked }]);
+  await request(id, say("revise the answered one"));
+  check("an answered surface can't be revised", /was answered/.test(errors[0] ?? ""));
+
+  // ── a question revised in the same reply waits on its revision
+  next.push([{ op: "ask", v: "B" }, { op: "update-asked", v: "C" }]);
+  const twice = await request(id, say("ask, then revise it"));
+  const askedFirst = lastAsked;
+  const waitingOn = twice.c.pending?.handle;
+  check(
+    "a question revised in the same reply waits on its revision",
+    waitingOn && waitingOn !== askedFirst && twice.c.superseded?.[askedFirst] === waitingOn,
+  );
+  const oldAnswer = await request(id, click(askedFirst, "choose", "x"));
+  const newAnswer = await request(id, click(waitingOn, "choose", "C"));
+  check(
+    "…and is answered there, with the revision's props",
+    /superseded/.test(oldAnswer.error?.message ?? "") && !newAnswer.error &&
+      newAnswer.c.messages.some((m) => JSON.stringify(m.content).includes("chose C from C")),
+  );
+
+  // ── freshness: a revised surface's window stops counting
+  next.push([{ op: "card", price: 10 }]);
+  const brief = await request(undefined, say("show"));
+  const bid = brief.c.id;
+  await new Promise((r) => setTimeout(r, 250));
+  next.push([{ op: "update", handle: brief.c.handles[0], price: 11 }]);
+  await request(bid, say("refresh"));
+  await new Promise((r) => setTimeout(r, 250)); // the first card's 400 ms window has passed; its revision's hasn't
+  const later = await request(bid, say("still fine?"));
+  check("a revised surface's window stops counting; its revision's counts instead", !later.events.some((e) => e.type === "expired"));
+  await new Promise((r) => setTimeout(r, 300));
+  const expired = await request(bid, say("now?"));
+  check("…and the revision's window still closes it in time", expired.events.some((e) => e.type === "expired"));
+
+  // ── a revision an overtaken turn made is inert
+  next.push([{ op: "card", price: 1 }]);
+  const base = await request(undefined, say("show"));
+  const oid = base.c.id;
+  const original = base.c.handles[0];
+  const losing = { ...store, saveConversation: async (c) => { throw new StaleLease(c.id); } };
+  const fenced = createHai({ model, store: losing, tools: [tool], surfaces: [card, other, picker], system: "x" });
+  next.push([{ op: "update", handle: original, price: 2 }]);
+  const lost = await store.loadConversation(oid);
+  const asItWas = JSON.parse(JSON.stringify(lost));
+  try {
+    await fenced.send(lost, "revise", () => {});
+  } catch {}
+  // the turn's save is lost: what is stored is the conversation from before it
+  asItWas.leaseUntil = null;
+  await store.saveConversation(asItWas);
+  const kept = await store.loadConversation(oid);
+  kept.leaseUntil = null;
+  await store.saveConversation(kept);
+  const stillThere = await request(oid, click(original, "note", "y"));
+  check("a revision whose turn's save was lost leaves the original clickable", !stillThere.error && !kept.superseded?.[original]);
+}
+
 // ── the events stream, and the client that follows it ──────────────────
 // Real parts end to end: a Hai with notices behind nodeHandler, read first with
 // plain fetches, then by createChat.
@@ -4012,7 +4220,20 @@ async function surfaceAgeChecks() {
     queries: {},
     staleAfterMs: 60_000,
   });
-  const show = defineTool({ name: "show", description: "d", input: any, inputJsonSchema: { type: "object" }, run: (_i, ctx) => ctx.render(fare, { price: 302 }) });
+  let shownHandle = null;
+  let reviseToo = false; // the wake turn also revises what it shows
+  const show = defineTool({
+    name: "show",
+    description: "d",
+    input: any,
+    inputJsonSchema: { type: "object" },
+    async run(_i, ctx) {
+      const ret = await ctx.render(fare, { price: 302 });
+      shownHandle = ret.handle;
+      return ret;
+    },
+  });
+  const revise = defineTool({ name: "revise", description: "d", input: any, inputJsonSchema: { type: "object" }, run: (_i, ctx) => ctx.update(fare, shownHandle, { price: 289 }) });
   const model = {
     id: "stub",
     async generate({ messages }) {
@@ -4020,12 +4241,15 @@ async function surfaceAgeChecks() {
       if (Array.isArray(last) && last.at(-1)?.text?.startsWith("[The user")) {
         return { content: [{ type: "tool_use", id: "tu_show", name: "show", input: {} }], stop_reason: "tool_use" };
       }
+      if (reviseToo && Array.isArray(last) && last.some((b) => b.type === "tool_result" && b.tool_use_id === "tu_show")) {
+        return { content: [{ type: "tool_use", id: "tu_revise", name: "revise", input: {} }], stop_reason: "tool_use" };
+      }
       if (Array.isArray(last) && last.some((b) => b.type === "tool_result")) await wait(1_000); // the turn runs on after showing it
       return { content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" };
     },
   };
   const store = memoryStore();
-  const hai = createHai({ model, store, tools: [show], surfaces: [fare], notices: [dropped], system: "x" });
+  const hai = createHai({ model, store, tools: [show, revise], surfaces: [fare], notices: [dropped], system: "x", maxWakes: { count: 10, perMs: 60_000 } });
   const handler = nodeHandler(hai, "/hai");
   const server = http.createServer(async (req, res) => {
     if (!(await handler(req, res))) res.writeHead(404).end();
@@ -4084,6 +4308,27 @@ async function surfaceAgeChecks() {
       "the events stream asks proxies not to buffer or transform it",
       watched.headers?.get("x-accel-buffering") === "no" && /no-transform/.test(watched.headers?.get("cache-control") ?? ""),
     );
+
+    // a wake turn that shows a surface, then revises it: a stream joining
+    // later sees it once, as it is now
+    reviseToo = true;
+    const c2 = await store.loadConversation(undefined);
+    c2.messages.push({ role: "user", content: "hi" }, { role: "assistant", content: [{ type: "text", text: "hello" }] });
+    c2.leaseUntil = null;
+    await store.saveConversation(c2);
+    const watching = stream(`http://127.0.0.1:5390/hai/events?conversationId=${c2.id}`, released);
+    await wait(150);
+    await hai.notify(c2.id, dropped, {});
+    await wait(700); // shown, revised, and the turn runs on
+    const joined = await stream(`http://127.0.0.1:5390/hai/events?conversationId=${c2.id}`, released);
+    await watching;
+    reviseToo = false;
+    const opens = joined.got.filter((e) => e.type === "ui_open");
+    const props = joined.got.filter((e) => e.type === "ui_props");
+    check(
+      "a stream joining after a wake turn revised its surface sees it once, as revised",
+      opens.length === 1 && !("replaces" in opens[0]) && props.length === 1 && props[0].props.price === 289 && props[0].handle === opens[0].handle,
+    );
   } finally {
     server.close();
   }
@@ -4120,6 +4365,130 @@ async function surfaceAgeChecks() {
   } finally {
     chat.close();
     fake.close();
+  }
+}
+
+// ── the client swaps a revision into the component on screen ───────────
+async function revisionClientChecks() {
+  console.log("\nsurface revisions in the client");
+  const http = await import("node:http");
+  const { createChat } = await import("../packages/client/src/index.js");
+  // Each chat request answers with the next stream in line.
+  const streams = [];
+  const posts = [];
+  let events = null; // the open events stream, written to when a test says
+  const server = http.createServer((req, res) => {
+    if (req.url.includes("/events")) {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.flushHeaders();
+      events = res;
+      return;
+    }
+    let raw = "";
+    req.on("data", (c) => (raw += c));
+    req.on("end", () => {
+      posts.push({ path: req.url, body: JSON.parse(raw || "{}") });
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      for (const e of streams.shift() ?? []) res.write(`data: ${JSON.stringify(e)}\n\n`);
+      res.end();
+    });
+  });
+  await new Promise((r) => server.listen(5392, "127.0.0.1", r));
+  const hello = { type: "hello", conversationId: "conv_rev", model: "m" };
+  const idle = { type: "status", status: "idle" };
+  const open = (handle, component, staleAfterMs, extra = {}) => ({
+    type: "ui_open", handle, toolId: "b1", component, version: 1, mode: "display", staleAfterMs, ...extra,
+  });
+  const el = () => ({ replaceChildren() {}, dataset: {}, textContent: "", className: "" });
+
+  const mounts = [];
+  const updates = [];
+  let sendFrom = null;
+  let mountedCtx = null;
+  const registry = {
+    // keeps what it holds through a revision
+    card: {
+      mount(_el, props, ctx) {
+        mounts.push({ component: "card", props });
+        sendFrom = ctx.send;
+        mountedCtx = ctx;
+        return { update: (next) => updates.push(next), unmount() {} };
+      },
+    },
+    // has no update: mounted again
+    plain: {
+      mount(_el, props) {
+        mounts.push({ component: "plain", props });
+        return { unmount() {} };
+      },
+    },
+  };
+  const chat = createChat({ endpoint: "http://127.0.0.1:5392/hai", registry });
+  try {
+    streams.push([hello, open("ui_01", "card", 10_000), { type: "ui_props", handle: "ui_01", props: { price: 343 } }, idle]);
+    await chat.send("show");
+    const record = chat.state.surfaces.get("ui_01");
+    chat.mount("ui_01", el());
+    const firstDeadline = chat.state.expiresAt;
+    streams.push([hello, open("ui_02", "card", 60_000, { replaces: "ui_01" }), { type: "ui_props", handle: "ui_02", props: { price: 389 } }, idle]);
+    const sentAt = Date.now();
+    await chat.send("reprice");
+    check(
+      "a revision takes over the surface's record, and the transcript's block, under its new handle",
+      !chat.state.surfaces.has("ui_01") && chat.state.surfaces.get("ui_02") === record &&
+        chat.state.blocks.filter((b) => b.kind === "ui").map((b) => b.handle).join() === "ui_02",
+    );
+    check(
+      "a component with update gets the new props, without being mounted again",
+      mounts.length === 1 && updates.length === 1 && updates[0].price === 389 && record.props.price === 389,
+    );
+    posts.length = 0;
+    await sendFrom("note", "x");
+    check("a click after the revision names the new handle", posts[0]?.body.handle === "ui_02");
+    check("…and the component's ctx.handle has moved on with it", mountedCtx?.handle === "ui_02");
+    check(
+      "the deadline is the revision's: the surface it replaced stops counting",
+      chat.state.expiresAt > firstDeadline && chat.state.expiresAt >= sentAt + 60_000 - 50,
+    );
+
+    // without update, the component is mounted again in place, with the new props
+    streams.push([hello, open("ui_03", "plain", undefined), { type: "ui_props", handle: "ui_03", props: { v: 1 } }, idle]);
+    await chat.send("plain");
+    chat.mount("ui_03", el());
+    streams.push([hello, open("ui_04", "plain", undefined, { replaces: "ui_03" }), { type: "ui_props", handle: "ui_04", props: { v: 2 } }, idle]);
+    await chat.send("revise plain");
+    const plain = mounts.filter((m) => m.component === "plain");
+    check("a component without update is mounted again, with the revision's props", plain.length === 2 && plain[1].props.v === 2);
+  } finally {
+    chat.close();
+  }
+
+  // notices beside a revised surface keep the order they arrived in
+  const telling = createChat({ endpoint: "http://127.0.0.1:5392/hai", registry: {} });
+  const helloE = { ...hello, conversationId: "conv_rev2", events: true };
+  const notice = (seq, handle) => ({ type: "notice", seq, name: "n", version: 1, payload: {}, handle });
+  const frame = (e) => events.write(`data: ${JSON.stringify(e)}\n\n`);
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const order = () =>
+    telling.state.blocks.filter((b) => b.kind === "ui" || b.kind === "notice").map((b) => (b.kind === "ui" ? `ui:${b.handle}` : `n${b.seq}`)).join(" ");
+  try {
+    events = null;
+    streams.push([helloE, open("ui_10", "card", undefined), { type: "ui_props", handle: "ui_10", props: {} }, idle]);
+    await telling.send("show");
+    for (let i = 0; i < 100 && !events; i++) await wait(10);
+    frame(notice(1, "ui_10"));
+    frame(notice(2, "ui_11")); // for the revision, before it has arrived
+    for (let i = 0; i < 100 && telling.state.notices.length < 2; i++) await wait(10);
+    streams.push([helloE, open("ui_11", "card", undefined, { replaces: "ui_10" }), { type: "ui_props", handle: "ui_11", props: {} }, idle]);
+    await telling.send("revise");
+    check(`a notice that arrived before its revision goes after those already beside the surface (${order()})`, order() === "ui:ui_11 n1 n2");
+    frame(notice(3, "ui_11"));
+    for (let i = 0; i < 100 && telling.state.notices.length < 3; i++) await wait(10);
+    check(`…and one that arrives after it goes after them all (${order()})`, order() === "ui:ui_11 n1 n2 n3");
+  } finally {
+    telling.close();
+    events?.destroy();
+    server.close();
   }
 }
 
@@ -4562,6 +4931,29 @@ async function transcriptChecks() {
     await settled();
     check("rendering again leaves a notice mounted as it was", mounted.length === 1 && noticed.children[0] === card);
     closeTranscript(noticed);
+
+    // ── a revision keeps the surface's element, under its new handle ────
+    const revising = new Root();
+    let surfaceMounts = 0;
+    const record = { component: "fare", props: { price: 343 }, mode: "display", state: "live" };
+    const showing = {
+      state: { blocks: [{ kind: "ui", id: "ui:ui_01", handle: "ui_01", toolId: "t" }], surfaces: new Map([["ui_01", record]]), expired: null },
+      mount: () => void surfaceMounts++,
+    };
+    renderTranscript(revising, showing);
+    await settled();
+    const element = revising.children[0];
+    // what the client does with a revision: the record and block move to the new handle
+    showing.state.surfaces.delete("ui_01");
+    showing.state.surfaces.set("ui_02", record);
+    showing.state.blocks[0].handle = "ui_02";
+    renderTranscript(revising, showing);
+    await settled();
+    check(
+      "a revised surface keeps its element and its mount, its data-handle moved on",
+      revising.children[0] === element && element.moves === 0 && surfaceMounts === 1 && element.dataset.handle === "ui_02",
+    );
+    closeTranscript(revising);
   } finally {
     if (!hadDocument) delete globalThis.document;
     if (!hadObserver) delete globalThis.ResizeObserver;
@@ -4642,6 +5034,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   await wakeStreamChecks();
   await crossInstanceChecks();
   await surfaceAgeChecks();
+  await revisionClientChecks();
   await transcriptChecks();
 
   // Said plainly because a suite that looks exhaustive is worse than one that

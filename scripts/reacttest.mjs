@@ -119,6 +119,24 @@ for (const chunk of ["One, ", "two, ", "three."]) {
 check("under the default transcript a React surface mounts once while a reply streams", effects === 1);
 await act(async () => surfaces.get("ui_02").instance.unmount());
 
+// ── a revision: new props, the component's own state kept
+{
+  function Fare({ props }) {
+    const [open, setOpen] = useState(false);
+    return h("div", null, h("button", { className: "open", onClick: () => setOpen(true) }, "open"), h("p", { className: "fare" }, `${props.price} ${open ? "open" : "closed"}`));
+  }
+  const fareEl = document.createElement("div");
+  document.body.append(fareEl);
+  let fare;
+  await act(async () => {
+    fare = reactSurface(Fare).mount(fareEl, { price: 343 }, { handle: "ui_01", mode: "display", state: "live", send: async () => {} });
+  });
+  await act(async () => click(fareEl.querySelector("button.open")));
+  await act(async () => fare.update({ price: 389 }));
+  check("update() re-renders a React surface with the new props, keeping its own state", fareEl.querySelector("p.fare")?.textContent === "389 open");
+  await act(async () => fare.unmount());
+}
+
 // ── a notice: rendered from its payload, with nothing to send
 {
   let noticeCleanups = 0;

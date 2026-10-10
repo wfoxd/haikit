@@ -71,6 +71,8 @@ const CASES = [
     notice: { name: "hold_confirmed", ask: "is my fare held?", expectInReply: /^Yes\. Air Canada confirmed the fare hold on AC832/ },
     // …and a little later cuts the fare: a wake notice, so the model speaks unasked
     wake: { name: "fare_dropped", expectInReply: /^Heads up: Air Canada dropped the held fare on AC832/ },
+    // a seat map revised in place by a tool (ctx.update), for a two-word airline
+    revise: { show: "show me the seat map", ask: "window seats only", tool: "highlight_seats", component: "seat_map" },
   },
 ];
 
@@ -304,6 +306,18 @@ for (const c of CASES) {
           ? ok("it starts a turn on the events stream, and the model speaks unasked")
           : bad(`the wake turn said: ${said || "(nothing)"}`);
       }
+    }
+
+    // 3c · a tool revises a surface in place
+    if (c.revise) {
+      const shown = await sse(`${base}/hai/chat`, { conversationId, message: c.revise.show });
+      const map = shown.find((e) => e.type === "ui_open" && e.component === c.revise.component);
+      const revised = await sse(`${base}/hai/chat`, { conversationId, message: c.revise.ask });
+      const called = revised.find((e) => e.type === "block_start" && e.block.kind === "tool")?.block.name;
+      const replacing = revised.find((e) => e.type === "ui_open");
+      called === c.revise.tool && replacing?.replaces === map?.handle && replacing.handle !== map?.handle
+        ? ok(`${c.revise.tool} revises the ${c.revise.component} in place: ${map?.handle} → ${replacing?.handle}`)
+        : bad(`expected ${c.revise.tool} to replace ${map?.handle}, got ${called} / ${JSON.stringify(replacing)}`);
     }
 
     // 4 · a resolved surface cannot be re-resolved

@@ -96,9 +96,11 @@ export const seatMapServer = seatMap.implement({
   digest(props, { handle }) {
     const seats = props.rows.flatMap((r) => r.seats);
     const free = seats.filter((s) => !s.taken);
+    const picked = props.highlight === "window" ? free.filter((s) => s.window) : props.highlight === "legroom" ? free.filter((s) => s.extraLegroom) : [];
     return (
       `Seat map for ${props.airline} ${props.flightId} rendered as ${handle}. ` +
-      `${free.length} of ${seats.length} seats free, rows 20-31. Extra legroom rows: 20, 26.`
+      `${free.length} of ${seats.length} seats free, rows 20-31. Extra legroom rows: 20, 26.` +
+      (props.highlight ? ` Highlighting ${picked.length} free ${props.highlight} seats: ${picked.map((s) => s.id).join(", ")}.` : "")
     );
   },
 

@@ -78,7 +78,8 @@ mountChat({ root, registry, notices: { hold_confirmed: reactNotice(HoldConfirmed
 
 The default transcript mounts a surface **once**, so `useState` survives the
 conversation streaming on around it. The root re-renders when the surface
-freezes or the conversation goes out of date. It is unmounted when the surface
+freezes, when a tool revises it in place (`ctx.update`), with the new props and
+its state kept, or when the conversation goes out of date. It is unmounted when the surface
 goes away, on `chat.reset()` or `chat.close()`, so effects clean up after
 themselves. The first render is synchronous, so the surface already has its
 height when the transcript scrolls to it.

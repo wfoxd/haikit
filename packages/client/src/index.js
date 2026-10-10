@@ -228,13 +228,9 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
         state.notices.push(notice);
         const block = { kind: "notice", id: `n:${event.seq}`, ...notice };
         // beside its surface — after any notices already there — or at the end
-        const at = event.handle === undefined ? -1 : state.blocks.findIndex((b) => b.id === `ui:${event.handle}`);
+        const at = event.handle === undefined ? -1 : state.blocks.findIndex((b) => b.kind === "ui" && b.handle === event.handle);
         if (at < 0) state.blocks.push(block);
-        else {
-          let i = at + 1;
-          while (state.blocks[i]?.kind === "notice" && state.blocks[i].handle === event.handle) i++;
-          state.blocks.splice(i, 0, block);
-        }
+        else state.blocks.splice(afterNotices(at), 0, block);
         break;
       }
 
@@ -271,44 +267,70 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
         break;
       }
 
-      case "ui_open":
+      case "ui_open": {
         if (state.surfaces.has(event.handle)) break; // shown already: a rejoin's catch-up
-        state.surfaces.set(event.handle, {
-          handle: event.handle,
-          component: event.component,
-          version: event.version,
-          mode: event.mode,
-          state: "live",
-          props: null,
-          instance: null,
-          element: null,
-        });
-        state.blocks.push({ kind: "ui", id: `ui:${event.handle}`, handle: event.handle, toolId: event.toolId });
+        // A revision of a surface on screen takes over its record in place:
+        // its component, element and state stay, its handle moves on, and its
+        // props stay until the new ones arrive, so the transcript keeps the
+        // same element rather than mounting afresh.
+        const old = event.replaces === undefined ? undefined : state.surfaces.get(event.replaces);
+        let surface;
+        if (old) {
+          state.surfaces.delete(old.handle);
+          Object.assign(old, { handle: event.handle, component: event.component, version: event.version, revising: true });
+          state.surfaces.set(event.handle, (surface = old));
+          const block = state.blocks.find((b) => b.kind === "ui" && b.handle === event.replaces);
+          if (block) block.handle = event.handle;
+        } else {
+          surface = {
+            handle: event.handle,
+            component: event.component,
+            version: event.version,
+            mode: event.mode,
+            state: "live",
+            props: null,
+            instance: null,
+            element: null,
+          };
+          state.surfaces.set(event.handle, surface);
+          state.blocks.push({ kind: "ui", id: `ui:${event.handle}`, handle: event.handle, toolId: event.toolId });
+        }
         // Notices come on a stream of their own, so one can arrive before the
         // surface it names: it went to the end then, and moves under it now.
         // Moved within the same array, which the transcript would otherwise
         // take for a new conversation's.
-        for (const early of state.blocks.filter((b) => b.kind === "notice" && b.handle === event.handle)) {
-          state.blocks.splice(state.blocks.indexOf(early), 1);
-          state.blocks.push(early);
-        }
+        const early = state.blocks.filter((b) => b.kind === "notice" && b.handle === event.handle);
+        for (const notice of early) state.blocks.splice(state.blocks.indexOf(notice), 1);
+        const at = state.blocks.findIndex((b) => b.kind === "ui" && b.handle === event.handle);
+        if (at >= 0) state.blocks.splice(afterNotices(at), 0, ...early);
+        else state.blocks.push(...early);
+        // Each surface keeps its own deadline: from when the request that
+        // rendered it was sent or, by its age, from when it was stored,
+        // whichever is earlier. A revision brings its own, and the one it
+        // replaced stops counting.
         if (typeof event.staleAfterMs === "number") {
-          // From when the request that rendered it was sent, or, for a surface
-          // replayed to a stream that joined a wake turn part way, from when
-          // it was stored, by its age: whichever is earlier.
           const from = typeof event.ageMs === "number" ? Math.min(sentAt, Date.now() - event.ageMs) : sentAt;
-          const at = from + event.staleAfterMs;
-          if (state.expiresAt === null || at < state.expiresAt) {
-            state.expiresAt = at;
-            closingWindow = event.staleAfterMs;
-            schedule();
-          }
+          surface.deadline = from + event.staleAfterMs;
+          surface.window = event.staleAfterMs;
+        } else {
+          surface.deadline = null;
         }
+        refreshDeadline();
         break;
+      }
 
       case "ui_props": {
         const surface = state.surfaces.get(event.handle);
-        if (surface) surface.props = event.props;
+        if (!surface) break;
+        surface.props = event.props;
+        if (surface.revising) {
+          // A revision's props reach the component already mounted: through
+          // its `update`, keeping its own state, or by mounting it again.
+          surface.revising = false;
+          const { instance, element } = surface;
+          if (instance && typeof instance.update === "function") attempt(() => instance.update(event.props));
+          else if (instance && element) mount(surface.handle, element);
+        }
         break;
       }
 
@@ -500,6 +522,29 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
         `${duration(closingWindow)}. Start a new conversation for current results.`,
     });
 
+  /**
+   * Where a notice for the surface at `at` goes: after the notices already
+   * beside it, which may name an earlier revision of it, so they keep the
+   * order they arrived in. A notice that names no surface sits at the end,
+   * not beside one, and isn't counted among them.
+   */
+  function afterNotices(at) {
+    let i = at + 1;
+    while (state.blocks[i]?.kind === "notice" && state.blocks[i].handle !== undefined) i++;
+    return i;
+  }
+
+  /** The earliest deadline among the surfaces showing, and which window set it. */
+  function refreshDeadline() {
+    let soonest = null;
+    for (const surface of state.surfaces.values()) {
+      if (surface.deadline != null && (soonest === null || surface.deadline < soonest.deadline)) soonest = surface;
+    }
+    state.expiresAt = soonest?.deadline ?? null;
+    if (soonest) closingWindow = soonest.window;
+    schedule();
+  }
+
   // One timer, for the earliest deadline. setTimeout fires at once for delays
   // past about 24.8 days, so a long wait is taken in steps.
   function schedule() {
@@ -546,13 +591,17 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
     element.replaceChildren();
     surface.element = element;
     surface.instance = definition.mount(element, surface.props, {
-      handle,
+      // the surface as it is now, as `send` below: a revision moves it on
+      get handle() {
+        return surface.handle;
+      },
       mode: surface.mode,
       state: surface.state,
       selection: surface.selection,
       // The ONLY channel a component has to the server. It passes an action
       // name declared in the contract — never a tool, never a handler.
-      send: (action, value) => interact(handle, action, value),
+      // and names the surface as it is now: a revision moves it on.
+      send: (action, value) => interact(surface.handle, action, value),
     });
     if (state.expired) seal(surface);
     return surface.instance;

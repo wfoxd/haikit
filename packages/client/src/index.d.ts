@@ -63,7 +63,8 @@ export type WireEvent = { type: string } & Record<string, any>;
  * tool name, never a handler.
  */
 export interface MountCtx {
-  handle: string;
+  /** The surface's handle as it is now: a revision in place (`update`) moves it on. */
+  readonly handle: string;
   mode: SurfaceMode;
   state: SurfaceState;
   /** What the user picked, when the surface is mounted already frozen. */
@@ -89,6 +90,13 @@ export interface SurfaceInstance {
   freeze?(selection?: unknown): void;
   expire?(): void;
   unmount?(): void;
+  /**
+   * The surface was revised in place (a tool's `ctx.update`): these are its
+   * new props. Implement it to keep what the component holds, such as its
+   * scroll, sort or expanded rows. Without it, the runtime mounts the
+   * component again in the same element, losing that.
+   */
+  update?(props: any): void;
 }
 
 /** Your component. `props` is whatever the surface's `props` schema produces. */
@@ -135,6 +143,9 @@ export interface SurfaceRecord {
   instance: SurfaceInstance | null;
   /** The element it was last mounted into. */
   element: HTMLElement | null;
+  /** When it goes out of date, in this browser's clock, or null if never. Its window, in ms. */
+  deadline?: number | null;
+  window?: number;
 }
 
 export interface ChatState {

@@ -189,7 +189,8 @@ Exported over MCP, tools degrade gracefully: a host without the registry gets th
 - Built Tool progress. `ctx.progress` updates a running tool's row over the UI channel; the model never sees it.
 - Built Notices. `hai.notify` sends a declared notice outside any request: its payload to the browser over `GET /events`, its required `model` text to the model in the next user message, taken in on the fenced conversation row. A `wake` notice starts a turn of its own, streamed where a browser is watching, at most `maxWakes` per window; a passive one never does. With several servers, a store with `publish`/`subscribe` carries the turn to browsers on the others.
 - Spec The append-only commit invariant, surface versioning.
-- Open `ui_patch` for in-place mutation — patching preserves scroll and sort state; re-rendering destroys it.
+- Built In-place revision (`ui_patch`). A tool's `ctx.update(surface, handle, props)` stores a revision as a new surface that supersedes the old handle: the browser swaps its props into the component on screen, keeping scroll and sort; a click on the old handle is refused, and its freshness window stops counting.
+- Open Revisions from outside a turn (`hai.update`), #65.
 - Open Consuming third-party MCP servers. Their results are single-channel, so a projection layer is needed or the context budget goes with it.
 
 > **Deliberately refused:** a `render_ui(component, props)` tool letting the model compose interface freely. Tools owning their rendering contract is the constraint that makes the registry typed, reviewable and safe. The moment the model picks components, every guarantee on this page evaporates.

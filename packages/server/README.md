@@ -82,6 +82,31 @@ has finished. A call after the tool has returned does nothing, and a field
 that isn't what its type says is dropped rather than failing the tool:
 `done` must be zero or more, and `total` more than zero.
 
+**A tool can revise a surface in place.** Rather than rendering a second
+table to show a refinement, a tool can change the one on screen:
+
+```ts
+run: (input, ctx) =>
+  ctx.update(seatMapServer, input.handle, { ...seats, highlight: "window" }),
+```
+
+`ctx.update(surface, handle, props)` is typed, validated and digested like
+`render`, and resolves the same way, with the new digest for the model. It's
+stored as a new surface with a new handle that supersedes the old one, all
+committed with the turn, so a revision an overtaken turn made is as inert as
+its payloads. From then on:
+
+- a click on the old handle is refused ("superseded by ui_05");
+- the old surface's freshness window stops counting, and the revision's
+  counts instead;
+- `query_ui` on the old handle answers from what it was, and says what it
+  is now;
+- a question waiting on the old surface waits on the revision.
+
+The browser swaps the new props into the component already on screen (see
+`SurfaceInstance.update` in `@haikit/client`). The handle must be a surface of
+the same contract in the conversation, neither answered nor revised already.
+
 **`init` runs a tool at the start of every conversation**, before the user
 types anything. The runtime makes the call, not the model, so it can't be
 skipped: the call and its result go into the history as if the model had made

@@ -43,3 +43,6 @@ table.ft { width: 100%; border-collapse: collapse; font-size: 13px; }
 .seat.legroom.free { border-color: color-mix(in srgb, var(--hai-good) 50%, transparent); color: var(--hai-good); }
 .seat.picked { background: var(--hai-good); color: var(--hai-on-accent); border-color: var(--hai-good); }
 .seat.free:hover:not(:disabled) { border-color: var(--hai-accent); }
+
+/* a seat map revised to pick out some seats: the rest step back */
+.seat.dim { opacity: .35; }

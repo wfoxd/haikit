@@ -50,6 +50,10 @@ export function scripted(): ModelAdapter {
             : `${id} it is.`;
           return say(`${lead} Want me to pull up the seat map?`, onTextDelta);
         }
+        if (/Highlighting \d+ free/.test(results)) {
+          const m = results.match(/Highlighting (\d+) free (\w+) seats: ([^.]*)\./);
+          return say(m ? `${m[1]} ${m[2]} seats free: ${m[3]}.` : "Done.", onTextDelta);
+        }
         if (/^Seat map/m.test(results)) {
           const free = results.match(/(\d+) of \d+ seats free/)?.[1];
           return say(`Seat map's up — ${free} seats open. Rows 20 and 26 have extra legroom.`, onTextDelta);
@@ -89,6 +93,21 @@ export function scripted(): ModelAdapter {
 
       if (/hold|held|confirm|book/.test(text)) {
         return say(hold ? `Yes. ${hold}` : "Not yet. I'll tell you as soon as the airline confirms.", onTextDelta);
+      }
+
+      // A seat map already on screen is revised in place, not shown again.
+      // the airline may be more than one word: "Air Canada AC832"
+      const seatMap = [...JSON.stringify(messages).matchAll(/Seat map for [^"]+? ([A-Z]{2}\d{2,4}) rendered as (ui_\d+)/g)].at(-1);
+      if (seatMap && /window|legroom|leg room/.test(text)) {
+        const kind = /window/.test(text) ? "window" : "legroom";
+        onTextDelta(`Picking out the ${kind} seats.`);
+        return {
+          content: [
+            { type: "text", text: `Picking out the ${kind} seats.` },
+            toolUse("highlight_seats", { handle: seatMap[2], flightId: seatMap[1], kind }),
+          ],
+          stop_reason: "tool_use",
+        };
       }
 
       if (/seat/.test(text)) {
