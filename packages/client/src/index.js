@@ -36,6 +36,11 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
   };
 
   const notify = (event) => listeners.forEach((fn) => fn(state, event));
+  /**
+   * handle -> the handle that replaced it, for every revision this browser has
+   * heard of, including ones it only heard named; followed by `current`.
+   */
+  const replacedBy = new Map();
 
   /**
    * Requests open or waiting to go out — which is not the same as
@@ -227,8 +232,10 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
         const { type, ...notice } = event;
         state.notices.push(notice);
         const block = { kind: "notice", id: `n:${event.seq}`, ...notice };
-        // beside its surface — after any notices already there — or at the end
-        const at = event.handle === undefined ? -1 : state.blocks.findIndex((b) => b.kind === "ui" && b.handle === event.handle);
+        // beside its surface — after any notices already there — or at the end;
+        // one naming an earlier handle of the surface goes beside it as it is now
+        const handle = event.handle === undefined ? undefined : current(event.handle);
+        const at = handle === undefined ? -1 : state.blocks.findIndex((b) => b.kind === "ui" && b.handle === handle);
         if (at < 0) state.blocks.push(block);
         else state.blocks.splice(afterNotices(at), 0, block);
         break;
@@ -279,6 +286,11 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
           .filter((h) => h !== undefined)
           .map((h) => state.surfaces.get(h))
           .find(Boolean);
+        // every earlier handle now leads here, seen or not, so a notice naming
+        // one finds this surface
+        for (const h of [event.replaces, ...(event.alsoReplaces ?? [])]) {
+          if (h !== undefined && h !== event.handle) replacedBy.set(h, event.handle);
+        }
         let surface;
         if (old) {
           const was = old.handle;
@@ -302,10 +314,14 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
           state.blocks.push({ kind: "ui", id: `ui:${event.handle}`, handle: event.handle, toolId: event.toolId });
         }
         // Notices come on a stream of their own, so one can arrive before the
-        // surface it names: it went to the end then, and moves under it now.
-        // Moved within the same array, which the transcript would otherwise
-        // take for a new conversation's.
-        const early = state.blocks.filter((b) => b.kind === "notice" && b.handle === event.handle);
+        // surface it names, or name a handle of it this browser hadn't heard
+        // of: it went to the end then, and moves under it now, among those
+        // already beside it in the order they were sent. Moved within the
+        // same array, which the transcript would otherwise take for a new
+        // conversation's.
+        const early = state.blocks
+          .filter((b) => b.kind === "notice" && b.handle !== undefined && current(b.handle) === event.handle)
+          .sort((x, y) => x.seq - y.seq);
         for (const notice of early) state.blocks.splice(state.blocks.indexOf(notice), 1);
         const at = state.blocks.findIndex((b) => b.kind === "ui" && b.handle === event.handle);
         if (at >= 0) state.blocks.splice(afterNotices(at), 0, ...early);
@@ -540,6 +556,12 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
     return i;
   }
 
+  /** The handle a surface has now, following every revision heard of since `handle`. */
+  function current(handle) {
+    while (replacedBy.has(handle)) handle = replacedBy.get(handle);
+    return handle;
+  }
+
   /** The earliest deadline among the surfaces showing, and which window set it. */
   function refreshDeadline() {
     let soonest = null;
@@ -695,6 +717,7 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
       notices: [],
     });
     state.surfaces.clear();
+    replacedBy.clear();
     notify({ type: "reset" });
   }
 

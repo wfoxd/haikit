@@ -4618,12 +4618,30 @@ async function revisionClientChecks() {
     // a replayed revision several steps on, to a browser that saw only the first
     streams.push([helloE, open("ui_20", "card", undefined), { type: "ui_props", handle: "ui_20", props: {} }, idle]);
     await telling.send("show again");
+    streams.push([helloE, open("ui_30", "card", undefined), { type: "ui_props", handle: "ui_30", props: {} }, idle]);
+    await telling.send("and another");
+    frame(notice(4, "ui_21")); // names the revision this browser will miss, before it hears of it
+    frame(notice(5, "ui_20")); // sent after it, and shown beside the surface
+    for (let i = 0; i < 100 && telling.state.notices.length < 5; i++) await wait(10);
     streams.push([helloE, open("ui_22", "card", undefined, { replaces: "ui_21", alsoReplaces: ["ui_20"] }), { type: "ui_props", handle: "ui_22", props: {} }, idle]);
     await telling.send("replayed");
     const handles = telling.state.blocks.filter((b) => b.kind === "ui").map((b) => b.handle);
     check(
       `a revision replayed past one this browser missed swaps in from the handle it did see (${handles.join(" ")})`,
-      handles.join(" ") === "ui_11 ui_22" && !telling.state.surfaces.has("ui_20"),
+      handles.join(" ") === "ui_11 ui_22 ui_30" && !telling.state.surfaces.has("ui_20"),
+    );
+    check(
+      `a notice naming the missed handle, which went to the end, moves beside the surface, in the order sent (${order()})`,
+      order() === "ui:ui_11 n1 n2 n3 ui:ui_22 n4 n5 ui:ui_30",
+    );
+    // caught up after the replay: naming the missed handle, then the one it saw
+    frame(notice(6, "ui_21"));
+    frame(notice(7, "ui_20"));
+    frame(notice(8));
+    for (let i = 0; i < 100 && telling.state.notices.length < 8; i++) await wait(10);
+    check(
+      `notices naming any earlier handle of the surface go beside it as it is now, in order (${order()})`,
+      order() === "ui:ui_11 n1 n2 n3 ui:ui_22 n4 n5 n6 n7 ui:ui_30 n8",
     );
   } finally {
     telling.close();
