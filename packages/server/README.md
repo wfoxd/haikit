@@ -306,8 +306,11 @@ conversation row (`Conversation.announcing`), before the notice is appended.
 If appending it fails, `hai.update` throws, saying so, and the notice stays
 owed: whoever holds the conversation next, a request, a wake or another
 update, appends it before doing anything else, so the model hears of the
-revision before it runs again. A notice already appended by a holder whose
-save then failed isn't appended twice.
+revision before it runs again. Delivery is at least once: a notice already
+appended by a holder whose save then failed isn't appended again, but an
+append that stalls past the lease while the next holder sends it can land
+twice. The browser shows the revision once either way; the model reads its
+text twice.
 
 One write per surface is in flight at a time. A call made meanwhile replaces
 any still waiting behind it, and every call it replaced resolves to the handle

@@ -450,9 +450,11 @@ export function createChat({ endpoint = "/hai", registry, notices = {} }) {
               if (line) {
                 const event = JSON.parse(line.slice(6));
                 followTurn(event);
-                // A revision `hai.update` made comes outside any turn, so no
-                // request of this browser's dates it: only its age does.
-                apply(event, remote ? sentAt : Date.now());
+                // A revision `hai.update` made comes outside any turn, even
+                // while one is running, so no request of this browser's
+                // dates it: only its age does. No tool call made it.
+                const outside = event.type === "ui_open" && event.toolId === "";
+                apply(event, remote && !outside ? sentAt : Date.now());
                 delivered = true;
               }
               // the notice this frame finished, revisions' included

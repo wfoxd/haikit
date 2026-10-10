@@ -5159,6 +5159,24 @@ async function revisionClientChecks() {
       `notices naming any earlier handle of the surface go beside it as it is now, in order (${order()})`,
       order() === "ui:ui_11 n1 n2 n3 ui:ui_22 n4 n5 n6 n7 ui:ui_30 n8",
     );
+
+    // a revision hai.update made, arriving while a wake turn is running, is
+    // dated by its age, not by when that turn started
+    streams.push([helloE, open("ui_40", "card", 10_000), { type: "ui_props", handle: "ui_40", props: {} }, idle]);
+    await telling.send("show a fare");
+    frame({ type: "status", status: "streaming", wake: 1 });
+    await wait(300);
+    const arrived = Date.now();
+    frame(open("ui_41", "card", 10_000, { replaces: "ui_40", toolId: "", ageMs: 0 }));
+    frame({ type: "ui_props", handle: "ui_41", props: {} });
+    for (let i = 0; i < 100 && !telling.state.surfaces.has("ui_41"); i++) await wait(10);
+    const outsideDeadline = telling.state.surfaces.get("ui_41")?.deadline ?? 0;
+    check(
+      `a revision from outside any turn, arriving during one, counts from its age, not the turn's start (${outsideDeadline - arrived - 10_000}ms)`,
+      outsideDeadline >= arrived + 10_000 - 50,
+    );
+    frame({ type: "released" });
+    await wait(50);
   } finally {
     telling.close();
     events?.destroy();

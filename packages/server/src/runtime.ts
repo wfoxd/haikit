@@ -404,6 +404,8 @@ export class Hai {
         const left = deadline - Date.now();
         if (!isConversationBusy(err) || left <= 0) throw err;
         await new Promise((r) => setTimeout(r, Math.min(wait, left)));
+        // not another try once the timeout has passed, even if the turn has gone
+        if (Date.now() >= deadline) throw err;
       }
     }
 
