@@ -599,7 +599,7 @@ to `any`, can get past the types' rules. Here's what the server does then:
 | An implementation with no `digest` | Rendering it fails with a `TypeError` after the payload is stored. The handle never joins the history, and the model hears `<tool> failed: <message>` |
 | A `digest` that's async, or returns something other than a string | Nothing awaits or checks it. The model gets the value as it is: a promise serialises as `{}`, and a promise that rejects is an unhandled rejection, which ends a Node process by default |
 | A query handler that returns a plain object | `query_ui` returns its `text` field, uncapped. Nothing checks that a `Cap` made it |
-| A query handler that's async | Nothing awaits it, so the model gets an empty result. One that rejects is an unhandled rejection |
+| A query handler that's async | Nothing awaits it: `query_ui` reads `text` from the promise, so the tool result's content is `undefined`, a history the model API may refuse on the next call. One that rejects is an unhandled rejection |
 | An action handler that returns something other than a string | It's recorded as it is, in `[UI interaction] <label>` or after the digest |
 | `mode: "elicit"` on a surface with no `resolve` action | The turn parks on it. No click can answer it, so the conversation stays parked until the user types a message, which closes the question out |
 | `ctx.render` with a `mode` other than `"display"` or `"elicit"` | A missing, `undefined` or `null` mode is `"display"`. Anything else is treated as `"elicit"` |
