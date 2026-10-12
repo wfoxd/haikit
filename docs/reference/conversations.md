@@ -87,10 +87,10 @@ turn's opening message stays on record however the turn ends. The exception
 is a wake turn that fails before any tool call: it's undone, so its notices
 can wake again.
 
-If that closing save fails for any reason other than `StaleLease`, the error
-is thrown out of `nodeHandler`. The response isn't ended, no `error` event is
-sent, and the lease stays held, so the conversation answers 409 until the
-lease expires.
+If that closing save fails for any reason other than `StaleLease`, the
+browser gets an `error` event, the response ends, and `nodeHandler` logs the
+error. The lease stays held, though, so the conversation answers 409 until
+the lease expires.
 
 ## `ConversationStatus`
 

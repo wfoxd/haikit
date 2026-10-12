@@ -130,6 +130,62 @@ export async function conform(label, make) {
     check("payload props of every JSON type round-trip, including bare strings", !error && same(single) && same(batch));
   }
 
+  // ── text Postgres can't store is stored as U+FFFD, not refused ───────
+  // U+0000 anywhere, and a lone surrogate in jsonb, fail a Postgres write. A
+  // user who types one would otherwise fail the request's closing save and
+  // leave the conversation held until its lease lapses. Every store replaces
+  // them, in strings and keys alike, so development sees what production does.
+  {
+    const s = make();
+    const nul = "a\u0000b";
+    const lone = "c\ud800d";
+    const pair = "e\ud83d\ude00f"; // a valid surrogate pair: left alone
+    const fixedNul = "a\ufffdb";
+    const fixedLone = "c\ufffdd";
+    const a = await s.loadConversation(undefined);
+    a.messages.push({ role: "user", content: [{ type: "text", text: nul }, { type: "text", text: lone }, { type: "text", text: pair }] });
+    a.leaseUntil = null;
+    let saved = null;
+    try {
+      await s.saveConversation(a);
+    } catch (err) {
+      saved = err;
+    }
+    check("a conversation holding U+0000 and a lone surrogate saves", saved === null);
+    const back = await s.loadConversation(a.id);
+    const texts = (back.messages[0]?.content ?? []).map((b) => b.text);
+    check(
+      "they come back as U+FFFD, and a valid surrogate pair as it was",
+      texts[0] === fixedNul && texts[1] === fixedLone && texts[2] === pair,
+    );
+
+    let stored = null;
+    let handle = null;
+    try {
+      handle = await s.putPayload({ ...payload(back.id), props: { [nul]: [lone] } }, back.leaseToken);
+    } catch (err) {
+      stored = err;
+    }
+    const props = handle ? (await s.getPayload(handle, back.id))?.props : null;
+    check(
+      "payload props holding them store, keys included, as U+FFFD",
+      stored === null && JSON.stringify(props) === JSON.stringify({ [fixedNul]: [fixedLone] }),
+    );
+
+    let notice = null;
+    let noticed = null;
+    try {
+      noticed = await s.putNotice({ conversationId: back.id, name: "n", version: 1, payload: { text: nul }, model: `${nul} ${lone}` });
+    } catch (err) {
+      notice = err;
+    }
+    const [read] = (await s.getNotices(back.id, 0)) ?? [];
+    check(
+      "a notice holding them stores, payload and model text, as U+FFFD",
+      notice === null && noticed !== null && read?.payload?.text === fixedNul && read?.model === `${fixedNul} ${fixedLone}`,
+    );
+  }
+
   // ── createdAt is when the payload was written, in epoch milliseconds ──
   // Every freshness window is measured from it. The runtime fails closed on a
   // value that isn't a number, but a wrong number it cannot detect: seconds
@@ -568,6 +624,85 @@ async function routeChecks() {
   } finally {
     server.close();
   }
+
+  // ── nodeHandler ends every response, and never rejects ────────────────
+  // A store failure, or a body that isn't a JSON object, used to reject the
+  // handler: the response stayed open, and an unhandled rejection could take
+  // the server down. Now each is answered and logged.
+  const logged = [];
+  const quietly = async (fn) => {
+    const error = console.error;
+    console.error = (...args) => logged.push(args);
+    try {
+      return await fn();
+    } finally {
+      console.error = error;
+    }
+  };
+  const base = memoryStore();
+  const hosts = {
+    // the closing save fails, as it would for a database that's down
+    saveFails: { ...base, async saveConversation() { throw new Error("database is down"); } },
+    // the load fails for a reason other than busy
+    loadFails: { ...base, async loadConversation() { throw new Error("load failed"); } },
+    // the events stream's first read fails
+    readFails: { ...base, async getNotices() { throw new Error("read failed"); } },
+  };
+  const rejected = [];
+  const serve = async (store, port, fn) => {
+    const h = createHai({
+      model: { id: "stub", async generate() { return { content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" }; } },
+      store,
+      tools: [],
+      surfaces: [],
+      system: "x",
+      updates: true,
+    });
+    const handle = nodeHandler(h, "/hai");
+    const s = http.createServer((req, res) => {
+      handle(req, res).then(
+        (handled) => handled || res.writeHead(404).end(),
+        (err) => {
+          rejected.push(err);
+          res.destroy();
+        },
+      );
+    });
+    await new Promise((r) => s.listen(port, r));
+    try {
+      return await fn(`http://127.0.0.1:${port}/hai`);
+    } finally {
+      s.close();
+    }
+  };
+  const post = (url, body) =>
+    fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body, signal: AbortSignal.timeout(5000) });
+
+  await quietly(async () => {
+    await serve(hosts.saveFails, 5378, async (url) => {
+      const res = await post(`${url}/chat`, JSON.stringify({ message: "hi" }));
+      const text = await res.text();
+      check("a failed closing save ends the response, with an error event", res.status === 200 && text.includes('"type":"error"') && text.includes("database is down"));
+    });
+    await serve(hosts.loadFails, 5379, async (url) => {
+      const res = await post(`${url}/chat`, JSON.stringify({ message: "hi" }));
+      const body = await res.json().catch(() => ({}));
+      check("a load that fails for another reason is a 500 with the reason", res.status === 500 && body.error === "load failed");
+    });
+    await serve(hosts.readFails, 5380, async (url) => {
+      const res = await fetch(`${url}/events?conversationId=c`, { signal: AbortSignal.timeout(5000) });
+      const body = await res.json().catch(() => ({}));
+      check("an events stream whose first read fails is a 500", res.status === 500 && body.error === "read failed");
+    });
+    await serve(base, 5381, async (url) => {
+      const bad = await Promise.all(["not json", "null", "[1]", '"text"'].map((b) => post(`${url}/chat`, b)));
+      check("a body that isn't a JSON object is a 400", bad.every((r) => r.status === 400));
+      const empty = await post(`${url}/start`, "");
+      check("an empty body still counts as {}", empty.status === 200);
+    });
+  });
+  check("the handler never rejected", rejected.length === 0);
+  check("each failure was logged", logged.length >= 3);
 }
 
 // ── an overtaken turn's surface cannot be interacted with ───────────────

@@ -301,8 +301,9 @@ The client adds block ids of its own: `ui:<handle>`, `n:<seq>`, and
 ### Messages the browser shows
 
 The server's and the client's out-of-date messages, `initialisation failed:
-<message>`, the client's fallbacks (`another turn is already in flight`,
+<message>`, the 400 answer `the request body must be a JSON object`, the
+client's fallbacks (`another turn is already in flight`,
 `request failed (<status>)`), and the error cards (`unknown component:
 <name>`, `unknown notice: <name>`): see
-[Surfaces: freshness](surfaces.md#freshness), [The server](server.md#init)
+[Surfaces: freshness](surfaces.md#freshness), [The server](server.md#init), [HTTP routes and the wire](http.md#requests)
 and [The browser client](client.md).

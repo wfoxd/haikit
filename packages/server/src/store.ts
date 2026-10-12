@@ -9,6 +9,28 @@ import {
 
 const LEASE_MS = 120_000;
 
+/**
+ * Postgres refuses U+0000 anywhere in text or jsonb, and a lone UTF-16
+ * surrogate in jsonb, so pgStore makes them storable as it saves. This store
+ * does the same, so development sees what production would store. Each
+ * becomes U+FFFD, the replacement character, in strings and object keys
+ * alike.
+ */
+const UNSTORABLE = /\u0000|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+const MAYBE_UNSTORABLE = /[\u0000\uD800-\uDFFF]/;
+const storable = (s: string): string => (MAYBE_UNSTORABLE.test(s) ? s.replace(UNSTORABLE, "\uFFFD") : s);
+/** A `JSON.stringify` replacer that makes every string and key storable. */
+function storableJson(_key: string, value: unknown): unknown {
+  if (typeof value === "string") return storable(value);
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const keys = Object.keys(value);
+    if (keys.some((k) => MAYBE_UNSTORABLE.test(k))) {
+      return Object.fromEntries(keys.map((k) => [storable(k), (value as Record<string, unknown>)[k]]));
+    }
+  }
+  return value;
+}
+
 export interface MemoryStoreOptions {
   /**
    * Turn lease TTL. A process that dies mid-turn strands the conversation for
@@ -60,7 +82,8 @@ export function memoryStore(options: MemoryStoreOptions = {}): StoreAdapter {
   let convSeq = 0;
   let handleSeq = 0;
 
-  const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+  // and anything Postgres can't store comes back as pgStore would return it
+  const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value, storableJson)) as T;
   const newToken = () => globalThis.crypto.randomUUID();
 
   /** Every durable mutation presents the token it was issued. A holder that has

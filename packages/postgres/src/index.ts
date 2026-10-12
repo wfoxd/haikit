@@ -236,8 +236,37 @@ const toPayload = (row: any): PayloadRecord => ({
 const newToken = () => globalThis.crypto.randomUUID();
 const newId = () => `conv_${globalThis.crypto.randomUUID().replaceAll("-", "")}`;
 
+/**
+ * Postgres refuses U+0000 anywhere in text or jsonb, and a lone UTF-16
+ * surrogate in jsonb: a message, props or a payload holding one would fail to
+ * save. Each becomes U+FFFD, the replacement character, in strings and object
+ * keys alike.
+ */
+const UNSTORABLE = /\u0000|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+const MAYBE_UNSTORABLE = /[\u0000\uD800-\uDFFF]/;
+const storable = (s: string): string => (MAYBE_UNSTORABLE.test(s) ? s.replace(UNSTORABLE, "\uFFFD") : s);
+/** A `JSON.stringify` replacer that makes every string and key storable. */
+function storableJson(_key: string, value: unknown): unknown {
+  if (typeof value === "string") return storable(value);
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const keys = Object.keys(value);
+    if (keys.some((k) => MAYBE_UNSTORABLE.test(k))) {
+      return Object.fromEntries(keys.map((k) => [storable(k), (value as Record<string, unknown>)[k]]));
+    }
+  }
+  return value;
+}
+
+/** Values for jsonb parameters, made storable. */
+const jsonb = (value: unknown): string => JSON.stringify(value, storableJson);
+
 export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapter {
   const leaseMs = options.leaseMs ?? LEASE_MS;
+  // Every text parameter made storable too, such as an id from the browser:
+  // one Postgres can't hold matches nothing, rather than failing the query.
+  const sql: Queryable = {
+    query: (text, params) => db.query(text, params?.map((p) => (typeof p === "string" ? storable(p) : p))),
+  };
   // Zero or negative makes every lease expire the moment it is taken, so every
   // load acquires and the one-turn-in-flight guarantee silently disappears.
   // Infinity would strand a crashed turn's conversation forever. Refuse both
@@ -331,7 +360,7 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
     );
     const before = sending.get(conversationId) ?? Promise.resolve();
     const sent = before.then(() =>
-      db.query(`SELECT pg_notify('${TURN_CHANNEL}', piece) FROM jsonb_array_elements_text($1::jsonb) AS piece`, [
+      sql.query(`SELECT pg_notify('${TURN_CHANNEL}', piece) FROM jsonb_array_elements_text($1::jsonb) AS piece`, [
         JSON.stringify(pieces),
       ]),
     );
@@ -401,7 +430,7 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
 
   /** A fenced write matched nothing. Say which of the two reasons applies. */
   async function stale(conversationId: string): Promise<never> {
-    const { rows } = await db.query(`SELECT 1 FROM haikit_conversations WHERE id = $1`, [conversationId]);
+    const { rows } = await sql.query(`SELECT 1 FROM haikit_conversations WHERE id = $1`, [conversationId]);
     throw rows.length
       ? new StaleLease(conversationId)
       : new StaleLease(conversationId, "does not exist — no lease was ever issued for it");
@@ -414,7 +443,7 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
         // the same UPDATE, so two instances cannot both see "expired" and both
         // acquire. The row lock serialises them; the loser re-evaluates the
         // WHERE clause against the winner's committed lease and matches nothing.
-        const { rows } = await db.query(
+        const { rows } = await sql.query(
           `UPDATE haikit_conversations
               SET lease_until = now() + $2::float8 * interval '1 millisecond',
                   lease_token = $3
@@ -427,12 +456,12 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
         // Nothing matched: either someone holds the lease, or there is no such
         // conversation. This second read only picks the error — it decides
         // nothing about who holds the lease.
-        const exists = await db.query(`SELECT 1 FROM haikit_conversations WHERE id = $1`, [id]);
+        const exists = await sql.query(`SELECT 1 FROM haikit_conversations WHERE id = $1`, [id]);
         if (exists.rows.length) throw new ConversationBusy(id);
         // An unknown id starts a fresh conversation, as memoryStore does.
       }
 
-      const { rows } = await db.query(
+      const { rows } = await sql.query(
         `INSERT INTO haikit_conversations (id, status, lease_until, lease_token)
          VALUES ($1, 'idle', now() + $2::float8 * interval '1 millisecond', $3)
          RETURNING ${CONVERSATION_COLUMNS}`,
@@ -445,7 +474,7 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
       // Compare-and-set on the token. A null token or an unknown id matches no
       // row (NULL = x is never true), which is exactly the contract: saving is
       // not an upsert, and a superseded holder cannot overwrite the winner.
-      const { rows } = await db.query(
+      const { rows } = await sql.query(
         `UPDATE haikit_conversations
             SET status      = $3,
                 messages    = $4::jsonb,
@@ -466,18 +495,18 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
           conversation.id,
           conversation.leaseToken,
           conversation.status,
-          JSON.stringify(conversation.messages),
-          JSON.stringify(conversation.handles),
-          JSON.stringify(conversation.frozen),
+          jsonb(conversation.messages),
+          jsonb(conversation.handles),
+          jsonb(conversation.frozen),
           // SQL NULL, not the JSON value null — keep "no pending turn" queryable
-          conversation.pending == null ? null : JSON.stringify(conversation.pending),
+          conversation.pending == null ? null : jsonb(conversation.pending),
           conversation.leaseUntil,
           conversation.noticedThrough ?? 0,
-          JSON.stringify(conversation.wakes ?? []),
+          jsonb(conversation.wakes ?? []),
           conversation.wokeThrough ?? 0,
           conversation.wakeTurns ?? 0,
-          JSON.stringify(conversation.superseded ?? {}),
-          conversation.announcing == null ? null : JSON.stringify(conversation.announcing),
+          jsonb(conversation.superseded ?? {}),
+          conversation.announcing == null ? null : jsonb(conversation.announcing),
         ],
       );
       if (!rows.length) await stale(conversation.id);
@@ -488,7 +517,7 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
       // the token and takes the next handle number under the row lock, so
       // concurrent renders in one conversation never share a handle. If the
       // token does not match, `owner` is empty and nothing is inserted.
-      const { rows } = await db.query(
+      const { rows } = await sql.query(
         `WITH owner AS (
            UPDATE haikit_conversations
               SET handle_seq = handle_seq + 1
@@ -508,7 +537,7 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
           leaseToken,
           record.component,
           record.version,
-          JSON.stringify(record.props),
+          jsonb(record.props),
           record.mode,
           record.staleAfterMs === "never" ? "Infinity" : (record.staleAfterMs ?? null),
         ],
@@ -519,7 +548,7 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
 
     /** Scoped: a handle is only meaningful inside its own conversation. */
     async getPayload(handle, conversationId) {
-      const { rows } = await db.query(
+      const { rows } = await sql.query(
         `SELECT ${PAYLOAD_COLUMNS} FROM haikit_payloads WHERE conversation_id = $1 AND handle = $2`,
         [conversationId, handle],
       );
@@ -530,11 +559,11 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
       if (!handles.length) return [];
       // The list travels as jsonb rather than a native array parameter, which
       // not every driver encodes the same way.
-      const { rows } = await db.query(
+      const { rows } = await sql.query(
         `SELECT ${PAYLOAD_COLUMNS} FROM haikit_payloads
           WHERE conversation_id = $1
             AND handle IN (SELECT jsonb_array_elements_text($2::jsonb))`,
-        [conversationId, JSON.stringify(handles)],
+        [conversationId, jsonb(handles)],
       );
       // `IN` returns each row once; the contract is one result per input
       // handle, duplicates and order included — map the input, not the rows.
@@ -553,7 +582,7 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
       // conversation commit in the order they were numbered and a reader never
       // sees a later one before an earlier. No conversation, no row from
       // `next`, nothing inserted. Unfenced: no lease token is checked.
-      const { rows } = await db.query(
+      const { rows } = await sql.query(
         `WITH next AS (
            UPDATE haikit_conversations SET notice_seq = notice_seq + 1
             WHERE id = $1::text
@@ -568,7 +597,7 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
           record.conversationId,
           record.name,
           record.version,
-          JSON.stringify(record.payload ?? null),
+          jsonb(record.payload ?? null),
           record.model,
           record.handle ?? null,
           record.kind === "wake" ? "wake" : null,
@@ -580,7 +609,7 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
     },
 
     async getNotices(conversationId, after, limit) {
-      const { rows } = await db.query(
+      const { rows } = await sql.query(
         `SELECT ${NOTICE_COLUMNS} FROM haikit_notices
           WHERE conversation_id = $1 AND seq > $2::bigint
           ORDER BY seq
@@ -589,7 +618,7 @@ export function pgStore(db: Queryable, options: PgStoreOptions = {}): StoreAdapt
       );
       if (rows.length) return rows.map(toNotice);
       // nothing to return: say which of the two reasons applies
-      const exists = await db.query(`SELECT 1 FROM haikit_conversations WHERE id = $1`, [conversationId]);
+      const exists = await sql.query(`SELECT 1 FROM haikit_conversations WHERE id = $1`, [conversationId]);
       return exists.rows.length ? [] : null;
     },
 
