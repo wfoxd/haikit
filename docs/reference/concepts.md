@@ -14,9 +14,9 @@ a payload. To learn more about one, it calls a *query* through the built-in
 `query_ui` tool, whose answer is *capped*. See [Surfaces](surfaces.md).
 
 **Payload.** A rendered surface's props, validated against the contract's
-schema and stored as a `PayloadRecord`. The record holds the handle, the
-contract's name and version, the mode, when it was stored, and its freshness
-window. It never changes once written, and it reaches the browser as a
+schema and stored as a `PayloadRecord`. The record holds the props, the
+handle, the conversation's id, the contract's name and version, the mode,
+when it was stored, and its freshness window. It never changes once written, and it reaches the browser as a
 `ui_props` event. See [Conversations](conversations.md).
 
 **Digest.** The string a surface implementation's `digest(props, { handle })`
@@ -43,25 +43,26 @@ In the browser, the component registered under the contract's name renders
 the surface. See [Surfaces](surfaces.md).
 
 **Handle.** The id the store gives a surface's payload when it's stored, such
-as `ui_01`. `memoryStore` numbers handles across the whole process, and
-`pgStore` within each conversation, so a handle is only unique within a
+as `ui_01`. A `memoryStore` numbers handles across all its conversations,
+and `pgStore` within each conversation, so a handle is only unique within a
 conversation. Each interaction names one. A handle in the conversation's
 `handles` list is part of its history. A payload whose handle isn't in that
-list is inert: a turn that was overtaken leaves one behind, and every click on
-it is refused. See [Conversations](conversations.md).
+list, one a turn that was overtaken left behind, can't be clicked: every
+click on it is refused. See [Conversations](conversations.md).
 
 **Mode.** How a surface is rendered: `display` or `elicit`.
 
-- A **display** surface is shown, and the tool call finishes straight away,
-  with the digest as its result.
-- An **elicit** surface is a question. The turn parks on it until the user
-  answers with a `resolve` action, or types a message instead.
+- A **display** surface is shown, and `ctx.render` resolves at once with its
+  digest, which the tool normally returns as its result.
+- An **elicit** surface is a question. Once every tool call in the model's
+  reply has finished, the turn parks on it until the user answers with a
+  `resolve` action, or types a message instead.
 
 The types only accept `elicit` for a surface that declares a `resolve`
 action. See [Surfaces](surfaces.md).
 
 **Action.** A declared interaction that reaches the server: the browser posts
-`{ handle, action, value }` to `/interact`. The server validates `value`
+`{ conversationId, handle, action, value }` to `/interact`. The server validates `value`
 against the action's schema, runs its handler, and records the string the
 handler returns, the *label*. An interaction the contract doesn't declare has
 no way to reach the server. There are two kinds:
@@ -76,12 +77,13 @@ See [Surfaces](surfaces.md).
 
 **Query.** A named, read-only way into a stored payload, declared in the
 contract with `query(...)`. The model calls it through `query_ui`. Its
-handler can only return a value made by `ctx.cap`. See [Surfaces](surfaces.md)
+handler can only return a value a `Cap` function made, normally `ctx.cap`. See [Surfaces](surfaces.md)
 and [Tools](tools.md).
 
 **Cap.** What bounds a query's answer. It keeps at most `maxRows` rows
-(default 8) within `maxChars` characters (default 1800), and its first line
-says how many rows matched, how many are shown and how many were left out.
+(default 8) within `maxChars` characters (default 1800). Its first line says
+how many rows matched out of the whole collection, how many are shown, and,
+when any were, how many were left out.
 See [Tools](tools.md).
 
 **Frozen.** An elicit surface that's finished with. That happens in three
@@ -104,8 +106,8 @@ See [Revisions](revisions.md).
 **Freshness window.** A surface implementation's `staleAfterMs`: how long its
 data may be acted on, counted from when its payload was stored. The default is
 `"never"`. Once any surface in a conversation is past its window, the
-conversation has *expired*, and every further request is refused before the
-model runs. Answered surfaces count toward this; superseded ones don't. Each
+conversation has *expired*: every further message or click is refused before
+the model runs, and nothing more can be revised. Answered surfaces count toward this; superseded ones don't. Each
 payload records the window it was shown under, and a surface is held to the
 stricter of that and the one the code declares now. See
 [Surfaces](surfaces.md).
@@ -137,9 +139,9 @@ See [Tools](tools.md) and [Conversations](conversations.md).
 at the start of every conversation, before the model's first turn. It's
 recorded as if the model had called it. See [The server](server.md).
 
-**Wake turn.** A turn nobody started by typing. The events route runs one for
-`wake` notices the conversation hasn't heard yet, or for a `hai.update` sent
-with `wake: true`, and only while a browser has the events stream open.
+**Wake turn.** A turn nobody started by typing. The events route starts one
+for `wake` notices the conversation hasn't heard yet, or for a `hai.update`
+sent with `wake: true`, and only from an open events stream or a poll.
 `maxWakes` limits how often, 1 every 60,000 ms by default. See
 [Notices](notices.md).
 
@@ -152,7 +154,9 @@ wake turns run. The routes act on whatever conversation id they're given, so
 treat an id as a bearer token. See [Conversations](conversations.md).
 
 **Status.** A conversation's state: `idle` (nothing running), `streaming` (a
-turn is running) or `awaiting` (parked on a question). See
+turn is running) or `awaiting` (parked on a question). A typed or clicked
+turn whose model call fails is saved as it stood, still `streaming`, though
+nothing is running. See
 [Conversations](conversations.md).
 
 **Lease.** The exclusive right to run a turn on a conversation. Loading the
@@ -168,15 +172,16 @@ and storing a payload. A request whose lease expired, and whose conversation
 another request then took over, holds an old token. Its writes fail with
 `StaleLease` and are discarded. See [Conversations](conversations.md).
 
-**Expired.** A conversation past one of its surfaces' freshness windows. Every
-request on it is answered with an `expired` event, and nothing is recorded.
-See [Surfaces](surfaces.md) and [HTTP routes and the wire](http.md).
+**Expired.** A conversation past one of its surfaces' freshness windows. A
+message or click is answered with an `expired` event, and nothing is
+recorded. No wake turn starts, and a revision is refused. Notices are still
+stored and delivered. See [Surfaces](surfaces.md#freshness).
 
 ## After the request
 
 **Events stream.** `GET {base}/events?conversationId=…`, a long-lived
 server-sent events stream. The browser opens one per conversation when the
-app sends notices, revisions or signals. It carries notices, revisions,
+app registers any notice or signal, or turns on `updates` for `hai.update`. It carries notices, revisions,
 signals and wake turns, and on reconnecting it resumes after the last notice
 the browser saw. Behind a proxy that holds streams back, the browser polls the
 same route instead. See [HTTP routes and the wire](http.md) and
@@ -194,14 +199,16 @@ for the user, and a **wake** notice starts a wake turn. See
 stream sends it as the revision's `ui_open` and `ui_props` events, and the
 model hears it as `[UI update] …`. See [Revisions](revisions.md).
 
-**Signal.** A broadcast to every open events stream, on every server sharing
-the store, sent with `hai.signal`. A signal isn't stored, belongs to no
+**Signal.** A broadcast to every open events stream, sent with `hai.signal`.
+It reaches the other servers sharing the store when the store implements
+`publish` and `subscribe`. A signal isn't stored, belongs to no
 conversation, and never reaches the model or the transcript. Each signal's
 latest payload is sent to a stream when it opens. See
 [Signals and presence](signals.md).
 
-**Presence.** How many conversations have an events stream open, across every
-server sharing the store, heard with `hai.onPresence`. A conversation whose
+**Presence.** How many conversations have an events stream open, heard with
+`hai.onPresence`. It counts across the servers sharing the store when the
+store implements `publish` and `subscribe`. A conversation whose
 stream closed still counts for `presence.graceMs`, 5,000 ms by default. See
 [Signals and presence](signals.md).
 
@@ -233,13 +240,15 @@ See [The browser client](client.md).
 1. **A surface without a digest.** `digest` is required, and so is `model` on
    a notice.
 2. **A query answer that isn't capped.** A query handler must return a
-   `Capped`, and `ctx.cap` is the only way to make one.
+   `Capped`, and only a `Cap` function (`ctx.cap`, or one from `makeCap`)
+   makes one.
 3. **A question that can't be answered.** `mode: "elicit"` only accepts a
    surface that declares a `resolve` action.
 4. **A round trip that wasn't declared.** An action in the contract is the
    only way a click reaches the server.
 
-The server also enforces the fourth at runtime: an action the surface doesn't
-declare and implement is refused. The other three are enforced only by the
-types. JavaScript code, which the type checker doesn't see, can get past them.
-[Surfaces](surfaces.md) says what happens then.
+At runtime, the server also refuses an action the surface doesn't declare
+and implement, and `hai.notify` refuses a notice whose `model` doesn't return
+what its kind requires. The rest is enforced only by the types. JavaScript
+code, which the type checker doesn't see, can get past them:
+[Surfaces](surfaces.md#when-the-types-are-bypassed) says what happens then.
