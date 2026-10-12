@@ -245,4 +245,15 @@ export function createChat(options: {
   registry: Registry;
   notices?: NoticeRegistry;
   signals?: SignalRegistry;
+  /**
+   * How long the events stream may stay silent as it opens before the client
+   * decides something on the way is holding it back, and polls instead.
+   * Default 8000 ms.
+   */
+  eventsFallbackMs?: number;
+  /**
+   * When polling, how long each poll asks the server to hold if nothing new
+   * has come (the server allows at most 15 s). Default 15000 ms.
+   */
+  pollHoldMs?: number;
 }): Chat;

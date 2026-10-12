@@ -111,6 +111,27 @@ export function nodeHandler(hai: Hai, basePath = "/hai") {
  * this is what still finds a notice whose wake-up was lost.
  */
 const POLL_MS = 2_000;
+/**
+ * A short fingerprint of signal values, by name: what a polling browser says it
+ * has, so a poll knows whether the latest values are news to it. The client
+ * computes the same (packages/client/src/index.js); change both together.
+ */
+export function signalsDigest(entries: [string, unknown][]): string {
+  const text = JSON.stringify([...entries].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 0x01000193);
+  return (hash >>> 0).toString(16);
+}
+
+/** How long a process keeps hearing a conversation's turns after its last stream closes. */
+const WATCH_LINGER_MS = 60_000;
+/** How long a wake turn that has ended is kept, for a poll that missed its end, and how many at most. */
+const ENDED_TURN_KEPT_MS = 60_000;
+const ENDED_TURNS_KEPT = 5;
+/** The longest a poll holds when there is nothing new to send. */
+const POLL_HOLD_MS = 15_000;
+/** How long a poll waits after something new, for what comes with it, before it ends. */
+const POLL_GATHER_MS = 250;
 /** Proxies drop a stream that says nothing for long; a comment keeps it open. */
 const HEARTBEAT_MS = 25_000;
 
@@ -132,6 +153,18 @@ const PAGE = 100;
 async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse, url: URL) {
   const { store } = hai.config;
   const conversationId = url.searchParams.get("conversationId") ?? "";
+  // A poll, for a browser behind a proxy that holds a stream back until it
+  // ends: what's waiting, then the response ends, which any proxy delivers.
+  // `poll=now` answers at once; `poll=1` holds until something new arrives,
+  // or for `wait` ms (at most POLL_HOLD_MS) if nothing does.
+  const poll = url.searchParams.get("poll");
+  const polling = poll === "1" || poll === "now";
+  // a fingerprint of the signal values the browser already has (signalsDigest)
+  const hasSignals = url.searchParams.get("signals");
+  // the last wake turn the browser saw end, by its number
+  const sawTurn = Number(url.searchParams.get("turn") ?? 0);
+  const asked = Number(url.searchParams.get("wait") ?? POLL_HOLD_MS);
+  const holdMs = Number.isFinite(asked) ? Math.min(Math.max(asked, 0), POLL_HOLD_MS) : POLL_HOLD_MS;
   const resume = Number(req.headers["last-event-id"] ?? url.searchParams.get("after") ?? 0);
   let after = Number.isSafeInteger(resume) && resume > 0 ? resume : 0;
 
@@ -147,6 +180,7 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
   // Counted as watching from here, so nothing lets the entry go while this
   // stream is still being set up.
   const watchers = watchersOf(hai, conversationId);
+  watchers.stay();
   watchers.pending++;
   try {
     await watchers.ready;
@@ -166,8 +200,11 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
     connection: "keep-alive",
   });
   // Sent now, not with the first frame: with nothing to catch up on, that is a
-  // heartbeat away, and the browser's request would hang open until then.
+  // heartbeat away, and the browser's request would hang open until then. A
+  // comment with them, so the browser hears its first bytes at once: one that
+  // hears nothing knows something on the way is holding the stream, and polls.
   res.flushHeaders();
+  res.write(": open\n\n");
   const aborter = new AbortController();
   const { signal } = aborter;
   res.on("close", () => aborter.abort());
@@ -186,10 +223,19 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
     });
   };
 
-  // A wake turn's events go out as they come, one frame each, and a stream
-  // the browser has left takes no more.
-  const emit: Emit = (event) => {
+  // Something new for this browser: a poll ends a moment after it, to gather
+  // what comes with it.
+  let markFresh = () => {};
+  const freshened = new Promise<void>((resolve) => (markFresh = resolve));
+
+  // A frame out, and a stream the browser has left takes no more.
+  const send = (event: WireEvent) => {
     if (!signal.aborted && !res.writableEnded) res.write(`data: ${JSON.stringify(event)}\n\n`);
+  };
+  // A wake turn's events go out as they come, one frame each.
+  const emit: Emit = (event) => {
+    send(event);
+    markFresh();
   };
   // Every stream this process has open for the conversation hears a wake
   // turn, not only the one whose attempt won the lease: another tab shows the
@@ -220,13 +266,41 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
     }
     res.write(`data: ${JSON.stringify(event)}\n\n`);
   };
-  const closeStream = hai.streamOpened(conversationId, emitSignal);
+  // A new signal is news. Each one's latest, sent as the stream opens, is
+  // news to a poll only if the browser doesn't have those values yet, such as
+  // one sent between two polls: every poll gets them, and a poll that always
+  // ended on them would never wait.
+  const replayed: [string, unknown][] = [];
+  const closeStream = hai.streamOpened(
+    conversationId,
+    (event) => {
+      emitSignal(event);
+      markFresh();
+    },
+    (event) => {
+      emitSignal(event);
+      if (!polling || event.type !== "signal") return;
+      // the latest are sent one after another, at once: compare once all are in
+      if (!replayed.length) queueMicrotask(() => signalsDigest(replayed) !== hasSignals && markFresh());
+      replayed.push([event.name, event.payload]);
+    },
+  );
   // Joining while a wake turn runs: what it has shown so far, starting with
   // its `streaming` status, so the browser holds requests until it lets go,
   // and the reply's later text has a block to land in.
   // A surface it shows is sent with its age, so the browser counts its
   // freshness from when the surface was stored, not from now.
-  if (watchers.live) for (const event of watchers.shown) emit(aged(event));
+  if (watchers.live) for (const event of watchers.shown) send(aged(event));
+  else if (polling) {
+    // A turn that ended between two polls, unseen: all it showed, its end
+    // included, which is news. Then that no turn is running, which a browser
+    // that saw nothing of one needs too, or it would wait for it for ever.
+    // every one it missed, oldest first, if more than one ended meanwhile
+    const missed = Number.isSafeInteger(sawTurn) ? watchers.ended.filter((turn) => turn.number > sawTurn) : [];
+    for (const turn of missed) for (const event of turn.shown) send(aged(event));
+    if (missed.length) markFresh();
+    send({ type: "released" });
+  }
 
   // Wake turns run beside the notice loop, so a notice never waits behind a
   // turn, nor behind the retries while another request holds the
@@ -299,6 +373,7 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
         if (n.replaces !== undefined && n.handle !== undefined) {
           await sendRevision(n.handle, n.replaces, n.seq);
           after = n.seq;
+          markFresh();
           woken ||= n.kind === "wake";
           continue;
         }
@@ -312,6 +387,7 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
         };
         await write(`id: ${n.seq}\ndata: ${JSON.stringify(event)}\n\n`);
         after = n.seq;
+        markFresh();
         woken ||= n.kind === "wake";
       }
       if (records.length < PAGE || signal.aborted) break;
@@ -325,14 +401,12 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
   // An app that sends no notices has nothing stored to read: the stream is only
   // for signals, and stays open, reading nothing, until the browser leaves.
   const wakes = hai.sendsNotices ? wakeups(store.watch?.(conversationId, signal), signal)[Symbol.asyncIterator]() : null;
-  try {
-    if (!wakes) {
-      await new Promise<void>((resolve) => {
-        if (signal.aborted) resolve();
-        else signal.addEventListener("abort", () => resolve(), { once: true });
-      });
-      return;
-    }
+  const left = new Promise<void>((resolve) => {
+    if (signal.aborted) resolve();
+    else signal.addEventListener("abort", () => resolve(), { once: true });
+  });
+  const run = async () => {
+    if (!wakes) return left;
     await catchUp(first);
     // A wake notice may be waiting from before this browser connected: one
     // that arrived while nobody watched, or while the conversation was busy.
@@ -346,6 +420,21 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
       next = wakes.next();
       await catchUp();
     }
+  };
+  try {
+    if (!polling) return await run();
+    // A poll: the same reading, until something new has gone out and what
+    // came with it has had a moment to follow, or the hold runs out.
+    if (poll === "now") markFresh();
+    let hold: ReturnType<typeof setTimeout> | undefined;
+    const done = Promise.race([
+      left,
+      freshened.then(() => new Promise<void>((resolve) => setTimeout(resolve, POLL_GATHER_MS))),
+      new Promise<void>((resolve) => (hold = setTimeout(resolve, holdMs))),
+    ]);
+    void run().catch(() => {});
+    await done;
+    clearTimeout(hold);
   } finally {
     clearInterval(heartbeat);
     aborter.abort();
@@ -372,6 +461,13 @@ interface Watchers {
    */
   shown: WireEvent[];
   /**
+   * The wake turns that ended in the past minute, the last few, oldest first:
+   * each one's number and everything it showed, `released` included. A poll
+   * is sent each one its browser hasn't seen end, since they may have ended
+   * between two polls.
+   */
+  ended: { number: number; shown: WireEvent[] }[];
+  /**
    * An emitter for one wake attempt in this process: its frames go to every
    * stream here and to the other processes, marked as one turn.
    */
@@ -380,6 +476,14 @@ interface Watchers {
   pending: number;
   /** Let this entry go, and stop hearing other processes for it. */
   forget: () => void;
+  /**
+   * A stream for the conversation opened: stop lingering. And its last stream
+   * closed: keep hearing other processes a while, then let go. A browser that
+   * polls comes back in moments, perhaps to another server, and a wake turn
+   * that ends meanwhile, wherever it ran, has to be here to replay.
+   */
+  stay: () => void;
+  leave: () => void;
   /** Settles once this process is listening for other processes' turns. */
   ready: Promise<void>;
 }
@@ -462,8 +566,9 @@ function watchersOf(hai: Hai, conversationId: string): Watchers {
     const origin = originOf(hai);
     // Hearing other processes' wake turns lasts as long as this entry does.
     const hearing = new AbortController();
+    let lingering: ReturnType<typeof setTimeout> | null = null;
     const forget = () => {
-      if (map.get(conversationId) !== fresh || fresh.pending || fresh.streams.size || fresh.live) return;
+      if (map.get(conversationId) !== fresh || fresh.pending || fresh.streams.size || fresh.live || fresh.ended.length || lingering) return;
       map.delete(conversationId);
       hearing.abort();
     };
@@ -478,12 +583,14 @@ function watchersOf(hai: Hai, conversationId: string): Watchers {
     // start. A turn takes over only with a number at least as high as any
     // seen; anything but the current turn's frames is dropped.
     let current: string | null = null;
+    let currentNumber: number | undefined;
     let newest = 0;
     const deliver = (event: WireEvent, turn: string, number: number | undefined) => {
       if (event.type === "status" && event.status === "streaming") {
         if (current !== turn) {
           if (number !== undefined && number < newest) return; // an older turn's late start
           current = turn;
+          currentNumber = number;
           if (number !== undefined) newest = number;
           fresh.live = true;
           fresh.shown = [];
@@ -493,6 +600,15 @@ function watchersOf(hai: Hai, conversationId: string): Watchers {
       }
       remember(fresh.shown, event);
       if (event.type === "released") {
+        // kept a while for a poll that missed the end, then let go
+        if (currentNumber !== undefined) {
+          const ended = { number: currentNumber, shown: fresh.shown };
+          fresh.ended = [...fresh.ended, ended].slice(-ENDED_TURNS_KEPT);
+          setTimeout(() => {
+            fresh.ended = fresh.ended.filter((turn) => turn !== ended);
+            forget();
+          }, ENDED_TURN_KEPT_MS).unref?.();
+        }
         current = null;
         fresh.live = false;
         fresh.shown = [];
@@ -506,7 +622,20 @@ function watchersOf(hai: Hai, conversationId: string): Watchers {
       streams: new Set(),
       live: false,
       shown: [],
+      ended: [],
       forget,
+      stay: () => {
+        if (lingering) clearTimeout(lingering);
+        lingering = null;
+      },
+      leave: () => {
+        if (lingering) clearTimeout(lingering);
+        lingering = setTimeout(() => {
+          lingering = null;
+          forget();
+        }, WATCH_LINGER_MS);
+        lingering.unref?.();
+      },
       ready: Promise.resolve(),
       // A wake turn running here: its frames to this process's streams, and,
       // through the store, to every other process's. All but `context`, the
@@ -554,8 +683,9 @@ function watchersOf(hai: Hai, conversationId: string): Watchers {
 
 function forgetWatchers(_hai: Hai, _conversationId: string, watchers: Watchers) {
   // Kept while a wake turn runs, so a stream that joins later still hears it,
-  // and while any stream is open or being set up. `forget` checks all three.
-  watchers.forget();
+  // while any stream is open or being set up, while an ended turn is kept, and
+  // for a while after the last stream closes. `forget` checks them all.
+  watchers.leave();
 }
 
 /** The first wait before trying a wake turn again on a busy conversation, and the longest. */

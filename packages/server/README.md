@@ -205,6 +205,36 @@ the inspector, the same as a digest. It reads the store every two
 seconds, and a store with `watch` wakes it the moment a notice lands. The
 two-second read stays even then, so a lost wake-up only delays a notice.
 
+**For browsers behind a proxy that holds streams back, the route also
+polls.** Corporate security tools that inspect HTTPS (Netskope, Zscaler and
+the like) often hold a response until it ends, and a stream never ends, so a
+browser behind one hears nothing. The route sends a comment (`: open`) the
+moment a stream opens; a client that hears nothing at all switches to
+polling, with `?poll=1`. A poll sends what's waiting and ends, and responses
+that end get through any proxy:
+
+- **What a poll holds for.** It sends any notices after `Last-Event-ID`, each
+  signal's latest value, and any frames of a wake turn under way. It ends
+  about 250 ms after something new goes out, or after 15 s with nothing new.
+  `wait` asks for a shorter hold.
+- **Signals.** The latest values count as new only when the client lacks
+  them. The poll's `signals` parameter is a fingerprint of the values the
+  client holds.
+- **First poll and wake turns.** `?poll=now` answers at once, for a page's
+  first poll. A wake turn that runs across several polls carries on through
+  the replay of what it has shown so far. One that ends between two polls is
+  kept for a minute (the last five at most): a poll whose `turn` parameter
+  says it hasn't seen a turn end is sent all of each such turn, oldest first,
+  its last text, `idle` and `released` included. A poll that finds no turn running says so with `released`, so
+  the browser never waits for one that has ended.
+- **More than one server.** Each server keeps hearing a conversation for a
+  minute after its last stream or poll closes. A browser whose polls move
+  between servers still gets a turn that ended on another one. A poll that
+  lands on a server that hasn't served that conversation in the past minute
+  can miss it; sticky sessions avoid that.
+- **Presence.** A tab polling back to back stays inside the presence grace,
+  so it keeps counting.
+
 **A `wake` notice starts a turn of its own.** Declare one with `kind: "wake"`,
 and its `model` function must return text, since the turn is the model's
 answer to it:

@@ -371,10 +371,12 @@ export class Hai {
    * An events stream opened for `conversationId`: it hears every signal from
    * now on, starting with each one's latest payload, and counts toward
    * presence. The events route calls this; call it too if you serve the
-   * stream yourself, and call what it returns when the stream closes.
+   * stream yourself, and call what it returns when the stream closes. The
+   * latest payloads go through `replay` when given, so a caller can tell them
+   * from new ones.
    */
-  streamOpened(conversationId: string, emit: Emit): () => void {
-    return this.broadcast.opened(conversationId, emit);
+  streamOpened(conversationId: string, emit: Emit, replay?: Emit): () => void {
+    return this.broadcast.opened(conversationId, emit, replay);
   }
 
   /**
