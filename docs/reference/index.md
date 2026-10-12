@@ -38,7 +38,7 @@ as written once it has been checked against the source.
 | [HTTP routes and the wire](http.md) | `nodeHandler`, each route's requests, responses and errors, the events stream and its polling mode, and every wire event | written |
 | [Models](models.md) | The model adapter interface, and `@haikit/anthropic` | written |
 | [Stores](stores.md) | The store interface every store implements, `memoryStore`, and `@haikit/postgres`: schema, migration, cross-server channels, cleanup | written |
-| [The browser client](client.md) | `createChat`, the `Chat` object and its state, and the registries for surfaces, notices and signals | planned |
+| [The browser client](client.md) | `createChat`, the `Chat` object and its state, and the registries for surfaces, notices and signals | written |
 | [The default UI](ui.md) | `mountChat`, the transcript and inspector renderers, and the `hai.css` tokens | planned |
 | [React](react.md) | `reactSurface` and `reactNotice` | planned |
 | [Configuration and limits](limits.md) | Every option in every package in one place, and every fixed limit and timing HaiKIT applies, with its value | planned |
