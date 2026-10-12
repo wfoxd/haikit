@@ -39,7 +39,7 @@ as written once it has been checked against the source.
 | [Models](models.md) | The model adapter interface, and `@haikit/anthropic` | written |
 | [Stores](stores.md) | The store interface every store implements, `memoryStore`, and `@haikit/postgres`: schema, migration, cross-server channels, cleanup | written |
 | [The browser client](client.md) | `createChat`, the `Chat` object and its state, and the registries for surfaces, notices and signals | written |
-| [The default UI](ui.md) | `mountChat`, the transcript and inspector renderers, and the `hai.css` tokens | planned |
+| [The default UI](ui.md) | `mountChat`, the transcript and inspector renderers, and the `hai.css` tokens | written |
 | [React](react.md) | `reactSurface` and `reactNotice` | planned |
 | [Configuration and limits](limits.md) | Every option in every package in one place, and every fixed limit and timing HaiKIT applies, with its value | planned |
 
