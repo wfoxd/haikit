@@ -223,9 +223,9 @@ that end get through any proxy:
 - **First poll and wake turns.** `?poll=now` answers at once, for a page's
   first poll. A wake turn that runs across several polls carries on through
   the replay of what it has shown so far. One that ends between two polls is
-  kept for a minute: a poll whose `turn` parameter says it hasn't seen that
-  turn end is sent all of it, its last text, `idle` and `released`
-  included. A poll that finds no turn running says so with `released`, so
+  kept for a minute (the last five at most): a poll whose `turn` parameter
+  says it hasn't seen a turn end is sent all of each such turn, oldest first,
+  its last text, `idle` and `released` included. A poll that finds no turn running says so with `released`, so
   the browser never waits for one that has ended.
 - **More than one server.** Each server keeps hearing a conversation for a
   minute after its last stream or poll closes. A browser whose polls move

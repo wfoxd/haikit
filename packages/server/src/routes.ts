@@ -125,8 +125,9 @@ export function signalsDigest(entries: [string, unknown][]): string {
 
 /** How long a process keeps hearing a conversation's turns after its last stream closes. */
 const WATCH_LINGER_MS = 60_000;
-/** How long a wake turn that has ended is kept, for a poll that missed its end. */
+/** How long a wake turn that has ended is kept, for a poll that missed its end, and how many at most. */
 const ENDED_TURN_KEPT_MS = 60_000;
+const ENDED_TURNS_KEPT = 5;
 /** The longest a poll holds when there is nothing new to send. */
 const POLL_HOLD_MS = 15_000;
 /** How long a poll waits after something new, for what comes with it, before it ends. */
@@ -294,11 +295,10 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
     // A turn that ended between two polls, unseen: all it showed, its end
     // included, which is news. Then that no turn is running, which a browser
     // that saw nothing of one needs too, or it would wait for it for ever.
-    const ended = watchers.ended;
-    if (ended && Number.isSafeInteger(sawTurn) && ended.number > sawTurn) {
-      for (const event of ended.shown) send(aged(event));
-      markFresh();
-    }
+    // every one it missed, oldest first, if more than one ended meanwhile
+    const missed = Number.isSafeInteger(sawTurn) ? watchers.ended.filter((turn) => turn.number > sawTurn) : [];
+    for (const turn of missed) for (const event of turn.shown) send(aged(event));
+    if (missed.length) markFresh();
     send({ type: "released" });
   }
 
@@ -461,11 +461,12 @@ interface Watchers {
    */
   shown: WireEvent[];
   /**
-   * The last wake turn to end, kept for a minute: its number and everything it
-   * showed, `released` included. A poll whose browser hasn't seen it end is
-   * sent it, since it may have ended between two polls.
+   * The wake turns that ended in the past minute, the last few, oldest first:
+   * each one's number and everything it showed, `released` included. A poll
+   * is sent each one its browser hasn't seen end, since they may have ended
+   * between two polls.
    */
-  ended: { number: number; shown: WireEvent[] } | null;
+  ended: { number: number; shown: WireEvent[] }[];
   /**
    * An emitter for one wake attempt in this process: its frames go to every
    * stream here and to the other processes, marked as one turn.
@@ -567,7 +568,7 @@ function watchersOf(hai: Hai, conversationId: string): Watchers {
     const hearing = new AbortController();
     let lingering: ReturnType<typeof setTimeout> | null = null;
     const forget = () => {
-      if (map.get(conversationId) !== fresh || fresh.pending || fresh.streams.size || fresh.live || fresh.ended || lingering) return;
+      if (map.get(conversationId) !== fresh || fresh.pending || fresh.streams.size || fresh.live || fresh.ended.length || lingering) return;
       map.delete(conversationId);
       hearing.abort();
     };
@@ -602,10 +603,9 @@ function watchersOf(hai: Hai, conversationId: string): Watchers {
         // kept a while for a poll that missed the end, then let go
         if (currentNumber !== undefined) {
           const ended = { number: currentNumber, shown: fresh.shown };
-          fresh.ended = ended;
+          fresh.ended = [...fresh.ended, ended].slice(-ENDED_TURNS_KEPT);
           setTimeout(() => {
-            if (fresh.ended !== ended) return;
-            fresh.ended = null;
+            fresh.ended = fresh.ended.filter((turn) => turn !== ended);
             forget();
           }, ENDED_TURN_KEPT_MS).unref?.();
         }
@@ -622,7 +622,7 @@ function watchersOf(hai: Hai, conversationId: string): Watchers {
       streams: new Set(),
       live: false,
       shown: [],
-      ended: null,
+      ended: [],
       forget,
       stay: () => {
         if (lingering) clearTimeout(lingering);

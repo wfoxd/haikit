@@ -4466,6 +4466,25 @@ async function pollChecks() {
       `a turn that ended on one server is sent whole by another that served the browser in the last minute (${elsewhere.ms}ms, "${otherText}")`,
       elsewhere.ms < 7_000 && otherText === `reply ${before3 + 1}` && elsewhere.events.some((e) => e.type === "released"),
     );
+
+    // ── two turns that both end unseen are both sent, oldest first
+    const twice = await store.loadConversation(undefined);
+    await hai.send(twice, "hi", () => {});
+    twice.leaseUntil = null;
+    await store.saveConversation(twice);
+    for (const n of [8, 9]) {
+      const was = replies;
+      await hai.notify(twice.id, nudge, { n });
+      await pollOnce(twice.id, `poll=now&turn=99&${sawNotes}`); // another watcher's poll starts it
+      await until(() => replies > was);
+      await wait(2_500);
+    }
+    const both = await pollOnce(twice.id, `poll=1&wait=15000&turn=0&${sawNotes}`, { "last-event-id": "999" });
+    const replied = both.events.filter((e) => e.type === "block_start" && e.block.kind === "assistant").map((e) => e.block.text);
+    check(
+      `a browser that saw neither of two turns that ended is sent both, oldest first (${replied.join(" | ")})`,
+      replied.length === 2 && replied[0] === `reply ${replies - 1}` && replied[1] === `reply ${replies}`,
+    );
     gap = 120;
   } finally {
     otherServer.close();
