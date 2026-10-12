@@ -4281,6 +4281,13 @@ async function pollChecks() {
     if (!(await quietHandler(req, res))) res.writeHead(404).end();
   });
   await new Promise((r) => quietServer.listen(5400, "127.0.0.1", r));
+  // a second server sharing the store, as behind a load balancer
+  const other = createHai({ model, store, tools: [], surfaces: [], system: "x", notices: [note, nudge], signals: [online] });
+  const otherHandler = nodeHandler(other, "/hai");
+  const otherServer = http.createServer(async (req, res) => {
+    if (!(await otherHandler(req, res))) res.writeHead(404).end();
+  });
+  await new Promise((r) => otherServer.listen(5401, "127.0.0.1", r));
   await new Promise((r) => server.listen(5398, "127.0.0.1", r));
   await new Promise((r) => proxy.listen(5399, "127.0.0.1", r));
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -4295,9 +4302,9 @@ async function pollChecks() {
     return c.id;
   };
   // One poll, read whole: its frames, and how long it took.
-  const pollOnce = async (id, query, headers = {}) => {
+  const pollOnce = async (id, query, headers = {}, port = 5398) => {
     const started = Date.now();
-    const url = `http://127.0.0.1:5398/hai/events?conversationId=${id}&${query}`;
+    const url = `http://127.0.0.1:${port}/hai/events?conversationId=${id}&${query}`;
     // once more if a kept-alive socket was closed under it
     const text = await fetch(url, { headers }).catch(() => fetch(url, { headers })).then((r) => r.text());
     const frames = text.split("\n\n").filter(Boolean).map((frame) => {
@@ -4441,8 +4448,27 @@ async function pollChecks() {
       `…and a poll that saw it end isn't sent it again (${caughtUp.ms}ms)`,
       caughtUp.ms >= 950 && !caughtUp.events.some((e) => e.type === "block_start"),
     );
+
+    // ── …even when the next poll goes to another server than the one the turn ran on
+    const shared = await store.loadConversation(undefined);
+    await hai.send(shared, "hi", () => {});
+    shared.leaseUntil = null;
+    await store.saveConversation(shared);
+    await pollOnce(shared.id, `poll=now&${sawNotes}`, {}, 5401); // the other server has served this browser
+    const before3 = replies;
+    await hai.notify(shared.id, nudge, { n: 7 });
+    await pollOnce(shared.id, `poll=now&${sawNotes}`); // this server sees the nudge and runs the turn
+    await until(() => replies > before3);
+    await wait(2_500); // the turn finishes, with no poll open anywhere
+    const elsewhere = await pollOnce(shared.id, `poll=1&wait=15000&turn=0&${sawNotes}`, { "last-event-id": "999" }, 5401);
+    const otherText = elsewhere.events.find((e) => e.type === "block_start" && e.block.kind === "assistant")?.block.text;
+    check(
+      `a turn that ended on one server is sent whole by another that served the browser in the last minute (${elsewhere.ms}ms, "${otherText}")`,
+      elsewhere.ms < 7_000 && otherText === `reply ${before3 + 1}` && elsewhere.events.some((e) => e.type === "released"),
+    );
     gap = 120;
   } finally {
+    otherServer.close();
     proxy.closeAllConnections?.();
     proxy.close();
     server.close();

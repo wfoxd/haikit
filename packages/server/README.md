@@ -227,6 +227,11 @@ that end get through any proxy:
   turn end is sent all of it, its last text, `idle` and `released`
   included. A poll that finds no turn running says so with `released`, so
   the browser never waits for one that has ended.
+- **More than one server.** Each server keeps hearing a conversation for a
+  minute after its last stream or poll closes. A browser whose polls move
+  between servers still gets a turn that ended on another one. A poll that
+  lands on a server that hasn't served that conversation in the past minute
+  can miss it; sticky sessions avoid that.
 - **Presence.** A tab polling back to back stays inside the presence grace,
   so it keeps counting.
 

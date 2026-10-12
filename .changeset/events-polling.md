@@ -13,4 +13,5 @@ A poll sends what's waiting and ends, and responses that end get through any pro
 - A signal's latest value counts as new only when the client lacks it, judged by a fingerprint the client sends.
 - A wake turn that ends between two polls is kept for a minute. The next poll whose `turn` parameter shows it hasn't seen that turn end gets all of it.
 - A poll that finds no wake turn running says so with `released`.
+- A server keeps hearing a conversation for a minute after its last stream or poll closes, so polls that move between servers still get a turn that ended on another.
 - Back-to-back polls keep a tab counted in presence.

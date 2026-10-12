@@ -123,6 +123,8 @@ export function signalsDigest(entries: [string, unknown][]): string {
   return (hash >>> 0).toString(16);
 }
 
+/** How long a process keeps hearing a conversation's turns after its last stream closes. */
+const WATCH_LINGER_MS = 60_000;
 /** How long a wake turn that has ended is kept, for a poll that missed its end. */
 const ENDED_TURN_KEPT_MS = 60_000;
 /** The longest a poll holds when there is nothing new to send. */
@@ -177,6 +179,7 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
   // Counted as watching from here, so nothing lets the entry go while this
   // stream is still being set up.
   const watchers = watchersOf(hai, conversationId);
+  watchers.stay();
   watchers.pending++;
   try {
     await watchers.ready;
@@ -472,6 +475,14 @@ interface Watchers {
   pending: number;
   /** Let this entry go, and stop hearing other processes for it. */
   forget: () => void;
+  /**
+   * A stream for the conversation opened: stop lingering. And its last stream
+   * closed: keep hearing other processes a while, then let go. A browser that
+   * polls comes back in moments, perhaps to another server, and a wake turn
+   * that ends meanwhile, wherever it ran, has to be here to replay.
+   */
+  stay: () => void;
+  leave: () => void;
   /** Settles once this process is listening for other processes' turns. */
   ready: Promise<void>;
 }
@@ -554,8 +565,9 @@ function watchersOf(hai: Hai, conversationId: string): Watchers {
     const origin = originOf(hai);
     // Hearing other processes' wake turns lasts as long as this entry does.
     const hearing = new AbortController();
+    let lingering: ReturnType<typeof setTimeout> | null = null;
     const forget = () => {
-      if (map.get(conversationId) !== fresh || fresh.pending || fresh.streams.size || fresh.live || fresh.ended) return;
+      if (map.get(conversationId) !== fresh || fresh.pending || fresh.streams.size || fresh.live || fresh.ended || lingering) return;
       map.delete(conversationId);
       hearing.abort();
     };
@@ -612,6 +624,18 @@ function watchersOf(hai: Hai, conversationId: string): Watchers {
       shown: [],
       ended: null,
       forget,
+      stay: () => {
+        if (lingering) clearTimeout(lingering);
+        lingering = null;
+      },
+      leave: () => {
+        if (lingering) clearTimeout(lingering);
+        lingering = setTimeout(() => {
+          lingering = null;
+          forget();
+        }, WATCH_LINGER_MS);
+        lingering.unref?.();
+      },
       ready: Promise.resolve(),
       // A wake turn running here: its frames to this process's streams, and,
       // through the store, to every other process's. All but `context`, the
@@ -659,8 +683,9 @@ function watchersOf(hai: Hai, conversationId: string): Watchers {
 
 function forgetWatchers(_hai: Hai, _conversationId: string, watchers: Watchers) {
   // Kept while a wake turn runs, so a stream that joins later still hears it,
-  // and while any stream is open or being set up. `forget` checks all three.
-  watchers.forget();
+  // while any stream is open or being set up, while an ended turn is kept, and
+  // for a while after the last stream closes. `forget` checks them all.
+  watchers.leave();
 }
 
 /** The first wait before trying a wake turn again on a busy conversation, and the longest. */
