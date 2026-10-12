@@ -123,6 +123,17 @@ mountChat({
 });
 ```
 
+If something on the network holds the stream back, as HTTPS-inspecting
+corporate proxies (Netskope, Zscaler) do, the chat polls instead. The server
+greets every stream with a comment the moment it opens. A stream that brings
+no bytes at all within `eventsFallbackMs` (default 8 s, a `createChat`
+option) is dropped for short polls, whose responses end and so get through.
+Notices, signals and wake turns all arrive by polling, a little later than
+they would stream. Each poll asks the server to hold for `pollHoldMs`
+(default 15 s, the server's maximum) when nothing is new; set it lower
+behind a proxy that drops requests sooner. The browser remembers it had to poll, in `localStorage`
+under `hai:events-poll`, for a day, so its next page polls from the start.
+
 A `wake` notice's turn comes down the same stream: its reply appears under the
 notice like any other. While it runs, `send` and `interact` wait for it to
 finish rather than being refused, just as they wait behind this chat's own

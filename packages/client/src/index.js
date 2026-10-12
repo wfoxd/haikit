@@ -12,7 +12,14 @@
 /**
  * @param {{endpoint?: string, registry: Record<string, {mount: Function}>, notices?: Record<string, {mount: Function}>}} options
  */
-export function createChat({ endpoint = "/hai", registry, notices = {}, signals = {} }) {
+export function createChat({
+  endpoint = "/hai",
+  registry,
+  notices = {},
+  signals = {},
+  eventsFallbackMs = EVENTS_FALLBACK_MS,
+  pollHoldMs = POLL_HOLD_MS,
+}) {
   const listeners = new Set();
   const state = {
     conversationId: null,
@@ -111,6 +118,15 @@ export function createChat({ endpoint = "/hai", registry, notices = {}, signals 
    * so `state.notices` alone would miss them.
    */
   let resumeAfter = 0;
+  /**
+   * Whether the events stream is read by polling: a browser behind something
+   * that holds a stream back until it ends switches to it, and remembers that
+   * for a day, so its next page skips the wait.
+   */
+  let polling = rememberedPolling();
+  /** The wake turn showing, and the last one seen to end, by number: a poll says the latter. */
+  let turnShowing = 0;
+  let turnSeen = 0;
 
   // ── transport: SSE over POST (EventSource cannot POST) ──────────────
   function enqueue(path, body) {
@@ -443,17 +459,40 @@ export function createChat({ endpoint = "/hai", registry, notices = {}, signals 
 
   async function follow(conversationId, gen, signal) {
     let wait = 1_000;
+    // a poll's first answer comes at once, with the latest of each signal
+    let firstPoll = true;
     while (gen === generation && !signal.aborted) {
       // A connection that delivered a notice, or stayed up a while, was
       // healthy, and the next drop starts the backoff over. One that drops
       // straight after it opens was not, however often the server says 200.
       const opened = Date.now();
       let delivered = false;
+      // This attempt's own abort, so silence can end it without ending the chat.
+      const attempt = new AbortController();
+      const stop = () => attempt.abort();
+      signal.addEventListener("abort", stop, { once: true });
+      // The server sends a comment the moment a stream opens. Nothing at all
+      // within eventsFallbackMs means something on the way, such as a proxy
+      // that inspects traffic, is holding the stream back until it ends,
+      // which it never does: poll instead, with responses that end.
+      let silent = false;
+      const silence = polling
+        ? null
+        : setTimeout(() => {
+            silent = true;
+            attempt.abort();
+          }, eventsFallbackMs);
+
+      let ended = false;
       try {
         const last = Math.max(resumeAfter, state.notices.at(-1)?.seq ?? 0);
-        const res = await fetch(`${endpoint}/events?conversationId=${encodeURIComponent(conversationId)}`, {
+        // with a fingerprint of the signals it has, so a poll knows if their latest are news
+        const query = polling
+          ? `&poll=${firstPoll ? "now" : "1"}&wait=${pollHoldMs}&turn=${turnSeen}&signals=${signalsDigest(Object.entries(state.signals))}`
+          : "";
+        const res = await fetch(`${endpoint}/events?conversationId=${encodeURIComponent(conversationId)}${query}`, {
           headers: last ? { "last-event-id": String(last) } : {},
-          signal,
+          signal: attempt.signal,
         });
         // the server has no such conversation, or sends no notices: stop
         if (res.status === 404) return;
@@ -462,7 +501,11 @@ export function createChat({ endpoint = "/hai", registry, notices = {}, signals 
           let buffer = "";
           for (;;) {
             const { value, done } = await reader.read();
-            if (done) break;
+            clearTimeout(silence);
+            if (done) {
+              ended = true;
+              break;
+            }
             buffer += value;
             let i;
             while ((i = buffer.indexOf("\n\n")) >= 0) {
@@ -489,6 +532,22 @@ export function createChat({ endpoint = "/hai", registry, notices = {}, signals 
         }
       } catch {
         if (signal.aborted) return finishRemote();
+      } finally {
+        clearTimeout(silence);
+        signal.removeEventListener("abort", stop);
+      }
+      if (silent) {
+        polling = true;
+        rememberPolling();
+        continue;
+      }
+      // A poll that ended as polls do: the next one at once, a moment apart.
+      // A wake turn it was part way through goes on in the next, which is sent
+      // what the turn has shown so far, or that none is running.
+      if (polling && ended && gen === generation && !signal.aborted) {
+        firstPoll = false;
+        await pause(Math.max(0, POLL_GAP_MS - (Date.now() - opened)), signal);
+        continue;
       }
       // A turn cut off with its connection runs on, but nothing will say when
       // it ends: stop waiting for it, and give the next request longer instead.
@@ -518,10 +577,13 @@ export function createChat({ endpoint = "/hai", registry, notices = {}, signals 
    */
   function followTurn(event) {
     if (event.type === "status" && event.status === "streaming") {
+      // the turn's number, so a poll can say which turn it last saw end
+      if (typeof event.wake === "number") turnShowing = event.wake;
       if (!remote) remote = new Promise((resolve) => (endRemote = resolve));
       // surfaces it shows are stamped after this, as a request's are after it is sent
       sentAt = Date.now();
     } else if (event.type === "released") {
+      if (turnShowing > turnSeen) turnSeen = turnShowing;
       finishRemote();
     }
   }
@@ -747,6 +809,9 @@ export function createChat({ endpoint = "/hai", registry, notices = {}, signals 
     stopListening();
     cutOff = false;
     resumeAfter = 0;
+    // turns are numbered per conversation
+    turnShowing = 0;
+    turnSeen = 0;
     clearTimeout(timer);
     for (const surface of state.surfaces.values()) unmount(surface);
     for (const seq of [...noticeMounts.keys()]) unmountNotice(seq);
@@ -814,6 +879,56 @@ const CUT_OFF_MS = 120_000;
 
 /** An events connection that stays up this long was healthy, whatever it delivered. */
 const HEALTHY_MS = 30_000;
+
+/** How long the events stream may stay silent as it opens before the client polls instead. */
+const EVENTS_FALLBACK_MS = 8_000;
+/** The least time from one poll's start to the next's. */
+const POLL_GAP_MS = 250;
+/** How long a poll asks the server to hold when nothing new has come: the server allows at most 15 s. */
+const POLL_HOLD_MS = 15_000;
+/** Where a browser remembers it had to poll, and for how long. */
+const POLL_KEY = "hai:events-poll";
+const POLL_REMEMBER_MS = 24 * 60 * 60_000;
+
+/**
+ * A short fingerprint of signal values, by name, as a poll reports what this
+ * browser has. The server computes the same (packages/server/src/routes.ts);
+ * change both together.
+ */
+function signalsDigest(entries) {
+  const text = JSON.stringify([...entries].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 0x01000193);
+  return (hash >>> 0).toString(16);
+}
+
+function rememberedPolling() {
+  try {
+    const at = Number(localStorage.getItem(POLL_KEY));
+    return Number.isFinite(at) && at > 0 && Date.now() - at < POLL_REMEMBER_MS;
+  } catch {
+    return false;
+  }
+}
+
+function rememberPolling() {
+  try {
+    localStorage.setItem(POLL_KEY, String(Date.now()));
+  } catch {}
+}
+
+/** Wait `ms`, or until `signal` aborts. */
+function pause(ms, signal) {
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal.addEventListener("abort", done);
+  });
+}
 
 /**
  * Run `fn`, reporting what it throws without letting it stop the caller: the

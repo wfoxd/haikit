@@ -53,10 +53,11 @@ export class Broadcast {
 
   /**
    * An events stream opened for `conversationId`: it hears signals from now
-   * on, starting with each one's latest payload, and the conversation counts
-   * as present. Call what this returns when the stream closes.
+   * on, through `emit`, starting with each one's latest payload, through
+   * `replay`; and the conversation counts as present. Call what this returns
+   * when the stream closes.
    */
-  opened(conversationId: string, emit: Emit): () => void {
+  opened(conversationId: string, emit: Emit, replay: Emit = emit): () => void {
     this.start();
     this.streams.add(emit);
     let closed = false;
@@ -64,7 +65,7 @@ export class Broadcast {
     // sent is among them. A live one may come first; the latest is still the
     // latest, so at worst one arrives twice.
     void this.hearing.then(() => {
-      if (!closed) for (const event of this.latest.values()) emit(event);
+      if (!closed) for (const event of this.latest.values()) replay(event);
     });
 
     const wasLeaving = this.leaving.get(conversationId);

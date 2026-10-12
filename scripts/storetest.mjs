@@ -4210,6 +4210,246 @@ async function signalChecks() {
   );
 }
 
+// ── polling: for a browser behind a proxy that holds a stream until it ends ──
+async function pollChecks() {
+  console.log("\nevents by polling");
+  const http = await import("node:http");
+  const { createHai, memoryStore, nodeHandler } = await import("../packages/server/dist/index.js");
+  const { defineNotice, defineSignal } = await import("../packages/core/dist/index.js");
+  const { createChat } = await import("../packages/client/src/index.js");
+  const { signalsDigest } = await import("../packages/server/dist/routes.js");
+  // what a poll says it already has: these signal values
+  const has = (entries) => `signals=${signalsDigest(entries)}`;
+  const any = { parse: (v) => v };
+  const note = defineNotice({ name: "note", version: 1, payload: any }).implement({ model: (p) => `note ${p.n}` });
+  const nudge = defineNotice({ name: "nudge", version: 1, kind: "wake", payload: any }).implement({ model: (p) => `nudge ${p.n}` });
+  const online = defineSignal({ name: "online", version: 1, payload: any });
+  let replies = 0;
+  let gap = 120; // between the pieces of a reply
+  const model = {
+    id: "stub",
+    async generate({ onTextDelta }) {
+      replies++;
+      // streamed in pieces, a little apart, as a model's reply is
+      for (const piece of [`reply `, `${replies}`]) {
+        onTextDelta(piece);
+        await new Promise((r) => setTimeout(r, gap));
+      }
+      return { content: [{ type: "text", text: `reply ${replies}` }], stop_reason: "end_turn" };
+    },
+  };
+  const store = memoryStore();
+  const hai = createHai({ model, store, tools: [], surfaces: [], system: "x", notices: [note, nudge], signals: [online], maxWakes: { count: 10, perMs: 60_000 } });
+  const handler = nodeHandler(hai, "/hai");
+  const requested = []; // every URL the server was asked for
+  const server = http.createServer(async (req, res) => {
+    requested.push(req.url);
+    if (!(await handler(req, res))) res.writeHead(404).end();
+  });
+  // Holds every response until it has ended, then sends it whole, as a proxy
+  // that inspects traffic does. A stream, which never ends, never arrives.
+  let proxied = 0; // polls through the proxy
+  const proxy = http.createServer(async (req, res) => {
+    if (req.url.includes("poll=")) proxied++;
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const upstream = new AbortController();
+    res.on("close", () => upstream.abort());
+    try {
+      const headers = { "content-type": req.headers["content-type"] ?? "application/json" };
+      if (req.headers["last-event-id"]) headers["last-event-id"] = req.headers["last-event-id"];
+      const r = await fetch(`http://127.0.0.1:5398${req.url}`, {
+        method: req.method,
+        headers,
+        body: req.method === "GET" ? undefined : Buffer.concat(chunks),
+        signal: upstream.signal,
+      });
+      const text = await r.text();
+      // a fresh connection each time: a kept-alive socket reused as this side
+      // closes it can leave a request hanging, which is the test's, not HaiKIT's
+      res.writeHead(r.status, { "content-type": r.headers.get("content-type") ?? "text/plain", connection: "close" });
+      res.end(text);
+    } catch {
+      res.destroy();
+    }
+  });
+  // an app with notices but no signals: a stream it opens may have nothing at all to send
+  const quietHai = createHai({ model, store, tools: [], surfaces: [], system: "x", notices: [note] });
+  const quietHandler = nodeHandler(quietHai, "/hai");
+  const quietServer = http.createServer(async (req, res) => {
+    requested.push(req.url);
+    if (!(await quietHandler(req, res))) res.writeHead(404).end();
+  });
+  await new Promise((r) => quietServer.listen(5400, "127.0.0.1", r));
+  await new Promise((r) => server.listen(5398, "127.0.0.1", r));
+  await new Promise((r) => proxy.listen(5399, "127.0.0.1", r));
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const until = async (cond, ms = 8_000) => {
+    for (const end = Date.now() + ms; Date.now() < end; await wait(10)) if (cond()) return true;
+    return cond();
+  };
+  const conversation = async () => {
+    const c = await store.loadConversation(undefined);
+    c.leaseUntil = null;
+    await store.saveConversation(c);
+    return c.id;
+  };
+  // One poll, read whole: its frames, and how long it took.
+  const pollOnce = async (id, query, headers = {}) => {
+    const started = Date.now();
+    const url = `http://127.0.0.1:5398/hai/events?conversationId=${id}&${query}`;
+    // once more if a kept-alive socket was closed under it
+    const text = await fetch(url, { headers }).catch(() => fetch(url, { headers })).then((r) => r.text());
+    const frames = text.split("\n\n").filter(Boolean).map((frame) => {
+      const lines = frame.split("\n");
+      const data = lines.find((l) => l.startsWith("data: "));
+      return { id: lines.find((l) => l.startsWith("id: "))?.slice(4), event: data ? JSON.parse(data.slice(6)) : null };
+    }).filter((f) => f.event || f.id);
+    return { ms: Date.now() - started, frames, events: frames.map((f) => f.event).filter(Boolean) };
+  };
+
+  try {
+    // warm up: the first request a fresh server takes pays for loading, which isn't what's timed below
+    await fetch("http://127.0.0.1:5398/hai/events?conversationId=conv_warm_up").then((r) => r.text());
+    // ── the server's polls
+    const id = await conversation();
+    await hai.notify(id, note, { n: 1 });
+    hai.signal(online, { count: 7 });
+    const now = await pollOnce(id, "poll=now");
+    check(
+      `poll=now answers at once with the backlog, each signal's latest, and that no turn is running (${now.ms}ms)`,
+      now.ms < 7_000 && now.events.some((e) => e.type === "notice" && e.payload.n === 1) &&
+        now.frames.find((f) => f.event?.type === "notice")?.id !== undefined &&
+        now.events.some((e) => e.type === "signal" && e.payload.count === 7) && now.events.some((e) => e.type === "released"),
+    );
+    const seen = now.frames.find((f) => f.event?.type === "notice").id;
+    const quiet = await pollOnce(id, `poll=1&wait=1000&${has([["online", { count: 7 }]])}`, { "last-event-id": seen });
+    check(
+      `poll=1 with nothing new holds, then ends, without ending early on a signal's latest (${quiet.ms}ms)`,
+      quiet.ms >= 950 && quiet.ms < 10_000 && !quiet.events.some((e) => e.type === "notice") &&
+        quiet.events.some((e) => e.type === "signal"),
+    );
+    const held = pollOnce(id, `poll=1&wait=15000&${has([["online", { count: 7 }]])}`, { "last-event-id": seen });
+    await wait(300);
+    await hai.notify(id, note, { n: 2 });
+    const got = await held;
+    check(
+      `a held poll ends soon after a notice arrives, with it (${got.ms}ms)`,
+      got.ms < 7_000 && got.events.some((e) => e.type === "notice" && e.payload.n === 2),
+    );
+    const heldForSignal = pollOnce(id, `poll=1&wait=15000&${has([["online", { count: 7 }]])}`, {
+      "last-event-id": got.frames.find((f) => f.event?.type === "notice").id,
+    });
+    await wait(300);
+    hai.signal(online, { count: 8 });
+    const sig = await heldForSignal;
+    check(
+      `…and soon after a new signal, with it (${sig.ms}ms)`,
+      sig.ms < 7_000 && sig.events.some((e) => e.type === "signal" && e.payload.count === 8),
+    );
+    check("the wait a poll may ask for is capped", (await pollOnce(id, "poll=now&wait=999999999")).ms < 7_000);
+    const nothingNew = await pollOnce(id, `poll=now&${has([["online", { count: 8 }]])}`, { "last-event-id": "999" });
+    check(`poll=now answers at once even with nothing new (${nothingNew.ms}ms)`, nothingNew.ms < 7_000);
+    // a browser that hasn't got the latest values yet gets them at once, not after the hold
+    const stale = await pollOnce(id, `poll=1&wait=15000&${has([["online", { count: 7 }]])}`, { "last-event-id": "999" });
+    check(
+      `a poll whose browser lacks a signal's latest value ends at once with it (${stale.ms}ms)`,
+      stale.ms < 7_000 && stale.events.some((e) => e.type === "signal" && e.payload.count === 8),
+    );
+
+    // ── a client on an ordinary network keeps its stream, even with nothing to send yet
+    const direct = createChat({ endpoint: "http://127.0.0.1:5400/hai", registry: {}, notices: { note: { mount() {} } }, eventsFallbackMs: 6_000 });
+    await direct.send("hello");
+    const directId = direct.state.conversationId;
+    await wait(7_000);
+    await quietHai.notify(directId, note, { n: 9 });
+    const streamed = await until(() => direct.state.notices.some((n) => n.payload?.n === 9), 6_000);
+    check(
+      "a client whose stream opens, though nothing is sent for a while, never falls back to polling",
+      streamed && !requested.some((u) => u.includes(directId) && u.includes("poll=")),
+    );
+    direct.close();
+
+    // ── a client behind the holding proxy switches to polling, and hears everything
+    const heard = [];
+    const client = createChat({
+      endpoint: "http://127.0.0.1:5399/hai",
+      registry: {},
+      notices: { note: { mount() {} }, nudge: { mount() {} } },
+      signals: { online: (p) => heard.push(p.count) },
+      eventsFallbackMs: 500,
+    });
+    await client.send("hello");
+    const cid = client.state.conversationId;
+    const switched = await until(() => heard.includes(8));
+    check(`a client whose events stream is held back polls instead, and hears each signal's latest (${heard.join(" ")})`, switched);
+    await hai.notify(cid, note, { n: 3 });
+    check("…and notices, through the polls", await until(() => client.state.notices.some((n) => n.payload?.n === 3)));
+    // sent at once and, again, between two polls: neither waits out a poll's hold
+    hai.signal(online, { count: 9 });
+    const sentAt = Date.now();
+    check(`…and new signals, promptly (${Date.now() - sentAt}ms)`, (await until(() => heard.includes(9), 6_000)));
+    await wait(240); // likely between polls now: the last ended about 250 ms after the signal
+    hai.signal(online, { count: 10 });
+    const betweenAt = Date.now();
+    const between = await until(() => heard.includes(10), 6_000);
+    check(`…including one sent between two polls, which the next poll sees is news (${Date.now() - betweenAt}ms)`, between);
+    const before = replies;
+    await hai.notify(cid, nudge, { n: 4 });
+    check(
+      "…and a wake turn, its reply coming down the polls, and the client let go once it ends",
+      await until(() => client.state.blocks.some((b) => b.kind === "assistant" && b.text === `reply ${before + 1}`) && client.state.status === "idle", 60_000),
+    );
+    // presence holds across the polls: once the bare polls above have aged
+    // out, one tab, counted throughout, never dropping out between polls
+    let present = 0;
+    const stop = hai.onPresence((n) => (present = n));
+    await until(() => present === 1, 10_000);
+    const counts = [];
+    const watch = hai.onPresence((n) => counts.push(n));
+    const pollsBefore = proxied;
+    await wait(3_000);
+    watch();
+    stop();
+    // the turn it saw end isn't sent again, so its polls go back to holding
+    check(`after a wake turn, a polling client's polls hold again (${proxied - pollsBefore} polls in 3 s)`, proxied - pollsBefore <= 2);
+    check(`a polling tab stays counted between its polls (${counts.join(" ")})`, counts.length >= 1 && counts.every((n) => n === 1));
+    client.close();
+
+    // ── a wake turn that ends between two polls is sent whole to the next
+    gap = 700; // a reply slow enough to end after the poll that started it
+    const begun = await store.loadConversation(undefined);
+    await hai.send(begun, "hi", () => {});
+    begun.leaseUntil = null;
+    await store.saveConversation(begun);
+    const sawNotes = has([["online", { count: 9 }], ["online", { count: 10 }]].slice(1));
+    const before2 = replies;
+    await hai.notify(begun.id, nudge, { n: 6 });
+    const starting = await pollOnce(begun.id, `poll=now&${sawNotes}`); // sees the nudge, starts the turn, ends
+    await until(() => replies > before2);
+    await wait(2_500); // the turn finishes with no poll open
+    const missed = await pollOnce(begun.id, `poll=1&wait=15000&turn=0&${sawNotes}`, { "last-event-id": "999" });
+    const text = missed.events.find((e) => e.type === "block_start" && e.block.kind === "assistant")?.block.text;
+    const number = missed.events.find((e) => e.type === "status" && typeof e.wake === "number")?.wake;
+    check(
+      `a poll that missed a wake turn's end is sent all of it at once: its whole reply, idle, released (${missed.ms}ms, "${text}")`,
+      starting.events.some((e) => e.type === "notice") && missed.ms < 7_000 && text === `reply ${before2 + 1}` &&
+        missed.events.some((e) => e.type === "status" && e.status === "idle") && missed.events.some((e) => e.type === "released"),
+    );
+    const caughtUp = await pollOnce(begun.id, `poll=1&wait=1000&turn=${number}&${sawNotes}`, { "last-event-id": "999" });
+    check(
+      `…and a poll that saw it end isn't sent it again (${caughtUp.ms}ms)`,
+      caughtUp.ms >= 950 && !caughtUp.events.some((e) => e.type === "block_start"),
+    );
+    gap = 120;
+  } finally {
+    proxy.closeAllConnections?.();
+    proxy.close();
+    server.close();
+    quietServer.close();
+  }
+}
+
 async function noticeStreamChecks() {
   console.log("\nnotice stream");
   const http = await import("node:http");
@@ -6062,6 +6302,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   await revisionClientChecks();
   await updateStreamChecks();
   await signalChecks();
+  await pollChecks();
   await transcriptChecks();
 
   // Said plainly because a suite that looks exhaustive is worse than one that
