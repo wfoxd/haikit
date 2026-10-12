@@ -27,7 +27,7 @@ as written once it has been checked against the source.
 
 | Page | Covers | Status |
 | --- | --- | --- |
-| [Concepts](concepts.md) | Short, exact definitions of the terms used throughout: dual channel, digest, payload, surface, handle, mode, parked turn, action, query, notice, revision, signal, presence, lease, freshness | planned |
+| [Concepts](concepts.md) | Short, exact definitions of the terms used throughout: dual channel, digest, payload, surface, handle, mode, parked turn, action, query, notice, revision, signal, presence, lease, freshness | written |
 | [Surfaces](surfaces.md) | Declaring a surface and implementing it on the server: props, actions, queries, digests, freshness | planned |
 | [Tools](tools.md) | Declaring tools, what a tool can do through its context, the built-in `query_ui` tool, and capping long results | planned |
 | [Notices](notices.md) | Telling a conversation something later: passive and wake notices, wake turns and their limits | planned |
