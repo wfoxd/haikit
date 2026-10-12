@@ -144,8 +144,9 @@ See [Surfaces: how a click is handled](surfaces.md#how-a-click-is-handled).
 **A `run` that doesn't keep to the types.** JavaScript code can get these
 wrong:
 
-- If `run` returns something with no `model`, such as nothing or a bare
-  string, the turn fails with a `TypeError`.
+- If `run` returns nothing (`undefined` or `null`), the turn fails with a
+  `TypeError`. Something else with no `model`, such as a bare string, is
+  recorded as a result with no content, and the turn goes on.
 - If it throws `undefined` or `null`, the turn fails the same way. A thrown
   string becomes `<name> failed: undefined`.
 

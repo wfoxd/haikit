@@ -34,7 +34,7 @@ as written once it has been checked against the source.
 | [Revisions](revisions.md) | Revising a surface in place, from inside a turn (`ctx.update`) and from outside one (`hai.update`) | written |
 | [Signals and presence](signals.md) | Broadcasts to every open browser, and counting who is watching | written |
 | [Conversations](conversations.md) | The stored conversation: its fields, statuses and lifecycle, leases, and the errors stores raise | written |
-| [The server](server.md) | `createHai`, the `Hai` class and every `HaiConfig` option | planned |
+| [The server](server.md) | `createHai`, the `Hai` class and every `HaiConfig` option | written |
 | [HTTP routes and the wire](http.md) | `nodeHandler`, each route's requests, responses and errors, the events stream and its polling mode, and every wire event | planned |
 | [Models](models.md) | The model adapter interface, and `@haikit/anthropic` | planned |
 | [Stores](stores.md) | The store interface every store implements, `memoryStore`, and `@haikit/postgres`: schema, migration, cross-server channels, cleanup | planned |
