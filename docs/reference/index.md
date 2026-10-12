@@ -31,7 +31,7 @@ as written once it has been checked against the source.
 | [Surfaces](surfaces.md) | Declaring a surface and implementing it on the server: props, actions, queries, digests, freshness | written |
 | [Tools](tools.md) | Declaring tools, what a tool can do through its context, the built-in `query_ui` tool, and capping long results | written |
 | [Notices](notices.md) | Telling a conversation something later: passive and wake notices, wake turns and their limits | written |
-| [Revisions](revisions.md) | Revising a surface in place, from inside a turn (`ctx.update`) and from outside one (`hai.update`) | planned |
+| [Revisions](revisions.md) | Revising a surface in place, from inside a turn (`ctx.update`) and from outside one (`hai.update`) | written |
 | [Signals and presence](signals.md) | Broadcasts to every open browser, and counting who is watching | planned |
 | [Conversations](conversations.md) | The stored conversation: its fields, statuses and lifecycle, leases, and the errors stores raise | planned |
 | [The server](server.md) | `createHai`, the `Hai` class and every `HaiConfig` option | planned |
