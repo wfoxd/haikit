@@ -55,13 +55,17 @@
       reading.className = "online-chip";
       reading.hidden = true;
       document.querySelector("#app .hai-actions")?.prepend(reading);
-      chat.subscribe((state, event) => {
-        if (event.type !== "signal" || event.name !== "online") return;
+      const showReading = (/** @type {typeof chat.state} */ state) => {
         const count = /** @type {{ count?: number } | undefined} */ (state.signals.online)?.count ?? 0;
         reading.hidden = count < 1;
         reading.textContent = `${count} reading now`;
         reading.title = count === 1 ? "You're the only one here right now" : `${count} people have the introduction open`;
+      };
+      chat.subscribe((state, event) => {
+        if (event.type === "signal" && event.name === "online") showReading(state);
       });
+      // A count may have come while the menu loaded: subscribers hear only what comes next.
+      showReading(chat.state);
     </script>
   </body>
 </html>

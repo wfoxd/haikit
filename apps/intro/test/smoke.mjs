@@ -428,12 +428,15 @@ try {
           const { value, done } = await reader.read();
           if (done) break;
           buffer += value;
-          for (const frame of buffer.split("\n\n").slice(0, -1)) {
+          // whole frames only: a read can end part way through one, which waits for the next
+          let end;
+          while ((end = buffer.indexOf("\n\n")) >= 0) {
+            const frame = buffer.slice(0, end);
+            buffer = buffer.slice(end + 2);
             const data = frame.split("\n").find((l) => l.startsWith("data: "));
             const event = data ? JSON.parse(data.slice(6)) : null;
             if (event?.type === "signal" && event.name === "online" && event.payload.count >= 1) signal = event;
           }
-          buffer = buffer.slice(buffer.lastIndexOf("\n\n") + 2);
         }
       } catch {}
       clearTimeout(timer);
