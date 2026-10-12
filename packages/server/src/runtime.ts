@@ -10,6 +10,8 @@ import {
   type ModelAdapter,
   type Notify,
   type Progress,
+  type SendSignal,
+  type Signal,
   type StoreAdapter,
   type Tool,
   type ToolCtx,
@@ -18,6 +20,7 @@ import {
   type UpdateOptions,
   type WireEvent,
 } from "@haikit/core";
+import { Broadcast } from "./signals.js";
 
 export interface HaiConfig {
   model: ModelAdapter;
@@ -74,6 +77,20 @@ export interface HaiConfig {
    * with `wake` asks for.
    */
   updates?: boolean;
+  /**
+   * The signals this app sends with `hai.signal`: short-lived broadcasts to
+   * every open browser. A signal not listed here is refused. With any listed,
+   * the browser opens the events stream, which is how a signal reaches it.
+   */
+  signals?: Signal<any>[];
+  /**
+   * How presence is counted (`hai.onPresence`). `graceMs`: how long a
+   * conversation whose events stream closed still counts, so a browser that
+   * reconnects doesn't flicker the count; default 5 s. `heartbeatMs`: how
+   * often servers sharing a store tell each other their counts; a server not
+   * heard from for three beats stops counting; default 10 s.
+   */
+  presence?: { graceMs?: number; heartbeatMs?: number };
 }
 
 /**
@@ -143,6 +160,9 @@ interface UpdateQueue {
   next: UpdateJob | null;
 }
 
+/** The longest delay a Node timer keeps; past it, one fires after about a millisecond. */
+const MAX_TIMER_MS = 2_147_483_647;
+
 /** How long `hai.update` waits for a turn to let the conversation go, by default. */
 const UPDATE_TIMEOUT_MS = 30_000;
 /** How many conversations `hai.update` remembers its surfaces' handles for. */
@@ -167,6 +187,9 @@ export class Hai {
   private readonly queryUi: Tool;
   /** Handles each conversation has a revision of in flight, so two calls can't revise one at once. */
   private readonly revising = new WeakMap<Conversation, Set<string>>();
+  private readonly signals = new Map<string, Signal<any>>();
+  /** Signals sent, streams open, and presence, here and on the other servers. */
+  private readonly broadcast: Broadcast;
   /** `hai.update` calls by conversation and surface: one writing, and the newest waiting behind it. */
   private readonly updating = new Map<string, UpdateQueue>();
   /**
@@ -203,6 +226,25 @@ export class Hai {
       );
     }
     this.maxWakes = { count, perMs };
+    for (const s of config.signals ?? []) {
+      if (this.signals.has(s.name)) throw new Error(`two signals are named "${s.name}"`);
+      this.signals.set(s.name, s);
+    }
+    const { graceMs = 5_000, heartbeatMs = 10_000 } = config.presence ?? {};
+    for (const [name, ms] of [["graceMs", graceMs], ["heartbeatMs", heartbeatMs]] as const) {
+      // Past the longest timer Node keeps, it fires after about a millisecond:
+      // a grace would end at once, and a heartbeat would spin.
+      // Whole milliseconds, as timers count them: a fractional one would be
+      // scheduled shorter than the staleness arithmetic assumes.
+      if (typeof ms !== "number" || !Number.isInteger(ms) || ms <= 0 || ms > MAX_TIMER_MS) {
+        throw new RangeError(
+          `presence.${name} must be a whole number of milliseconds, from 1 to ${MAX_TIMER_MS} (got ${String(ms)})`,
+        );
+      }
+    }
+    this.broadcast = new Broadcast(config.store, graceMs, heartbeatMs);
+    // hear the other servers' signals from now, so a stream that opens later gets their latest
+    if (this.signals.size) this.broadcast.start();
     // query_ui is DERIVED, never authored. It cannot drift from the surfaces
     // that actually exist, and it always exists.
     const queryUi = this.buildQueryUiTool();
@@ -218,11 +260,20 @@ export class Hai {
   }
 
   /**
-   * Whether this app sends notices, `hai.update`'s included, so the browser
-   * should open the events stream.
+   * Whether this app sends notices, `hai.update`'s included: what the
+   * conversation's history may have unread, and the events stream may have to
+   * deliver.
    */
   get sendsNotices(): boolean {
     return this.notices.size > 0 || this.config.updates === true;
+  }
+
+  /**
+   * Whether the browser should open the events stream: for notices, or for
+   * signals, which travel on it too.
+   */
+  get streamsEvents(): boolean {
+    return this.sendsNotices || this.signals.size > 0;
   }
 
   /**
@@ -276,6 +327,55 @@ export class Hai {
     });
     return { seq: record.seq };
   };
+
+  /**
+   * Send a signal to every open events stream, on this server and, through a
+   * store with `publish` and `subscribe`, on the others. Not stored, not
+   * numbered, never in the model's context or the transcript: the browser
+   * hands it to the app's handler for it. Each signal's latest payload is
+   * kept, and a stream that opens later is sent it first.
+   *
+   * Throws for a signal not listed in `signals`, or a payload that fails its
+   * schema.
+   */
+  readonly signal: SendSignal = (signal, payload) => {
+    const name = signal?.name;
+    if (this.signals.get(name) !== signal) {
+      throw new Error(`signal "${name}" is not registered: list it in createHai({ signals })`);
+    }
+    this.broadcast.send({ type: "signal", name, version: signal.version, payload: signal.payload.parse(payload) });
+  };
+
+  /**
+   * How many conversations have an events stream open, on every server
+   * sharing the store: a tab with the app open, as near as the server can
+   * tell. `listener` hears the count now and whenever it changes. A stream
+   * that closes still counts for `presence.graceMs`, so a reconnect doesn't
+   * flicker it. Returns a function that stops listening.
+   *
+   * Each server counts its own and the totals are summed, so a conversation
+   * counts once per server it has a stream on: one that reconnects to another
+   * server counts on both until the grace runs out, and one with streams on
+   * two servers at once counts twice. (The client opens one stream per
+   * conversation, so the second doesn't happen with it.)
+   *
+   * Only the number leaves a server: no conversation ids, and nothing the
+   * model sees. An app with no notices, updates or signals opens no events
+   * stream, so counts nothing.
+   */
+  onPresence(listener: (count: number) => void): () => void {
+    return this.broadcast.onPresence(listener);
+  }
+
+  /**
+   * An events stream opened for `conversationId`: it hears every signal from
+   * now on, starting with each one's latest payload, and counts toward
+   * presence. The events route calls this; call it too if you serve the
+   * stream yourself, and call what it returns when the stream closes.
+   */
+  streamOpened(conversationId: string, emit: Emit): () => void {
+    return this.broadcast.opened(conversationId, emit);
+  }
 
   /**
    * Revise a surface from outside any turn: a webhook, a job, a price feed.

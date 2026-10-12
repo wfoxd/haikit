@@ -135,6 +135,29 @@ name the registry doesn't list renders an error card. Like a surface, `mount`
 may return `{ unmount }`. With `createChat`, mount one yourself with
 `chat.mountNotice(seq, element)`.
 
+## Signals
+
+A signal (`hai.signal`) is a broadcast to every open browser, such as how many
+people are online. It comes down the same events stream, and goes to a
+handler, never to the transcript:
+
+```js
+mountChat({
+  root, registry,
+  signals: {
+    online(payload, { version }) {
+      badge.textContent = `${payload.count} reading now`;
+    },
+  },
+});
+```
+
+Each signal's latest payload is also in `state.signals`, by name, and
+subscribers hear a `signal` event. A stream that opens is sent each signal's
+latest value first, so the handler runs as soon as the events stream is up.
+Signals carry no id: a reconnect is sent the latest values again rather than
+the ones it missed.
+
 ## Out-of-date conversations
 
 The server closes a conversation once any surface passes its freshness window.

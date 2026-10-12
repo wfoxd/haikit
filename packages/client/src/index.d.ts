@@ -128,6 +128,15 @@ export interface NoticeDef<P = any> {
   mount(element: HTMLElement, payload: P, ctx: NoticeMountCtx): NoticeInstance | null | void;
 }
 
+/**
+ * What the browser does with a signal: a handler, called with its payload each
+ * time one arrives. Signals are never drawn in the transcript.
+ */
+export type SignalHandler<P = any> = (payload: P, ctx: { version: number }) => void;
+
+/** Handlers for the signals the server sends, by signal name. */
+export type SignalRegistry = Record<string, SignalHandler<any>>;
+
 /** The notices allowlist, by notice name. Separate from `Registry`, so names never clash. */
 export type NoticeRegistry = Record<string, NoticeDef<any>>;
 
@@ -171,6 +180,8 @@ export interface ChatState {
   expired: string | null;
   /** Notices the server has sent this conversation, in order. */
   notices: NoticeRecord[];
+  /** Each signal's latest payload, by name, since the events stream opened. */
+  signals: Record<string, unknown>;
 }
 
 export interface Chat {
@@ -229,4 +240,9 @@ export interface Chat {
  * `GET {endpoint}/events` open for the conversation, resuming after the last
  * notice it saw if the connection drops, until `reset()` or `close()`.
  */
-export function createChat(options: { endpoint?: string; registry: Registry; notices?: NoticeRegistry }): Chat;
+export function createChat(options: {
+  endpoint?: string;
+  registry: Registry;
+  notices?: NoticeRegistry;
+  signals?: SignalRegistry;
+}): Chat;

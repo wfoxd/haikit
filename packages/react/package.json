@@ -1,6 +1,6 @@
 {
   "name": "@haikit/react",
-  "version": "0.18.0",
+  "version": "0.19.0",
   "description": "Write haikit surface components in React: typed props and actions from the shared surface contract.",
   "keywords": [
     "haikit",
@@ -28,8 +28,8 @@
     "prepack": "npm --prefix ../.. run build"
   },
   "dependencies": {
-    "@haikit/client": "0.18.0",
-    "@haikit/core": "0.18.0"
+    "@haikit/client": "0.19.0",
+    "@haikit/core": "0.19.0"
   },
   "peerDependencies": {
     "react": "^18.0.0 || ^19.0.0",

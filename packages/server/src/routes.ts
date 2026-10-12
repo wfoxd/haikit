@@ -22,7 +22,7 @@ export function nodeHandler(hai: Hai, basePath = "/hai") {
     if (!url.pathname.startsWith(basePath)) return false;
     const route = url.pathname.slice(basePath.length);
 
-    if (req.method === "GET" && route === "/events" && hai.sendsNotices) {
+    if (req.method === "GET" && route === "/events" && hai.streamsEvents) {
       await streamNotices(hai, req, res, url);
       return true;
     }
@@ -59,7 +59,7 @@ export function nodeHandler(hai: Hai, basePath = "/hai") {
         type: "hello",
         conversationId: conversation.id,
         model: hai.config.model.id,
-        ...(hai.sendsNotices ? { events: true as const } : {}),
+        ...(hai.streamsEvents ? { events: true as const } : {}),
       });
     }
 
@@ -195,6 +195,32 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
   // turn, not only the one whose attempt won the lease: another tab shows the
   // reply too, and holds its requests until the turn lets go.
   watchers.streams.add(emit);
+  // Signals from here on, starting with each one's latest; and it counts as
+  // present. A signal only matters as its latest value, so a reader that has
+  // fallen behind is sent just the newest of each once it catches up: a
+  // stalled socket holds at most one per signal, never every one sent.
+  const behind = new Map<string, WireEvent>();
+  let draining = false;
+  const flush = () => {
+    draining = false;
+    const pending = [...behind.values()];
+    behind.clear();
+    for (const event of pending) emitSignal(event);
+  };
+  const emitSignal: Emit = (event) => {
+    if (event.type !== "signal") return emit(event);
+    if (signal.aborted || res.writableEnded) return;
+    if (res.writableNeedDrain || behind.size) {
+      behind.set(event.name, event);
+      if (!draining) {
+        draining = true;
+        res.once("drain", flush);
+      }
+      return;
+    }
+    res.write(`data: ${JSON.stringify(event)}\n\n`);
+  };
+  const closeStream = hai.streamOpened(conversationId, emitSignal);
   // Joining while a wake turn runs: what it has shown so far, starting with
   // its `streaming` status, so the browser holds requests until it lets go,
   // and the reply's later text has a block to land in.
@@ -296,8 +322,17 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
 
   // a heartbeat is only for a stream gone quiet, never one already backed up
   const heartbeat = setInterval(() => res.writableNeedDrain || res.write(": ping\n\n"), HEARTBEAT_MS);
-  const wakes = wakeups(store.watch?.(conversationId, signal), signal)[Symbol.asyncIterator]();
+  // An app that sends no notices has nothing stored to read: the stream is only
+  // for signals, and stays open, reading nothing, until the browser leaves.
+  const wakes = hai.sendsNotices ? wakeups(store.watch?.(conversationId, signal), signal)[Symbol.asyncIterator]() : null;
   try {
+    if (!wakes) {
+      await new Promise<void>((resolve) => {
+        if (signal.aborted) resolve();
+        else signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+      return;
+    }
     await catchUp(first);
     // A wake notice may be waiting from before this browser connected: one
     // that arrived while nobody watched, or while the conversation was busy.
@@ -314,9 +349,10 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
   } finally {
     clearInterval(heartbeat);
     aborter.abort();
+    closeStream();
     watchers.streams.delete(emit);
     if (!watchers.streams.size) forgetWatchers(hai, conversationId, watchers);
-    await wakes.return?.();
+    await wakes?.return?.();
     res.end();
   }
 }

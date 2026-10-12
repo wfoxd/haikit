@@ -101,6 +101,7 @@ export function mountChat({
   root,
   registry,
   notices,
+  signals,
   endpoint = "/hai",
   title = "HaiKIT",
   subtitle = "",
@@ -110,7 +111,7 @@ export function mountChat({
   emptyText = "",
   theme,
 }) {
-  const chat = createChat({ endpoint, registry, notices });
+  const chat = createChat({ endpoint, registry, notices, signals });
   const id = `hai-${++shells}`;
 
   // Unset, the page follows the system. A pin goes on the root, where hai.css

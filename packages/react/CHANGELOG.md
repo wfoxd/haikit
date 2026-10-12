@@ -1,5 +1,13 @@
 # @haikit/react
 
+## 0.19.0
+
+### Patch Changes
+
+- Updated dependencies [07db361]
+  - @haikit/core@0.19.0
+  - @haikit/client@0.19.0
+
 ## 0.18.0
 
 ### Patch Changes
