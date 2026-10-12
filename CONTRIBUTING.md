@@ -52,7 +52,7 @@ public signature, run it.
 
 ## Releasing
 
-Changesets, with the four packages version-locked:
+Changesets, with the six packages version-locked:
 
 ```bash
 npx changeset          # describe the change

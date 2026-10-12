@@ -11,8 +11,8 @@ npm test          # typecheck, typetest, storetest, reacttest, pgtest, smoke
 npm run packtest  # when you touch files, exports, types or any public signature
 ```
 
-A change to a published package needs a changeset (`npx changeset`). The four
-packages are version-locked.
+A change to a published package needs a changeset (`npx changeset`). The six
+packages are version-locked (`fixed` in `.changeset/config.json`).
 
 ## Keep the reference manual current
 
