@@ -324,7 +324,10 @@ the same message as `memoryStore`.
   a notice's model text, U+0000 fails too, and a lone surrogate becomes
   U+FFFD.
 - **Integer columns:** a surface's or notice's `version` must be a whole
-  number in 32-bit range, or the write fails.
+  number in 32-bit range, or the write fails. The per-conversation counters
+  `handle_seq`, `notice_seq` and `wake_turns` are 32-bit too, so a
+  conversation's next payload, notice or wake turn fails once its counter
+  reaches 2,147,483,647.
 - **`putNotice`** also sends a `NOTIFY` on `haikit_notices`, with the
   conversation id, in the same statement. It throws `conversation <id> does
   not exist` for an unknown conversation.

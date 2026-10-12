@@ -159,8 +159,13 @@ runaway tool loop. A turn ends when a model reply's `stop_reason` isn't
 When the limit is reached, the last reply's tool results are recorded, and
 the turn ends with status `idle`. The model hasn't seen those results yet:
 they're the last message in the history, and the model sees them on the next
-turn. `maxHops` isn't validated. With 0 or less, or a value that isn't a
-number, a turn never calls the model.
+turn. `maxHops` isn't validated. The loop runs while the hop count is less
+than it, with JavaScript's `<`, and `null` or `undefined` gives the default:
+
+- 0 or less, or `NaN`, makes no model call at all;
+- a fraction rounds up: `2.5` allows 3 calls;
+- `Infinity` removes the limit, so a tool loop never stops;
+- a string is converted: `"2"` allows 2 calls, and `"abc"` none.
 
 ### `init`
 

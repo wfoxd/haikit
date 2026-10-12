@@ -435,7 +435,10 @@ const estTokens: (value: unknown) => number;
 ```
 
 A rough token count: the length of `value` (a string as it is, anything else
-as `JSON.stringify(value ?? "")`) divided by 4, rounded up. The runtime uses
+as `JSON.stringify(value ?? "")`) divided by 4, rounded up. It throws a
+`TypeError` for a value `JSON.stringify` can't measure: a `BigInt` or a
+cycle, or a top-level function or symbol, for which `JSON.stringify` returns
+`undefined`. The runtime uses
 it for the `context` event's `modelTokens` (the whole history) and `uiTokens`
 (the sum over the conversation's payloads' props), which the default UI's
 inspector shows. Nothing else depends on it.

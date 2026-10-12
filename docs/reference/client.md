@@ -178,7 +178,9 @@ mount(handle: string, element: HTMLElement): SurfaceInstance | null;
 Mounts the surface `handle` into `element`, from `registry`.
 
 - Returns `null` without mounting if the chat is closed, there's no such
-  surface, or its props haven't arrived yet.
+  surface, or its props haven't arrived yet. "Arrived" is a truthiness check,
+  so a surface whose props are falsy (`false`, `0`, `""`) is never mounted:
+  give a surface object props.
 - **One instance per surface.** It first unmounts the instance the surface had,
   calling its `unmount`.
 - **A surface name `registry` doesn't list** renders an error card:

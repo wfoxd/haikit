@@ -254,7 +254,7 @@ back down. A new conversation starts at the bottom.
 | `assistant` | `div.hai-block.hai-assistant` | The text, as it streams |
 | `tool` | `details.hai-block.hai-tool.hai-status-<status>` | A summary row: a status mark, the tool's name, its input as JSON, and its status text. Expanded: the input, pretty-printed, and `→ tool_result — all the model receives` with the result, or `…` until it arrives. An expanded row stays expanded as its status changes |
 | `interaction` | `div.hai-block.hai-interaction` | An arrow and the click's label |
-| `ui` | `div.hai-surface`, with `data-handle` and `data-component` | The surface, mounted with `chat.mount` once its props arrive. Before then, `aria-busy="true"` and a skeleton labelled `<surface name> · loading…`. A revision updates `data-handle` and keeps the element |
+| `ui` | `div.hai-surface`, with `data-handle` and `data-component` | The surface, mounted with `chat.mount` once its props arrive. Falsy props (`false`, `0`, `""`) count as not arrived, so such a surface shows the skeleton for good. Before then, `aria-busy="true"` and a skeleton labelled `<surface name> · loading…`. A revision updates `data-handle` and keeps the element |
 | `notice` | `div.hai-notice`, `role="status"`, with `data-notice` | A label, `notice · <name>`, and the notice, mounted with `chat.mountNotice` |
 | `error` | `div.hai-block.hai-error`, `role="alert"` | The message |
 | `expired` | `div.hai-block.hai-expired` | The message, and a `Start a new conversation` button that calls `chat.reset()` |

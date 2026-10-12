@@ -22,7 +22,7 @@ Checked against `@haikit/*` 0.20.0. Durations are in milliseconds.
 | `tools` | required | an array of tools. A later duplicate name wins, in the earlier one's place; `query_ui` is reserved | [Tools](tools.md#definetool) |
 | `surfaces` | required | an array of surface implementations | [Surfaces](surfaces.md) |
 | `scope` | `DEFAULT_SCOPE` | a string, or `false` (`""` counts as `false`) | [The server](server.md#scope) |
-| `maxHops` | `8` | a number. Not validated: 0 or less means no model call | [The server](server.md#maxhops) |
+| `maxHops` | `8` | a positive whole number. Not validated: 0 or less means no model call, a fraction rounds up, `Infinity` means no limit, and a string is converted (see the page) | [The server](server.md#maxhops) |
 | `init` | none | a tool whose name no other tool has, `query_ui` included | [The server](server.md#init) |
 | `notices` | `[]` | notice implementations with unique names | [Notices](notices.md) |
 | `maxWakes` | `{ count: 1, perMs: 60000 }` | `count` a safe integer ≥ 1, `perMs` finite and > 0. Both, or neither | [Notices](notices.md#maxwakes) |
@@ -167,6 +167,8 @@ None of these can be changed without changing HaiKIT's code.
 | Largest piece of a message per `NOTIFY` | 7000 base64 characters | [Stores](stores.md#turn_channel) |
 | Most pieces in one message | 10,000 | [Stores](stores.md#turn_channel) |
 | How long a part-received message waits for its other pieces | 30,000 | [Stores](stores.md#turn_channel) |
+| Largest surface or notice `version` | 2,147,483,647: a whole number in 32-bit range | [Stores](stores.md#pgstore) |
+| Payloads, notices and wake turns per conversation | 2,147,483,647 each: the next write fails once its counter reaches it | [Stores](stores.md#pgstore) |
 
 ### The browser client
 
