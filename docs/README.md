@@ -6,6 +6,7 @@
 | [**tutorial.md**](tutorial.md) | Build *Hello, World!* as a haikit app in ten steps, annotated line by line |
 | [**tutorial-2.md**](tutorial-2.md) | *Tell them later*: the same app, speaking up after the request is over — progress, notices, wake turns and live updates, in nine steps |
 | [**default-ui.md**](default-ui.md) | The chat UI `@haikit/client` ships: setting it up, what each part does, the model context debug drawer, theming, styling your surfaces, and building your own layout |
+| [**reference/**](reference/index.md) | The reference manual: every public function, type and option, package by package, with every default, limit and error, checked against the source |
 
 These Markdown files are the source of truth: edit them directly. They were
 seeded once from standalone HTML exports, which no longer exist — there is no

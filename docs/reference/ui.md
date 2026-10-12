@@ -1,0 +1,392 @@
+# The default UI
+
+`@haikit/client` ships a default chat UI: `mountChat` builds a whole page
+around a chat, `renderTranscript` draws a chat's transcript into any element,
+`renderInspector` draws the model context debug drawer, and `hai.css` styles
+what they render. They're conveniences built on `createChat` (see
+[The browser client](client.md)). Dropping to `createChat` and your own
+rendering when they stop fitting is the expected path. The
+[default UI guide](../default-ui.md) walks through the same ground as a
+guide; this page is the exact reference.
+
+Exported by `@haikit/client/app.js`: `mountChat`, `MountChatOptions`,
+`renderInspector`. By `@haikit/client/transcript.js`: `renderTranscript`,
+`closeTranscript`, `h`. And the stylesheet `@haikit/client/hai.css`.
+
+Checked against `@haikit/*` 0.20.0. Source: `packages/client/src/app.js`,
+`packages/client/src/transcript.js`, `packages/client/src/hai.css` and their
+`.d.ts` files.
+
+- [`mountChat`](#mountchat), [`MountChatOptions`](#mountchatoptions)
+- [The model context debug drawer](#the-model-context-debug-drawer):
+  `renderInspector`
+- [`renderTranscript`](#rendertranscript), [`closeTranscript`](#closetranscript)
+- [`h`](#h)
+- [`hai.css`](#haicss): the `--hai-*` tokens
+
+## `mountChat`
+
+```ts
+function mountChat(options: MountChatOptions): Chat;
+```
+
+Builds the chat page inside `options.root`, and returns its `Chat`.
+(`MountChatOptions` is exported as a type only.)
+
+```js
+import { mountChat } from "@haikit/client/app.js";
+import { registry } from "./components.js";
+
+mountChat({ root: document.querySelector("#app"), registry, suggestions: ["Say hello"] });
+```
+
+**What it does, in order:**
+
+1. Makes a chat with `createChat({ endpoint, registry, notices, signals })`.
+   The polling options aren't passed, so they're the defaults.
+2. Pins the colour scheme, if `theme` is set (see [Themes](#themes)).
+3. Adds HaiKIT's icon as the page's favicon, if the page has no link whose
+   `rel` includes `icon` (such as `shortcut icon`) when the first chat
+   opens. Every chat on the page shares it, and the
+   last one to close removes it.
+4. Builds the shell, and replaces everything in `root` with it. The shell
+   fills the viewport (`height: 100dvh`): `mountChat` is a whole-page
+   layout, and a smaller `root` doesn't constrain it.
+5. Renders the transcript, and the empty state (see
+   [The empty conversation](#the-empty-conversation)).
+6. Calls `chat.start()`, so a server with an init tool runs it before the user
+   types. It calls `start()` again after every reset.
+
+**The page it builds:**
+
+| Part | Element and class | What it does |
+| --- | --- | --- |
+| Shell | `div.hai-shell` | Everything below. A page whose `body` contains one gets `margin: 0` |
+| Header | `header.hai-top`, holding `div.hai-brand` and `div.hai-actions` | HaiKIT's mark, `title`, and `subtitle` if set. Under 900 px wide, the subtitle is hidden, and the header buttons' labels are hidden visually but kept for screen readers |
+| Model | `span.hai-model` | The model adapter's `id`, from `hello`. Hidden until there is one, and on screens under 600 px wide |
+| New chat | `button.hai-btn` | Calls `chat.reset()`. Disabled unless the transcript has a `user` or `interaction` block, the conversation has expired, or the server has given a conversation id. Checked on every event, so it's disabled again after a reset |
+| Context | `button.hai-btn.hai-ctx-toggle` | Opens and closes the debug drawer, showing `~<n> tok`, the model's context estimate, with thousands separators. Empty while the estimate is 0. `title`, `aria-controls` and `aria-expanded` are set. Only with `inspector` |
+| Main | `div.hai-main` | Holds the chat and the drawer. Has `.has-inspector` with `inspector`, and `.inspector-open` while the drawer is open |
+| Chat | `section.hai-chat` | Holds the transcript, the status line and the composer (`div.hai-composer` > `div.hai-composer-box`) |
+| Transcript | `div.hai-transcript` | Drawn by `renderTranscript` on every event |
+| Status line | `div.hai-status`, `role="status"` | `Thinking` while streaming, `Waiting on your selection above` while awaiting, empty otherwise. It changes only when the status does, so a screen reader hears it once per turn. Its `data-status` is the status, or `idle` once the conversation has expired. It's absent until the first event |
+| Message box | `textarea.hai-input`, `aria-label="Message"` | Grows with what's typed, up to 200 px |
+| Send | `button.hai-send`, `aria-label="Send"` | Sends the message. An icon only |
+| Drawer | `aside.hai-inspector` | The model context debug drawer. Only with `inspector` |
+
+**The message box.**
+
+- **Enter sends,** and Shift+Enter makes a new line. Enter while an input
+  method is composing doesn't send.
+- **Sending** trims the text, and does nothing if it's empty. It clears the
+  box, unless the conversation has expired, when it keeps the text for the
+  next conversation. If the message is later turned away (`send` resolves
+  `false`), the text is put back, unless something new has been typed.
+- **It stays live while a question waits,** with the placeholder `pick an
+  option above — or type to override`. A typed message closes the question
+  out.
+- **When the conversation has expired,** the box is disabled, with the
+  placeholder `start a new conversation to continue`. Otherwise the
+  placeholder is `placeholder`.
+- **The Send button is disabled** while a turn streams, and once the
+  conversation has expired. Enter still sends while a turn streams: the
+  message is queued behind the turn.
+- **If a request fails,** such as on a network error, `send` rejects, and
+  `mountChat` doesn't handle it: the cleared text isn't put back, nothing
+  appears in the transcript, and the rejection goes unhandled. The same goes
+  for the `start()` it calls.
+
+### The empty conversation
+
+Until the transcript has a `user` or `interaction` block, it ends with
+`div.hai-empty`. The server sends those blocks once it accepts a message or a
+click, so the empty state stays while the first message is queued, and stays
+if it's turned away. With `emptyText` or `suggestions`, it holds HaiKIT's
+mark, `emptyText` as a paragraph, and one `button.hai-suggestion` per
+suggestion. Clicking one puts it in the message box, replacing any draft, and
+sends it as a typed message would be. Blocks the conversation opened with,
+such as an init tool's row or a welcome surface, don't replace it: after
+them, the empty state is left-aligned, without the mark.
+
+### Themes
+
+Without `theme`, the page follows the system's light or dark setting, or a
+`data-hai-theme` attribute already on the `<html>` element. `theme: "light"`
+or `"dark"` sets `data-hai-theme` on the `<html>` element until the chat
+closes. With several chats on a page, the pin follows the newest themed chat
+still open. When the last closes, the page gets back the pin it had before
+the first. A pin the page set itself meanwhile is left alone.
+
+### Closing
+
+`chat.close()` closes the chat (see [The browser client](client.md#close)),
+and `mountChat` then removes its shell from the page, stops following its
+transcript, releases the theme pin and the favicon, and stops listening for
+screen-width changes.
+
+## `MountChatOptions`
+
+```ts
+interface MountChatOptions {
+  root: HTMLElement;
+  registry: Registry;
+  notices?: NoticeRegistry;
+  signals?: SignalRegistry;
+  endpoint?: string;
+  title?: string;
+  subtitle?: string;
+  suggestions?: string[];
+  inspector?: boolean;
+  placeholder?: string;
+  emptyText?: string;
+  theme?: "light" | "dark";
+}
+```
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `root` | required | The element the page is built in. Its children are replaced |
+| `registry` | required | Components for surfaces, by surface name |
+| `notices` | `{}` | Components for notices, by notice name |
+| `signals` | `{}` | Handlers for signals, by signal name |
+| `endpoint` | `"/hai"` | Where the server's routes are |
+| `title` | `"HaiKIT"` | The header's title |
+| `subtitle` | `""` | Text beside the title. Left out when empty |
+| `suggestions` | `[]` | Starter messages, as buttons, on the empty conversation |
+| `inspector` | `true` | Include the model context debug drawer, and its Context button |
+| `placeholder` | `"message…"` | The message box's placeholder |
+| `emptyText` | `""` | A line of text on the empty conversation |
+| `theme` | follows the system | `"light"` or `"dark"` pins the page's colour scheme. Any other value is ignored |
+
+## The model context debug drawer
+
+With `inspector`, the header's Context button opens a drawer that shows the
+conversation's history as the model receives it: every message, tool call and
+tool result, and how much of the data stayed out of the model's context. The
+system prompt and the tool definitions aren't shown, and aren't in the
+estimate.
+
+- **It starts closed,** and slides in from the right. Closed, it's `inert`
+  and hidden. With `prefers-reduced-motion`, it doesn't slide, and the
+  default UI's other animations stop.
+- **On a wide screen** (`min-width: 900px`), it opens beside the chat. **On a
+  narrow one,** it opens over the chat, and the chat behind it is made
+  `inert` until it closes or the screen widens. A tap on the uncovered part
+  closes it then.
+- **Escape closes it** from anywhere in the shell, unless something there
+  used the key first (`defaultPrevented`), such as a surface closing a menu of
+  its own. So do its close button and the Context button.
+- **Focus:** opening it moves focus to its close button. Closing it from the
+  button, with Escape from inside the drawer, or with a tap on the uncovered
+  chat returns focus to Context. Escape from outside the drawer leaves focus
+  where it is.
+- **It remembers being open,** in `localStorage` under `hai:debug-drawer`
+  (`"open"` or `"closed"`), and opens again after a reload, but only on a wide
+  screen.
+- Its accessible name is `Model context debug drawer`. Its visual heading, a
+  `div` rather than a heading element, shows the same, with `everything the
+  model sees` beneath. The close button is labelled `Close model context
+  debug drawer`.
+
+### `renderInspector`
+
+```ts
+function renderInspector(
+  el: HTMLElement,
+  context?: { messages?: any[]; modelTokens?: number; uiTokens?: number },
+): void;
+```
+
+Draws the drawer's contents into `el`, from a chat's `state.context`.
+`mountChat` calls it on every event. Call it yourself to put the same view in
+a layout of your own.
+
+- **With no messages and no tokens,** it shows `Nothing yet. Every message,
+  tool call and digest the model receives shows up here.`
+- **Otherwise, a summary:** when `uiTokens` is above 0, a headline `<p>% kept
+  out of context`, where `p` is `1 - modelTokens / (modelTokens + uiTokens)`
+  as a whole percentage. Then a bar showing the model's share, and two lines,
+  `model context` and `browser payload`, each `~<n> tok`.
+- **Then every message,** labelled with its role: a string's text, each
+  non-empty text block, each `tool_use` (`tool_use · <name>` and its input as
+  JSON), and each `tool_result` (labelled `tool_result`, with its content as
+  text: a string as it is, a list of blocks as each block's `text`, or its
+  JSON, one per line). Other content blocks, such as thinking, aren't shown.
+- Token counts are written with thousands separators.
+- **It keeps following the newest message** if `el` was scrolled to within
+  40 px of the bottom.
+
+## `renderTranscript`
+
+```ts
+function renderTranscript(root: HTMLElement, chat: Chat): void;
+```
+
+Draws `chat.state.blocks` into `root`. Call it on every event, from a
+subscriber. Everything is written with `textContent`, never as HTML, since
+tool data is untrusted. `root` must be the element that scrolls (hai.css
+gives `.hai-transcript` `overflow-y: auto`): following reads and sets its
+scroll position, and listens for its `scroll` events.
+
+```js
+const chat = createChat({ registry });
+chat.subscribe(() => renderTranscript(log, chat));
+```
+
+**Each block keeps its element** while what it shows is unchanged, so a
+surface mounts once, and whatever its component holds, such as a filter or a
+React tree, lives as long as the surface does. Elements are put in order
+without moving any already in place, so none loses its scroll position or
+focus, and no iframe or video in one starts over. **Anything else in `root`
+is removed,** including nodes the page added after the last render. When a
+reset gives the chat a new blocks array, every block gets a new element.
+
+**Following.** While the reader is within 40 px of the bottom, the transcript
+keeps the newest content in view, surfaces included, as they mount and as
+they grow. Once the reader scrolls up, it keeps their place until they scroll
+back down. A new conversation starts at the bottom.
+
+**How each block is drawn:**
+
+| Block | Element | Contents |
+| --- | --- | --- |
+| `user` | `div.hai-block.hai-user` | The text |
+| `assistant` | `div.hai-block.hai-assistant` | The text, as it streams |
+| `tool` | `details.hai-block.hai-tool.hai-status-<status>` | A summary row: a status mark, the tool's name, its input as JSON, and its status text. Expanded: the input, pretty-printed, and `→ tool_result — all the model receives` with the result, or `…` until it arrives. An expanded row stays expanded as its status changes |
+| `interaction` | `div.hai-block.hai-interaction` | An arrow and the click's label |
+| `ui` | `div.hai-surface`, with `data-handle` and `data-component` | The surface, mounted with `chat.mount` once its props arrive. Falsy props (`false`, `0`, `""`) count as not arrived, so such a surface shows the skeleton for good. Before then, `aria-busy="true"` and a skeleton labelled `<surface name> · loading…`. A revision updates `data-handle` and keeps the element |
+| `notice` | `div.hai-notice`, `role="status"`, with `data-notice` | A label, `notice · <name>`, and the notice, mounted with `chat.mountNotice` |
+| `error` | `div.hai-block.hai-error`, `role="alert"` | The message |
+| `expired` | `div.hai-block.hai-expired` | The message, and a `Start a new conversation` button that calls `chat.reset()` |
+| any other kind | `div.hai-block` | The block as JSON |
+
+A surface the registry doesn't list shows the client's error card: the
+element's class becomes `hai-surface-error`, with `unknown component:
+<name>`. An unknown notice's body does the same, with `unknown notice:
+<name>`. On an expired conversation, surfaces are `inert`, with
+`data-expired`, which hai.css greys out.
+
+**A tool row's status** is the block's, except for a question:
+
+| Status | Text | When |
+| --- | --- | --- |
+| `running` | `running…` | The call is running |
+| `awaiting` | `awaiting you` | Its question is waiting |
+| `resolved` | `resolved` | Its question was frozen: answered, or closed out by a typed message |
+| `expired` | `out of date` | Its question was waiting when the conversation expired |
+| `error` | `failed · <ms> ms` | The init tool failed |
+| `ok` | `<ms> ms` | The call finished. That includes a call that threw: its result says `<name> failed: …`, and any question it showed was withdrawn |
+
+While a call runs and has reported progress, its status text is the progress
+instead: the message, the count, or both with ` · ` between. The count is
+`<done>/<total>` (`0/<total>` before any `done`), or `<done>` alone without a
+total. With a `total` above 0, a thin `progressbar` along the row's bottom
+edge fills. Its accessible name is `<tool> progress`, and its value text
+`<message> · <done> of <total>`. Progress updates the row in place, so a
+keyboard user on the row keeps their focus.
+
+## `closeTranscript`
+
+```ts
+function closeTranscript(root: HTMLElement): void;
+```
+
+Stops following a transcript that's going away: its resize observer and
+scroll listener let go of `root`. `mountChat` calls it when its chat closes.
+A page rendering a transcript itself calls it when it removes one.
+
+## `h`
+
+```ts
+function h<K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  className?: string | null,
+  text?: string | null,
+): HTMLElementTagNameMap[K];
+```
+
+Makes an element: `document.createElement(tag)`, with `className` and
+`textContent` set when given (`text` may be `""`). The default UI builds
+everything with it. It's exported for components that want the same.
+
+## `hai.css`
+
+```html
+<link rel="stylesheet" href="/hai-client/hai.css" />
+```
+
+That path is where the examples serve the package's `src/` (see
+[The browser client: serving it](client.md#serving-it)). With a bundler,
+import `@haikit/client/hai.css`.
+
+Styles only what the framework renders: the shell, the transcript's blocks,
+the tool rows, the surface container and the drawer. It doesn't style the
+inside of your surfaces: your components use their own class names, and your
+stylesheet owns them. They can use the tokens.
+
+### Tokens
+
+Every token is set on `:where(:root)`, at zero specificity, so a plain
+`:root` rule in your own stylesheet wins. Colours take one value per scheme
+with `light-dark()`:
+
+| Token | Light | Dark | Used for |
+| --- | --- | --- | --- |
+| `--hai-bg` | `#f6f7f9` | `#0c0f13` | The page |
+| `--hai-panel` | `#ffffff` | `#141920` | Cards and the header |
+| `--hai-panel-2` | `#f9fafb` | `#10141a` | Secondary panels |
+| `--hai-line` | `#e1e5ea` | `#252c35` | Borders |
+| `--hai-fg` | `#161b22` | `#e3e8ee` | Text |
+| `--hai-dim` | `#5b6675` | `#8a95a3` | Secondary text |
+| `--hai-accent` | `#2160e0` | `#7aa7ff` | The accent |
+| `--hai-on-accent` | `#ffffff` | `#0b1220` | Text drawn on the accent |
+| `--hai-good` | `#127a4c` | `#5ec597` | Success |
+| `--hai-warn` | `#9a5b00` | `#e7b65c` | Warnings |
+| `--hai-bad` | `#c23338` | `#f07b7b` | Errors |
+| `--hai-user-bg` | `#e7eefb` | `#1e2835` | The user's messages |
+| `--hai-code-bg` | `#f3f5f8` | `#0a0d11` | Code and digests |
+| `--hai-shadow` | `0 1px 2px rgb(15 23 42 / .06)` | `0 1px 2px rgb(0 0 0 / .35)` | Card shadows |
+| `--hai-logo-ink` | `#0f1115` | `#f3f2ee` | HaiKIT's mark |
+| `--hai-logo-paper` | `#f3f2ee` | `#0f1115` | HaiKIT's mark |
+| `--hai-logo-hot` | `#ff5a1f` | `#ff5a1f` | HaiKIT's mark |
+
+These are mixed from the colours above, where they're declared, so they
+follow an override set on `:root` (not one set on an inner element):
+
+| Token | Value |
+| --- | --- |
+| `--hai-line-soft` | `--hai-line` at 60%: row dividers |
+| `--hai-hover` | `--hai-fg` at 6%: row hover, for your surfaces too |
+| `--hai-selected` | `--hai-good` at 15%: a picked row, for your surfaces too |
+| `--hai-accent-soft` | `--hai-accent` at 14% |
+| `--hai-good-soft` | `--hai-good` at 13% |
+| `--hai-warn-soft` | `--hai-warn` at 12% |
+| `--hai-bad-soft` | `--hai-bad` at 12% |
+
+And these aren't colours:
+
+| Token | Default | Meaning |
+| --- | --- | --- |
+| `--hai-radius` | `12px` | Corner radius |
+| `--hai-sans` | `ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif` | Text |
+| `--hai-mono` | `ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace` | Code |
+| `--hai-column` | `780px` | The conversation's width |
+| `--hai-inspector-width` | `400px` | The drawer's width |
+
+**Schemes.** hai.css sets `color-scheme: light dark` on the page root, which
+also changes the page's default background, form controls and scrollbars in
+dark mode. `data-hai-theme="light"` or `"dark"` on the `<html>` element pins
+the page to one scheme, through `color-scheme` at zero specificity, so a
+page's own `:root { color-scheme: … }` overrides both. A browser without
+`light-dark()` gets the dark values, even with a `light` pin. To override a colour for both schemes, keep a plain value first, for
+those browsers:
+
+```css
+:root { --hai-accent: #b07cff; }
+@supports (color: light-dark(#000, #fff)) {
+  :root { --hai-accent: light-dark(#6d28d9, #b07cff); }
+}
+```
+
+An override that browser can't read would otherwise leave the token with no
+colour at all.
