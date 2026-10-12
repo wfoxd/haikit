@@ -45,7 +45,9 @@ most every few seconds, as the `online` signal (`src/shared/signals.ts`), to
 every open tab. A signal is never stored and never reaches the guide's
 context or the transcript: the page reads it with `chat.subscribe` and shows
 the latest count. A tab that closes still counts for a few seconds, so a
-reconnect doesn't make the number flicker.
+reconnect doesn't make the number flicker. A server that has just started
+waits ten seconds before sending its first count, until it has heard the
+other servers', so it never shows every tab a number that leaves theirs out.
 
 ## The tutorials
 

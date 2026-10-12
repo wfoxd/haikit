@@ -102,15 +102,23 @@ const handleHai = nodeHandler(hai, "/hai");
 // server sharing the store; the header hears it at most every few seconds,
 // and only when it has changed.
 const ONLINE_EVERY_MS = 3_000;
+// A server that has just started knows only its own tabs: the others' counts
+// come with their next heartbeat, up to 10 s away (HaiKIT's default). Until
+// then it sends nothing, so it can't tell every tab a count that leaves them out.
+const STARTED_AT = Date.now();
+const WARM_UP_MS = 10_000;
 let latest = 0;
 let sent = -1;
 let waiting: ReturnType<typeof setTimeout> | null = null;
 hai.onPresence((count) => {
   latest = count;
-  waiting ??= setTimeout(() => {
-    waiting = null;
-    if (latest !== sent) hai.signal(online, { count: (sent = latest) });
-  }, ONLINE_EVERY_MS);
+  waiting ??= setTimeout(
+    () => {
+      waiting = null;
+      if (latest !== sent) hai.signal(online, { count: (sent = latest) });
+    },
+    Math.max(ONLINE_EVERY_MS, STARTED_AT + WARM_UP_MS - Date.now()),
+  );
 });
 
 // ─────────────────────────────────────────────────── static files

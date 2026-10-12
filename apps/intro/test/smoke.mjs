@@ -418,7 +418,8 @@ try {
         ? ok("hello opens the events stream, for the online count")
         : bad("hello did not open the events stream");
       const aborter = new AbortController();
-      const timer = setTimeout(() => aborter.abort(), 8_000);
+      // the server sends its first count once it has been up 10 s, then every 3 s
+      const timer = setTimeout(() => aborter.abort(), 16_000);
       let signal = null;
       try {
         const res = await fetch(`${BASE}/hai/events?conversationId=${id}`, { signal: aborter.signal });
