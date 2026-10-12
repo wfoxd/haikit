@@ -48,6 +48,8 @@ the latest count. A tab that closes still counts for a few seconds, so a
 reconnect doesn't make the number flicker. A server that has just started
 waits ten seconds before sending its first count, until it has heard the
 other servers', so it never shows every tab a number that leaves theirs out.
+Behind a corporate proxy that holds the events stream back (Netskope, Zscaler),
+the page polls instead, so the count still arrives, a little later.
 
 ## The tutorials
 
