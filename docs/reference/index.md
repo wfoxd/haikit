@@ -9,8 +9,8 @@ what it refuses, and every default and limit that applies.
 
 **Covers:** `@haikit/*` 0.20.0.
 
-**Status:** in preparation. The pages below are planned, and each one is marked
-as written once it has been checked against the source.
+**Status:** every page below is written, and was checked against the source
+of 0.20.0, statement by statement.
 
 ## Packages
 
@@ -41,7 +41,7 @@ as written once it has been checked against the source.
 | [The browser client](client.md) | `createChat`, the `Chat` object and its state, and the registries for surfaces, notices and signals | written |
 | [The default UI](ui.md) | `mountChat`, the transcript and inspector renderers, and the `hai.css` tokens | written |
 | [React](react.md) | `reactSurface` and `reactNotice` | written |
-| [Configuration and limits](limits.md) | Every option in every package in one place, and every fixed limit and timing HaiKIT applies, with its value | planned |
+| [Configuration and limits](limits.md) | Every option in every package in one place, and every fixed limit and timing HaiKIT applies, with its value | written |
 
 ## How each entry is written
 
