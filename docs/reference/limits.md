@@ -295,7 +295,7 @@ index `haikit_payloads_created_at`: see
 | Conversation id | `conv_<n>_<16 hex digits>` | `conv_<32 hex digits>` |
 | Handle | `ui_01`, `ui_02`, … across the store | `ui_01`, `ui_02`, … per conversation |
 | Init call id | `toolu_init_<16 hex digits>` | the same |
-| Block id | `b_<n>`, counting up in each `Hai` | the same |
+| Block id | `b_<32 hex digits, random per Hai>_<n>`, counting up in each `Hai` | the same |
 | Notice `seq`, the SSE id | 1, 2, … per conversation | the same |
 | Wake turn number (`status.wake`) | 1, 2, … per conversation | the same |
 
