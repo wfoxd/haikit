@@ -207,7 +207,7 @@ export class Hai {
    * events stream, which another server, or this one restarted, may have
    * sent: a count alone would repeat there, and a new block overwrite an old.
    */
-  private readonly blockIds = globalThis.crypto.randomUUID().replaceAll("-", "").slice(0, 12);
+  private readonly blockIds = globalThis.crypto.randomUUID().replaceAll("-", "");
   private seq = 0;
 
   constructor(config: HaiConfig) {

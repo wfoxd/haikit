@@ -4419,7 +4419,7 @@ async function blockIdChecks() {
   const all = [...one.ids, ...two.ids, ...three.ids];
   check("each turn's blocks have ids", one.ids.length >= 2 && two.ids.length >= 2 && three.ids.length >= 2);
   check("block ids from two servers, and a restarted one, never repeat in a conversation", new Set(all).size === all.length);
-  check("a block id is b_, a part of its own, and a count", all.every((id) => /^b_[0-9a-f]{12}_\d+$/.test(id)));
+  check("a block id is b_, a part of its own, and a count", all.every((id) => /^b_[0-9a-f]{32}_\d+$/.test(id)));
 }
 
 // ── a wake attempt is made only when there may be something to wake ────

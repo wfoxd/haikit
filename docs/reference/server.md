@@ -366,9 +366,9 @@ fails at the API, and so does every later message in the conversation. A
 reply with `stop_reason: "tool_use"` and no tool calls records an empty user
 message and calls the model again.
 
-**Block ids** are `b_`, a random part of 12 hex digits made when the `Hai`
-is created, `_`, and a count from 1: `b_3f2a9c0d1e4b_1`, `b_3f2a9c0d1e4b_2`,
-…. The browser matches blocks by id for the whole conversation, across the
+**Block ids** are `b_`, a random part made when the `Hai` is created (a
+UUID's 32 hex digits), `_`, and a count from 1:
+`b_3f2a9c0d1e4b4c7d8e9f0a1b2c3d4e5f_1`, then `…_2`, and so on. The browser matches blocks by id for the whole conversation, across the
 POST responses and the events stream, which different servers sharing a
 store may send, or a server restarted while a tab stays open. The random
 part keeps their ids apart, so a new block is always added, never written

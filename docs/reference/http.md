@@ -433,8 +433,8 @@ type Block =
 A transcript block, as `block_start` sends it. A `tool` block starts with
 status `running`. `progress` is set by the client, merged from `progress`
 events, and on a block replayed to a stream that joins a wake turn. Ids look
-like `b_3f2a9c0d1e4b_12`: a random part made when the `Hai` is created, then
-a count. The client matches blocks by id for the whole conversation, so ids
+like `b_3f2a9c0d1e4b4c7d8e9f0a1b2c3d4e5f_12`: a random part made when the
+`Hai` is created (a UUID's 32 hex digits), then a count. The client matches blocks by id for the whole conversation, so ids
 never repeat across servers or restarts (see
 [The server](server.md#how-a-turn-runs)). The client adds block kinds of its
 own (see [The browser client](client.md)).
