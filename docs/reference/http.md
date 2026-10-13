@@ -41,7 +41,8 @@ so the app can serve it instead.
 | `GET {basePath}/events` | `hai.streamsEvents` is `true` | Stream notices, revisions, signals and wake turns |
 
 **Matching.** A request whose path doesn't start with `basePath` resolves to
-`false`. The rest of the path must be exactly one of the routes above, with
+`false`, and so does one whose target isn't a valid URL (Node accepts some,
+such as `//[`). The rest of the path must be exactly one of the routes above, with
 the method shown, or it resolves to `false` too. So `basePath` must not end in
 `/`. `GET {basePath}/events` resolves to `false` when the app has no notices,
 no `updates` and no signals.

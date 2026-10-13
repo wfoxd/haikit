@@ -19,7 +19,14 @@ import type { Hai } from "./runtime.js";
  */
 export function nodeHandler(hai: Hai, basePath = "/hai") {
   return async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
-    const url = new URL(req.url ?? "/", "http://localhost");
+    let url: URL;
+    try {
+      url = new URL(req.url ?? "/", "http://localhost");
+    } catch {
+      // Node accepts targets a URL can't parse, such as `//[`. None is under
+      // a base path, which a URL always parses, so it's not ours: the app's.
+      return false;
+    }
     if (!url.pathname.startsWith(basePath)) return false;
     const route = url.pathname.slice(basePath.length);
 

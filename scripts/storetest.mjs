@@ -591,6 +591,7 @@ async function routeChecks() {
   console.log("\nroutes");
   const { createHai, nodeHandler } = await import("../packages/server/dist/index.js");
   const http = await import("node:http");
+  const net = await import("node:net");
 
   const busyStore = {
     ...memoryStore(),
@@ -696,10 +697,52 @@ async function routeChecks() {
     });
     await serve(base, 5381, async (url) => {
       const bad = await Promise.all(["not json", "null", "[1]", '"text"'].map((b) => post(`${url}/chat`, b)));
-      check("a body that isn't a JSON object is a 400", bad.every((r) => r.status === 400));
+      const reasons = await Promise.all(bad.map((r) => r.json().catch(() => ({}))));
+      check(
+        "a body that isn't a JSON object is a 400, saying so",
+        bad.every((r) => r.status === 400) && reasons.every((b) => b.error === "the request body must be a JSON object"),
+      );
       const empty = await post(`${url}/start`, "");
       check("an empty body still counts as {}", empty.status === 200);
+      // a target a URL can't parse, which Node still accepts: raw, since fetch won't send one
+      const raw = (target) =>
+        new Promise((resolve) => {
+          const sock = net.connect(5381, "127.0.0.1", () => sock.end(`GET ${target} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`));
+          let text = "";
+          sock.on("data", (d) => (text += d));
+          sock.on("close", () => resolve(text));
+          sock.on("error", () => resolve(text));
+        });
+      const unparsed = await raw("//[");
+      check("a request target that isn't a valid URL is left to the app, without rejecting", unparsed.startsWith("HTTP/1.1 404"));
     });
+    // A poll whose later read fails is logged, and the poll still ends at its
+    // hold: the first read, and the wake attempt's own reads, succeed.
+    {
+      const store = memoryStore();
+      const c = await store.loadConversation(undefined);
+      c.leaseUntil = null;
+      await store.saveConversation(c);
+      let pages = 0;
+      const flaky = {
+        ...store,
+        async getNotices(id, after, limit) {
+          if (limit === 100 && ++pages > 1) throw new Error("later read failed");
+          return store.getNotices(id, after, limit);
+        },
+      };
+      await serve(flaky, 5382, async (url) => {
+        const before = logged.length;
+        const started = Date.now();
+        const res = await fetch(`${url}/events?conversationId=${c.id}&poll=1&wait=1500`, { signal: AbortSignal.timeout(10000) });
+        await res.text();
+        const took = Date.now() - started;
+        check(
+          "a poll whose later read fails is logged, and still ends at its hold",
+          res.status === 200 && took >= 1200 && logged.slice(before).some((args) => String(args[0]).includes("events poll failed")),
+        );
+      });
+    }
   });
   check("the handler never rejected", rejected.length === 0);
   check("each failure was logged", logged.length >= 3);
