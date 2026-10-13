@@ -41,7 +41,8 @@ so the app can serve it instead.
 | `GET {basePath}/events` | `hai.streamsEvents` is `true` | Stream notices, revisions, signals and wake turns |
 
 **Matching.** A request whose path doesn't start with `basePath` resolves to
-`false`. The rest of the path must be exactly one of the routes above, with
+`false`, and so does one whose target isn't a valid URL (Node accepts some,
+such as `//[`). The rest of the path must be exactly one of the routes above, with
 the method shown, or it resolves to `false` too. So `basePath` must not end in
 `/`. `GET {basePath}/events` resolves to `false` when the app has no notices,
 no `updates` and no signals.
@@ -57,27 +58,28 @@ createServer(async (req, res) => {
 }).listen(5180);
 ```
 
-**The returned promise rejects** in these cases. Catch it in the server, or
-the request is left hanging:
+**The returned promise never rejects.** A request that fails in a way no
+route answers itself is answered, ended and logged with `console.error`:
 
-- a POST body that isn't valid JSON, or is JSON `null`, or a request body
-  that fails while it's read;
-- a store error from loading the conversation, other than `ConversationBusy`;
-- a store error from the closing save, other than `StaleLease`. The response
-  isn't ended then, and the conversation's lease stays held until it expires;
-- on `GET /events`, a store error from the first read of notices, before any
-  headers are sent;
-- on an events stream (not a poll), a store error from a later read, after
-  the response has ended. On a poll, such an error is ignored, and the poll
-  ends when its hold runs out.
+- before the response has started, such as a store error loading the
+  conversation (other than `ConversationBusy`), or the events stream's first
+  read of notices: **HTTP 500** with `{ "error": "<message>" }`;
+- after it has started, such as a store error from a POST route's closing
+  save (other than `StaleLease`): an `error` event, then the response ends.
+  The conversation's lease stays held until it expires;
+- on an events stream, a store error from a later read ends the stream, and
+  the browser reconnects. On a poll, it's logged, and the poll ends when its
+  hold runs out.
 
 ## The POST routes
 
 ### Requests
 
-Each POST body is read whole and parsed as JSON. An empty body is `{}`.
-Nothing limits the body's size or checks its content type: put that in front
-of the handler.
+Each POST body is read whole and parsed as JSON. An empty body is `{}`. A
+body that isn't a JSON object (invalid JSON, `null`, an array, a string), or
+that fails while it's read, is answered **HTTP 400** with
+`{ "error": "the request body must be a JSON object" }`. Nothing limits the
+body's size or checks its content type: put that in front of the handler.
 
 | Route | Body | Fields used |
 | --- | --- | --- |
@@ -117,9 +119,9 @@ from the surface's contract.
    [The server](server.md#send-start-interact)), sending its wire events as
    it goes. An error it throws is sent as `{ type: "error", message }`.
 6. **The lease is released and the conversation saved.** If the request
-   already hit `StaleLease`, the save is skipped. A `StaleLease` from this
-   save is sent as an `error` event. Any other save error rejects the
-   handler's promise (see above).
+   already hit `StaleLease`, the save is skipped. A save error is sent as an
+   `error` event; one other than `StaleLease` is also logged, and leaves the
+   lease held until it expires (see above).
 7. **The response ends.**
 
 Every frame on a POST stream is `data: <JSON>` followed by a blank line, with

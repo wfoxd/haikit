@@ -5,7 +5,8 @@ import type { Hai } from "./runtime.js";
 
 /**
  * Node http handler for the three routes, and a fourth when the app sends
- * notices. Returns true if it handled the request.
+ * notices. Returns true if it handled the request. It never rejects: a request
+ * that fails is answered, ended and logged (see `failed`).
  *
  * The three POST routes stream SSE: chat and interact because both can resume
  * the agent loop, start because the init tool it runs can render surfaces.
@@ -18,92 +19,139 @@ import type { Hai } from "./runtime.js";
  */
 export function nodeHandler(hai: Hai, basePath = "/hai") {
   return async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
-    const url = new URL(req.url ?? "/", "http://localhost");
+    let url: URL;
+    try {
+      url = new URL(req.url ?? "/", "http://localhost");
+    } catch {
+      // Node accepts targets a URL can't parse, such as `//[`. None is under
+      // a base path, which a URL always parses, so it's not ours: the app's.
+      return false;
+    }
     if (!url.pathname.startsWith(basePath)) return false;
     const route = url.pathname.slice(basePath.length);
 
     if (req.method === "GET" && route === "/events" && hai.streamsEvents) {
-      await streamNotices(hai, req, res, url);
+      try {
+        await streamNotices(hai, req, res, url);
+      } catch (err) {
+        failed(res, err);
+      }
       return true;
     }
 
     if (req.method !== "POST") return false;
     if (route !== "/chat" && route !== "/interact" && route !== "/start") return false;
 
-    const body = await readJson(req);
-
-    // Nothing to run before the first message: answer with an empty stream and
-    // create no conversation, so an app without init doesn't get one for every
-    // page view. Its first message starts the conversation, as it always has.
-    if (route === "/start" && !hai.config.init) {
-      openSSE(res);
-      res.end();
-      return true;
-    }
-
-    // Before the SSE stream opens, because a rejected load has no stream to
-    // report into — and an uncaught throw here would take down the request.
-    let conversation;
     try {
-      conversation = await hai.config.store.loadConversation(body.conversationId);
+      await respond(hai, route, req, res);
     } catch (err) {
-      if (!isConversationBusy(err)) throw err;
-      res.writeHead(409, { "content-type": "application/json" });
-      res.end(JSON.stringify({ error: (err as Error).message }));
-      return true;
+      failed(res, err);
     }
-
-    const emit = openSSE(res);
-    if (route === "/chat" || route === "/start") {
-      emit({
-        type: "hello",
-        conversationId: conversation.id,
-        model: hai.config.model.id,
-        ...(hai.streamsEvents ? { events: true as const } : {}),
-      });
-    }
-
-    let superseded = false;
-    try {
-      if (route === "/chat") {
-        await hai.send(conversation, String(body.message ?? ""), emit);
-      } else if (route === "/start") {
-        await hai.start(conversation, emit);
-      } else {
-        await hai.interact(
-          conversation,
-          { handle: body.handle, action: body.action, value: body.value },
-          emit,
-        );
-      }
-    } catch (err) {
-      if (isStaleLease(err)) superseded = true;
-      emit({ type: "error", message: (err as Error).message });
-    } finally {
-      // The lease lives exactly as long as the request. Releasing it any
-      // earlier — when a turn parks, say — lets the client's next interaction
-      // arrive before this request has finished writing, and the two turns
-      // interleave on one conversation.
-      //
-      // Only the expiry is cleared. The token has to survive so the save below
-      // can still prove this request is the rightful holder.
-      conversation.leaseUntil = null;
-      try {
-        // A turn that already hit a fence knows its save would be rejected too;
-        // attempting it only repeats the same error to the client.
-        if (!superseded) await hai.config.store.saveConversation(conversation);
-      } catch (err) {
-        // Overtaken while we were slow: another turn already wrote newer state
-        // under a fresh token. Dropping this write is the correct outcome, but
-        // the client asked for something it is not getting, so say so.
-        if (!isStaleLease(err)) throw err;
-        emit({ type: "error", message: (err as Error).message });
-      }
-    }
-
-    res.end();
     return true;
   };
+}
+
+/**
+ * A request that failed in a way the route has no event for, such as a store
+ * error: the browser is told, the response ends, and the error is logged. It
+ * is never thrown on to the server, where an unhandled rejection would take
+ * the process down and leave the response open.
+ */
+function failed(res: ServerResponse, err: unknown) {
+  console.error("[haikit] request failed:", err);
+  const message = err instanceof Error ? err.message : String(err);
+  if (!res.headersSent) {
+    res.writeHead(500, { "content-type": "application/json" });
+    res.end(JSON.stringify({ error: message }));
+  } else if (!res.writableEnded) {
+    res.write(`data: ${JSON.stringify({ type: "error", message } satisfies WireEvent)}\n\n`);
+    res.end();
+  }
+}
+
+/** One of the three POST routes, once the request is known to be one. */
+async function respond(hai: Hai, route: string, req: IncomingMessage, res: ServerResponse) {
+  let body: Record<string, any>;
+  try {
+    body = await readJson(req);
+  } catch {
+    res.writeHead(400, { "content-type": "application/json" });
+    res.end(JSON.stringify({ error: "the request body must be a JSON object" }));
+    return;
+  }
+
+  // Nothing to run before the first message: answer with an empty stream and
+  // create no conversation, so an app without init doesn't get one for every
+  // page view. Its first message starts the conversation, as it always has.
+  if (route === "/start" && !hai.config.init) {
+    openSSE(res);
+    res.end();
+    return;
+  }
+
+  // Before the SSE stream opens, because a rejected load has no stream to
+  // report into: busy is a 409, and anything else a 500 (see `failed`).
+  let conversation;
+  try {
+    conversation = await hai.config.store.loadConversation(body.conversationId);
+  } catch (err) {
+    if (!isConversationBusy(err)) throw err;
+    res.writeHead(409, { "content-type": "application/json" });
+    res.end(JSON.stringify({ error: (err as Error).message }));
+    return;
+  }
+
+  const emit = openSSE(res);
+  if (route === "/chat" || route === "/start") {
+    emit({
+      type: "hello",
+      conversationId: conversation.id,
+      model: hai.config.model.id,
+      ...(hai.streamsEvents ? { events: true as const } : {}),
+    });
+  }
+
+  let superseded = false;
+  try {
+    if (route === "/chat") {
+      await hai.send(conversation, String(body.message ?? ""), emit);
+    } else if (route === "/start") {
+      await hai.start(conversation, emit);
+    } else {
+      await hai.interact(
+        conversation,
+        { handle: body.handle, action: body.action, value: body.value },
+        emit,
+      );
+    }
+  } catch (err) {
+    if (isStaleLease(err)) superseded = true;
+    emit({ type: "error", message: (err as Error).message });
+  } finally {
+    // The lease lives exactly as long as the request. Releasing it any
+    // earlier — when a turn parks, say — lets the client's next interaction
+    // arrive before this request has finished writing, and the two turns
+    // interleave on one conversation.
+    //
+    // Only the expiry is cleared. The token has to survive so the save below
+    // can still prove this request is the rightful holder.
+    conversation.leaseUntil = null;
+    try {
+      // A turn that already hit a fence knows its save would be rejected too;
+      // attempting it only repeats the same error to the client.
+      if (!superseded) await hai.config.store.saveConversation(conversation);
+    } catch (err) {
+      // Overtaken while we were slow: another turn already wrote newer state
+      // under a fresh token. Dropping this write is the correct outcome, but
+      // the client asked for something it is not getting, so say so. Any
+      // other failure goes to `failed`, which says so too, ends the response
+      // and logs it: the conversation stays held until its lease lapses.
+      if (!isStaleLease(err)) throw err;
+      emit({ type: "error", message: (err as Error).message });
+    }
+  }
+
+  res.end();
 }
 
 /**
@@ -432,7 +480,8 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
       freshened.then(() => new Promise<void>((resolve) => setTimeout(resolve, POLL_GATHER_MS))),
       new Promise<void>((resolve) => (hold = setTimeout(resolve, holdMs))),
     ]);
-    void run().catch(() => {});
+    // a read that fails ends nothing early: the poll answers at its hold
+    void run().catch((err) => console.error("[haikit] events poll failed:", err));
     await done;
     clearTimeout(hold);
   } finally {
@@ -752,8 +801,11 @@ function openSSE(res: ServerResponse): Emit {
   };
 }
 
-async function readJson(req: IncomingMessage): Promise<any> {
+/** The request body, as a JSON object; anything else, or a body that fails to arrive, throws. */
+async function readJson(req: IncomingMessage): Promise<Record<string, any>> {
   const chunks: Buffer[] = [];
   for await (const chunk of req) chunks.push(chunk as Buffer);
-  return JSON.parse(Buffer.concat(chunks).toString() || "{}");
+  const body: unknown = JSON.parse(Buffer.concat(chunks).toString() || "{}");
+  if (!body || typeof body !== "object" || Array.isArray(body)) throw new TypeError("not a JSON object");
+  return body as Record<string, any>;
 }

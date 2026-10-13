@@ -67,6 +67,7 @@ is changed or lost by then:
 - a `Date` arrives as a string, though `P` says `Date`;
 - `undefined` fields disappear;
 - a `BigInt` makes storing throw;
+- U+0000 and lone surrogates become U+FFFD, in both built-in stores;
 - with `pgStore`, an object's keys come back in `jsonb`'s order (shorter keys
   first), not the order they were rendered in.
 

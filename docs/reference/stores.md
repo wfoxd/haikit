@@ -70,6 +70,11 @@ Review them, or race real connections against a real database.
 - **Accept any id.** `loadConversation` gets the browser's `conversationId`
   unchecked: any JSON value. Treat one that isn't a string, or isn't known,
   as a new conversation, rather than throwing.
+- **Store any string.** Messages, props and payloads hold whatever users
+  type and tools return. A string the store's database can't hold must be
+  stored changed, not refused: a refused closing save leaves the conversation
+  held until its lease expires. Both built-in stores replace U+0000 and lone
+  surrogates with U+FFFD.
 - **Issue ids without a colon,** so none can be the signals channel,
   `haikit:signals`.
 
@@ -254,9 +259,9 @@ It throws a `RangeError` unless `leaseMs` is a positive, finite number:
 - **It copies through JSON,** in and out: `JSON.parse(JSON.stringify(…))`. A
   caller never holds a live reference to stored state, and anything a real
   store's `jsonb` column would drop or change (`undefined`, a `Date`'s type, a
-  class instance) is dropped or changed here too, in development. Unlike
-  `pgStore`, it accepts strings `jsonb` refuses: U+0000 and lone
-  surrogates.
+  class instance) is dropped or changed here too, in development. So are
+  strings Postgres can't store: U+0000 and lone surrogates become U+FFFD, as
+  `pgStore` stores them.
 - **Ids:** `conv_<n>_<16 hex digits>`, unguessable. Handles are `ui_01`,
   `ui_02`, … numbered across all of this store's conversations, padded to two
   digits.
@@ -316,13 +321,12 @@ the same message as `memoryStore`.
 - **Time:** `createdAt` comes from the database's clock, but the runtime
   measures freshness and ages with the app server's clock, so skew between
   the two shifts when surfaces go out of date.
-- **Strings Postgres refuses.** A U+0000 character in anything stored as
-  `jsonb` (messages, props, payloads) fails the write, and so does a lone
-  surrogate. Nothing in the runtime removes them, so a user who types a NUL
-  character makes the request's closing save fail: the error is thrown out of
-  `nodeHandler`, and the conversation stays held until its lease expires. In
-  a notice's model text, U+0000 fails too, and a lone surrogate becomes
-  U+FFFD.
+- **Strings Postgres refuses** are stored changed. Postgres refuses U+0000
+  in any text or `jsonb`, and a lone surrogate in `jsonb`. `pgStore` replaces
+  each with U+FFFD as it writes: in every string and object key of what it
+  stores as `jsonb` (messages, props, payloads), and in every text parameter,
+  such as a notice's model text, or an id from the browser (which then
+  matches no conversation). A valid surrogate pair is left alone.
 - **Integer columns:** a surface's or notice's `version` must be a whole
   number in 32-bit range, or the write fails. The per-conversation counters
   `handle_seq`, `notice_seq` and `wake_turns` are 32-bit too, so a
