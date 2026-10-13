@@ -7,10 +7,10 @@
     "start": "node src/server/main.ts"
   },
   "dependencies": {
-    "@haikit/core": "0.20.3",
-    "@haikit/server": "0.20.3",
-    "@haikit/anthropic": "0.20.3",
-    "@haikit/client": "0.20.3",
+    "@haikit/core": "0.20.4",
+    "@haikit/server": "0.20.4",
+    "@haikit/anthropic": "0.20.4",
+    "@haikit/client": "0.20.4",
     "zod": "^4.0.0"
   }
 }

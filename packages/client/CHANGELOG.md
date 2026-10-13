@@ -1,5 +1,7 @@
 # @haikit/client
 
+## 0.20.4
+
 ## 0.20.3
 
 ### Patch Changes
