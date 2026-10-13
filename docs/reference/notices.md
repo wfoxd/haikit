@@ -272,17 +272,20 @@ and how notice blocks are placed.
 
 ## Wake turns
 
-A wake notice asks for a turn. Only the events route starts one: after it
-reads notices and finds a wake notice among them, and once when a stream
-opens (or a poll arrives), for a wake notice that arrived while nobody was
-watching. So **a wake turn starts only from an open events stream or a
+A wake notice asks for a turn. Only the events route starts one: when a
+stream (or a poll) on a server knows of a wake notice, read there from the
+store, newer than the last one that server has already settled. That
+includes one that arrived while nobody was watching (see
+[HTTP routes and the wire](http.md#starting-wake-turns)). So **a wake turn starts only from an open events stream or a
 poll**. A wake notice sent while nobody is connected waits. The next stream
 to open starts its turn, if it still can. Once a turn has started, it runs to
 the end and is saved even if every stream closes.
 
-Nothing retries a turn that failed or was limited. The route retries only
-while the conversation is busy. A new attempt comes only when a stream opens
-or the route reads a newer wake notice.
+A turn that was limited, or found nothing to do, is settled: nothing tries
+it again until a newer notice arrives. A turn that failed settles nothing:
+the next stream to open, or the next poll, tries again, until `maxWakes`
+holds it back. A stream that stays open doesn't retry it until it reads a
+newer notice. The route also retries while the conversation is busy.
 
 The turn's events go to every events stream this process has open for the
 conversation. With a store that implements `publish` and `subscribe`, they

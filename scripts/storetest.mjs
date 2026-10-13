@@ -4388,6 +4388,169 @@ async function signalChecks() {
   );
 }
 
+// ── a wake attempt is made only when there may be something to wake ────
+// An attempt takes the conversation's lease and saves it even when it finds
+// nothing, and a message sent meanwhile is turned away busy. A polling
+// browser opens a stream several times a minute, so attempts are made only
+// for notices past the last one an attempt here settled.
+async function wakeLeaseChecks() {
+  console.log("\nwake attempts and the lease");
+  const http = await import("node:http");
+  const { createHai, memoryStore, nodeHandler } = await import("../packages/server/dist/index.js");
+  const { defineNotice } = await import("../packages/core/dist/index.js");
+  const any = { parse: (v) => v };
+  const dropped = defineNotice({ name: "dropped", version: 1, kind: "wake", payload: any }).implement({
+    model: (p) => `${p.flight} is cheaper.`,
+  });
+  let woken = 0;
+  let failNextWake = false;
+  const model = {
+    id: "stub",
+    async generate({ messages, onTextDelta }) {
+      const last = messages.at(-1).content;
+      const text = typeof last === "string" ? last : last.at(-1).text;
+      if (text.startsWith("[The user has not said anything") && failNextWake) {
+        failNextWake = false;
+        throw new Error("model down");
+      }
+      if (text.startsWith("[The user has not said anything")) woken++;
+      onTextDelta("ok");
+      return { content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" };
+    },
+  };
+  const memory = memoryStore();
+  let loads = 0;
+  let taken = 0; // loads that took the lease, rather than finding it busy
+  const store = {
+    ...memory,
+    async loadConversation(id) {
+      loads++;
+      const c = await memory.loadConversation(id);
+      taken++;
+      return c;
+    },
+  };
+  const hai = createHai({ model, store, tools: [], surfaces: [], notices: [dropped], system: "x", maxWakes: { count: 100, perMs: 60_000 } });
+  const handler = nodeHandler(hai, "/hai");
+  const server = http.createServer(async (req, res) => {
+    if (!(await handler(req, res))) res.writeHead(404).end();
+  });
+  await new Promise((r) => server.listen(5390, "127.0.0.1", r));
+  const base = "http://127.0.0.1:5390/hai";
+  const chat = async (conversationId, message) => {
+    const res = await fetch(`${base}/chat`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ conversationId, message }),
+    });
+    const text = await res.text();
+    return { status: res.status, id: /"conversationId":"([^"]+)"/.exec(text)?.[1] };
+  };
+  const poll = async (id) => (await fetch(`${base}/events?conversationId=${id}&poll=now`)).text();
+
+  try {
+    const { id } = await chat(undefined, "hi");
+    let before = loads;
+    for (let i = 0; i < 5; i++) await poll(id);
+    check("five polls with nothing new take the lease once at most", loads - before <= 1);
+
+    before = loads;
+    let busy = 0;
+    for (let i = 0; i < 5; i++) {
+      const [, sent] = await Promise.all([poll(id), chat(id, `message ${i}`)]);
+      if (sent.status === 409) busy++;
+    }
+    check("a message sent while the browser polls is never turned away busy", busy === 0);
+
+    before = loads;
+    await hai.notify(id, dropped, { flight: "AC1" });
+    const woke = await poll(id);
+    const waited = Date.now();
+    while (woken === 0 && Date.now() - waited < 3000) await new Promise((r) => setTimeout(r, 10));
+    check("a new wake notice starts its turn from the next poll, taking the lease once", woken === 1 && loads - before === 1 && woke.includes('"wake":'));
+
+    before = loads;
+    for (let i = 0; i < 3; i++) await poll(id);
+    check("once it has woken, polls take the lease no more", loads === before);
+
+    // A turn that fails before any tool gives its notices back, so it settles
+    // nothing: it's tried again, rather than taken as done.
+    failNextWake = true;
+    await hai.notify(id, dropped, { flight: "AC2" });
+    const failed = await poll(id);
+    await poll(id);
+    const retried = Date.now();
+    while (woken < 2 && Date.now() - retried < 3000) await new Promise((r) => setTimeout(r, 10));
+    check("a wake turn that failed is tried again", failed.includes("model down") && woken === 2);
+
+    // What an attempt settles comes from the store, never from the browser:
+    // a stream claiming to have seen far more than exists doesn't stop the
+    // next wake notice waking.
+    {
+      const { id: other } = await chat(undefined, "hello");
+      await fetch(`${base}/events?conversationId=${other}&poll=now`, { headers: { "last-event-id": "999999" } }).then((r) => r.text());
+      const was = woken;
+      await hai.notify(other, dropped, { flight: "AC3" });
+      await poll(other);
+      const waited = Date.now();
+      while (woken === was && Date.now() - waited < 3000) await new Promise((r) => setTimeout(r, 10));
+      check("a stream claiming a huge resume point doesn't stop the next wake notice waking", woken === was + 1);
+    }
+
+    // Two streams on this server read the same new notice: one wakes, the
+    // other finds it busy, and once the first has settled the notice, the
+    // second doesn't take the lease again to find nothing.
+    {
+      const { id: shared } = await chat(undefined, "two tabs");
+      const tabs = [new AbortController(), new AbortController()];
+      for (const tab of tabs) {
+        fetch(`${base}/events?conversationId=${shared}`, { signal: tab.signal })
+          .then((r) => r.body.pipeTo(new WritableStream(), { signal: tab.signal }))
+          .catch(() => {});
+      }
+      await new Promise((r) => setTimeout(r, 300)); // both open, and their first looks done
+      const was = woken;
+      const takenBefore = taken;
+      await hai.notify(shared, dropped, { flight: "AC4" });
+      const waited = Date.now();
+      while (woken === was && Date.now() - waited < 3000) await new Promise((r) => setTimeout(r, 10));
+      await new Promise((r) => setTimeout(r, 1500)); // time for the other tab's retries
+      for (const tab of tabs) tab.abort();
+      check("two tabs reading one wake notice wake once, and take the lease once", woken === was + 1 && taken - takenBefore === 1);
+    }
+
+    // A wake notice a poll read, whose attempt found the conversation busy
+    // and was cut short when the poll ended, isn't forgotten: the next poll
+    // resumes past it, reading nothing, and still tries.
+    {
+      const { id: held } = await chat(undefined, "held");
+      await poll(held); // the first look, done
+      const holder = await memory.loadConversation(held); // another request holds it
+      const was = woken;
+      const { seq } = await hai.notify(held, dropped, { flight: "AC5" });
+      await poll(held); // reads it, finds the conversation busy, and ends
+      holder.leaseUntil = null;
+      await memory.saveConversation(holder);
+      await fetch(`${base}/events?conversationId=${held}&poll=now`, { headers: { "last-event-id": String(seq) } }).then((r) => r.text());
+      const waited = Date.now();
+      while (woken === was && Date.now() - waited < 3000) await new Promise((r) => setTimeout(r, 10));
+      check("a wake notice whose attempt was cut short is tried by the next poll, though it resumes past it", woken === was + 1);
+    }
+
+    // The first stream a server opens for a conversation looks once, even
+    // with no notices: an update notice a revision still owes goes out then.
+    const owing = await memory.loadConversation(undefined);
+    owing.announcing = { conversationId: owing.id, name: "s", version: 1, payload: null, model: "ui_01 was replaced by ui_02", handle: "ui_02", replaces: "ui_01" };
+    owing.leaseUntil = null;
+    await memory.saveConversation(owing);
+    await poll(owing.id);
+    const owed = (await memory.getNotices(owing.id, 0)) ?? [];
+    check("the first poll stores an update notice a revision still owes", owed.length === 1 && owed[0].replaces === "ui_01");
+  } finally {
+    server.close();
+  }
+}
+
 // ── polling: for a browser behind a proxy that holds a stream until it ends ──
 async function pollChecks() {
   console.log("\nevents by polling");
@@ -6526,6 +6689,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   await updateStreamChecks();
   await signalChecks();
   await pollChecks();
+  await wakeLeaseChecks();
   await transcriptChecks();
 
   // Said plainly because a suite that looks exhaustive is worse than one that

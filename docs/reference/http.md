@@ -170,9 +170,9 @@ polling parameters below.
 Reading notices takes no lease and writes nothing. But when `hai.wakes` is
 `true`, each wake attempt (see [Starting wake turns](#starting-wake-turns)
 below) takes the conversation's lease and saves it, even when no turn
-starts. Attempts happen on every stream open, every poll, and every wake
-notice read. A POST that arrives during one is answered 409, which the
-client retries once.
+starts, and a POST that arrives during one is answered 409, which the client
+retries once. So attempts are made only when there may be something to wake,
+not on every stream open or poll.
 
 ### Query parameters and headers
 
@@ -242,14 +242,34 @@ with 404), or when a store read fails.
 
 ### Starting wake turns
 
-When `hai.wakes` is `true`, the stream calls `hai.wake` once the whole
-backlog of notices is sent, for a wake notice that arrived while nobody
-watched, and again whenever it reads a wake notice. Each stream runs one
-attempt at a time: a wake notice that lands meanwhile asks for another once
-it's done. Several streams on one conversation make their own attempts, and
-contend for the lease. While `hai.wake` answers `"busy"`, the stream tries
-again after 250 ms, then twice as long each time, up to 5,000 ms, until it
-closes. If `hai.wake` rejects, the stream gets an `error` event. See
+When `hai.wakes` is `true`, the stream considers a wake attempt once the
+whole backlog of notices is sent, for a wake notice that arrived while
+nobody watched, and again whenever it reads a wake notice.
+
+**An attempt is made only for something new.** Each server remembers, per
+conversation, two numbers, both read from the store, never taken from the
+browser: the highest wake notice `seq` any stream there has read, and the
+highest one an attempt there has *settled* (it woke, found nothing to do, or
+was held back by `maxWakes`). A stream makes an attempt only while the first
+is past the second, so a browser polling a quiet conversation takes the lease
+once, not on every poll. A wake notice whose attempt didn't settle, because a
+poll ended while the conversation was busy, for instance, is tried by the
+next stream or poll, even one that resumes past it. The
+first stream a server opens for a conversation always looks once, even with
+no notices, for an update notice a revision still owes. A turn that fails
+settles nothing: the next stream to open, or the next poll, tries again. A
+stream that stays open doesn't retry it until it reads a newer notice. What the server remembers lasts as long as it keeps listening for
+the conversation: at least 60,000 ms after its last stream closes (see
+[Wake turns on the stream](#wake-turns-on-the-stream)), after which the next
+stream looks once again.
+
+Each stream runs one attempt at a time: a wake notice that lands meanwhile
+asks for another once it's done, if that one didn't settle it. Several
+streams on one conversation make their own attempts, and contend for the
+lease. While `hai.wake` answers `"busy"`, the stream tries again after
+250 ms, then twice as long each time, up to 5,000 ms, until it closes, or
+until another stream's attempt has settled the notices it was trying for. If
+`hai.wake` rejects, the stream gets an `error` event. See
 [Notices: wake turns](notices.md#wake-turns).
 
 ## Polling
@@ -350,7 +370,8 @@ last 5 at most, for polls that missed its end.
 
 **A wake attempt that fails before its `status: streaming`,** such as on a
 store error, is never seen by any browser: its frames belong to no turn the
-streams heard start. Nothing retries it.
+streams heard start. Like any failed attempt, it settles nothing, so the
+next stream to open, or the next poll, tries again.
 
 ## Wire events
 

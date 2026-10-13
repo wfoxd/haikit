@@ -144,6 +144,7 @@ None of these can be changed without changing HaiKIT's code.
 | Time between `: ping` comments | 25,000 | [HTTP routes and the wire](http.md#the-events-stream) |
 | A poll's longest hold, and its default | 15,000 | [HTTP routes and the wire](http.md#polling) |
 | How long a poll waits after something new, before ending | 250 | [HTTP routes and the wire](http.md#polling) |
+| Wake attempts a server makes per new wake notice | 1, unless it fails. None for a stream or poll with nothing new, except the server's first stream for a conversation, which looks once even with no notices | [HTTP routes and the wire](http.md#starting-wake-turns) |
 | Wait before retrying a wake turn on a busy conversation | 250, doubling each time | [HTTP routes and the wire](http.md#the-events-stream) |
 | Longest wait between those retries | 5000 | [HTTP routes and the wire](http.md#the-events-stream) |
 | How long a server keeps listening for a conversation's wake turns after its last stream closes | at least 60,000 (longer while a turn runs, or an ended one is kept) | [HTTP routes and the wire](http.md#wake-turns-on-the-stream) |
