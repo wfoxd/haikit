@@ -192,8 +192,7 @@ Mounts the surface `handle` into `element`, from `registry`.
 - Otherwise it empties `element`, calls the component's `mount(element,
   props, ctx)`, and returns what that returns, `undefined` included. On an
   expired conversation, the element is sealed at once (see
-  [Freshness in the browser](#freshness-in-the-browser)), and an `expire`
-  hook that throws then throws out of `mount`.
+  [Freshness in the browser](#freshness-in-the-browser)).
 
 `renderTranscript` calls it for every `ui` block, once per surface.
 
@@ -402,20 +401,18 @@ interface SurfaceInstance {
 }
 ```
 
-Every hook is optional. An error thrown by `unmount` or `update` is
-reported as an uncaught error, after the chat has finished what it was
-doing, so it can't stop a reset or a close part way through. **`freeze` and
-`expire` mustn't throw:** they're called directly. A throwing `freeze` stops
-the event being applied, like a throwing subscriber. A throwing `expire`
-stops the chat sealing the surfaces after it, which then stay clickable, and
-subscribers never hear the `expired` event.
+Every hook is optional. An error a hook throws is reported as an uncaught
+error, after the chat has finished what it was doing, so it can't stop an
+event being applied, a reset or a close part way through. An `expire` that
+throws still leaves every surface sealed: each element is made `inert`
+before its hook is called.
 
 | Hook | Called when |
 | --- | --- |
 | `freeze(selection)` | The surface was frozen (`ui_state`): answered, with the picked value, or closed out or withdrawn, with none |
 | `expire()` | The conversation went out of date. The element is already `inert`, with `data-expired` set, so nothing inside can reach the server; this is only for looks |
 | `unmount()` | The surface goes away: `reset()`, `close()`, or it's mounted again. Release timers, subscriptions or a React root here |
-| `update(props)` | The surface was revised in place. Keep what the component holds, such as its scroll or sort. Without `update`, the component is mounted again in the same element, if its `mount` returned an instance. If it returned nothing, the new props aren't drawn at all |
+| `update(props)` | The surface was revised in place. Keep what the component holds, such as its scroll or sort. Without `update`, or when `mount` returned no instance at all, the component is mounted again in the same element |
 
 ### `SurfaceMode`, `SurfaceState`
 
@@ -430,9 +427,9 @@ A `ui_open` with `replaces` (or `alsoReplaces`) naming a surface on screen
 moves that surface's record to the new handle, in place: the same
 component, element and `ui` block. Its props stay until the new `ui_props`
 arrives. Then the component's `update(props)` is called, or, without one,
-the component is mounted again in the same element, provided its `mount`
-returned an instance. A component whose `mount` returned nothing keeps
-showing the old props, so return at least `{}`. Every earlier handle
+or when its `mount` returned nothing, the component is mounted again in the
+same element. A surface not yet mounted is drawn with the latest props when
+it is. Every earlier handle
 leads to the new one, so a notice naming an old handle goes beside the
 surface as it is now.
 
@@ -523,7 +520,7 @@ otherwise.
 | `block_update` | Merges the event's fields into the block |
 | `progress` | Merges the fields into the `tool` block's `progress` |
 | `ui_open` | Ignored for a handle already shown. Ignored for a handle a revision already replaced, except that the revision takes its tool row. For a revision, moves the surface in place (see [Revisions in the browser](#revisions-in-the-browser)). Otherwise adds a surface record and a `ui` block. Then sets the surface's deadline |
-| `ui_props` | Sets the surface's props. For a revision, calls `update`, or mounts again when there's an instance |
+| `ui_props` | Sets the surface's props. For a revision, calls `update`, or mounts again |
 | `ui_state` | Sets the surface's `state` and `selection`, and calls `freeze` |
 | `status` | Sets `status` |
 | `context` | Sets `context` |
@@ -596,12 +593,10 @@ never does. The chat then polls instead: requests whose responses end.
   [HTTP routes and the wire](http.md#polling)).
 - **The next poll** starts as soon as one ends, but at least 250 ms after the
   previous one started. A poll that fails, rather than ending, backs off as a
-  stream does. Polls that end normally don't reset that backoff, so failures
-  far apart keep doubling the wait, up to 30,000 ms, unless a failing poll
-  delivered something.
-- **A 404 during a wake turn,** while polling, stops the stream without
-  ending the turn's wait, so every later request waits until `reset()` or
-  `close()`.
+  stream does. A poll that ends normally resets that backoff, so the next
+  failure waits 1,000 ms again.
+- **A 404** stops polling as it stops a stream, and ends the wait on any wake
+  turn the browser was following, so requests aren't left waiting.
 
 Notices, revisions, signals and wake turns all arrive by polling, a little
 later than they would stream. A turn's reply on `/chat` or `/interact` isn't
