@@ -600,7 +600,7 @@ export class Hai {
     } catch (err) {
       // Still owed, and appended by whoever holds the conversation next, before
       // anything else: the model hears of the revision before it runs again.
-      throw new Error(`${next} is saved, but its update notice could not be stored yet: it goes out with the conversation's next request (${(err as Error).message})`);
+      throw new Error(`${next} is saved, but its update notice could not be stored yet: it goes out with the conversation's next request (${errorText(err)})`);
     }
     conversation.announcing = null;
     return { handle: next, replaced: current };
@@ -635,7 +635,7 @@ export class Hai {
       outcome = await this.wakeTurn(conversation, emit);
     } catch (err) {
       if (isStaleLease(err)) superseded = true;
-      emit({ type: "error", message: (err as Error).message });
+      emit({ type: "error", message: errorText(err) });
       outcome = "failed";
     } finally {
       // As the route does at the end of a request: release the lease, keeping
@@ -646,7 +646,7 @@ export class Hai {
       } catch (err) {
         // A lost lease is told here, since it isn't thrown. Any other failure
         // is thrown, after `released`, and told by whoever called.
-        if (isStaleLease(err)) emit({ type: "error", message: (err as Error).message });
+        if (isStaleLease(err)) emit({ type: "error", message: errorText(err) });
         else saveFailed = err;
       }
       // Only now may the browser send again: until the save above, the lease
@@ -845,7 +845,7 @@ export class Hai {
         try {
           args = spec.input.parse(input.args ?? {});
         } catch (err) {
-          return ctx.text(`Invalid args for "${input.query}": ${(err as Error).message}`);
+          return ctx.text(`Invalid args for "${input.query}": ${errorText(err)}`);
         }
 
         const rows = (record.props as any)?.[primaryCollection(record.props)] ?? [];
@@ -959,7 +959,7 @@ export class Hai {
       conversation.handles.length = before.handles;
       conversation.status = before.status;
       if (isStaleLease(err)) throw err;
-      const message = `initialisation failed: ${(err as Error).message}`;
+      const message = `initialisation failed: ${errorText(err)}`;
       emit({ type: "block_update", id: toolBlockId, status: "error", ms: Date.now() - started, result: message });
       throw new Error(message);
     }
@@ -1038,7 +1038,7 @@ export class Hai {
     try {
       value = spec.input.parse(input.value);
     } catch (err) {
-      throw new Error(`invalid action payload: ${(err as Error).message}`);
+      throw new Error(`invalid action payload: ${errorText(err)}`);
     }
 
     // Gated before the handler runs, because a handler may write: only a click
@@ -1058,7 +1058,7 @@ export class Hai {
     try {
       label = await handler(value, { props: record.props, handle: record.handle, conversationId: conversation.id });
     } catch (err) {
-      throw new Error(`action failed: ${(err as Error).message}`);
+      throw new Error(`action failed: ${errorText(err)}`);
     }
 
     // Read after the handler, so a notice its own work sent rides with the click.
@@ -1222,7 +1222,28 @@ export class Hai {
       });
 
       conversation.messages.push({ role: "assistant", content: final.content });
-      if (final.stop_reason !== "tool_use") break;
+      const calls: any[] = Array.isArray(final.content) ? final.content.filter((b: any) => b?.type === "tool_use") : [];
+      // "tool_use" with no call to make: the reply is complete, and an empty
+      // message of results would be one the API refuses.
+      if (!calls.length) break;
+      if (final.stop_reason !== "tool_use") {
+        // A reply that stopped for another reason, such as max_tokens part
+        // way through a call, can still hold calls. None runs: its input may
+        // be cut short. But each needs a result, or the API refuses this
+        // history from the next call on, so each is told why, and the turn
+        // goes on, so the model can answer or try again, within maxHops.
+        const note = `Not run: your reply ended with stop_reason "${final.stop_reason}" before this call was complete. Make it again if it's still needed.`;
+        conversation.messages.push({
+          role: "user",
+          content: calls.map((call) => {
+            const toolBlockId = this.nid("b");
+            emit({ type: "block_start", block: { kind: "tool", id: toolBlockId, name: call.name, input: call.input, status: "running" } });
+            emit({ type: "block_update", id: toolBlockId, status: "error", ms: 0, result: note });
+            return { type: "tool_result", tool_use_id: call.id, content: note };
+          }),
+        });
+        continue;
+      }
 
       const results: unknown[] = [];
       let parked: { toolUseId: string; handle: string; digest: string } | null = null;
@@ -1230,7 +1251,7 @@ export class Hai {
       // elicit render is the one it waits on, and any later one is refused.
       const hop: Hop = { asking: null };
 
-      for (const call of final.content.filter((b: any) => b?.type === "tool_use")) {
+      for (const call of calls) {
         const toolBlockId = this.nid("b");
         emit({
           type: "block_start",
@@ -1537,7 +1558,7 @@ export class Hai {
       input = tool.input.parse(call.input);
     } catch (err) {
       if (options.init) throw err;
-      return { ret: { model: `Invalid input for ${call.name}: ${(err as Error).message}` }, asked: null };
+      return { ret: { model: `Invalid input for ${call.name}: ${errorText(err)}` }, asked: null };
     }
 
     let outcome: { ok: true; ret: ToolReturn } | { ok: false; err: unknown };
@@ -1561,6 +1582,10 @@ export class Hai {
 
     if (outcome.ok) {
       let { ret } = outcome;
+      // JavaScript can return anything: a call with no text for the model would
+      // leave its tool_use with no usable result. A question it showed is the
+      // answer then, as a render's result is; otherwise it's said plainly.
+      if (typeof ret?.model !== "string") ret = { model: asked ? asked.digest : `${call.name} returned no result.` };
       // A query on a surface since revised answers from what it was, which is
       // what the model asked about; it is told the surface has moved on.
       const queried = (input as { handle?: unknown } | null)?.handle;
@@ -1585,7 +1610,7 @@ export class Hai {
       emit({ type: "ui_state", handle: asked.handle, state: "frozen" });
       hop.asking = null;
     }
-    return { ret: { model: `${call.name} failed: ${(err as Error).message}` }, asked: null };
+    return { ret: { model: `${call.name} failed: ${errorText(err)}` }, asked: null };
   }
 
   private async emitContext(conversation: Conversation, emit: Emit) {
@@ -1645,6 +1670,9 @@ function strictest(recorded: unknown, current: unknown): number | "never" | unde
 }
 
 const newId = () => globalThis.crypto.randomUUID().replaceAll("-", "").slice(0, 16);
+
+/** What a thrown value says: its message, or, for one that isn't an Error, such as a string or undefined, itself as text. */
+const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
 /** The latest revision of a surface: `handle` itself, or what it was superseded by, all the way along. */
 function currentHandle(conversation: Conversation, handle: string): string {

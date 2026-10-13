@@ -87,11 +87,13 @@ Each hop of a turn makes one `generate` call (see
    then the turn parks, and the next `generate` call comes in a later
    request. And unless this was the `maxHops`th call: then the turn ends (see
    [The server](server.md#maxhops)).
-5. **Any other `stop_reason` ends the turn,** including `"max_tokens"`. The
-   runtime doesn't continue a reply that was cut off. `tool_use` blocks in
-   such a reply are recorded but not run, and get no `tool_result`, so the
-   Messages API refuses that history on the next call (see
-   [The server](server.md#how-a-turn-runs)).
+5. **Any other `stop_reason` ends the turn,** including `"max_tokens"`,
+   unless the reply holds `tool_use` blocks. Those aren't run, since their
+   input may be cut short: each gets a `tool_result` saying it wasn't, and
+   the next hop begins, so the model can answer or try again (see
+   [The server](server.md#how-a-turn-runs)). So does `"tool_use"` with no
+   `tool_use` block in the reply. The runtime doesn't continue a reply's text
+   that was cut off.
 
 **If `generate` throws** (or rejects), the turn ends there and the caller
 reports the error. What the turn recorded before stays saved, except in a
@@ -158,7 +160,7 @@ interface AnthropicOptions {
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `model` | `"claude-haiku-5-5"` | Any Claude model id, such as `"claude-sonnet-5-5"`. Also the adapter's `id` |
-| `maxTokens` | `16000` | The reply's `max_tokens`. A reply that reaches it ends the turn, and one cut off part way through a tool call leaves a history the API refuses (see above) |
+| `maxTokens` | `16000` | The reply's `max_tokens`. A reply that reaches it ends the turn, unless it was cut off part way through a tool call: that call isn't run, and the model is told and called again (see above) |
 | `effort` | `"medium"` | Sent as `output_config.effort`. Lower is faster and cheaper |
 | `apiKey` | the SDK's default (`ANTHROPIC_API_KEY`, or `ANTHROPIC_AUTH_TOKEN`) | The API key. An empty string counts as not given |
 
@@ -177,8 +179,7 @@ From HaiKIT, an adapter needs only `@haikit/core`'s types, never
   the turn.
 - **give each tool call a unique `id`** in a `tool_use` block, with `name`
   and `input`, and return `stop_reason: "tool_use"` to have them run, and
-  only then. With no `tool_use` block, the runtime records an empty user
-  message and calls again.
+  only then. With no `tool_use` block, the runtime ends the turn.
 - **pass text to `onTextDelta`** as it arrives, or all at once, for the
   browser to show it.
 - **leave `request.messages` unchanged.**

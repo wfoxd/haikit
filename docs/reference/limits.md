@@ -268,7 +268,9 @@ index `haikit_payloads_created_at`: see
 | `Unknown tool: <name>` | The model called a tool that doesn't exist | [Tools](tools.md#how-a-tool-call-runs) |
 | `<name> already ran at the start of this conversation; its result is above.` | The model called the init tool | [The server](server.md#init) |
 | `Invalid input for <name>: <message>` | The input failed the tool's schema | [Tools](tools.md#how-a-tool-call-runs) |
-| `<name> failed: <message>` | The tool threw | [Tools](tools.md#how-a-tool-call-runs) |
+| `<name> failed: <message>` | The tool threw (a value that isn't an `Error` as text) | [Tools](tools.md#how-a-tool-call-runs) |
+| `<name> returned no result.` | The tool returned nothing with a string `model` | [Tools](tools.md#how-a-tool-call-runs) |
+| `Not run: your reply ended with stop_reason "<reason>" before this call was complete. Make it again if it's still needed.` | A call in a reply that stopped for another reason, such as `max_tokens` | [The server](server.md#how-a-turn-runs) |
 | `Not shown: <handle> is already waiting for the user. Ask this again after it is answered.` | A second question in one reply | [Tools](tools.md#render) |
 | `Not shown: the tool had already finished.`, `Not revised: the tool had already finished.` | A render or update after the tool returned | [Tools](tools.md#toolctx) |
 | `No such handle: <handle>`, `Unsupported query "<query>". Available: <names, or none>.`, `Invalid args for "<query>": <message>` | `query_ui` couldn't answer | [Surfaces](surfaces.md#query-handlers) |

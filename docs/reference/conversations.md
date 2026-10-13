@@ -138,7 +138,8 @@ typed.
 | When | What's recorded |
 | --- | --- |
 | A message the user typed | a user message: its text, after any unread notices' text blocks (see [Notices](notices.md#what-the-model-hears)) |
-| A model reply's tool calls finished | one user message holding each call's `tool_result`, in call order: the `ToolReturn`'s `model`, or the framework text for a call that failed (see [Tools](tools.md#how-a-tool-call-runs)). If the reply parked on a question, they're held in `pending.results` instead |
+| A model reply's tool calls finished | one user message holding each call's `tool_result`, in call order: the `ToolReturn`'s `model`, or the framework text for a call that failed or returned nothing (see [Tools](tools.md#how-a-tool-call-runs)). If the reply parked on a question, they're held in `pending.results` instead |
+| A reply that stopped for another reason with tool calls in it | one user message answering each call with `Not run: …`, without running it (see [The server](server.md#how-a-turn-runs)) |
 | A `resolve` click | the parked reply's other tool results, then the question's `tool_result`: `<digest>` + newline + `<label>`, then any unread notices |
 | An `inform` click | a user message: any unread notices, then `[UI interaction] <label>` |
 | A typed message while a question waits | first, a user message closing the question: the parked reply's other tool results, then the question's `tool_result`, `<digest>` + newline + `User did not select; they said: "<text>"`. Then the typed message, as above |
