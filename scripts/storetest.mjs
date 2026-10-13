@@ -4388,6 +4388,40 @@ async function signalChecks() {
   );
 }
 
+// ── block ids never repeat across servers, or a restart ────────────────
+// The browser matches blocks by id for a whole conversation, across POST
+// responses and the events stream, which different servers may send. Ids
+// that only counted from 1 in each Hai repeated, and a new block overwrote
+// an earlier one in place.
+async function blockIdChecks() {
+  console.log("\nblock ids");
+  const { createHai, memoryStore } = await import("../packages/server/dist/index.js");
+  const store = memoryStore();
+  const model = {
+    id: "stub",
+    async generate({ onTextDelta }) {
+      onTextDelta("ok");
+      return { content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" };
+    },
+  };
+  const make = () => createHai({ model, store, tools: [], surfaces: [], system: "x" });
+  const turn = async (hai, id) => {
+    const c = await store.loadConversation(id);
+    const events = [];
+    await hai.send(c, "hi", (e) => events.push(e));
+    c.leaseUntil = null;
+    await store.saveConversation(c);
+    return { id: c.id, ids: events.filter((e) => e.type === "block_start").map((e) => e.block.id) };
+  };
+  const one = await turn(make(), undefined);
+  const two = await turn(make(), one.id); // another server sharing the store
+  const three = await turn(make(), one.id); // or this one, restarted
+  const all = [...one.ids, ...two.ids, ...three.ids];
+  check("each turn's blocks have ids", one.ids.length >= 2 && two.ids.length >= 2 && three.ids.length >= 2);
+  check("block ids from two servers, and a restarted one, never repeat in a conversation", new Set(all).size === all.length);
+  check("a block id is b_, a part of its own, and a count", all.every((id) => /^b_[0-9a-f]{12}_\d+$/.test(id)));
+}
+
 // ── a wake attempt is made only when there may be something to wake ────
 // An attempt takes the conversation's lease and saves it even when it finds
 // nothing, and a message sent meanwhile is turned away busy. A polling
@@ -6690,6 +6724,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   await signalChecks();
   await pollChecks();
   await wakeLeaseChecks();
+  await blockIdChecks();
   await transcriptChecks();
 
   // Said plainly because a suite that looks exhaustive is worse than one that

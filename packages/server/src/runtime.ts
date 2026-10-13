@@ -201,6 +201,13 @@ export class Hai {
   private readonly surfaceNames = new Map<string, Map<string, string>>();
   /** What the model gets as its system prompt: the app's, then the scope. */
   readonly system: string;
+  /**
+   * Block ids: this Hai's own random part, then a count. The browser matches
+   * blocks by id for a whole conversation, across POST responses and the
+   * events stream, which another server, or this one restarted, may have
+   * sent: a count alone would repeat there, and a new block overwrite an old.
+   */
+  private readonly blockIds = globalThis.crypto.randomUUID().replaceAll("-", "").slice(0, 12);
   private seq = 0;
 
   constructor(config: HaiConfig) {
@@ -770,7 +777,7 @@ export class Hai {
   }
 
   private nid(prefix: string) {
-    return `${prefix}_${++this.seq}`;
+    return `${prefix}_${this.blockIds}_${++this.seq}`;
   }
 
   // ───────────────────────────────────────────────── derived tool
