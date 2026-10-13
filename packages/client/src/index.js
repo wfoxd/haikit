@@ -401,7 +401,9 @@ export function createChat({
           surface.revising = false;
           const { instance, element } = surface;
           if (instance && typeof instance.update === "function") attempt(() => instance.update(event.props));
-          else if (instance && element) mount(surface.handle, element);
+          // mounted with no instance to update, a component's `mount` may return
+          // nothing: it's mounted again all the same, or it would show old props
+          else if (element) mount(surface.handle, element);
         }
         break;
       }
@@ -412,7 +414,8 @@ export function createChat({
           surface.state = event.state;
           // kept, so a surface mounted again once frozen still knows the answer
           surface.selection = event.selection;
-          surface.instance?.freeze?.(event.selection);
+          // isolated, like every other hook: one that throws mustn't stop the event
+          attempt(() => surface.instance?.freeze?.(event.selection));
         }
         break;
       }
@@ -494,8 +497,9 @@ export function createChat({
           headers: last ? { "last-event-id": String(last) } : {},
           signal: attempt.signal,
         });
-        // the server has no such conversation, or sends no notices: stop
-        if (res.status === 404) return;
+        // the server has no such conversation, or sends no notices: stop,
+        // and stop waiting for a wake turn this stream was following
+        if (res.status === 404) return finishRemote();
         if (res.ok) {
           const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
           let buffer = "";
@@ -546,6 +550,8 @@ export function createChat({
       // what the turn has shown so far, or that none is running.
       if (polling && ended && gen === generation && !signal.aborted) {
         firstPoll = false;
+        // a poll that ended as polls do was healthy: the next failure backs off from the start
+        wait = 1_000;
         await pause(Math.max(0, POLL_GAP_MS - (Date.now() - opened)), signal);
         continue;
       }
@@ -698,7 +704,8 @@ export function createChat({
     if (!surface.element) return;
     surface.element.inert = true;
     surface.element.dataset.expired = "";
-    surface.instance?.expire?.();
+    // after sealing, and isolated: one that throws mustn't leave the next unsealed
+    attempt(() => surface.instance?.expire?.());
   }
 
   /**

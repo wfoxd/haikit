@@ -4388,6 +4388,135 @@ async function signalChecks() {
   );
 }
 
+// ── client hooks are isolated, revisions reach any component, polling recovers ──
+// Driven with a fetch that answers with scripted event streams, so each case
+// is exact rather than raced against a server.
+async function clientHookChecks() {
+  console.log("\nclient hooks and polling");
+  const { createChat } = await import("../packages/client/src/index.js");
+  const realFetch = globalThis.fetch;
+  // what hooks throw is reported as an uncaught error, after the chat has done its work
+  const reported = [];
+  const onReported = (err) => reported.push(err);
+  process.on("uncaughtException", onReported);
+  const frames = (events) => events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join("");
+  const sse = (events) => new Response(frames(events), { status: 200, headers: { "content-type": "text/event-stream" } });
+  const el = () => ({ replaceChildren() {}, dataset: {}, textContent: "", className: "", inert: false });
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const open = (handle, component, extra = {}) => ({ type: "ui_open", handle, toolId: "b_t", component, version: 1, mode: "display", ...extra });
+
+  try {
+    // freeze and expire that throw don't stop the chat's own work
+    {
+      const posts = [
+        [
+          { type: "hello", conversationId: "c1", model: "m" },
+          open("ui_01", "boom"),
+          { type: "ui_props", handle: "ui_01", props: { a: 1 } },
+          open("ui_02", "plain"),
+          { type: "ui_props", handle: "ui_02", props: { b: 1 } },
+          open("ui_03", "boom", { mode: "elicit" }),
+          { type: "ui_props", handle: "ui_03", props: { q: 1 } },
+          { type: "status", status: "awaiting" },
+        ],
+        [{ type: "ui_state", handle: "ui_03", state: "frozen", selection: "A" }, { type: "status", status: "idle" }],
+        [{ type: "expired", message: "out of date" }],
+      ];
+      globalThis.fetch = async () => sse(posts.shift() ?? []);
+      let plainExpired = 0;
+      const registry = {
+        boom: { mount: () => ({ freeze() { throw new Error("freeze broke"); }, expire() { throw new Error("expire broke"); } }) },
+        plain: { mount: () => ({ expire() { plainExpired++; } }) },
+      };
+      const chat = createChat({ endpoint: "http://x/hai", registry });
+      const heard = [];
+      chat.subscribe((_s, e) => heard.push(e.type));
+      await chat.send("show");
+      const elements = {};
+      for (const h of ["ui_01", "ui_02", "ui_03"]) chat.mount(h, (elements[h] = el()));
+      reported.length = 0;
+      await chat.send("answer");
+      await wait(0);
+      check("a freeze hook that throws doesn't stop the event", chat.state.status === "idle" && heard.includes("ui_state") && chat.state.surfaces.get("ui_03").state === "frozen");
+      check("…and its error is still reported", reported.some((e) => e?.message === "freeze broke"));
+      reported.length = 0;
+      await chat.send("again");
+      await wait(0);
+      check(
+        "an expire hook that throws doesn't leave the surfaces after it unsealed",
+        elements.ui_02.inert === true && "expired" in elements.ui_02.dataset && plainExpired === 1 && elements.ui_03.inert === true,
+      );
+      check("…subscribers hear the expiry, and the error is reported", heard.includes("expired") && reported.some((e) => e?.message === "expire broke"));
+      chat.close();
+    }
+
+    // a component whose mount returns nothing still shows a revision
+    {
+      const posts = [
+        [{ type: "hello", conversationId: "c2", model: "m" }, open("ui_01", "bare"), { type: "ui_props", handle: "ui_01", props: { v: 1 } }],
+        [open("ui_02", "bare", { replaces: "ui_01", toolId: "" }), { type: "ui_props", handle: "ui_02", props: { v: 2 } }],
+      ];
+      globalThis.fetch = async () => sse(posts.shift() ?? []);
+      const drawn = [];
+      const chat = createChat({ endpoint: "http://x/hai", registry: { bare: { mount: (_e, props) => void drawn.push(props.v) } } });
+      await chat.send("show");
+      chat.mount("ui_01", el());
+      await chat.send("revise");
+      check("a component whose mount returns nothing is mounted again with a revision's props", drawn.join() === "1,2");
+      chat.close();
+    }
+
+    // polling: a 404 while a wake turn was showing doesn't leave requests waiting for good
+    {
+      let polls = 0;
+      const posts = [
+        [{ type: "hello", conversationId: "c3", model: "m", events: true }, { type: "status", status: "idle" }],
+        [{ type: "status", status: "idle" }],
+      ];
+      globalThis.fetch = async (url, init = {}) => {
+        if (!String(url).includes("/events")) return sse(posts.shift() ?? []);
+        polls++;
+        // the first: a stream that says nothing, so the chat falls back to polling
+        if (polls === 1) return new Response(new ReadableStream({ start(c) { init.signal?.addEventListener("abort", () => c.error(new Error("aborted"))); } }), { status: 200 });
+        // a poll that ends part way through a wake turn
+        if (polls === 2) return sse([{ type: "status", status: "streaming", wake: 1 }]);
+        return new Response(JSON.stringify({ error: "unknown conversation" }), { status: 404 });
+      };
+      const chat = createChat({ endpoint: "http://x/hai", registry: {}, eventsFallbackMs: 50 });
+      await chat.send("hi");
+      for (const end = Date.now() + 3000; polls < 3 && Date.now() < end; ) await wait(10);
+      await wait(50);
+      const sent = await Promise.race([chat.send("next").then(() => "sent"), wait(2000).then(() => "stuck")]);
+      check("a 404 while polling during a wake turn doesn't leave the next message waiting", polls >= 3 && sent === "sent");
+      chat.close();
+    }
+
+    // polling: a poll that ends normally resets the backoff
+    {
+      let polls = 0;
+      const at = [];
+      globalThis.fetch = async (url, init = {}) => {
+        if (!String(url).includes("/events")) return sse([{ type: "hello", conversationId: "c4", model: "m", events: true }]);
+        polls++;
+        at[polls] = Date.now();
+        if (polls === 1) return new Response(new ReadableStream({ start(c) { init.signal?.addEventListener("abort", () => c.error(new Error("aborted"))); } }), { status: 200 });
+        if (polls === 2 || polls === 4) throw new TypeError("network down");
+        if (polls === 3) return sse([{ type: "released" }]);
+        return new Response(new ReadableStream({ start(c) { init.signal?.addEventListener("abort", () => c.error(new Error("aborted"))); } }), { status: 200 });
+      };
+      const chat = createChat({ endpoint: "http://x/hai", registry: {}, eventsFallbackMs: 50 });
+      await chat.send("hi");
+      for (const end = Date.now() + 6000; polls < 5 && Date.now() < end; ) await wait(20);
+      const gap = at[5] - at[4];
+      check(`a poll that ends normally resets the backoff (${gap}ms after the next failure)`, polls >= 5 && gap < 1500);
+      chat.close();
+    }
+  } finally {
+    globalThis.fetch = realFetch;
+    process.off("uncaughtException", onReported);
+  }
+}
+
 // ── a wake attempt is made only when there may be something to wake ────
 // An attempt takes the conversation's lease and saves it even when it finds
 // nothing, and a message sent meanwhile is turned away busy. A polling
@@ -6690,6 +6819,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   await signalChecks();
   await pollChecks();
   await wakeLeaseChecks();
+  await clientHookChecks();
   await transcriptChecks();
 
   // Said plainly because a suite that looks exhaustive is worse than one that

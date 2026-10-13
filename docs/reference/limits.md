@@ -178,7 +178,7 @@ None of these can be changed without changing HaiKIT's code.
 | Wait before retrying a request answered 409 | 150, once | [The browser client](client.md#requests) |
 | Retrying after a wake turn's connection dropped | 250, doubling, at most 2000 apart, for up to 120,000 | [The browser client](client.md#requests) |
 | Events stream reconnect wait | 1000, doubling, up to 30,000 | [The browser client](client.md#the-events-stream) |
-| A connection that resets the reconnect wait | one that delivered an event, or stayed open 30,000 | [The browser client](client.md#the-events-stream) |
+| A connection that resets the reconnect wait | one that delivered an event, or stayed open 30,000, or, when polling, a poll that ended normally | [The browser client](client.md#the-events-stream) |
 | Least time from one poll's start to the next | 250 | [The browser client](client.md#polling) |
 | How long the browser remembers it must poll | 24 hours | [The browser client](client.md#polling) |
 | Requests in flight per chat | 1: `start` and `send` queue, `interact` is dropped while any is open or queued | [The browser client](client.md#requests) |
