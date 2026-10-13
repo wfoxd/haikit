@@ -610,7 +610,7 @@ to `any`, can get past the types' rules. Here's what the server does then:
 | An action handler that returns something other than a string | It's recorded as it is, in `[UI interaction] <label>` or after the digest |
 | `mode: "elicit"` on a surface with no `resolve` action | The turn parks on it. No click can answer it, so the conversation stays parked until the user types a message, which closes the question out |
 | `ctx.render` with a `mode` other than `"display"` or `"elicit"` | A missing, `undefined` or `null` mode is `"display"`. Anything else is treated as `"elicit"` |
-| An action spec whose `kind` is neither `"resolve"` nor `"inform"`, such as `"Resolve"`, or that has no `input` schema | Refused at startup: `createHai` throws a `TypeError`, `surface <name>: action "<action>" has kind "<kind>"; declare it with resolve() or inform()`, or `surface <name>: action "<action>" has no input schema with a parse method` |
+| An action spec whose `kind` is neither `"resolve"` nor `"inform"`, such as `"Resolve"`, or that has no `input` schema | Refused at startup: `createHai` throws a `TypeError`, `surface <name>: action "<action>" has kind <kind>; declare it with resolve() or inform()` (a string `<kind>` in quotes, such as `"Resolve"`, anything else as text, such as `undefined`), or `surface <name>: action "<action>" has no input schema with a parse method` |
 
 The fourth guarantee, that only declared actions reach the server, holds at
 runtime: the server refuses any action the contract and the implementation

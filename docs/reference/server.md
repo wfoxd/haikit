@@ -36,7 +36,7 @@ Returns `new Hai(config)`. Make one per process, and hand it to
 | Check | Error |
 | --- | --- |
 | Each surface's `staleAfterMs` is `"never"`, missing, or a positive finite number | `RangeError`: `surface <name>: staleAfterMs must be a positive, finite number of milliseconds, or "never" (got <value>)` |
-| Each of its actions has kind `"resolve"` or `"inform"` (checked per surface, after its window) | `TypeError`: `surface <name>: action "<action>" has kind "<kind>"; declare it with resolve() or inform()` |
+| Each of its actions has kind `"resolve"` or `"inform"` (checked per surface, after its window) | `TypeError`: `surface <name>: action "<action>" has kind <kind>; declare it with resolve() or inform()`, where a string `<kind>` is in quotes (`"Resolve"`) and anything else is written as text (`1`, `NaN`, `undefined`) |
 | …and an `input` schema with a `parse` method | `TypeError`: `surface <name>: action "<action>" has no input schema with a parse method` |
 | No two notices share a name | `two notices are named "<name>"` |
 | `maxWakes` is a whole count of at least 1 per a positive, finite number of milliseconds | `RangeError`: `maxWakes must be a whole count of at least 1 per a positive, finite number of milliseconds (got <count> per <perMs>)` |
