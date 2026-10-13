@@ -4341,6 +4341,24 @@ async function wakeLeaseChecks() {
       check("two tabs reading one wake notice wake once, and take the lease once", woken === was + 1 && taken - takenBefore === 1);
     }
 
+    // A wake notice a poll read, whose attempt found the conversation busy
+    // and was cut short when the poll ended, isn't forgotten: the next poll
+    // resumes past it, reading nothing, and still tries.
+    {
+      const { id: held } = await chat(undefined, "held");
+      await poll(held); // the first look, done
+      const holder = await memory.loadConversation(held); // another request holds it
+      const was = woken;
+      const { seq } = await hai.notify(held, dropped, { flight: "AC5" });
+      await poll(held); // reads it, finds the conversation busy, and ends
+      holder.leaseUntil = null;
+      await memory.saveConversation(holder);
+      await fetch(`${base}/events?conversationId=${held}&poll=now`, { headers: { "last-event-id": String(seq) } }).then((r) => r.text());
+      const waited = Date.now();
+      while (woken === was && Date.now() - waited < 3000) await new Promise((r) => setTimeout(r, 10));
+      check("a wake notice whose attempt was cut short is tried by the next poll, though it resumes past it", woken === was + 1);
+    }
+
     // The first stream a server opens for a conversation looks once, even
     // with no notices: an update notice a revision still owes goes out then.
     const owing = await memory.loadConversation(undefined);

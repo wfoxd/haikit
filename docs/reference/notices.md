@@ -273,9 +273,10 @@ and how notice blocks are placed.
 ## Wake turns
 
 A wake notice asks for a turn. Only the events route starts one: when a
-stream (or a poll) reads a wake notice newer than the last one that server
-has already settled, including one that arrived while nobody was watching
-(see [HTTP routes and the wire](http.md#starting-wake-turns)). So **a wake turn starts only from an open events stream or a
+stream (or a poll) on a server knows of a wake notice, read there from the
+store, newer than the last one that server has already settled. That
+includes one that arrived while nobody was watching (see
+[HTTP routes and the wire](http.md#starting-wake-turns)). So **a wake turn starts only from an open events stream or a
 poll**. A wake notice sent while nobody is connected waits. The next stream
 to open starts its turn, if it still can. Once a turn has started, it runs to
 the end and is saved even if every stream closes.

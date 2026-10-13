@@ -167,10 +167,6 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
   const holdMs = Number.isFinite(asked) ? Math.min(Math.max(asked, 0), POLL_HOLD_MS) : POLL_HOLD_MS;
   const resume = Number(req.headers["last-event-id"] ?? url.searchParams.get("after") ?? 0);
   let after = Number.isSafeInteger(resume) && resume > 0 ? resume : 0;
-  // The highest seq this stream has read from the store. Unlike `after`,
-  // which starts where the browser says it got to, it holds only numbers the
-  // store gave: what a wake attempt settles is shared with every stream here.
-  let read = 0;
 
   const first = await store.getNotices(conversationId, after, PAGE);
   if (first === null) {
@@ -313,14 +309,15 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
   //
   // An attempt takes the conversation's lease and saves it, even when it
   // finds nothing to do, and a request that arrives meanwhile is turned away
-  // busy. So it is made only when there may be something new: a notice past
-  // the last one an attempt here already settled. A polling browser opens a
-  // stream several times a minute; each would otherwise take the lease.
+  // busy. So it is made only when there may be something new: a wake notice,
+  // read from the store by any stream here, past the last one an attempt here
+  // settled. A polling browser opens a stream several times a minute; each
+  // would otherwise take the lease.
   let waking: Promise<void> | null = null;
   let again = false;
   const wake = () => {
     if (!hai.wakes || signal.aborted) return;
-    if (read <= watchers.wakeSettled) return;
+    if (watchers.wakeRead <= watchers.wakeSettled) return;
     if (waking) {
       again = true;
       return;
@@ -328,8 +325,8 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
     waking = (async () => {
       do {
         again = false;
-        // every notice this stream has read: what the attempt settles, unless it fails
-        const through = read;
+        // every wake notice read here so far: what the attempt settles, unless it fails
+        const through = watchers.wakeRead;
         let wait = WAKE_RETRY_MS;
         let outcome: WakeOutcome = "busy";
         while (!signal.aborted && (outcome = await hai.wake(conversationId, watchers.turn())) === "busy") {
@@ -343,7 +340,7 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
         // nothing: the next stream to open tries once more.
         if (outcome !== "busy" && outcome !== "failed") watchers.wakeSettled = Math.max(watchers.wakeSettled, through);
         // asked again meanwhile: only if a notice came that this one didn't settle
-      } while (again && !signal.aborted && read > watchers.wakeSettled);
+      } while (again && !signal.aborted && watchers.wakeRead > watchers.wakeSettled);
     })()
       .catch((err) => emit({ type: "error", message: (err as Error).message }))
       .finally(() => {
@@ -393,9 +390,12 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
         if (n.seq <= after) continue;
         if (n.replaces !== undefined && n.handle !== undefined) {
           await sendRevision(n.handle, n.replaces, n.seq);
-          after = read = n.seq;
+          after = n.seq;
           markFresh();
-          woken ||= n.kind === "wake";
+          if (n.kind === "wake") {
+            woken = true;
+            watchers.wakeRead = Math.max(watchers.wakeRead, n.seq);
+          }
           continue;
         }
         const event: WireEvent = {
@@ -407,9 +407,12 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
           ...(n.handle === undefined ? {} : { handle: n.handle }),
         };
         await write(`id: ${n.seq}\ndata: ${JSON.stringify(event)}\n\n`);
-        after = read = n.seq;
+        after = n.seq;
         markFresh();
-        woken ||= n.kind === "wake";
+        if (n.kind === "wake") {
+          woken = true;
+          watchers.wakeRead = Math.max(watchers.wakeRead, n.seq);
+        }
       }
       if (records.length < PAGE || signal.aborted) break;
       page = null;
@@ -508,12 +511,18 @@ interface Watchers {
   /** Settles once this process is listening for other processes' turns. */
   ready: Promise<void>;
   /**
-   * The highest notice seq, as read from the store, that a wake attempt here
-   * has settled: it woke, found nothing to do, or was held back by `maxWakes`.
-   * Never a number the browser sent, since every stream here shares it. A stream makes no attempt
-   * until a notice past it arrives. -1 until the first, so the first stream
-   * this process opens for the conversation looks once, for an update notice
-   * a revision still owes.
+   * The highest seq of a wake notice any stream here has read from the store,
+   * whether or not an attempt has settled it yet: a stream that resumes past
+   * it, reading nothing, still knows it's there. 0 until one is read.
+   */
+  wakeRead: number;
+  /**
+   * The highest wake notice seq a wake attempt here has settled: it woke,
+   * found nothing to do, or was held back by `maxWakes`. A stream makes an
+   * attempt only while `wakeRead` is past it. -1 until the first, so the first
+   * stream this process opens for the conversation looks once, for an update
+   * notice a revision still owes. Both come from the store, never from what a
+   * browser says it has seen, since every stream here shares them.
    */
   wakeSettled: number;
 }
@@ -667,6 +676,7 @@ function watchersOf(hai: Hai, conversationId: string): Watchers {
         lingering.unref?.();
       },
       ready: Promise.resolve(),
+      wakeRead: 0,
       wakeSettled: -1,
       // A wake turn running here: its frames to this process's streams, and,
       // through the store, to every other process's. All but `context`, the

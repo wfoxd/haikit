@@ -245,10 +245,14 @@ whole backlog of notices is sent, for a wake notice that arrived while
 nobody watched, and again whenever it reads a wake notice.
 
 **An attempt is made only for something new.** Each server remembers, per
-conversation, the highest notice `seq` an attempt there has *settled*: one
-that woke, found nothing to do, or was held back by `maxWakes`. A stream
-makes an attempt only when it has read a notice past that, so a browser
-polling a quiet conversation takes the lease once, not on every poll. The
+conversation, two numbers, both read from the store, never taken from the
+browser: the highest wake notice `seq` any stream there has read, and the
+highest one an attempt there has *settled* (it woke, found nothing to do, or
+was held back by `maxWakes`). A stream makes an attempt only while the first
+is past the second, so a browser polling a quiet conversation takes the lease
+once, not on every poll. A wake notice whose attempt didn't settle, because a
+poll ended while the conversation was busy, for instance, is tried by the
+next stream or poll, even one that resumes past it. The
 first stream a server opens for a conversation always looks once, even with
 no notices, for an update notice a revision still owes. A turn that fails
 settles nothing: the next stream to open, or the next poll, tries again. A
