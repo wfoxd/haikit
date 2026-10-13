@@ -4242,11 +4242,14 @@ async function wakeLeaseChecks() {
   };
   const memory = memoryStore();
   let loads = 0;
+  let taken = 0; // loads that took the lease, rather than finding it busy
   const store = {
     ...memory,
     async loadConversation(id) {
       loads++;
-      return memory.loadConversation(id);
+      const c = await memory.loadConversation(id);
+      taken++;
+      return c;
     },
   };
   const hai = createHai({ model, store, tools: [], surfaces: [], notices: [dropped], system: "x", maxWakes: { count: 100, perMs: 60_000 } });
@@ -4314,6 +4317,28 @@ async function wakeLeaseChecks() {
       const waited = Date.now();
       while (woken === was && Date.now() - waited < 3000) await new Promise((r) => setTimeout(r, 10));
       check("a stream claiming a huge resume point doesn't stop the next wake notice waking", woken === was + 1);
+    }
+
+    // Two streams on this server read the same new notice: one wakes, the
+    // other finds it busy, and once the first has settled the notice, the
+    // second doesn't take the lease again to find nothing.
+    {
+      const { id: shared } = await chat(undefined, "two tabs");
+      const tabs = [new AbortController(), new AbortController()];
+      for (const tab of tabs) {
+        fetch(`${base}/events?conversationId=${shared}`, { signal: tab.signal })
+          .then((r) => r.body.pipeTo(new WritableStream(), { signal: tab.signal }))
+          .catch(() => {});
+      }
+      await new Promise((r) => setTimeout(r, 300)); // both open, and their first looks done
+      const was = woken;
+      const takenBefore = taken;
+      await hai.notify(shared, dropped, { flight: "AC4" });
+      const waited = Date.now();
+      while (woken === was && Date.now() - waited < 3000) await new Promise((r) => setTimeout(r, 10));
+      await new Promise((r) => setTimeout(r, 1500)); // time for the other tab's retries
+      for (const tab of tabs) tab.abort();
+      check("two tabs reading one wake notice wake once, and take the lease once", woken === was + 1 && taken - takenBefore === 1);
     }
 
     // The first stream a server opens for a conversation looks once, even

@@ -335,6 +335,9 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
         while (!signal.aborted && (outcome = await hai.wake(conversationId, watchers.turn())) === "busy") {
           await pause(wait, signal);
           wait = Math.min(wait * 2, WAKE_RETRY_MAX_MS);
+          // Another stream here may have been the one holding it, with a turn
+          // that settled these notices: taking the lease again finds nothing.
+          if (through <= watchers.wakeSettled) break;
         }
         // A failed turn gives its notices back to wake again, so it settles
         // nothing: the next stream to open tries once more.

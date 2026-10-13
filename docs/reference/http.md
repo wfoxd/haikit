@@ -251,8 +251,8 @@ makes an attempt only when it has read a notice past that, so a browser
 polling a quiet conversation takes the lease once, not on every poll. The
 first stream a server opens for a conversation always looks once, even with
 no notices, for an update notice a revision still owes. A turn that fails
-settles nothing: the stream tries again at once, and the next stream to open
-tries too. What the server remembers lasts as long as it keeps listening for
+settles nothing: the next stream to open, or the next poll, tries again. A
+stream that stays open doesn't retry it until it reads a newer notice. What the server remembers lasts as long as it keeps listening for
 the conversation: at least 60,000 ms after its last stream closes (see
 [Wake turns on the stream](#wake-turns-on-the-stream)), after which the next
 stream looks once again.
@@ -261,7 +261,8 @@ Each stream runs one attempt at a time: a wake notice that lands meanwhile
 asks for another once it's done, if that one didn't settle it. Several
 streams on one conversation make their own attempts, and contend for the
 lease. While `hai.wake` answers `"busy"`, the stream tries again after
-250 ms, then twice as long each time, up to 5,000 ms, until it closes. If
+250 ms, then twice as long each time, up to 5,000 ms, until it closes, or
+until another stream's attempt has settled the notices it was trying for. If
 `hai.wake` rejects, the stream gets an `error` event. See
 [Notices: wake turns](notices.md#wake-turns).
 

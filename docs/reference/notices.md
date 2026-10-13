@@ -282,9 +282,9 @@ the end and is saved even if every stream closes.
 
 A turn that was limited, or found nothing to do, is settled: nothing tries
 it again until a newer notice arrives. A turn that failed settles nothing:
-the stream tries again at once, and so does the next stream to open, until
-`maxWakes` holds it back. The route also retries while the conversation is
-busy.
+the next stream to open, or the next poll, tries again, until `maxWakes`
+holds it back. A stream that stays open doesn't retry it until it reads a
+newer notice. The route also retries while the conversation is busy.
 
 The turn's events go to every events stream this process has open for the
 conversation. With a store that implements `publish` and `subscribe`, they
