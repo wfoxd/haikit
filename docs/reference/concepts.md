@@ -248,7 +248,8 @@ See [The browser client](client.md).
    only way a click reaches the server.
 
 At runtime, the server also refuses an action the surface doesn't declare
-and implement, and `hai.notify` refuses a notice whose `model` doesn't return
-what its kind requires. The rest is enforced only by the types. JavaScript
+and implement, `createHai` refuses an action whose kind isn't `resolve` or
+`inform`, and `hai.notify` refuses a notice whose `model` doesn't return what
+its kind requires. The rest is enforced only by the types. JavaScript
 code, which the type checker doesn't see, can get past them:
 [Surfaces](surfaces.md#when-the-types-are-bypassed) says what happens then.

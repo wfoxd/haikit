@@ -260,8 +260,11 @@ on the server only, and list the result in `createHai({ surfaces })`.
 
 **Registration.** `createHai` registers each implementation under its
 surface's name. It throws a `RangeError` for an invalid `staleAfterMs` (see
-[Freshness](#freshness)). Two implementations with the same name don't make it
-throw: the later one in the list silently replaces the earlier.
+[Freshness](#freshness)), and a `TypeError` for an action whose kind isn't
+`"resolve"` or `"inform"`, or that has no `input` schema with a `parse`
+method (see [When the types are bypassed](#when-the-types-are-bypassed)). Two
+implementations with the same name don't make it throw: the later one in the
+list silently replaces the earlier.
 
 `hai.update` rejects an implementation that isn't the one registered under
 its name, with `surface "<name>" is not registered: list it in createHai({
@@ -379,7 +382,7 @@ of:
 | Case | Tool result |
 | --- | --- |
 | The handle isn't a payload in this conversation | `No such handle: <handle>` |
-| The surface isn't registered, or its contract or implementation has no such query | `Unsupported query "<query>". Available: <the contract's query names, comma-separated, or none>.` |
+| The surface isn't registered, or its contract or implementation doesn't declare the query itself (an inherited name such as `toString` doesn't count) | `Unsupported query "<query>". Available: <the contract's query names, comma-separated, or none>.` |
 | `args` (or `{}`) fails the query's schema | `Invalid args for "<query>": <message>` |
 | The handler throws | `query_ui failed: <message>` |
 | Otherwise | the `Capped` value's `text` |
@@ -461,7 +464,7 @@ recorded.
 | `handle` is frozen | `error`: `component is frozen` |
 | Its payload can't be read | `error`: `unknown handle` |
 | Its surface isn't registered | `error`: `unknown component: <name>` |
-| The contract or the implementation lacks `action` | `error`: `unbound action`. A name inherited from `Object.prototype`, such as `toString`, gets past this check and is refused at the next, with `invalid action payload: Cannot read properties of undefined (reading 'parse')` |
+| The contract or the implementation lacks `action` | `error`: `unbound action`. Only names each declares itself count, so one every object inherits, such as `toString`, is refused here too |
 | `value` fails the action's schema | `error`: `invalid action payload: <message>` |
 | A `resolve` on a surface the conversation isn't waiting on | `error`: `nothing awaiting this handle` |
 | An `inform` while a question is waiting | `error`: `a question is waiting to be answered first` |
@@ -607,7 +610,7 @@ to `any`, can get past the types' rules. Here's what the server does then:
 | An action handler that returns something other than a string | It's recorded as it is, in `[UI interaction] <label>` or after the digest |
 | `mode: "elicit"` on a surface with no `resolve` action | The turn parks on it. No click can answer it, so the conversation stays parked until the user types a message, which closes the question out |
 | `ctx.render` with a `mode` other than `"display"` or `"elicit"` | A missing, `undefined` or `null` mode is `"display"`. Anything else is treated as `"elicit"` |
-| An action spec whose `kind` is neither `"resolve"` nor `"inform"`, such as `"Resolve"` | It passes both kind checks. With no question waiting, it's recorded as an `inform`. With one waiting, it answers that question with this click's label and freezes the clicked surface, not the question's. The question's surface then can't be answered |
+| An action spec whose `kind` is neither `"resolve"` nor `"inform"`, such as `"Resolve"`, or that has no `input` schema | Refused at startup: `createHai` throws a `TypeError`, `surface <name>: action "<action>" has kind <kind>; declare it with resolve() or inform()` (a string `<kind>` in quotes, such as `"Resolve"`, anything else as text, such as `undefined`), or `surface <name>: action "<action>" has no input schema with a parse method` |
 
 The fourth guarantee, that only declared actions reach the server, holds at
 runtime: the server refuses any action the contract and the implementation

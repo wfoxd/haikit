@@ -2467,6 +2467,86 @@ async function actionChecks(make) {
   }
 }
 
+// ── actions are checked: their kind at startup, and their names at a click ──
+// A kind that is neither resolve nor inform passed both of a click's gates
+// and answered a question it wasn't for, and a name every object inherits,
+// such as toString, passed the check that an action is declared.
+async function actionKindChecks() {
+  console.log("\naction kinds and names");
+  const { createHai, memoryStore } = await import("../packages/server/dist/index.js");
+  const { defineSurface, defineTool, inform, query } = await import("../packages/core/dist/index.js");
+  const any = { parse: (v) => v };
+  const model = { id: "stub", async generate() { return { content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" }; } };
+  const refused = (actions) => {
+    const surface = defineSurface({ name: "s", version: 1, props: any, actions });
+    try {
+      createHai({ model, store: memoryStore(), tools: [], surfaces: [surface.implement({ digest: () => "d", actions: {}, queries: {} })], system: "x" });
+      return null;
+    } catch (err) {
+      return err;
+    }
+  };
+  const misspelt = refused({ pick: { kind: "Resolve", input: any } });
+  check(
+    "a misspelt action kind is refused at startup",
+    misspelt instanceof TypeError && misspelt.message === 'surface s: action "pick" has kind "Resolve"; declare it with resolve() or inform()',
+  );
+  const cyclic = {};
+  cyclic.self = cyclic;
+  const odd = [1n, NaN, Symbol("k"), cyclic, undefined].map((kind) => refused({ pick: { kind, input: any } })?.message);
+  check(
+    "a kind that isn't a string is named accurately, a BigInt or a cycle included",
+    odd.join("|") ===
+      ['1', "NaN", "Symbol(k)", "[object Object]", "undefined"].map((k) => `surface s: action "pick" has kind ${k}; declare it with resolve() or inform()`).join("|"),
+  );
+  const noSchema = refused({ pick: { kind: "inform" } });
+  check("an action with no input schema is refused at startup", noSchema instanceof TypeError && noSchema.message === 'surface s: action "pick" has no input schema with a parse method');
+
+  // inherited names, at a click and a query
+  const card = defineSurface({ name: "card", version: 1, props: any, actions: { note: inform(any) }, queries: { rows: query(any, "rows", { type: "object" }) } });
+  const cardImpl = card.implement({
+    digest: () => "a card",
+    actions: { note: (v) => `noted ${v}` },
+    queries: { rows: (_a, ctx) => ctx.cap([], (r) => String(r)), extra: (_a, ctx) => ctx.cap([], (r) => String(r)) },
+  });
+  const show = defineTool({ name: "show", description: "show", input: any, inputJsonSchema: { type: "object" }, run: (_i, ctx) => ctx.render(cardImpl, { rows: [] }) });
+  let replies = [];
+  const scripted = { id: "stub", async generate() { return replies.shift() ?? { content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" }; } };
+  const store = memoryStore();
+  const hai = createHai({ model: scripted, store, tools: [show], surfaces: [cardImpl], system: "x" });
+  const request = async (id, act) => {
+    const c = await store.loadConversation(id);
+    const events = [];
+    let error = null;
+    try {
+      await act(c, (e) => events.push(e));
+    } catch (err) {
+      error = err;
+    }
+    c.leaseUntil = null;
+    await store.saveConversation(c);
+    return { c, events, error };
+  };
+  replies = [{ content: [{ type: "tool_use", id: "t1", name: "show", input: {} }], stop_reason: "tool_use" }];
+  const shown = await request(undefined, (c, emit) => hai.send(c, "show", emit));
+  const handle = shown.c.handles[0];
+  const clicks = [];
+  for (const action of ["toString", "constructor", "__proto__", "hasOwnProperty"]) {
+    clicks.push((await request(shown.c.id, (c, emit) => hai.interact(c, { handle, action, value: "x" }, emit))).error?.message);
+  }
+  check("an inherited name such as toString is refused as an unbound action", clicks.every((m) => m === "unbound action"));
+  const declared = await request(shown.c.id, (c, emit) => hai.interact(c, { handle, action: "note", value: "x" }, emit));
+  check("…while a declared one still works", !declared.error);
+
+  replies = [
+    { content: [{ type: "tool_use", id: "q1", name: "query_ui", input: { handle, query: "toString" } }, { type: "tool_use", id: "q2", name: "query_ui", input: { handle, query: "extra" } }], stop_reason: "tool_use" },
+  ];
+  const queried = await request(shown.c.id, (c, emit) => hai.send(c, "query", emit));
+  const result = (id) => queried.c.messages.flatMap((m) => (Array.isArray(m.content) ? m.content : [])).find((b) => b.tool_use_id === id)?.content;
+  check("an inherited name as a query is unsupported", result("q1") === 'Unsupported query "toString". Available: rows.');
+  check("…and so is a query only the implementation has", result("q2") === 'Unsupported query "extra". Available: rows.');
+}
+
 // ── one question per reply ───────────────────────────────────────────────
 // A model reply can make several tool calls, and Claude makes parallel ones on
 // its own. The turn parks on one surface, so a second elicit surface in the
@@ -6982,6 +7062,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   await conform("memoryStore", (opts) => memoryStore(opts));
   await integration("memoryStore", (opts) => memoryStore(opts));
   await routeChecks();
+  await actionKindChecks();
   await scopeChecks();
   await windowChecks();
   await clientChecks();
