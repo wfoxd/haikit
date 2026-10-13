@@ -353,18 +353,23 @@ error, which becomes the tool's result (see
 error stays: `nodeHandler` saves the conversation as it stands, with the
 user's message, any earlier hops, and a status still `streaming` (see
 [Conversations](conversations.md#conversationstatus)). The browser gets an
-`error` event and no closing status. If the error came during a reply's tool
-calls, the saved history ends with that reply's tool calls and no results,
-and later requests fail at the model API. After a `StaleLease`, nothing is
-saved. A wake turn is different: it undoes itself if no tool call has
+`error` event and no closing status. Every tool call the history records
+has its result by then: a tool's errors, and a tool that returns nothing,
+become results (see [Tools](tools.md#how-a-tool-call-runs)). After a
+`StaleLease`, nothing is saved. A wake turn is different: it undoes itself if no tool call has
 happened yet (see [Notices](notices.md#haiwake)).
 
 **A reply that stops for another reason with tool calls in it,** such as one
-cut off by `max_tokens` part way through a call, ends the turn with those
-calls recorded and never run. They get no results, so the next model call
-fails at the API, and so does every later message in the conversation. A
-reply with `stop_reason: "tool_use"` and no tool calls records an empty user
-message and calls the model again.
+cut off by `max_tokens` part way through a call, has none of them run: their
+input may be cut short. Each gets a result instead, `Not run: your reply
+ended with stop_reason "<reason>" before this call was complete. Make it
+again if it's still needed.`, and its `tool` row ends with status `error`
+and that text. The turn then goes on to the next hop, so the model can
+answer or try again, within `maxHops`. Without those results, the Messages
+API would refuse the history from the next call on.
+
+**A reply with `stop_reason: "tool_use"` and no tool calls** ends the turn,
+as a complete reply does.
 
 **Block ids** are `b_`, a random part made when the `Hai` is created (a
 UUID's 32 hex digits), `_`, and a count from 1:

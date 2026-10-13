@@ -144,15 +144,17 @@ See [Surfaces: how a click is handled](surfaces.md#how-a-click-is-handled).
 **A `run` that doesn't keep to the types.** JavaScript code can get these
 wrong:
 
-- If `run` returns nothing (`undefined` or `null`), the turn fails with a
-  `TypeError`. Something else with no `model`, such as a bare string, is
-  recorded as a result with no content, and the turn goes on.
-- If it throws `undefined` or `null`, the turn fails the same way. A thrown
-  string becomes `<name> failed: undefined`.
+- If `run` returns anything without a string `model` (nothing, `null`, a
+  bare string), the result is `<name> returned no result.`, and the turn goes
+  on. If the call showed a question, the question's digest is the result
+  instead, as if `run` had returned `render`'s result.
+- If it throws something that isn't an `Error`, such as a string or
+  `undefined`, the result is `<name> failed: <that value as text>`, such as
+  `lookup failed: undefined`. A value that can't be made into text, such as
+  an object with no prototype, reads `an error that can't be shown as text`.
 
-The route then sends an `error` event and saves the conversation as it
-stands. Its history ends with a tool call that has no result, and its status
-stays `streaming`. Later requests then fail at the model API.
+Either way, the call gets a result, so the history stays one the model API
+accepts.
 
 ## The tool's context
 
