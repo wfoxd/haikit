@@ -223,6 +223,7 @@ export class Hai {
     this.system = scope === false || scope === "" ? config.system : `${config.system}\n\n${scope}`;
     for (const s of config.surfaces) {
       checkWindow(s);
+      checkActions(s);
       this.surfaces.set(s.surface.name, s);
     }
     for (const t of config.tools) this.tools.set(t.name, t);
@@ -845,13 +846,14 @@ export class Hai {
         if (!record) return ctx.text(`No such handle: ${input.handle}`);
 
         const impl = self.surfaces.get(record.component);
-        const handler = impl?.impl.queries?.[input.query];
-        if (!impl || !handler) {
+        // declared on both halves, by their own names
+        const handler = own(impl?.impl.queries, input.query);
+        const spec = own(impl?.surface.queries, input.query);
+        if (!impl || !handler || !spec) {
           const available = impl ? Object.keys(impl.surface.queries).join(", ") : "none";
           return ctx.text(`Unsupported query "${input.query}". Available: ${available || "none"}.`);
         }
 
-        const spec = impl.surface.queries[input.query];
         let args: unknown;
         try {
           args = spec.input.parse(input.args ?? {});
@@ -1041,8 +1043,9 @@ export class Hai {
 
     // GUARANTEE 4 in force at runtime: the client sent {handle, action, value}.
     // What that action MEANS is decided here, from the declared contract.
-    const spec = impl.surface.actions[input.action];
-    const handler = impl.impl.actions?.[input.action];
+    // Own names only: the browser sends any string, and `toString` is on every object.
+    const spec = own(impl.surface.actions, input.action);
+    const handler = own(impl.impl.actions, input.action);
     if (!spec || !handler) throw new Error("unbound action");
 
     let value: unknown;
@@ -1654,6 +1657,31 @@ const windowOf = (s: AnySurfaceImpl): number | "never" =>
  * compares as expired, and Infinity means "never" without saying so. Leaving
  * the window out is fine: that is "never".
  */
+/**
+ * Each declared action checked at runtime, because JavaScript callers never
+ * see the type: a kind that is neither would pass both of a click's gates,
+ * and answer a question it isn't for, and one with no schema can't validate
+ * a click.
+ */
+function checkActions(s: AnySurfaceImpl) {
+  for (const [name, spec] of Object.entries(s.surface.actions ?? {})) {
+    const kind: unknown = (spec as { kind?: unknown } | undefined)?.kind;
+    if (kind !== "resolve" && kind !== "inform") {
+      throw new TypeError(
+        `surface ${s.surface.name}: action "${name}" has kind ${JSON.stringify(kind) ?? "undefined"}; ` +
+          `declare it with resolve() or inform()`,
+      );
+    }
+    if (typeof (spec as { input?: { parse?: unknown } }).input?.parse !== "function") {
+      throw new TypeError(`surface ${s.surface.name}: action "${name}" has no input schema with a parse method`);
+    }
+  }
+}
+
+/** A name declared on `map` itself, not one every object inherits, such as `toString`. */
+const own = <T>(map: Record<string, T> | undefined, name: unknown): T | undefined =>
+  map && typeof name === "string" && Object.hasOwn(map, name) ? map[name] : undefined;
+
 function checkWindow(s: AnySurfaceImpl) {
   const window: unknown = windowOf(s);
   if (window === "never" || (typeof window === "number" && Number.isFinite(window) && window > 0)) return;
