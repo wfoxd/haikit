@@ -143,6 +143,8 @@ interface MountChatOptions {
   placeholder?: string;
   emptyText?: string;
   theme?: "light" | "dark";
+  eventsFallbackMs?: number;
+  pollHoldMs?: number;
 }
 ```
 
