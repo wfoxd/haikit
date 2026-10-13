@@ -4517,6 +4517,181 @@ async function clientHookChecks() {
   }
 }
 
+// ── every tool call in the history gets a result ────────────────────────
+// The Messages API refuses a history with a tool_use that has no tool_result
+// after it, from the next call on, for good. A reply cut off by max_tokens
+// part way through a call, and a tool that returned nothing or threw
+// undefined, each used to leave one.
+async function toolResultChecks() {
+  console.log("\ntool calls always answered");
+  const { createHai, memoryStore } = await import("../packages/server/dist/index.js");
+  const { defineTool, defineSurface, defineNotice, resolve } = await import("../packages/core/dist/index.js");
+  const any = { parse: (v) => v };
+  const ran = [];
+  const tool = (name, run) =>
+    defineTool({ name, description: name, input: any, inputJsonSchema: { type: "object" }, run: async (input, ctx) => (ran.push(name), run(input, ctx)) });
+  const question = defineSurface({ name: "q", version: 1, props: any, actions: { pick: resolve(any) } });
+  const questionImpl = question.implement({ digest: () => "a question", actions: { pick: (v) => `picked ${v}` }, queries: {} });
+  const asyncSurface = defineSurface({ name: "a", version: 1, props: any });
+  const asyncImpl = asyncSurface.implement({ digest: async () => "late", actions: {}, queries: {} });
+  const tools = [
+    tool("lookup", () => ({ model: "found" })),
+    tool("nothing", () => undefined),
+    tool("throwsUndefined", () => {
+      throw undefined;
+    }),
+    tool("asksThenNothing", async (_input, ctx) => {
+      await ctx.render(questionImpl, {}, { mode: "elicit" });
+      return undefined;
+    }),
+    tool("throwsUnprintable", () => {
+      throw Object.create(null);
+    }),
+    tool("asyncDigest", (_input, ctx) => ctx.render(asyncImpl, {})),
+  ];
+  // each request's replies, in order
+  let script = [];
+  const model = {
+    id: "stub",
+    async generate() {
+      const reply = script.shift() ?? { content: [{ type: "text", text: "done" }], stop_reason: "end_turn" };
+      if (reply === "throw") throw new Error("model down");
+      return reply;
+    },
+  };
+  const store = memoryStore();
+  const dropped = defineNotice({ name: "dropped", version: 1, kind: "wake", payload: any }).implement({ model: () => "cheaper" });
+  const hai = createHai({ model, store, tools, surfaces: [questionImpl, asyncImpl], notices: [dropped], system: "x", maxWakes: { count: 100, perMs: 60_000 } });
+  const call = (name, id = `toolu_${name}`) => ({ type: "tool_use", id, name, input: {} });
+  const run = async (id, text, replies) => {
+    script = replies;
+    const c = await store.loadConversation(id);
+    const events = [];
+    let error = null;
+    try {
+      await hai.send(c, text, (e) => events.push(e));
+    } catch (err) {
+      error = err;
+    }
+    c.leaseUntil = null;
+    await store.saveConversation(c);
+    return { c, events, error };
+  };
+  // every tool_use is followed by a message answering it, or is the question the conversation waits on
+  const answered = (c) =>
+    c.messages.every((m, i) => {
+      if (m.role !== "assistant" || !Array.isArray(m.content)) return true;
+      const uses = m.content.filter((b) => b.type === "tool_use").map((b) => b.id);
+      const next = c.messages[i + 1];
+      const results = new Set((Array.isArray(next?.content) ? next.content : []).filter((b) => b.type === "tool_result").map((b) => b.tool_use_id));
+      return uses.every((u) => results.has(u) || c.pending?.toolUseId === u);
+    });
+  const resultFor = (c, id) =>
+    c.messages.flatMap((m) => (Array.isArray(m.content) ? m.content : [])).find((b) => b.type === "tool_result" && b.tool_use_id === id)?.content;
+
+  // a reply cut off by max_tokens part way through a call
+  {
+    ran.length = 0;
+    const { c, events, error } = await run(undefined, "hi", [
+      { content: [{ type: "text", text: "Let me look" }, call("lookup", "toolu_cut")], stop_reason: "max_tokens" },
+      { content: [{ type: "text", text: "Sorry, cut off." }], stop_reason: "end_turn" },
+    ]);
+    check("a call in a reply cut off by max_tokens isn't run", !error && !ran.includes("lookup"));
+    check("…but is answered, saying why", /Not run: your reply ended with stop_reason "max_tokens"/.test(resultFor(c, "toolu_cut") ?? ""));
+    check("…and the turn goes on, so the model can reply", c.messages.at(-1)?.content?.[0]?.text === "Sorry, cut off." && c.status === "idle");
+    check("…its row shows it wasn't run", events.some((e) => e.type === "block_update" && e.status === "error" && /Not run/.test(e.result)));
+    check("…and the history stays one the API accepts", answered(c));
+    const next = await run(c.id, "again", []);
+    check("…so the next message works", !next.error && answered(next.c));
+  }
+
+  // stop_reason tool_use with no call in it
+  {
+    const { c, error } = await run(undefined, "hi", [{ content: [{ type: "text", text: "hmm" }], stop_reason: "tool_use" }]);
+    check("a tool_use reply with no call ends the turn, with no empty message", !error && c.messages.every((m) => !Array.isArray(m.content) || m.content.length > 0) && c.status === "idle");
+  }
+
+  // a tool that returns nothing, and one that throws undefined
+  {
+    const { c, error } = await run(undefined, "hi", [{ content: [call("nothing"), call("throwsUndefined")], stop_reason: "tool_use" }]);
+    check("a tool that returns nothing doesn't crash the turn", !error && c.status === "idle");
+    check("…its call is answered", resultFor(c, "toolu_nothing") === "nothing returned no result.");
+    check("a tool that throws undefined is answered too", resultFor(c, "toolu_throwsUndefined") === "throwsUndefined failed: undefined");
+    check("…and the history stays one the API accepts", answered(c));
+  }
+
+  // a thrown value that can't be made into text, and a digest that isn't a string
+  {
+    const { c, error } = await run(undefined, "hi", [{ content: [call("throwsUnprintable"), call("asyncDigest")], stop_reason: "tool_use" }]);
+    check("a thrown value that can't be text is still answered", !error && resultFor(c, "toolu_throwsUnprintable") === "throwsUnprintable failed: an error that can't be shown as text");
+    check(
+      "a digest that isn't a string fails its render, saying so",
+      resultFor(c, "toolu_asyncDigest") === "asyncDigest failed: surface a: digest must return a string (got object)" && answered(c),
+    );
+  }
+
+  // A wake turn whose reply was cut off with calls in it, then whose model
+  // fails, ran no tool: it's undone, and its notice can wake again.
+  {
+    const { c: begun } = await run(undefined, "hi", []);
+    await hai.notify(begun.id, dropped, {});
+    const before = await store.loadConversation(begun.id);
+    before.leaseUntil = null;
+    await store.saveConversation(before);
+    ran.length = 0;
+    script = [{ content: [call("lookup", "toolu_wake_cut")], stop_reason: "max_tokens" }, "throw"];
+    const outcome = await hai.wake(begun.id, () => {});
+    const after = await store.loadConversation(begun.id);
+    after.leaseUntil = null;
+    await store.saveConversation(after);
+    check(
+      "a wake turn whose cut-off calls never ran, then failed, is undone",
+      outcome === "failed" && !ran.includes("lookup") && after.messages.length === before.messages.length &&
+        after.noticedThrough === before.noticedThrough && (after.wokeThrough ?? 0) === (before.wokeThrough ?? 0),
+    );
+  }
+
+  // a tool that shows a question and returns nothing parks on it
+  {
+    const { c, error } = await run(undefined, "hi", [{ content: [call("asksThenNothing")], stop_reason: "tool_use" }]);
+    check("a tool that asks and returns nothing parks on its question", !error && c.status === "awaiting" && c.pending?.digest === "a question");
+  }
+}
+
+// ── block ids never repeat across servers, or a restart ────────────────
+// The browser matches blocks by id for a whole conversation, across POST
+// responses and the events stream, which different servers may send. Ids
+// that only counted from 1 in each Hai repeated, and a new block overwrote
+// an earlier one in place.
+async function blockIdChecks() {
+  console.log("\nblock ids");
+  const { createHai, memoryStore } = await import("../packages/server/dist/index.js");
+  const store = memoryStore();
+  const model = {
+    id: "stub",
+    async generate({ onTextDelta }) {
+      onTextDelta("ok");
+      return { content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" };
+    },
+  };
+  const make = () => createHai({ model, store, tools: [], surfaces: [], system: "x" });
+  const turn = async (hai, id) => {
+    const c = await store.loadConversation(id);
+    const events = [];
+    await hai.send(c, "hi", (e) => events.push(e));
+    c.leaseUntil = null;
+    await store.saveConversation(c);
+    return { id: c.id, ids: events.filter((e) => e.type === "block_start").map((e) => e.block.id) };
+  };
+  const one = await turn(make(), undefined);
+  const two = await turn(make(), one.id); // another server sharing the store
+  const three = await turn(make(), one.id); // or this one, restarted
+  const all = [...one.ids, ...two.ids, ...three.ids];
+  check("each turn's blocks have ids", one.ids.length >= 2 && two.ids.length >= 2 && three.ids.length >= 2);
+  check("block ids from two servers, and a restarted one, never repeat in a conversation", new Set(all).size === all.length);
+  check("a block id is b_, a part of its own, and a count", all.every((id) => /^b_[0-9a-f]{32}_\d+$/.test(id)));
+}
+
 // ── a wake attempt is made only when there may be something to wake ────
 // An attempt takes the conversation's lease and saves it even when it finds
 // nothing, and a message sent meanwhile is turned away busy. A polling
@@ -6820,6 +6995,8 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   await pollChecks();
   await wakeLeaseChecks();
   await clientHookChecks();
+  await toolResultChecks();
+  await blockIdChecks();
   await transcriptChecks();
 
   // Said plainly because a suite that looks exhaustive is worse than one that

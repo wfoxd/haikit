@@ -1,5 +1,19 @@
 # @haikit/react
 
+## 0.20.2
+
+### Patch Changes
+
+- @haikit/core@0.20.2
+- @haikit/client@0.20.2
+
+## 0.20.1
+
+### Patch Changes
+
+- @haikit/core@0.20.1
+- @haikit/client@0.20.1
+
 ## 0.20.0
 
 ### Patch Changes

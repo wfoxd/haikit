@@ -1,5 +1,20 @@
 # @haikit/server
 
+## 0.20.2
+
+### Patch Changes
+
+- 2463d05: Block ids no longer repeat across servers or restarts. They counted from 1 in each `Hai`, but the browser matches blocks by id for a whole conversation, across POST responses and the events stream, so a block from a second server sharing the store, or from a restarted one, overwrote an earlier block in place. Ids are now `b_<random part per Hai>_<n>`.
+  - @haikit/core@0.20.2
+
+## 0.20.1
+
+### Patch Changes
+
+- 60bbd1a: A message or tool result holding U+0000, or a lone surrogate, no longer locks the conversation. `pgStore` stores each as U+FFFD, in jsonb strings and keys and in text parameters, where Postgres used to refuse the write; `memoryStore` does the same, so development matches. And `nodeHandler` never rejects: a failed closing save becomes an `error` event, a store failure before the response starts a 500, a body that isn't a JSON object a 400, and each is logged, so no request is left open.
+- cc19ae4: The events stream no longer takes the conversation's lease on every open and every poll. A wake attempt locks and saves the conversation even when it finds nothing, so a message sent at that moment was answered 409. Now each server remembers the newest notice an attempt there has settled, and a stream only tries again when a newer notice has arrived; a polling browser on a quiet conversation takes the lease once. The first stream still looks once, for an update notice a revision owes, and a failed turn is still tried again.
+  - @haikit/core@0.20.1
+
 ## 0.20.0
 
 ### Minor Changes

@@ -274,7 +274,7 @@ element's class becomes `hai-surface-error`, with `unknown component:
 | `awaiting` | `awaiting you` | Its question is waiting |
 | `resolved` | `resolved` | Its question was frozen: answered, or closed out by a typed message |
 | `expired` | `out of date` | Its question was waiting when the conversation expired |
-| `error` | `failed · <ms> ms` | The init tool failed |
+| `error` | `failed · <ms> ms` | The init tool failed, or the call was in a reply that stopped for another reason, such as `max_tokens`, and wasn't run |
 | `ok` | `<ms> ms` | The call finished. That includes a call that threw: its result says `<name> failed: …`, and any question it showed was withdrawn |
 
 While a call runs and has reported progress, its status text is the progress

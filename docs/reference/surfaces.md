@@ -297,7 +297,10 @@ interface SurfaceImplDef<P, A extends ActionMap, Q extends QueryMap> {
 Called once per render or revision: after the props are validated and the
 payload is stored, and before the surface is sent to the browser. It receives
 the validated props and `{ handle }`, the new payload's handle. It must be
-synchronous and return a string. Where what it returns goes:
+synchronous and return a string. Anything else, a promise included, fails
+the render with a `TypeError`: `surface <name>: digest must return a string
+(got <type>)`, and a promise's rejection is caught rather than left
+unhandled. Where what it returns goes:
 
 - **A display surface:** `ctx.render` resolves to `{ model: <digest>, handle }`.
   The model gets whatever the tool returns, normally that.
@@ -598,9 +601,9 @@ to `any`, can get past the types' rules. Here's what the server does then:
 | Mistake | What happens |
 | --- | --- |
 | An implementation with no `digest` | Rendering it fails with a `TypeError` after the payload is stored. The handle never joins the history, and the model hears `<tool> failed: <message>` |
-| A `digest` that's async, or returns something other than a string | Nothing awaits or checks it. The model gets the value as it is: a promise serialises as `{}`, and a promise that rejects is an unhandled rejection, which ends a Node process by default |
+| A `digest` that's async, or returns something other than a string | Rendering fails with a `TypeError`, `surface <name>: digest must return a string (got <type>)`, after the payload is stored, as for a digest that throws. A promise's rejection is caught, not left unhandled |
 | A query handler that returns a plain object | `query_ui` returns its `text` field, uncapped. Nothing checks that a `Cap` made it |
-| A query handler that's async | Nothing awaits it: `query_ui` reads `text` from the promise, so the tool result's content is `undefined`, a history the model API may refuse on the next call. One that rejects is an unhandled rejection |
+| A query handler that's async | Nothing awaits it: `query_ui` reads `text` from the promise, finds none, and the model gets `query_ui returned no result.`. One that rejects is an unhandled rejection |
 | An action handler that returns something other than a string | It's recorded as it is, in `[UI interaction] <label>` or after the digest |
 | `mode: "elicit"` on a surface with no `resolve` action | The turn parks on it. No click can answer it, so the conversation stays parked until the user types a message, which closes the question out |
 | `ctx.render` with a `mode` other than `"display"` or `"elicit"` | A missing, `undefined` or `null` mode is `"display"`. Anything else is treated as `"elicit"` |

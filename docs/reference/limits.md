@@ -268,7 +268,11 @@ index `haikit_payloads_created_at`: see
 | `Unknown tool: <name>` | The model called a tool that doesn't exist | [Tools](tools.md#how-a-tool-call-runs) |
 | `<name> already ran at the start of this conversation; its result is above.` | The model called the init tool | [The server](server.md#init) |
 | `Invalid input for <name>: <message>` | The input failed the tool's schema | [Tools](tools.md#how-a-tool-call-runs) |
-| `<name> failed: <message>` | The tool threw | [Tools](tools.md#how-a-tool-call-runs) |
+| `<name> failed: <message>` | The tool threw (a value that isn't an `Error` as text) | [Tools](tools.md#how-a-tool-call-runs) |
+| `<name> returned no result.` | The tool's return had no string `model` | [Tools](tools.md#how-a-tool-call-runs) |
+| `<name> failed: an error that can't be shown as text` | The tool threw a value that can't be made into text, such as an object with no prototype | [Tools](tools.md#how-a-tool-call-runs) |
+| `<name> failed: surface <surface>: digest must return a string (got <type>)` | A surface's digest returned something other than a string | [Surfaces](surfaces.md#digest) |
+| `Not run: your reply ended with stop_reason "<reason>" before this call was complete. Make it again if it's still needed.` | A call in a reply that stopped for another reason, such as `max_tokens` | [The server](server.md#how-a-turn-runs) |
 | `Not shown: <handle> is already waiting for the user. Ask this again after it is answered.` | A second question in one reply | [Tools](tools.md#render) |
 | `Not shown: the tool had already finished.`, `Not revised: the tool had already finished.` | A render or update after the tool returned | [Tools](tools.md#toolctx) |
 | `No such handle: <handle>`, `Unsupported query "<query>". Available: <names, or none>.`, `Invalid args for "<query>": <message>` | `query_ui` couldn't answer | [Surfaces](surfaces.md#query-handlers) |
@@ -291,7 +295,7 @@ index `haikit_payloads_created_at`: see
 | Conversation id | `conv_<n>_<16 hex digits>` | `conv_<32 hex digits>` |
 | Handle | `ui_01`, `ui_02`, … across the store | `ui_01`, `ui_02`, … per conversation |
 | Init call id | `toolu_init_<16 hex digits>` | the same |
-| Block id | `b_<n>`, counting up in each `Hai` | the same |
+| Block id | `b_<32 hex digits, random per Hai>_<n>`, counting up in each `Hai` | the same |
 | Notice `seq`, the SSE id | 1, 2, … per conversation | the same |
 | Wake turn number (`status.wake`) | 1, 2, … per conversation | the same |
 
