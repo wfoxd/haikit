@@ -607,7 +607,7 @@ http
 
 **6** Stops the model narrating the options in prose alongside the picker, which is the most common first-run annoyance.
 
-**7** Mounts `POST /hai/chat` and `POST /hai/interact`. Everything about the elicit state machine lives behind these two routes.
+**7** Mounts the routes under `/hai`: `POST /hai/chat`, `POST /hai/interact`, and `POST /hai/start`, which answers with an empty stream for an app with no init tool, such as this one. Everything about the elicit state machine lives behind them.
 
 **8** Ask Node where the package actually is rather than hand-writing a path into `node_modules` — hoisting, pnpm and workspaces each put it somewhere different, and a guessed path breaks on whichever one you didn't test.
 

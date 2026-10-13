@@ -10,7 +10,10 @@ const hai = createHai({ model, store: memoryStore(), tools, surfaces, system });
 const handle = nodeHandler(hai, "/hai");
 ```
 
-Two routes: `POST /hai/chat` and `POST /hai/interact`, both streaming SSE.
+Three routes, `POST /hai/chat`, `POST /hai/interact` and `POST /hai/start`,
+all streaming SSE, and `GET /hai/events` when the app sends notices,
+revisions or signals. The [reference manual](../../docs/reference/http.md)
+has every request and response.
 
 **Don't let a proxy buffer the streams.** Every route streams SSE, and a
 browser counts a surface's freshness from when its frames arrive, so a proxy

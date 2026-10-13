@@ -14,7 +14,11 @@
 
 // ───────────────────────────────────────────────────────── schemas
 
-/** Structural match for zod, valibot, or a hand-rolled validator. */
+/**
+ * Anything with a `parse` method, called as `schema.parse(value)`: a zod schema
+ * as it is, or a hand-rolled validator. Valibot parses with a free function, so
+ * wrap one: `{ parse: (value) => v.parse(schema, value) }`.
+ */
 export interface Schema<T> {
   parse(value: unknown): T;
 }

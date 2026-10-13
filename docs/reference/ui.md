@@ -42,8 +42,9 @@ mountChat({ root: document.querySelector("#app"), registry, suggestions: ["Say h
 
 **What it does, in order:**
 
-1. Makes a chat with `createChat({ endpoint, registry, notices, signals })`.
-   The polling options aren't passed, so they're the defaults.
+1. Makes a chat with `createChat({ endpoint, registry, notices, signals,
+   eventsFallbackMs, pollHoldMs })`. Options left out get `createChat`'s
+   defaults.
 2. Pins the colour scheme, if `theme` is set (see [Themes](#themes)).
 3. Adds HaiKIT's icon as the page's favicon, if the page has no link whose
    `rel` includes `icon` (such as `shortcut icon`) when the first chat
@@ -91,10 +92,12 @@ mountChat({ root: document.querySelector("#app"), registry, suggestions: ["Say h
 - **The Send button is disabled** while a turn streams, and once the
   conversation has expired. Enter still sends while a turn streams: the
   message is queued behind the turn.
-- **If a request fails,** such as on a network error, `send` rejects, and
-  `mountChat` doesn't handle it: the cleared text isn't put back, nothing
-  appears in the transcript, and the rejection goes unhandled. The same goes
-  for the `start()` it calls.
+- **If a request fails,** such as on a network error, the text goes back in
+  the message box, unless something new has been typed, and the error is
+  logged with `console.error` (`[haikit] the message wasn't sent:`). Nothing
+  appears in the transcript. A `start()` that fails is logged the same way
+  (`[haikit] the conversation couldn't start:`): the first message starts the
+  conversation instead.
 
 ### The empty conversation
 
@@ -157,6 +160,8 @@ interface MountChatOptions {
 | `placeholder` | `"message…"` | The message box's placeholder |
 | `emptyText` | `""` | A line of text on the empty conversation |
 | `theme` | follows the system | `"light"` or `"dark"` pins the page's colour scheme. Any other value is ignored |
+| `eventsFallbackMs` | `8000` | Passed to `createChat`: how long the events stream may send nothing as it opens before the chat polls (see [The browser client](client.md#polling)) |
+| `pollHoldMs` | `15000` | Passed to `createChat`: how long each poll asks the server to hold |
 
 ## The model context debug drawer
 

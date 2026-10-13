@@ -95,6 +95,8 @@ function dropFavicon() {
  *   placeholder?: string,
  *   emptyText?: string,
  *   theme?: "light" | "dark",
+ *   eventsFallbackMs?: number,
+ *   pollHoldMs?: number,
  * }} options
  */
 export function mountChat({
@@ -110,8 +112,11 @@ export function mountChat({
   placeholder = "message…",
   emptyText = "",
   theme,
+  eventsFallbackMs,
+  pollHoldMs,
 }) {
-  const chat = createChat({ endpoint, registry, notices, signals });
+  // undefined leaves createChat's defaults
+  const chat = createChat({ endpoint, registry, notices, signals, eventsFallbackMs, pollHoldMs });
   const id = `hai-${++shells}`;
 
   // Unset, the page follows the system. A pin goes on the root, where hai.css
@@ -250,6 +255,10 @@ export function mountChat({
   shell.append(top, main);
   root.replaceChildren(shell);
 
+  // A start that fails, such as the network being down, is reported, not
+  // left unhandled: the first message starts the conversation anyway.
+  const start = () => chat.start().catch((err) => console.error("[haikit] the conversation couldn't start:", err));
+
   // ── composer ───────────────────────────────────────────────────────
   // The input grows with what is typed, up to the height hai.css allows.
   const fit = () => {
@@ -270,12 +279,21 @@ export function mountChat({
     // A message queued behind a long turn can still be turned away later, if
     // the conversation goes out of date before its turn comes. Give the text
     // back then, unless something new has been typed since.
-    sending.then((sent) => {
-      if (!sent && !input.value) {
+    const giveBack = () => {
+      if (!input.value) {
         input.value = text;
         fit();
       }
-    });
+    };
+    sending.then(
+      (sent) => sent || giveBack(),
+      // the request itself failed, such as the network being down: the text
+      // goes back, and the error is reported rather than left unhandled
+      (err) => {
+        console.error("[haikit] the message wasn't sent:", err);
+        giveBack();
+      },
+    );
   };
 
   // ── empty state ────────────────────────────────────────────────────
@@ -342,7 +360,7 @@ export function mountChat({
 
     // A new conversation starts at once, so the server's init tool — if it
     // has one — runs before anything is typed.
-    if (event.type === "reset") chat.start();
+    if (event.type === "reset") start();
 
     render();
 
@@ -378,7 +396,7 @@ export function mountChat({
   render();
   // a server without an init tool sends nothing until the first message
   if (inspectorBody) renderInspector(inspectorBody, chat.state.context);
-  chat.start();
+  start();
   return chat;
 }
 

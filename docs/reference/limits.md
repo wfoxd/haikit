@@ -110,7 +110,7 @@ Every `--hai-*` custom property, colours and the layout tokens `--hai-radius`
 (`12px`), `--hai-column` (`780px`) and `--hai-inspector-width` (`400px`), is
 an override point. See [The default UI: tokens](ui.md#tokens).
 
-`mountChat` doesn't take `eventsFallbackMs` or `pollHoldMs`.
+| `eventsFallbackMs`, `pollHoldMs` | as `createChat` | [The default UI](ui.md#mountchatoptions) |
 
 ## Fixed limits and timings
 

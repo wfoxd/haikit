@@ -126,8 +126,8 @@ mountChat({
 If something on the network holds the stream back, as HTTPS-inspecting
 corporate proxies (Netskope, Zscaler) do, the chat polls instead. The server
 greets every stream with a comment the moment it opens. A stream that brings
-no bytes at all within `eventsFallbackMs` (default 8 s, a `createChat`
-option) is dropped for short polls, whose responses end and so get through.
+no bytes at all within `eventsFallbackMs` (default 8 s, an option of
+`createChat` and `mountChat`) is dropped for short polls, whose responses end and so get through.
 Notices, signals and wake turns all arrive by polling, a little later than
 they would stream. Each poll asks the server to hold for `pollHoldMs`
 (default 15 s, the server's maximum) when nothing is new; set it lower
