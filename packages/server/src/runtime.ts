@@ -1668,7 +1668,8 @@ function checkActions(s: AnySurfaceImpl) {
     const kind: unknown = (spec as { kind?: unknown } | undefined)?.kind;
     if (kind !== "resolve" && kind !== "inform") {
       throw new TypeError(
-        `surface ${s.surface.name}: action "${name}" has kind ${JSON.stringify(kind) ?? "undefined"}; ` +
+        // a string quoted, anything else as text: neither can throw, a BigInt or a cycle included
+        `surface ${s.surface.name}: action "${name}" has kind ${typeof kind === "string" ? JSON.stringify(kind) : errorText(kind)}; ` +
           `declare it with resolve() or inform()`,
       );
     }

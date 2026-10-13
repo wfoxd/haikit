@@ -2491,6 +2491,14 @@ async function actionKindChecks() {
     "a misspelt action kind is refused at startup",
     misspelt instanceof TypeError && misspelt.message === 'surface s: action "pick" has kind "Resolve"; declare it with resolve() or inform()',
   );
+  const cyclic = {};
+  cyclic.self = cyclic;
+  const odd = [1n, NaN, Symbol("k"), cyclic, undefined].map((kind) => refused({ pick: { kind, input: any } })?.message);
+  check(
+    "a kind that isn't a string is named accurately, a BigInt or a cycle included",
+    odd.join("|") ===
+      ['1', "NaN", "Symbol(k)", "[object Object]", "undefined"].map((k) => `surface s: action "pick" has kind ${k}; declare it with resolve() or inform()`).join("|"),
+  );
   const noSchema = refused({ pick: { kind: "inform" } });
   check("an action with no input schema is refused at startup", noSchema instanceof TypeError && noSchema.message === 'surface s: action "pick" has no input schema with a parse method');
 
