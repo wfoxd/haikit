@@ -7,7 +7,7 @@ export interface MountChatOptions {
   notices?: NoticeRegistry;
   /** Handlers for the signals the server sends, by signal name. */
   signals?: SignalRegistry;
-  /** Base path the server's two routes are mounted at. Default `/hai`. */
+  /** Where the server's routes are: `nodeHandler`'s base path. Default `/hai`. */
   endpoint?: string;
   title?: string;
   subtitle?: string;
@@ -27,6 +27,10 @@ export interface MountChatOptions {
    * dark setting, or a `data-hai-theme` already in the page's markup.
    */
   theme?: "light" | "dark";
+  /** Passed to `createChat`: how long the events stream may be silent before the chat polls. Default 8000 ms. */
+  eventsFallbackMs?: number;
+  /** Passed to `createChat`: how long each poll asks the server to hold. Default 15000 ms. */
+  pollHoldMs?: number;
 }
 
 /**

@@ -59,9 +59,8 @@ Makes a chat. Nothing is sent until `start`, `send` or `interact` is called.
 | `eventsFallbackMs` | `number` | `8000` | How long the events stream may send nothing at all as it opens before the client polls instead (see [Polling](#polling)) |
 | `pollHoldMs` | `number` | `15000` | When polling, how long each poll asks the server to hold if nothing new has come. The server allows at most 15,000. Set it lower behind a proxy that drops requests sooner |
 
-None of the options is validated. `mountChat` doesn't pass
-`eventsFallbackMs` or `pollHoldMs` through, so a page using the default UI
-gets the defaults.
+None of the options is validated. `mountChat` takes `eventsFallbackMs` and
+`pollHoldMs` too, and passes them through.
 
 ```js
 import { createChat } from "@haikit/client";

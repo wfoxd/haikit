@@ -2,7 +2,7 @@
 
 ```bash
 npm install
-npm test          # typecheck, typetest, storetest, pgtest, smoke
+npm test          # typecheck, typetest, storetest, reacttest, uitest, pgtest, smoke
 npm run packtest  # pack the tarballs, install them clean, use them
 npm run pgtest    # @haikit/postgres on PGlite; set HAIKIT_PG_URL to add a real server
 ```

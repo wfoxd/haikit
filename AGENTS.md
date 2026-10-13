@@ -7,7 +7,7 @@ too.
 ## Before you open a pull request
 
 ```bash
-npm test          # typecheck, typetest, storetest, reacttest, pgtest, smoke
+npm test          # typecheck, typetest, storetest, reacttest, uitest, pgtest, smoke
 npm run packtest  # when you touch files, exports, types or any public signature
 ```
 

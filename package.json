@@ -14,7 +14,7 @@
     "storetest": "node scripts/storetest.mjs",
     "pgtest": "node packages/postgres/test/conform.mjs",
     "packtest": "node scripts/packtest.mjs",
-    "test": "npm run typecheck && npm run typetest && npm run storetest && npm run reacttest && npm run pgtest && npm run smoke",
+    "test": "npm run typecheck && npm run typetest && npm run storetest && npm run reacttest && npm run uitest && npm run pgtest && npm run smoke",
     "prepublish-check": "npm run test && npm run packtest",
     "example:flights": "npm run build && HAI_SCRIPTED=1 node examples/flights/src/server/main.ts",
     "example:hello": "npm run build && HAI_SCRIPTED=1 node examples/hello/src/server/main.ts",
@@ -23,7 +23,8 @@
     "clean": "rm -rf packages/*/dist packages/*/*.tsbuildinfo",
     "release": "npm run build && npx changeset publish",
     "changeset": "npx changeset",
-    "reacttest": "node scripts/reacttest.mjs"
+    "reacttest": "node scripts/reacttest.mjs",
+    "uitest": "node scripts/uitest.mjs"
   },
   "devDependencies": {
     "@changesets/cli": "^2.27.0",

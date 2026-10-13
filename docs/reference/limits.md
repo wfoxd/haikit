@@ -103,14 +103,13 @@ Checked against `@haikit/*` 0.20.0. Durations are in milliseconds.
 | `placeholder` | `"message…"`, replaced by fixed text while a question waits and once the conversation has expired | [The default UI](ui.md#mountchatoptions) |
 | `emptyText` | `""` | [The default UI](ui.md#mountchatoptions) |
 | `theme` | follows the system, or a `data-hai-theme` already on `<html>`. Only `"light"` or `"dark"` pins | [The default UI](ui.md#mountchatoptions) |
+| `eventsFallbackMs`, `pollHoldMs` | as `createChat` | [The default UI](ui.md#mountchatoptions) |
 
 ### `hai.css`
 
 Every `--hai-*` custom property, colours and the layout tokens `--hai-radius`
 (`12px`), `--hai-column` (`780px`) and `--hai-inspector-width` (`400px`), is
 an override point. See [The default UI: tokens](ui.md#tokens).
-
-`mountChat` doesn't take `eventsFallbackMs` or `pollHoldMs`.
 
 ## Fixed limits and timings
 
