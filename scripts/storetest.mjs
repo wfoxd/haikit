@@ -4396,13 +4396,15 @@ async function signalChecks() {
 async function toolResultChecks() {
   console.log("\ntool calls always answered");
   const { createHai, memoryStore } = await import("../packages/server/dist/index.js");
-  const { defineTool, defineSurface, resolve } = await import("../packages/core/dist/index.js");
+  const { defineTool, defineSurface, defineNotice, resolve } = await import("../packages/core/dist/index.js");
   const any = { parse: (v) => v };
   const ran = [];
   const tool = (name, run) =>
     defineTool({ name, description: name, input: any, inputJsonSchema: { type: "object" }, run: async (input, ctx) => (ran.push(name), run(input, ctx)) });
   const question = defineSurface({ name: "q", version: 1, props: any, actions: { pick: resolve(any) } });
   const questionImpl = question.implement({ digest: () => "a question", actions: { pick: (v) => `picked ${v}` }, queries: {} });
+  const asyncSurface = defineSurface({ name: "a", version: 1, props: any });
+  const asyncImpl = asyncSurface.implement({ digest: async () => "late", actions: {}, queries: {} });
   const tools = [
     tool("lookup", () => ({ model: "found" })),
     tool("nothing", () => undefined),
@@ -4413,17 +4415,24 @@ async function toolResultChecks() {
       await ctx.render(questionImpl, {}, { mode: "elicit" });
       return undefined;
     }),
+    tool("throwsUnprintable", () => {
+      throw Object.create(null);
+    }),
+    tool("asyncDigest", (_input, ctx) => ctx.render(asyncImpl, {})),
   ];
   // each request's replies, in order
   let script = [];
   const model = {
     id: "stub",
     async generate() {
-      return script.shift() ?? { content: [{ type: "text", text: "done" }], stop_reason: "end_turn" };
+      const reply = script.shift() ?? { content: [{ type: "text", text: "done" }], stop_reason: "end_turn" };
+      if (reply === "throw") throw new Error("model down");
+      return reply;
     },
   };
   const store = memoryStore();
-  const hai = createHai({ model, store, tools, surfaces: [questionImpl], system: "x" });
+  const dropped = defineNotice({ name: "dropped", version: 1, kind: "wake", payload: any }).implement({ model: () => "cheaper" });
+  const hai = createHai({ model, store, tools, surfaces: [questionImpl, asyncImpl], notices: [dropped], system: "x", maxWakes: { count: 100, perMs: 60_000 } });
   const call = (name, id = `toolu_${name}`) => ({ type: "tool_use", id, name, input: {} });
   const run = async (id, text, replies) => {
     script = replies;
@@ -4480,6 +4489,37 @@ async function toolResultChecks() {
     check("…its call is answered", resultFor(c, "toolu_nothing") === "nothing returned no result.");
     check("a tool that throws undefined is answered too", resultFor(c, "toolu_throwsUndefined") === "throwsUndefined failed: undefined");
     check("…and the history stays one the API accepts", answered(c));
+  }
+
+  // a thrown value that can't be made into text, and a digest that isn't a string
+  {
+    const { c, error } = await run(undefined, "hi", [{ content: [call("throwsUnprintable"), call("asyncDigest")], stop_reason: "tool_use" }]);
+    check("a thrown value that can't be text is still answered", !error && resultFor(c, "toolu_throwsUnprintable") === "throwsUnprintable failed: an error that can't be shown as text");
+    check(
+      "a digest that isn't a string fails its render, saying so",
+      resultFor(c, "toolu_asyncDigest") === "asyncDigest failed: surface a: digest must return a string (got object)" && answered(c),
+    );
+  }
+
+  // A wake turn whose reply was cut off with calls in it, then whose model
+  // fails, ran no tool: it's undone, and its notice can wake again.
+  {
+    const { c: begun } = await run(undefined, "hi", []);
+    await hai.notify(begun.id, dropped, {});
+    const before = await store.loadConversation(begun.id);
+    before.leaseUntil = null;
+    await store.saveConversation(before);
+    ran.length = 0;
+    script = [{ content: [call("lookup", "toolu_wake_cut")], stop_reason: "max_tokens" }, "throw"];
+    const outcome = await hai.wake(begun.id, () => {});
+    const after = await store.loadConversation(begun.id);
+    after.leaseUntil = null;
+    await store.saveConversation(after);
+    check(
+      "a wake turn whose cut-off calls never ran, then failed, is undone",
+      outcome === "failed" && !ran.includes("lookup") && after.messages.length === before.messages.length &&
+        after.noticedThrough === before.noticedThrough && (after.wokeThrough ?? 0) === (before.wokeThrough ?? 0),
+    );
   }
 
   // a tool that shows a question and returns nothing parks on it

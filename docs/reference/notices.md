@@ -372,9 +372,10 @@ and the outcome is `"failed"`:
 - **After a tool call,** what happened is kept, with the call and its result
   where the model can see them. The conversation goes back to `idle`, and the
   notices never wake again. Undoing it would let the notice run the tool a
-  second time, booking or charging twice. A tool call counts once a model
-  reply in the turn asked for one, even an unknown tool or one with invalid
-  input.
+  second time, booking or charging twice. A tool call counts once a tool's
+  `run` has been called. A call to an unknown tool, one with invalid input,
+  and one in a reply cut off before it was complete never reach `run`, so
+  they don't count.
 - **If the lease was lost** (`StaleLease`), nothing more is saved.
 
 **At the end,** whatever the outcome, once the conversation was loaded, the

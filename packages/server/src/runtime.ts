@@ -187,6 +187,13 @@ export class Hai {
   private readonly queryUi: Tool;
   /** Handles each conversation has a revision of in flight, so two calls can't revise one at once. */
   private readonly revising = new WeakMap<Conversation, Set<string>>();
+  /**
+   * Conversations a tool's `run` has been called in, during the turn now
+   * running: what a failed wake turn checks before undoing itself. A call that
+   * never ran, such as one in a reply cut off by max_tokens, did nothing a
+   * retry could repeat.
+   */
+  private readonly toolsRan = new WeakSet<Conversation>();
   private readonly signals = new Map<string, Signal<any>>();
   /** Signals sent, streams open, and presence, here and on the other servers. */
   private readonly broadcast: Broadcast;
@@ -566,7 +573,7 @@ export class Hai {
       },
       conversation.leaseToken,
     );
-    const digest = impl.impl.digest(job.props, { handle: next });
+    const digest = digestOf(impl, job.props, next);
     // …and once more as it takes effect: the write and the digest take a while too
     const window = strictest(record.staleAfterMs, windowOf(impl));
     if (window !== "never" && !(Number.isFinite(record.createdAt) && window !== undefined && record.createdAt + window > Date.now())) {
@@ -725,10 +732,7 @@ export class Hai {
         // and result where the model can see them, and close the turn, as a
         // failed chat turn is kept; the notice never wakes again. Before any
         // tool has run, nothing has happened that a retry could repeat.
-        const toolRan = conversation.messages
-          .slice(before.messages + 1)
-          .some((m) => m.role === "assistant" && Array.isArray(m.content) && m.content.some((b: any) => b?.type === "tool_use"));
-        if (toolRan) {
+        if (this.toolsRan.has(conversation)) {
           conversation.status = "idle";
         } else {
           conversation.messages.length = before.messages;
@@ -1362,7 +1366,7 @@ export class Hai {
       );
 
       // The split, in two lines. Digest -> model. Payload -> browser.
-      const digest = impl.impl.digest(parsed, { handle });
+      const digest = digestOf(impl, parsed, handle);
       beforeAttach?.();
       // Recorded only once the digest is in hand. A surface that fails here is
       // never shown, and a handle in the history counts toward its freshness,
@@ -1563,6 +1567,7 @@ export class Hai {
 
     let outcome: { ok: true; ret: ToolReturn } | { ok: false; err: unknown };
     try {
+      this.toolsRan.add(conversation);
       outcome = { ok: true, ret: await tool.run(input, ctx) };
     } catch (err) {
       outcome = { ok: false, err };
@@ -1671,8 +1676,33 @@ function strictest(recorded: unknown, current: unknown): number | "never" | unde
 
 const newId = () => globalThis.crypto.randomUUID().replaceAll("-", "").slice(0, 16);
 
-/** What a thrown value says: its message, or, for one that isn't an Error, such as a string or undefined, itself as text. */
-const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+/**
+ * What a thrown value says: its message, or, for one that isn't an Error, such
+ * as a string or undefined, itself as text. Never throws itself: some values,
+ * such as an object with no prototype, can't be made into text.
+ */
+function errorText(err: unknown): string {
+  try {
+    return err instanceof Error ? String(err.message) : String(err);
+  } catch {
+    return "an error that can't be shown as text";
+  }
+}
+
+/**
+ * A surface's digest, checked: JavaScript can return anything, and the model
+ * must get text. One that isn't a string fails the render, as one that throws
+ * does; an async one is never awaited, so its rejection is caught here rather
+ * than left unhandled.
+ */
+function digestOf(impl: AnySurfaceImpl, props: unknown, handle: string): string {
+  const digest: unknown = impl.impl.digest(props, { handle });
+  if (typeof digest === "string") return digest;
+  if (digest && typeof (digest as PromiseLike<unknown>).then === "function") {
+    Promise.resolve(digest).catch(() => {});
+  }
+  throw new TypeError(`surface ${impl.surface.name}: digest must return a string (got ${digest === null ? "null" : typeof digest})`);
+}
 
 /** The latest revision of a surface: `handle` itself, or what it was superseded by, all the way along. */
 function currentHandle(conversation: Conversation, handle: string): string {

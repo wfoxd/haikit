@@ -297,7 +297,10 @@ interface SurfaceImplDef<P, A extends ActionMap, Q extends QueryMap> {
 Called once per render or revision: after the props are validated and the
 payload is stored, and before the surface is sent to the browser. It receives
 the validated props and `{ handle }`, the new payload's handle. It must be
-synchronous and return a string. Where what it returns goes:
+synchronous and return a string. Anything else, a promise included, fails
+the render with a `TypeError`: `surface <name>: digest must return a string
+(got <type>)`, and a promise's rejection is caught rather than left
+unhandled. Where what it returns goes:
 
 - **A display surface:** `ctx.render` resolves to `{ model: <digest>, handle }`.
   The model gets whatever the tool returns, normally that.
@@ -598,7 +601,7 @@ to `any`, can get past the types' rules. Here's what the server does then:
 | Mistake | What happens |
 | --- | --- |
 | An implementation with no `digest` | Rendering it fails with a `TypeError` after the payload is stored. The handle never joins the history, and the model hears `<tool> failed: <message>` |
-| A `digest` that's async, or returns something other than a string | Nothing awaits or checks it. A display surface's tool, returning that as its `model`, gets `<tool> returned no result.` as its result. An elicit surface's question holds the value as it is, and the model gets it with the answer: a promise serialises as `{}`. A promise that rejects is an unhandled rejection, which ends a Node process by default |
+| A `digest` that's async, or returns something other than a string | Rendering fails with a `TypeError`, `surface <name>: digest must return a string (got <type>)`, after the payload is stored, as for a digest that throws. A promise's rejection is caught, not left unhandled |
 | A query handler that returns a plain object | `query_ui` returns its `text` field, uncapped. Nothing checks that a `Cap` made it |
 | A query handler that's async | Nothing awaits it: `query_ui` reads `text` from the promise, finds none, and the model gets `query_ui returned no result.`. One that rejects is an unhandled rejection |
 | An action handler that returns something other than a string | It's recorded as it is, in `[UI interaction] <label>` or after the digest |

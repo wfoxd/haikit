@@ -150,7 +150,8 @@ wrong:
   instead, as if `run` had returned `render`'s result.
 - If it throws something that isn't an `Error`, such as a string or
   `undefined`, the result is `<name> failed: <that value as text>`, such as
-  `lookup failed: undefined`.
+  `lookup failed: undefined`. A value that can't be made into text, such as
+  an object with no prototype, reads `an error that can't be shown as text`.
 
 Either way, the call gets a result, so the history stays one the model API
 accepts.

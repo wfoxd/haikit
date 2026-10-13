@@ -91,9 +91,9 @@ Each hop of a turn makes one `generate` call (see
    unless the reply holds `tool_use` blocks. Those aren't run, since their
    input may be cut short: each gets a `tool_result` saying it wasn't, and
    the next hop begins, so the model can answer or try again (see
-   [The server](server.md#how-a-turn-runs)). So does `"tool_use"` with no
-   `tool_use` block in the reply. The runtime doesn't continue a reply's text
-   that was cut off.
+   [The server](server.md#how-a-turn-runs)). A reply with
+   `stop_reason: "tool_use"` but no `tool_use` block ends the turn. The
+   runtime doesn't continue a reply's text that was cut off.
 
 **If `generate` throws** (or rejects), the turn ends there and the caller
 reports the error. What the turn recorded before stays saved, except in a
