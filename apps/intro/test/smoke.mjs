@@ -434,7 +434,8 @@ try {
 
       const pageOf = (evs) => {
         const ui = opened(evs).find((e) => e.component === "reference_page");
-        return { ui, props: propsOf(evs, ui?.handle) };
+        const digest = evs.find((e) => e.type === "block_update" && /^Reference page /.test(e.result ?? ""))?.result ?? "";
+        return { ui, props: propsOf(evs, ui?.handle), digest };
       };
       const into = await sse("/hai/interact", { conversationId: id, handle: screen?.handle, action: "reference", value: "surfaces" });
       const surfaces = pageOf(into);
@@ -490,10 +491,17 @@ try {
 
       // every page renders, and every link on every page leads to a page and a section there are
       const shown = new Map();
+      const digests = new Map();
       for (const page of panel?.pages ?? []) {
         const got = pageOf(await sse("/hai/chat", { conversationId: id, message: `Open reference page ${page.id}` }));
         if (got.props?.id === page.id && got.props.blocks.length) shown.set(page.id, got.props);
+        digests.set(page.id, got.digest);
       }
+      // the digest names only the buttons a page shows
+      const buttons = (page) => digests.get(page)?.match(/its links and its (.*?) buttons?;/)?.[1];
+      buttons("index") === "Next" && buttons("surfaces") === "Next, Previous and Contents" && buttons("limits") === "Previous and Contents"
+        ? ok("each page's digest names only the buttons it shows: no Contents on the contents, no Next on the last")
+        : bad(`digest buttons: ${JSON.stringify(["index", "surfaces", "limits"].map(buttons))}`);
       const anchorsOf = (blocks) =>
         blocks.flatMap((b) => (b.kind === "h" && b.id ? [b.id] : b.kind === "items" ? b.items.flatMap(anchorsOf) : []));
       const broken = [];

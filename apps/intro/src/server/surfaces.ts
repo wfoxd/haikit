@@ -308,6 +308,9 @@ export const referencePageServer = referencePage.implement({
     const page = referencePageOf(props.id);
     const sections = props.blocks.flatMap((b) => (b.kind === "h" && b.level === 2 ? [plain(b.text)] : []));
     const at = props.anchor ? page?.anchors.get(props.anchor) : undefined;
+    // the buttons this page shows: the contents has no Contents, the last page no Next
+    const buttons = [props.next && "Next", props.prev && "Previous", props.id !== "index" && "Contents"].filter(Boolean);
+    const named = buttons.length > 1 ? `${buttons.slice(0, -1).join(", ")} and ${buttons.at(-1)} buttons` : `${buttons[0]} button`;
     return [
       `Reference page ${props.id} ${quote(props.title)} is on screen as ${handle}` +
         (at ? `, opened at its section #${props.anchor} ${quote(at)}` : "") +
@@ -315,7 +318,7 @@ export const referencePageServer = referencePage.implement({
         ` about ${estTokens(props).toLocaleString("en")} tokens that stay in the browser).`,
       page?.lead ? `It opens: ${page.lead.length > 220 ? `${page.lead.slice(0, 219)}…` : page.lead}` : "",
       sections.length ? `Sections: ${sections.join("; ")}.` : "",
-      "The reader moves on with its links and its Previous, Next and Contents buttons;" +
+      `The reader moves on with its links and its ${named};` +
         " query_ui find answers questions about it, with the section each answer is in.",
     ]
       .filter(Boolean)
