@@ -131,7 +131,7 @@ export function checkpointProps(id: string): CheckpointProps | null {
 
 /** The welcome screen's introduction: kept short, the lessons do the teaching. */
 const INTRO = [
-  "Build whole apps with an LLM, not just chats that call one.",
+  "AI drives the software. You steer.",
   "This introduction is a HaiKIT app too. Each lesson is a tool result, each checkpoint waits for your click, and **Context**, at the top right, shows exactly what the model receives.",
 ];
 

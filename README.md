@@ -5,7 +5,7 @@
   </picture>
 </h1>
 
-<p align="center"><strong>Build whole apps with an LLM, not just chats that call one.</strong></p>
+<p align="center"><strong>AI drives the software. You steer.</strong></p>
 
 <p align="center">
   <a href="https://www.npmjs.com/search?q=haikit"><img src="https://img.shields.io/npm/v/@haikit/core?label=%40haikit&color=0f1115" alt="npm version"></a>
