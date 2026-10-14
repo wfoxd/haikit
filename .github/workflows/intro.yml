@@ -43,13 +43,14 @@ jobs:
       # server and browser typecheck, which also compiles test/guarantees.ts:
       # what HaiKIT refuses to compile, against this app's own surfaces.
       # then the smoke test: the real server, every lesson's live excerpts,
-      # the tutorial parsed, the guide driven through the menu and lessons
+      # the tutorials and the reference manual parsed, every reference link
+      # checked, the guide driven through the menu, lessons and pages
       - run: npm test
 
   # The lockfile pins what `test` sees, so a HaiKIT release can't break it.
   # This runs the app's own update scripts instead, as a maintainer would, and
   # tests the result: red here means the next `npm run haikit:update` or
-  # `npm run tutorial:update` would fail, and why. Nothing is committed.
+  # `npm run docs:update` would fail, and why. Nothing is committed.
   latest:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
@@ -58,8 +59,8 @@ jobs:
       fail-fast: false
       matrix:
         # haikit: every @haikit/* package at @latest from npm
-        # tutorial: docs/tutorial.md from main, through the app's parser
-        update: [haikit, tutorial]
+        # docs: both tutorials and the reference manual from main, through the app's parsers
+        update: [haikit, docs]
     defaults:
       run:
         working-directory: apps/intro

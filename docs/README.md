@@ -18,8 +18,8 @@ create is verified to exist and compile, so if you change a code block, change
 actually exercises. `tutorial-2.md` is the same, with `examples/hello-notices`
 as its finished app.
 
-The introduction app (`apps/intro`) carries copies of both tutorials in its
-`content/` folder and shows them as pages. After changing either, copy it
-there too (or run `npm run tutorial:update` in `apps/intro` once it's on
-`main`), and run that app's `npm test`: its parser stops on Markdown it
-doesn't know.
+The introduction app (`apps/intro`) carries copies of both tutorials and of
+the reference manual in its `content/` folder and shows them as pages. After
+changing a tutorial, copy it there too (or run `npm run docs:update` in
+`apps/intro` once it's on `main`), and run that app's `npm test`: its parsers
+stop on Markdown they don't know, and on a reference link that leads nowhere.

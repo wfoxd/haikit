@@ -8,6 +8,7 @@ import type {
   WelcomeProps,
 } from "../../shared/surfaces.ts";
 import { excerpt } from "../excerpts.ts";
+import { REFERENCE_TITLE, referenceRefs } from "../reference.ts";
 import { TUTORIALS, tutorialRefs, tutorialSteps } from "../tutorial.ts";
 import { part1 } from "./part1.ts";
 import { part2 } from "./part2.ts";
@@ -265,9 +266,17 @@ const TUTORIAL_NAMES: Record<number, { title: string; blurb: string }> = {
   2: { title: TUTORIAL_PANEL.next!.title, blurb: "Teach the same app to speak up later: progress, notices, wake turns and live updates." },
 };
 
+/** The reference manual, as the welcome screen offers it: every page, read from the manual itself. */
+const REFERENCE_PANEL: WelcomeProps["reference"] = {
+  title: REFERENCE_TITLE,
+  lead: "Look something up: what each function takes, returns and refuses, every option and its default, and every limit HaiKIT applies.",
+  pages: referenceRefs(),
+};
+
 export const welcomeProps = (): WelcomeProps => ({
   intro: INTRO,
   tutorial: TUTORIAL_PANEL,
+  reference: REFERENCE_PANEL,
   links: LINKS,
   architecture: ARCHITECTURE,
   sections: SECTIONS,
@@ -283,9 +292,10 @@ export const welcomeProps = (): WelcomeProps => ({
 });
 
 /**
- * What the header's menu lists: every lesson by part, and each tutorial's
- * numbered steps. Served as /menu.json; the menu is navigation, not a surface,
- * so it reaches the conversation the way typing does.
+ * What the header's menu lists: every lesson by part, each tutorial's
+ * numbered steps, and the reference manual's pages. Served as /menu.json; the
+ * menu is navigation, not a surface, so it reaches the conversation the way
+ * typing does.
  */
 export const menu = () => ({
   lessons: PARTS.map((p) => ({ part: p.n, title: p.title, lessons: p.lessons.map((l) => ({ id: l.id, title: l.title })) })),
@@ -293,6 +303,7 @@ export const menu = () => ({
     title: TUTORIAL_NAMES[t.n]!.title,
     steps: tutorialSteps(t.n).map(({ id, title }) => ({ id, title })),
   })),
+  reference: { title: REFERENCE_TITLE, pages: referenceRefs() },
 });
 
 export const courseMapProps = (): CourseMapProps => ({

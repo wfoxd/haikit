@@ -1,7 +1,16 @@
 import { defineTool } from "@haikit/core";
 import { z } from "zod";
 import { checkpointProps, courseMapProps, lessonIds, lessonProps, lessonRef, welcomeProps } from "./course/index.ts";
-import { checkpointServer, courseMapServer, lessonServer, nextLessonServer, tutorialStepServer, welcomeServer } from "./surfaces.ts";
+import { REFERENCE, referencePageOf, referenceRefs } from "./reference.ts";
+import {
+  checkpointServer,
+  courseMapServer,
+  lessonServer,
+  nextLessonServer,
+  referencePageServer,
+  tutorialStepServer,
+  welcomeServer,
+} from "./surfaces.ts";
 import { tutorialOf, tutorialRefs } from "./tutorial.ts";
 
 const LessonInput = z.object({ id: z.string() });
@@ -152,4 +161,49 @@ export const showTutorialStep = defineTool({
 });
 // #endregion tutorial-tool
 
-export const tools = [showLesson, askCheckpoint, offerNextLesson, showCourseMap, showTutorialStep, showWelcome];
+const pageIds = REFERENCE.map((p) => p.id).join(", ");
+
+export const showReferencePage = defineTool({
+  name: "show_reference_page",
+  description:
+    `Show a page of HaiKIT's reference manual, built into this app: ${pageIds}. index is its contents, ` +
+    "and its symbol index names the page that documents each export. Pass anchor to open the page at a " +
+    "section, such as freshness on surfaces. BLOCKS until the reader clicks a link to another page, or " +
+    "Previous, Next or Contents on it.",
+  input: z.object({ page: z.string(), anchor: z.string().optional() }),
+  inputJsonSchema: {
+    type: "object",
+    properties: {
+      page: { type: "string", description: pageIds },
+      anchor: { type: "string", description: "A section's anchor on that page, as the manual's links write it, such as freshness" },
+    },
+    required: ["page"],
+    additionalProperties: false,
+  },
+
+  async run({ page: id, anchor }, ctx) {
+    const page = referencePageOf(id);
+    if (!page) return ctx.text(`No reference page ${id}. Pages: ${pageIds}.`);
+    const wanted = anchor?.replace(/^#/, "") || null;
+    if (wanted && !page.anchors.has(wanted)) {
+      return ctx.text(`No section #${wanted} on reference page ${id}. Its sections: ${[...page.anchors.keys()].join(", ")}.`);
+    }
+    const refs = referenceRefs();
+    const at = refs.findIndex((r) => r.id === id);
+    return ctx.render(
+      referencePageServer,
+      {
+        blocks: page.blocks,
+        id: page.id,
+        title: page.title,
+        position: { index: at + 1, total: refs.length },
+        prev: refs[at - 1] ?? null,
+        next: refs[at + 1] ?? null,
+        anchor: wanted,
+      },
+      { mode: "elicit" }, // its links and buttons are the question
+    );
+  },
+});
+
+export const tools = [showLesson, askCheckpoint, offerNextLesson, showCourseMap, showTutorialStep, showReferencePage, showWelcome];

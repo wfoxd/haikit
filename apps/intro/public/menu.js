@@ -1,5 +1,5 @@
 /**
- * The menu bar under the header: Home, Tutorial and Lesson.
+ * The menu bar under the header: Home, Tutorial, Lesson and Reference.
  *
  * mountChat draws the header and has no option for a menu, so this adds a bar
  * of its own just beneath it. A choice is a chat
@@ -14,7 +14,8 @@
  */
 
 /** @typedef {import("@haikit/client").Chat} Chat */
-/** @typedef {{ lessons: { part: number, title: string, lessons: { id: string, title: string }[] }[], tutorials: { title: string, steps: { id: string, title: string }[] }[] }} MenuData */
+/** @typedef {{ id: string, title: string }} Ref */
+/** @typedef {{ lessons: { part: number, title: string, lessons: Ref[] }[], tutorials: { title: string, steps: Ref[] }[], reference?: { title: string, pages: Ref[] } }} MenuData */
 /** @typedef {{ n?: string, label: string, message: string }} Item */
 /** @typedef {{ heading?: string, items: Item[] }} Group */
 /** @typedef {{ label: string, icon: keyof typeof ICONS, groups: Group[] }} Section */
@@ -27,6 +28,7 @@ const ICONS = {
   home: "M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5.5h-5V20H5a1 1 0 0 1-1-1z",
   tutorial: "M8.5 8 4.5 12l4 4M15.5 8l4 4-4 4M13.5 5.5l-3 13",
   lesson: "M3 5.5c2.5-1 5.5-1 9 1 3.5-2 6.5-2 9-1V19c-2.5-1-5.5-1-9 1-3.5-2-6.5-2-9-1zM12 6.5V20",
+  reference: "M14 3.5H7A1.5 1.5 0 0 0 5.5 5v14A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.5-1.5V8zM14 3.5V8h4.5M9 12.5h6M9 16h6",
   chevron: "M6 9l6 6 6-6",
 };
 
@@ -83,6 +85,21 @@ const sectionsOf = (data) => [
       items: p.lessons.map((l) => ({ n: l.id, label: l.title, message: `Open lesson ${l.id}` })),
     })),
   },
+  // a server from before the reference was built in sends none
+  ...(data.reference
+    ? [
+        {
+          label: "Reference",
+          icon: /** @type {const} */ ("reference"),
+          groups: [
+            {
+              heading: data.reference.title,
+              items: data.reference.pages.map((p) => ({ label: p.title, message: `Open reference page ${p.id}` })),
+            },
+          ],
+        },
+      ]
+    : []),
 ];
 
 let panels = 0;

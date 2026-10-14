@@ -10,9 +10,10 @@ where to begin, lesson 1.1 or the course map. Before the question, it shows the
 HaiKIT logo, a diagram of how a HaiKIT app works, and three short sections: why
 build a product on HaiKIT, what the LLM brings to the app, and what HaiKIT gives
 you, each with an illustration. It ends with the place to start, beside a
-Tutorial panel whose steps open HaiKIT's tutorials right here. The text lives in
-`src/server/course/index.ts`, and the illustrations are drawn as SVG in
-`public/illustrations.js`.
+Tutorial panel whose steps open HaiKIT's tutorials right here, and under them a
+Reference panel whose buttons open each page of HaiKIT's reference manual. The
+text lives in `src/server/course/index.ts`, and the illustrations are drawn as
+SVG in `public/illustrations.js`.
 
 From there a guide opens lessons with tools: each lesson is a `display`
 surface, and each checkpoint question is an `elicit` surface that parks the
@@ -29,11 +30,12 @@ shows what the model received the whole time.
 ## The menu
 
 A menu bar under the header has **Home** (the welcome screen), **Tutorial**
-(both tutorials' steps) and **Lesson** (every lesson, by part). The menu isn't a
-surface, so a choice reaches the server the way typing does: it sends a message
-such as “Open lesson 1.3”, and the guide shows what was asked for. The menu's
-contents come from `/menu.json`, built from the course and the tutorials when
-the server starts.
+(both tutorials' steps), **Lesson** (every lesson, by part) and **Reference**
+(every page of the reference manual). The menu isn't a surface, so a choice
+reaches the server the way typing does: it sends a message such as “Open
+lesson 1.3” or “Open reference page surfaces”, and the guide shows what was
+asked for. The menu's contents come from `/menu.json`, built from the course,
+the tutorials and the manual when the server starts.
 
 ## Who's reading
 
@@ -72,11 +74,39 @@ both.
 `docs/tutorial.md` and `docs/tutorial-2.md` from the haikit repository, so the
 app stays self-contained. The server parses them when it starts
 (`src/server/tutorial.ts`), and stops with the line it couldn't read if a
-tutorial ever uses Markdown the parser doesn't know. To pick up the latest:
+tutorial ever uses Markdown the parser doesn't know. To pick up the latest of
+both tutorials and the reference manual:
 
 ```bash
-npm run tutorial:update   # fetches both tutorials from GitHub, then runs npm test
+npm run docs:update   # fetches them from GitHub, then runs npm test
 ```
+
+## The reference manual
+
+HaiKIT's reference manual is built in too: all 16 pages of `docs/reference/`,
+from the contents (`index`) to *Configuration and limits*, in the order the
+contents lists them. Each page is a `reference_page` surface, like a tutorial
+page: the browser holds the whole page, about 8,000 tokens for *Surfaces*,
+and the model gets a digest of about 165: the page's title, how it opens, its
+sections, and a `find` query for the rest. Each answer from `query_ui` names
+the section it comes from, so the guide can answer an exact API question from
+the manual itself.
+
+A page waits for the reader, as a tutorial page does. A link to a section of
+the same page scrolls there in the browser. A link to another page, or
+Previous, Next or Contents at its foot, is the page's answer: the guide shows
+the page it names, opened at the section the link points to. A page goes only
+where its own links and buttons lead, and once the reader has moved on, its
+links to other pages are plain text again. The welcome screen's Reference
+panel, the menu, and typing “reference” or “reference page tools” open a page
+too.
+
+`content/reference/` is a copy of `docs/reference/`, refreshed by
+`npm run docs:update` with the tutorials. The server reads it when it starts
+(`src/server/reference.ts`), rewriting each link into a target the browser
+follows without resolving a path, and checks every link. A link to a page or
+a section that doesn't exist, or Markdown the parser doesn't know, stops the
+server with the page, the line and the link.
 
 ## Run it
 
@@ -117,7 +147,10 @@ That runs two checks:
   opening a lesson, answering a checkpoint, typing instead of answering, a
   glossary lookup through `query_ui`, every lesson rendering, and every page
   of both tutorials, reached from the welcome screen, the map, the menu and by
-  typing.
+  typing. For the reference manual: every page rendering with nothing in its
+  Markdown lost, every one of its links leading to a page and a section that
+  exist, a page going only where its links lead, and `find` naming the
+  section of each answer.
 
 ## Which haikit it runs
 
@@ -177,12 +210,12 @@ in `/opt/haikit-intro`, and its database is a container on the network
 `haikit-intro_default`.
 
 **1. Prepare the release**, on your machine, in this folder. Move to the newest
-haikit, and pick up the latest tutorials if they changed. Each command runs
-`npm test` when it finishes; commit what changes.
+haikit, and pick up the latest tutorials and reference manual if they changed.
+Each command runs `npm test` when it finishes; commit what changes.
 
 ```bash
 npm run haikit:update
-npm run tutorial:update
+npm run docs:update
 ```
 
 **2. Copy the folder to the server.** `node_modules` is installed in the image,
@@ -244,15 +277,17 @@ If the deployment runs the app as a service in a Compose file, run
 
 ```
 src/shared/surfaces.ts     the contract: welcome, course_map, lesson, checkpoint, next_lesson,
-                           tutorial_step
+                           tutorial_step, reference_page
 src/shared/signals.ts      the online signal: how many people are reading now
-src/server/surfaces.ts     digests, the action handlers, the glossary query
+src/server/surfaces.ts     digests, the action handlers, the glossary and find queries
 src/server/tools.ts        welcome (init), show_welcome, show_course_map, show_lesson,
-                           ask_checkpoint, offer_next_lesson, show_tutorial_step
+                           ask_checkpoint, offer_next_lesson, show_tutorial_step,
+                           show_reference_page
 src/server/scripted.ts     the scripted guide, a ModelAdapter
 src/server/course/         the lessons, the introduction, the glossary and the answer key
 src/server/excerpts.ts     reads the code the lessons quote
 src/server/tutorial.ts     reads content/tutorial.md and tutorial-2.md into the tutorials' pages
+src/server/reference.ts    reads content/reference/ into the manual's pages, and checks its links
 src/server/main.ts         createHai, routes, static files
 public/                    the page, the components, the header menu, the styles, the HaiKIT logo,
                            the welcome screen's diagram and illustrations
@@ -260,7 +295,8 @@ test/guarantees.ts         what haikit refuses to compile, quoted by lesson 2.7
 test/smoke.mjs             the end-to-end check
 content/tutorial.md        HaiKIT's tutorials, copied from the haikit repository
 content/tutorial-2.md
-scripts/update-tutorial.mjs  refreshes those copies
+content/reference/         HaiKIT's reference manual, copied from the haikit repository
+scripts/update-docs.mjs    refreshes those copies
 ```
 
 ## Adding a part

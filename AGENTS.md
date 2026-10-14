@@ -61,9 +61,12 @@ that changes observable behaviour without updating the manual isn't ready.
 
 - `docs/tutorial.md` is runnable: change `examples/hello` with it.
   `docs/tutorial-2.md` goes with `examples/hello-notices`.
-- `apps/intro/content/` holds copies of both tutorials: after changing
-  either, run `npm run tutorial:update` in `apps/intro` once it is on `main`,
-  and that app's `npm test`.
+- `apps/intro/content/` holds copies of both tutorials and of the reference
+  manual, and the intro shows them as pages. After changing a tutorial, and
+  when the intro moves to a new release, run `npm run docs:update` in
+  `apps/intro` once the change is on `main`; it runs that app's `npm test`,
+  which stops on Markdown the intro's parsers don't know and on a reference
+  link that leads nowhere.
 - The four type guarantees are asserted in
   `packages/core/test/types/guarantees.ts`: change a guarantee and its test
   together.

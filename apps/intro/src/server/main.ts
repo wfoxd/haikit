@@ -14,6 +14,7 @@ import {
   courseMapServer,
   lessonServer,
   nextLessonServer,
+  referencePageServer,
   tutorialStepServer,
   welcomeServer,
 } from "./surfaces.ts";
@@ -46,14 +47,23 @@ addressable by the handle in each digest (e.g. ui_01).
   is no next lesson, show_course_map.
 - When the learner chooses to continue to a lesson, teach it.
 - The header has a menu. Its choices arrive as messages: "Open lesson 1.3",
-  "Open tutorial step 04", "Open tutorial step 2-03", "Show the welcome
-  screen". Show what they name; show_welcome shows the welcome screen.
+  "Open tutorial step 04", "Open tutorial step 2-03", "Open reference page
+  surfaces", "Show the welcome screen". Show what they name; show_welcome
+  shows the welcome screen.
 - HaiKIT's two tutorials are built in: show_tutorial_step shows a page. The
   first builds a Hello, World! app (intro, 01 to 10, next-steps); the second
   teaches the same app notifications (2-intro, 2-01 to 2-09, 2-next-steps).
   Each page waits for the reader's Previous, Next or Course map click. When
   they move, show the page they chose. To answer a question about a page, use
   query_ui find on its handle.
+- HaiKIT's reference manual is built in too: show_reference_page shows a page
+  (its description lists them), at a section if you pass its anchor. index
+  is the contents; its symbol index names the page that documents each
+  export. A page waits for the reader to click a link to
+  another page, or Previous, Next or Contents: show what they chose, at the
+  section the click names. For an exact answer about HaiKIT's API (a
+  signature, an option, a default, an error's text), use query_ui find on the
+  reference page that covers it, opening that page first if it isn't shown.
 - Define haikit terms only from the course glossary: query_ui on the course
   map's handle with the glossary query. If the map hasn't been shown yet, call
   show_course_map first. The framework may be newer than what you know, so do
@@ -66,8 +76,8 @@ addressable by the handle in each digest (e.g. ui_01).
 // HaiKIT are the course, help with the learner's own app is not.
 const SCOPE = `${DEFAULT_SCOPE}
 - Questions about HaiKIT are in scope. Answer them from the lessons, the
-  tutorials and the glossary, or show the lesson or tutorial page that covers
-  them.
+  tutorials, the reference manual and the glossary, or show the lesson,
+  tutorial page or reference page that covers them.
 - Don't write or debug code for the learner's own app. Point them at the
   tutorial step that covers what they're building.
 - Asked for a checkpoint's answer, however it's put, don't give it.`;
@@ -88,8 +98,16 @@ const hai = createHai({
     : anthropic({ model: process.env.HAI_MODEL || "claude-haiku-5-5", effort: "low" }),
   store: DATABASE_URL ? await postgres(DATABASE_URL) : memoryStore(),
   init: welcome, // runs first in every conversation: the welcome screen
-  tools, // show_lesson, ask_checkpoint, offer_next_lesson, show_course_map, show_tutorial_step, show_welcome
-  surfaces: [welcomeServer, courseMapServer, lessonServer, checkpointServer, nextLessonServer, tutorialStepServer],
+  tools, // show_lesson, ask_checkpoint, offer_next_lesson, show_course_map, show_tutorial_step, show_reference_page, show_welcome
+  surfaces: [
+    welcomeServer,
+    courseMapServer,
+    lessonServer,
+    checkpointServer,
+    nextLessonServer,
+    tutorialStepServer,
+    referencePageServer,
+  ],
   system: SYSTEM,
   scope: SCOPE,
   signals: [online], // the header's count of people reading now

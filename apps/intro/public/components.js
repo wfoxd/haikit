@@ -19,6 +19,7 @@ import { logo } from "./logo.js";
 /** @typedef {import("../src/shared/surfaces.ts").CheckpointProps} CheckpointProps */
 /** @typedef {import("../src/shared/surfaces.ts").NextLessonProps} NextLessonProps */
 /** @typedef {import("../src/shared/surfaces.ts").TutorialStepProps} TutorialStepProps */
+/** @typedef {import("../src/shared/surfaces.ts").ReferencePageProps} ReferencePageProps */
 /** @typedef {import("../src/shared/surfaces.ts").Block} Block */
 /** @typedef {import("../src/shared/surfaces.ts").Step} Step */
 /** @typedef {import("@haikit/client").MountCtx} MountCtx */
@@ -41,20 +42,51 @@ const h = (tag, className, text) => {
 const tokens = (/** @type {unknown} */ value) => Math.ceil(JSON.stringify(value).length / 4);
 
 /**
- * Inline `code`, **bold** and *italic*, as elements. Bold may hold code or
- * italics, as in **`defineSurface`**. Anything else stays text, never HTML.
+ * How a link becomes an element: given its target and its label, already
+ * drawn. See `Block` in ../src/shared/surfaces.ts for the targets there are.
+ * @typedef {(target: string, label: HTMLElement) => HTMLElement} Linker
+ */
+
+/**
+ * Without a linker, an https link opens in a new tab and any other link is its
+ * label alone: it has nowhere to go outside a reference page.
+ * @type {Linker}
+ */
+const plainLink = (target, label) => {
+  if (!/^https:\/\//.test(target)) return label;
+  const a = h("a", "l-link l-link-out");
+  a.href = target;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  a.append(...label.childNodes);
+  return a;
+};
+
+// a link, whose label may hold code; code, between runs of one or more
+// backticks, so ``a `b` c`` holds a backtick; bold; italic
+const INLINE = /\[((?:`[^`]*`|[^\]`])+)\]\(([^)\s]+)\)|(?<!`)(`+)(?!`)(.+?)(?<!`)\3(?!`)|\*\*(.+?)\*\*|\*([^*\s][^*]*?)\*/g;
+
+/**
+ * Inline `code`, **bold**, *italic* and [links](ref:tools), as elements. Bold
+ * may hold code or italics, as in **`defineSurface`**, and a link's label may
+ * hold code. Anything else stays text, never HTML.
  * @param {HTMLElement} el
  * @param {string} text
+ * @param {Linker} [link] what a link becomes
  * @returns {HTMLElement}
  */
-function inline(el, text) {
+function inline(el, text, link = plainLink) {
   let at = 0;
-  for (const m of text.matchAll(/(`[^`]+`)|\*\*(.+?)\*\*|\*([^*\s][^*]*?)\*/g)) {
+  for (const m of text.matchAll(INLINE)) {
     const i = m.index ?? 0;
     if (i > at) el.append(text.slice(at, i));
-    if (m[1]) el.append(h("code", "ic", m[1].slice(1, -1)));
-    else if (m[2] != null) el.append(inline(h("strong"), m[2]));
-    else el.append(inline(h("em"), m[3] ?? ""));
+    if (m[1] != null) el.append(link(m[2] ?? "", inline(h("span"), m[1])));
+    else if (m[4] != null) {
+      // one space each side is padding, so the code can start or end with a backtick
+      const code = /^ .*[^ ].* $/.test(m[4]) ? m[4].slice(1, -1) : m[4];
+      el.append(h("code", "ic", code));
+    } else if (m[5] != null) el.append(inline(h("strong"), m[5], link));
+    else el.append(inline(h("em"), m[6] ?? "", link));
     at = i + m[0].length;
   }
   if (at < text.length) el.append(text.slice(at));
@@ -202,28 +234,39 @@ function selectList(picker) {
 /** @typedef {Extract<Block, { kind: "code" }>} CodeBlock */
 /** @typedef {{ kind: "p", text: string } | { kind: "list", items: string[] }} Prose */
 
-/** @param {Prose} part */
-function proseEl(part) {
-  if (part.kind === "p") return inline(h("p"), part.text);
+/**
+ * @param {Prose} part
+ * @param {Linker} [link]
+ */
+function proseEl(part, link) {
+  if (part.kind === "p") return inline(h("p"), part.text, link);
   const ul = h("ul");
-  for (const item of part.items) ul.append(inline(h("li"), item));
+  for (const item of part.items) ul.append(inline(h("li"), item, link));
   return ul;
 }
 
 let figures = 0;
 
 /**
- * Bring a note, or the line it explains, into view and mark it for a moment.
- * @param {string} id
+ * Bring an element into view and mark it for a moment.
+ * @param {Element | null} target
+ * @param {ScrollLogicalPosition} [block] where it lands: "nearest" moves as little as it can
+ * @param {boolean} [smooth]
  */
-function reveal(id) {
-  const target = document.getElementById(id);
+function bringIntoView(target, block = "nearest", smooth = true) {
   if (!target) return;
-  target.scrollIntoView({ block: "nearest", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+  const still = !smooth || matchMedia("(prefers-reduced-motion: reduce)").matches;
+  target.scrollIntoView({ block, behavior: still ? "auto" : "smooth" });
   target.classList.remove("flash");
   void target.getBoundingClientRect(); // restart the animation
   target.classList.add("flash");
 }
+
+/**
+ * Bring a note, or the line it explains, into view and mark it for a moment.
+ * @param {string} id
+ */
+const reveal = (id) => bringIntoView(document.getElementById(id));
 
 /**
  * Code whose lines carry numbered notes: each number links to its note, and
@@ -366,8 +409,9 @@ function copyButton(code) {
  * up to its details-end, under its summary.
  * @param {HTMLElement} parent
  * @param {Block[]} blocks
+ * @param {Linker} [link] what the links in their text become
  */
-function renderBlocks(parent, blocks) {
+function renderBlocks(parent, blocks, link) {
   const stack = [parent];
   for (const block of blocks) {
     const into = stack[stack.length - 1] ?? parent;
@@ -379,28 +423,49 @@ function renderBlocks(parent, blocks) {
     } else if (block.kind === "details-end") {
       if (stack.length > 1) stack.pop();
     } else {
-      into.append(renderBlock(block));
+      into.append(renderBlock(block, link));
     }
   }
   return parent;
 }
 
-/** @param {Exclude<Block, { kind: "details" | "details-end" }>} block */
-function renderBlock(block) {
+/**
+ * @param {Exclude<Block, { kind: "details" | "details-end" }>} block
+ * @param {Linker} [link]
+ */
+function renderBlock(block, link) {
   switch (block.kind) {
     case "p":
-      return inline(h("p", "l-p"), block.text);
-    case "h":
-      return inline(h("h3", "l-h"), block.text);
+      return inline(h("p", "l-p"), block.text, link);
+    case "h": {
+      // a reference page's ## is an h3 under the page's h2, its ### an h4
+      const tag = block.level === 4 ? "h5" : block.level === 3 ? "h4" : "h3";
+      const head = inline(h(tag, block.level ? `l-h l-h${block.level}` : "l-h"), block.text, link);
+      if (block.id) head.dataset.anchor = block.id;
+      return head;
+    }
     case "list": {
       const ul = h("ul", "l-list");
-      for (const item of block.items) ul.append(inline(h("li"), item));
+      for (const item of block.items) ul.append(inline(h("li"), item, link));
       return ul;
+    }
+    case "items": {
+      const list = h(block.ordered ? "ol" : "ul", "l-list");
+      if (list instanceof HTMLOListElement && block.start) list.start = block.start;
+      for (const item of block.items) {
+        const li = h("li");
+        // an item that is one paragraph is its text; anything more is its blocks
+        const [only] = item;
+        if (item.length === 1 && only?.kind === "p") inline(li, only.text, link);
+        else renderBlocks(li, item, link);
+        list.append(li);
+      }
+      return list;
     }
     case "note": {
       const labels = { look: "Look", tip: "Try it", warn: "Before you ship" };
       const aside = h("aside", `l-note l-note-${block.tone}`);
-      aside.append(h("strong", "l-note-label", labels[block.tone]), inline(h("p"), block.text));
+      aside.append(h("strong", "l-note-label", labels[block.tone]), inline(h("p"), block.text, link));
       return aside;
     }
     case "code": {
@@ -449,12 +514,12 @@ function renderBlock(block) {
       const wrap = h("div", "l-table");
       const table = h("table");
       const head = h("tr");
-      for (const cell of block.head) head.append(h("th", null, cell));
+      for (const cell of block.head) head.append(inline(h("th"), cell, link));
       table.append(h("thead"), h("tbody"));
       table.tHead?.append(head);
       for (const row of block.rows) {
         const tr = h("tr");
-        for (const cell of row) tr.append(inline(h("td"), cell));
+        for (const cell of row) tr.append(inline(h("td"), cell, link));
         table.tBodies[0].append(tr);
       }
       wrap.append(table);
@@ -478,8 +543,8 @@ function renderBlock(block) {
       const look = { note: ["look", "Note"], tip: ["tip", "Tip"], warning: ["warn", "Warning"] }[block.tone];
       const box = h("aside", `l-note l-note-${look[0]} l-callout`);
       box.append(h("strong", "l-note-label", look[1]));
-      if (block.title) box.append(inline(h("p", "l-callout-title"), block.title));
-      for (const part of block.body) box.append(proseEl(part));
+      if (block.title) box.append(inline(h("p", "l-callout-title"), block.title, link));
+      for (const part of block.body) box.append(proseEl(part, link));
       return box;
     }
   }
@@ -570,6 +635,35 @@ function tutorialPanel(tutorial, at) {
 }
 
 /**
+ * The reference manual as a panel: each of its pages, a button that opens it
+ * here, the contents first. Choosing one answers the welcome screen's question
+ * through its declared `reference` action, as the tutorial panel's steps do.
+ * @param {WelcomeProps["reference"]} reference
+ * @param {{ live: boolean, picked: unknown, choose: (id: string) => void }} at
+ */
+function referencePanel(reference, at) {
+  const panel = h("section", "welcome-reference");
+  const words = h("div", "welcome-reference-words");
+  words.append(
+    h("p", "welcome-tutorial-label", "Reference"),
+    h("h3", "welcome-tutorial-title", reference.title),
+    inline(h("p", "welcome-tutorial-lead"), reference.lead),
+  );
+  const pages = h("ul", "welcome-reference-pages");
+  for (const page of reference.pages) {
+    const b = h("button", `welcome-reference-page${page.id === "index" ? " contents" : ""}${page.id === at.picked ? " picked" : ""}`, page.title);
+    b.type = "button";
+    b.disabled = !at.live;
+    b.onclick = () => at.choose(page.id);
+    const li = h("li");
+    li.append(b);
+    pages.append(li);
+  }
+  panel.append(words, pages);
+  return panel;
+}
+
+/**
  * Scroll the transcript that holds a surface, as its reader would.
  *
  * The default UI follows the newest content while the reader is at the
@@ -577,13 +671,16 @@ function tutorialPanel(tutorial, at) {
  * transcript's scroll events, so one goes with the move. Outside a transcript
  * this does nothing.
  * @param {HTMLElement} surface the element a surface mounted into
- * @param {"top" | "bottom"} where its top (with the tool row above it), or the end
+ * @param {"top" | "bottom" | Element} where its top (with the tool row above
+ *   it), the end, or an element in it, brought to the top
  */
 function scrollTranscript(surface, where) {
   const transcript = surface.closest(".hai-transcript");
   if (!(transcript instanceof HTMLElement)) return;
   if (where === "bottom") {
     transcript.scrollTop = transcript.scrollHeight;
+  } else if (where instanceof Element) {
+    transcript.scrollTop += where.getBoundingClientRect().top - transcript.getBoundingClientRect().top - 14;
   } else {
     const first = surface.previousElementSibling ?? surface;
     const above = first.getBoundingClientRect().top - transcript.getBoundingClientRect().top - 16;
@@ -663,9 +760,10 @@ export const registry = {
         // The two buttons are this screen's question. Answering sends the
         // declared `begin` action, and the guide takes it from there.
         // Every choice here answers the screen's question: `begin` for the
-        // two buttons, `tutorial` for a page of the tutorial.
+        // two buttons, `tutorial` for a page of the tutorial, `reference` for
+        // a page of the manual.
         /**
-         * @param {"begin" | "tutorial"} action
+         * @param {"begin" | "tutorial" | "reference"} action
          * @param {string} value
          */
         const pick = async (action, value) => {
@@ -694,9 +792,11 @@ export const registry = {
         start.append(actions);
 
         if (!live && state === "frozen") {
+          const manual = props.reference?.pages.find((p) => p.id === picked);
           const done =
             picked === "first-lesson" ? `You started with lesson ${props.first.id}.`
             : picked === "course-map" ? "You opened the course map."
+            : manual ? (manual.id === "index" ? "You opened the reference manual." : `You opened ${manual.title} in the reference manual.`)
             : picked === "intro" ? "You started the tutorial."
             : props.tutorial?.next && picked === props.tutorial.next.first.id ? `You started ${props.tutorial.next.title}.`
             : typeof picked === "string" ? `You opened step ${picked} of the tutorial.`
@@ -711,6 +811,12 @@ export const registry = {
         if (props.tutorial && steps.every((st) => typeof st.id === "string")) {
           close.append(
             tutorialPanel(props.tutorial, { live: live && !sending, picked, choose: (id) => void pick("tutorial", id) }),
+          );
+        }
+        // a welcome stored before version 10 has no reference
+        if (props.reference) {
+          close.append(
+            referencePanel(props.reference, { live: live && !sending, picked, choose: (id) => void pick("reference", id) }),
           );
         }
         root.append(close);
@@ -964,6 +1070,128 @@ export const registry = {
       return {
         /** @param {unknown} selection */
         freeze(selection) { state = "frozen"; picked = selection; drawNav(); },
+      };
+    },
+  },
+
+  reference_page: {
+    /**
+     * @param {HTMLElement} el
+     * @param {ReferencePageProps} props
+     * @param {MountCtx} ctx
+     */
+    mount(el, props, ctx) {
+      let state = ctx.state;
+      let picked = ctx.selection; // set when mounted already answered
+      let sending = false;
+      const live = () => state === "live" && ctx.mode === "elicit" && !sending;
+
+      const article = h("article", "lesson tutorial reference");
+      /** @param {string | undefined} anchor its section, marked for a moment; or the page's top */
+      const toAnchor = (anchor, smooth = true) => {
+        if (anchor) bringIntoView(article.querySelector(`[data-anchor="${CSS.escape(anchor)}"]`), "start", smooth);
+        else article.scrollIntoView({ block: "start" });
+      };
+
+      /** @type {HTMLAnchorElement[]} the links that lead off this page, links only while it waits */
+      const ways = [];
+      /** @type {Linker} */
+      const link = (target, label) => {
+        if (/^https:\/\//.test(target)) return plainLink(target, label);
+        const a = h("a", "l-link");
+        a.append(...label.childNodes);
+        const [, page, anchor] = target.match(/^(?:ref:([\w-]+))?(?:#([\w-]+))?$/) ?? [];
+        if (!/^tutorial:/.test(target) && (page === undefined || page === props.id)) {
+          // a section of this page: the browser scrolls to it, nothing is sent
+          a.href = `#${anchor ?? ""}`;
+          a.onclick = (e) => {
+            e.preventDefault();
+            toAnchor(anchor);
+          };
+          return a;
+        }
+        a.classList.add("l-go");
+        a.dataset.go = target;
+        a.onclick = (e) => {
+          e.preventDefault();
+          if (live()) void go(target);
+        };
+        ways.push(a);
+        return a;
+      };
+
+      // The page is drawn once: its links and buttons go quiet when it's
+      // answered, so a long page keeps the reader's place.
+      const head = h("header", "lesson-head");
+      const where = h("p", "lesson-where");
+      where.append(h("span", null, "Reference manual"), h("span", "lesson-min", `page ${props.position.index} of ${props.position.total}`));
+      head.append(where, h("h2", "lesson-title", props.title));
+      const body = renderBlocks(h("div", "lesson-body"), props.blocks, link);
+      const nav = h("footer", "tutorial-nav");
+      article.append(head, body, nav);
+      el.append(article);
+
+      /** How the reader's choice is named once the page is answered. */
+      const named = (/** @type {unknown} */ target) => {
+        const ref = [props.next, props.prev, { id: "index", title: "the contents" }].find((r) => r && `ref:${r.id}` === target);
+        if (ref) return ref.title;
+        const a = ways.find((w) => w.dataset.go === target);
+        return a ? `“${a.textContent}”` : null;
+      };
+
+      const draw = () => {
+        const open = live();
+        for (const a of ways) {
+          // a link is a link only while the page waits; once answered, it's text
+          if (open) a.href = "#";
+          else a.removeAttribute("href");
+          a.classList.toggle("picked", a.dataset.go === picked);
+        }
+        nav.replaceChildren();
+        const choices = [
+          props.next && { value: `ref:${props.next.id}`, label: `Next: ${props.next.title}`, cls: "choice-btn primary" },
+          props.prev && { value: `ref:${props.prev.id}`, label: `Previous: ${props.prev.title}`, cls: "choice-btn" },
+          props.id !== "index" && { value: "ref:index", label: "Contents", cls: "choice-btn" },
+        ].filter((c) => !!c);
+        const row = h("div", "tutorial-nav-actions");
+        for (const choice of choices) {
+          const b = h("button", `${choice.cls}${choice.value === picked ? " picked" : ""}`, choice.label);
+          b.type = "button";
+          b.disabled = !open;
+          b.onclick = () => void go(choice.value);
+          row.append(b);
+        }
+        nav.append(row);
+        if (state === "frozen") {
+          const to = named(picked);
+          nav.append(h("p", "tutorial-nav-closed", to ? `You went on to ${to}.` : "Closed when you typed instead."));
+        }
+      };
+
+      /** @param {string} target the link's target or a button's: the page's answer */
+      const go = async (target) => {
+        sending = true;
+        picked = target;
+        draw();
+        scrollTranscript(el, "bottom"); // follow the next page in
+        await ctx.send("go", target);
+        sending = false;
+        if (state === "live") { picked = undefined; draw(); } // refused: stays live
+      };
+
+      draw();
+      if (ctx.state === "live") {
+        // Opened at a section: bring it to the top, and mark it. Otherwise the
+        // page's top: longer than the window, it would open on its last lines.
+        requestAnimationFrame(() => {
+          const section = props.anchor ? article.querySelector(`[data-anchor="${CSS.escape(props.anchor)}"]`) : null;
+          scrollTranscript(el, section ?? "top");
+          if (section) bringIntoView(section, "nearest", false);
+        });
+      }
+      return {
+        /** @param {unknown} selection */
+        freeze(selection) { state = "frozen"; picked = selection; draw(); },
       };
     },
   },

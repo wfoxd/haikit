@@ -391,6 +391,10 @@ try {
         steps[0][0].id === "01" && steps[1].length === 9 && steps[1][0].id === "2-01"
         ? ok("the menu lists 14 lessons in 2 parts, and the two tutorials' 10 and 9 steps")
         : bad(`menu.json: ${menu.lessons.length} parts, ${lessons.length} lessons, ${JSON.stringify(steps.map((s) => s.length))} steps`);
+      const manual = menu.reference?.pages ?? [];
+      manual.length === 16 && manual[0].id === "index" && manual[0].title === "Contents" && manual[15].id === "limits"
+        ? ok("…and the reference manual's 16 pages, its contents first")
+        : bad(`menu.json reference: ${JSON.stringify(manual.map((p) => p.id))}`);
 
       const fresh = await sse("/hai/start", {});
       const id = fresh.find((e) => e.type === "hello")?.conversationId;
@@ -405,9 +409,220 @@ try {
       (await pick("Open tutorial step 04", "tutorial_step", (p) => p?.id === "04"))
         ? ok("Tutorial › 04 opens tutorial step 04")
         : bad("the menu's tutorial choice did not open step 04");
+      (await pick("Open reference page limits", "reference_page", (p) => p?.id === "limits"))
+        ? ok("Reference › Configuration and limits opens that page")
+        : bad("the menu's reference choice did not open limits");
       (await pick("Show the welcome screen", "welcome", (p) => p?.intro?.length > 0))
         ? ok("Home › Welcome shows the welcome screen again")
         : bad("the menu's Home choice did not show the welcome screen");
+    }
+
+    // 7c2 · the reference manual: from the welcome, between its pages, by its
+    //       links, from the menu and by typing; every page, every link
+    {
+      const fresh = await sse("/hai/start", {});
+      const id = fresh.find((e) => e.type === "hello")?.conversationId;
+      const screen = opened(fresh)[0];
+      const panel = propsOf(fresh, screen?.handle)?.reference;
+      panel?.pages?.length === 16 && panel.pages[0].id === "index" && panel.pages[0].title === "Contents" && panel.pages[15].id === "limits"
+        ? ok("the welcome offers the reference manual's 16 pages, its contents first")
+        : bad(`the welcome's reference: ${JSON.stringify(panel?.pages?.map((p) => p.id))}`);
+      const said = fresh.find((e) => e.type === "block_update")?.result ?? "";
+      /built into this app: 16 pages, index \(the contents\), concepts, .*, limits; show_reference_page opens one/.test(said)
+        ? ok("the welcome digest names every page of the manual for the model")
+        : bad(`the welcome digest on the manual: ${said}`);
+
+      const pageOf = (evs) => {
+        const ui = opened(evs).find((e) => e.component === "reference_page");
+        const digest = evs.find((e) => e.type === "block_update" && /^Reference page /.test(e.result ?? ""))?.result ?? "";
+        return { ui, props: propsOf(evs, ui?.handle), digest };
+      };
+      const into = await sse("/hai/interact", { conversationId: id, handle: screen?.handle, action: "reference", value: "surfaces" });
+      const surfaces = pageOf(into);
+      surfaces.ui?.mode === "elicit" && surfaces.props?.id === "surfaces" && surfaces.props.position.index === 3 &&
+        surfaces.props.position.total === 16 && lastStatus(into) === "awaiting"
+        ? ok("the welcome's panel opens Surfaces, page 3 of 16, waiting for the reader")
+        : bad(`the welcome's Surfaces: ${JSON.stringify({ ...surfaces.props, blocks: undefined })}`);
+      const digest = into.find((e) => e.type === "block_update" && /^Reference page surfaces/.test(e.result ?? ""))?.result ?? "";
+      const pageTokens = Math.ceil(JSON.stringify(surfaces.props).length / 4);
+      digest.includes("Sections: Schemas; Declaring a contract;") && digest.length / 4 < pageTokens / 20
+        ? ok(`the model gets a digest (~${Math.ceil(digest.length / 4)} tok) of a page that stays in the browser (~${pageTokens} tok)`)
+        : bad(`reference digest: ${digest}`);
+
+      const off = await sse("/hai/interact", { conversationId: id, handle: surfaces.ui?.handle, action: "go", value: "ref:react" });
+      /no way from surfaces to ref:react/.test(off.find((e) => e.type === "error")?.message ?? "")
+        ? ok("a page only goes where its links and buttons go")
+        : bad("a reference page accepted a jump it doesn't offer");
+      // a link on Surfaces to a section of Tools
+      const link = JSON.stringify(surfaces.props?.blocks).match(/\]\((ref:tools#([\w-]+))\)/);
+      const moved = await sse("/hai/interact", { conversationId: id, handle: surfaces.ui?.handle, action: "go", value: link?.[1] });
+      const tools = pageOf(moved);
+      tools.props?.id === "tools" && tools.props.anchor === link?.[2] && tools.props.prev?.id === "surfaces"
+        ? ok(`a link opens the page it names, at its section (${link?.[1]})`)
+        : bad(`the link ${link?.[1]} opened ${JSON.stringify({ id: tools.props?.id, anchor: tools.props?.anchor })}`);
+      const back = pageOf(await sse("/hai/interact", { conversationId: id, handle: tools.ui?.handle, action: "go", value: "ref:surfaces" }));
+      back.props?.id === "surfaces" && back.props.anchor === null ? ok("Previous goes back to Surfaces, at its top") : bad("Previous did not go back");
+      const contents = pageOf(await sse("/hai/interact", { conversationId: id, handle: back.ui?.handle, action: "go", value: "ref:index" }));
+      contents.props?.id === "index" && contents.props.prev === null && contents.props.next?.id === "concepts"
+        ? ok("Contents opens the index, the manual's first page")
+        : bad("Contents did not open the index");
+      // the contents shows no Contents button, so it can't be sent one
+      const itself = await sse("/hai/interact", { conversationId: id, handle: contents.ui?.handle, action: "go", value: "ref:index" });
+      /no way from index to ref:index/.test(itself.find((e) => e.type === "error")?.message ?? "")
+        ? ok("the contents refuses a Contents click, since it has no such button")
+        : bad("the contents accepted a Contents click it doesn't show");
+      // the contents link to the tutorials, which are built in too
+      const toTutorial = await sse("/hai/interact", { conversationId: id, handle: contents.ui?.handle, action: "go", value: "tutorial:intro" });
+      propsOf(toTutorial, opened(toTutorial).find((e) => e.component === "tutorial_step")?.handle)?.id === "intro"
+        ? ok("the contents' link to the tutorials opens the first tutorial here")
+        : bad("the link to the tutorials did not open one");
+
+      const typed = pageOf(await sse("/hai/chat", { conversationId: id, message: "show me the reference" }));
+      typed.props?.id === "index" ? ok("typing “reference” opens its contents") : bad("“reference” did not open the manual");
+      const atSection = pageOf(await sse("/hai/chat", { conversationId: id, message: "Open reference page surfaces at #freshness" }));
+      atSection.props?.id === "surfaces" && atSection.props.anchor === "freshness"
+        ? ok("a page opens at a section asked for by its anchor")
+        : bad(`surfaces at #freshness: ${JSON.stringify({ id: atSection.props?.id, anchor: atSection.props?.anchor })}`);
+      const nowhere = await sse("/hai/chat", { conversationId: id, message: "Open reference page nowhere" });
+      const refused = nowhere.filter((e) => e.type === "text_delta").map((e) => e.text).join("");
+      !pageOf(nowhere).ui && /There's no reference page nowhere\. Its pages are index, concepts/.test(refused)
+        ? ok("a page the manual doesn't have is refused, with the pages it does")
+        : bad("an unknown reference page was not refused");
+
+      // every page renders, and every link on every page leads to a page and a section there are
+      const shown = new Map();
+      const digests = new Map();
+      for (const page of panel?.pages ?? []) {
+        const got = pageOf(await sse("/hai/chat", { conversationId: id, message: `Open reference page ${page.id}` }));
+        if (got.props?.id === page.id && got.props.blocks.length) shown.set(page.id, got.props);
+        digests.set(page.id, got.digest);
+      }
+      // the digest names only the buttons a page shows
+      const buttons = (page) => digests.get(page)?.match(/its links and its (.*?) buttons?;/)?.[1];
+      buttons("index") === "Next" && buttons("surfaces") === "Next, Previous and Contents" && buttons("limits") === "Previous and Contents"
+        ? ok("each page's digest names only the buttons it shows: no Contents on the contents, no Next on the last")
+        : bad(`digest buttons: ${JSON.stringify(["index", "surfaces", "limits"].map(buttons))}`);
+      const anchorsOf = (blocks) =>
+        blocks.flatMap((b) => (b.kind === "h" && b.id ? [b.id] : b.kind === "items" ? b.items.flatMap(anchorsOf) : []));
+      const broken = [];
+      let links = 0;
+      for (const [page, props] of shown) {
+        for (const [, target] of JSON.stringify(props.blocks).matchAll(/\]\(((?:ref:[\w-]+)?(?:#[\w-]+)?)\)/g)) {
+          links++;
+          const [, to = page, anchor] = target.match(/^(?:ref:([\w-]+))?(?:#([\w-]+))?$/) ?? [];
+          const there = shown.get(to);
+          if (!there || (anchor && !anchorsOf(there.blocks).includes(anchor))) broken.push(`${page} → ${target}`);
+        }
+      }
+      shown.size === 16 && links > 500 && !broken.length
+        ? ok(`all 16 reference pages render, and all ${links} of their links lead somewhere`)
+        : bad(`reference pages shown: ${shown.size}; links that lead nowhere: ${broken.slice(0, 5).join(", ")}`);
+
+      // nothing the Markdown holds is lost on the way: as many headings, code
+      // blocks, table rows and list items on each page as in its file
+      const tally = (blocks, t = { h: 0, code: 0, rows: 0, items: 0 }) => {
+        for (const b of blocks) {
+          if (b.kind === "h") t.h++;
+          if (b.kind === "code") t.code++;
+          if (b.kind === "table") t.rows += 1 + b.rows.length;
+          if (b.kind === "items") {
+            t.items += b.items.length;
+            for (const item of b.items) tally(item, t);
+          }
+        }
+        return t;
+      };
+      const lost = [];
+      for (const [page, props] of shown) {
+        const want = { h: 0, code: 0, rows: 0, items: 0 };
+        let fenced = false;
+        for (const line of readFileSync(path.join(APP, "content/reference", `${page}.md`), "utf8").split("\n")) {
+          if (/^\s*```/.test(line)) {
+            if (!fenced) want.code++;
+            fenced = !fenced;
+          } else if (!fenced) {
+            if (/^#{2,4} /.test(line)) want.h++;
+            // a table can sit in a list item, indented under its text
+            if (/^\s*\|/.test(line) && !/^\s*\|(\s*:?-{3,}:?\s*\|)+\s*$/.test(line)) want.rows++;
+            if (/^\s*([-*]|\d+\.) /.test(line)) want.items++;
+          }
+        }
+        const got = tally(props.blocks);
+        if (JSON.stringify(got) !== JSON.stringify(want)) lost.push(`${page}: ${JSON.stringify(got)}, its file ${JSON.stringify(want)}`);
+        // and a row has a cell under each heading: a pipe in `a \| b` divides nothing
+        const tables = JSON.stringify(props.blocks).match(/"kind":"table"/g)?.length ?? 0;
+        const ragged = (function walk(blocks) {
+          return blocks.flatMap((b) => (b.kind === "table" ? b.rows.filter((r) => r.length !== b.head.length) : b.kind === "items" ? b.items.flatMap(walk) : []));
+        })(props.blocks);
+        if (tables && ragged.length) lost.push(`${page}: a row of ${ragged[0].length} cells, ${ragged[0].join(" | ").slice(0, 60)}`);
+      }
+      !lost.length
+        ? ok("every heading, code block, table row and list item in the manual's files is on its page")
+        : bad(`reference pages that lost something: ${lost.join("; ")}`);
+
+      // query_ui find: each answer says which section it's in
+      const { referencePageServer } = await import("../src/server/surfaces.ts");
+      const { makeCap } = await import("@haikit/core");
+      const found = referencePageServer.impl.queries.find(
+        { text: "staleAfterMs" },
+        { props: shown.get("surfaces"), cap: makeCap(shown.get("surfaces")?.blocks.length ?? 0) },
+      );
+      // "Surface.implement:" is the section; the paragraph itself begins "Registers"
+      /^\d+ of \d+ match/.test(found.text) && /^Surface\.implement: .*RangeError/m.test(found.text)
+        ? ok("query_ui find answers from a page, naming each passage's section")
+        : bad(`find on surfaces: ${found.text}`);
+      // "N of TOTAL" counts blocks, as the runtime's TOTAL does: never more matches than there are
+      const overcounted = [...shown].filter(([, props]) => {
+        const head = referencePageServer.impl.queries.find({ text: "the" }, { props, cap: makeCap(props.blocks.length) }).text;
+        const [, n, total] = head.match(/^(\d+) of (\d+) match/) ?? [];
+        return !n || Number(n) > Number(total);
+      });
+      !overcounted.length
+        ? ok("on every page, find's matches are blocks, never more than the page holds")
+        : bad(`find counts more matches than blocks on ${overcounted.map(([id]) => id).join(", ")}`);
+
+      // a link to a page or a section that isn't there stops the server, with the page, the line and the link
+      const { readManual } = await import("../src/server/reference.ts");
+      const index = "# Manual\n\n| Page |\n| --- |\n| [One](one.md) |\n";
+      const refusal = (files) => {
+        try {
+          readManual(new Map(Object.entries(files)));
+          return "";
+        } catch (err) {
+          return err.message;
+        }
+      };
+      const noPage = refusal({ "index.md": index, "one.md": "# One\n\nSee [two](two.md).\n" });
+      const noSection = refusal({ "index.md": index, "one.md": "# One\n\n## Here\n\nSee [there](#there) or [here](#here).\n" });
+      /one\.md, line 3: a link to a page there isn't: ref:two\. Fix it in docs\/reference\/one\.md, then run npm run docs:update\./.test(noPage) &&
+        /one\.md, line 5: a link to a section one\.md doesn't have: #there\. Fix it in docs\/reference\/one\.md/.test(noSection) &&
+        refusal({ "index.md": index, "one.md": "# One\n\n## Here\n\nSee [here](#here).\n" }) === ""
+        ? ok("a link to a page or a section the manual doesn't have stops the server, naming the line")
+        : bad(`broken links: ${JSON.stringify([noPage, noSection])}`);
+      const another = await sse("/hai/start", {});
+      const unwelcome = await sse("/hai/interact", {
+        conversationId: another.find((e) => e.type === "hello")?.conversationId,
+        handle: opened(another)[0]?.handle,
+        action: "reference",
+        value: "nowhere",
+      });
+      /no reference page nowhere/.test(unwelcome.find((e) => e.type === "error")?.message ?? "")
+        ? ok("the welcome refuses a reference page the manual doesn't have")
+        : bad("the welcome accepted an unknown reference page");
+
+      // a conversation saved before the manual: the guide finds its pages in the tool's description
+      const { scripted } = await import("../src/server/scripted.ts");
+      const { showReferencePage } = await import("../src/server/tools.ts");
+      const answer = await scripted().generate({
+        system: "",
+        tools: [{ name: showReferencePage.name, description: showReferencePage.description, input_schema: {} }],
+        messages: [{ role: "user", content: "Open reference page stores" }],
+        onTextDelta() {},
+      });
+      const call = answer.content.find((b) => b.type === "tool_use");
+      call?.name === "show_reference_page" && call.input?.page === "stores"
+        ? ok("a conversation from before the manual still opens its pages, from the tool's description")
+        : bad(`an old conversation's "Open reference page stores": ${JSON.stringify(answer.content)}`);
     }
 
     // 7d · how many people are reading now: the online signal, on the events stream
@@ -463,7 +678,7 @@ try {
 
     // 9 · each surface has a component in the browser registry
     const registry = await get(`${BASE}/components.js`).then((r) => r.text());
-    for (const component of ["welcome", "course_map", "lesson", "checkpoint", "next_lesson", "tutorial_step"]) {
+    for (const component of ["welcome", "course_map", "lesson", "checkpoint", "next_lesson", "tutorial_step", "reference_page"]) {
       new RegExp(`\\b${component}\\s*:`).test(registry)
         ? ok(`${component} is registered in components.js`)
         : bad(`${component} missing from the client registry → "unknown component"`);
