@@ -465,6 +465,11 @@ try {
       contents.props?.id === "index" && contents.props.prev === null && contents.props.next?.id === "concepts"
         ? ok("Contents opens the index, the manual's first page")
         : bad("Contents did not open the index");
+      // the contents shows no Contents button, so it can't be sent one
+      const itself = await sse("/hai/interact", { conversationId: id, handle: contents.ui?.handle, action: "go", value: "ref:index" });
+      /no way from index to ref:index/.test(itself.find((e) => e.type === "error")?.message ?? "")
+        ? ok("the contents refuses a Contents click, since it has no such button")
+        : bad("the contents accepted a Contents click it doesn't show");
       // the contents link to the tutorials, which are built in too
       const toTutorial = await sse("/hai/interact", { conversationId: id, handle: contents.ui?.handle, action: "go", value: "tutorial:intro" });
       propsOf(toTutorial, opened(toTutorial).find((e) => e.component === "tutorial_step")?.handle)?.id === "intro"
@@ -581,8 +586,8 @@ try {
       };
       const noPage = refusal({ "index.md": index, "one.md": "# One\n\nSee [two](two.md).\n" });
       const noSection = refusal({ "index.md": index, "one.md": "# One\n\n## Here\n\nSee [there](#there) or [here](#here).\n" });
-      /one\.md, line 3: a link to a page there isn't: ref:two/.test(noPage) &&
-        /one\.md, line 5: a link to a section one\.md doesn't have: #there/.test(noSection) &&
+      /one\.md, line 3: a link to a page there isn't: ref:two\. Fix it in docs\/reference\/one\.md, then run npm run docs:update\./.test(noPage) &&
+        /one\.md, line 5: a link to a section one\.md doesn't have: #there\. Fix it in docs\/reference\/one\.md/.test(noSection) &&
         refusal({ "index.md": index, "one.md": "# One\n\n## Here\n\nSee [here](#here).\n" }) === ""
         ? ok("a link to a page or a section the manual doesn't have stops the server, naming the line")
         : bad(`broken links: ${JSON.stringify([noPage, noSection])}`);

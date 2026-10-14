@@ -323,12 +323,13 @@ export const referencePageServer = referencePage.implement({
   },
 
   actions: {
-    // Only where this page leads: its own links, Previous, Next and the
-    // contents. The page's links are the allowlist, as a tutorial page's
-    // buttons are.
+    // Only where this page leads: its own links, Previous, Next and, on every
+    // page but the contents itself, Contents. The page's links and buttons
+    // are the allowlist, as a tutorial page's buttons are.
     go(target, { props }) {
       const ways = linksOff(props.blocks);
-      for (const ref of [props.prev, props.next, { id: "index" }]) if (ref) ways.add(`ref:${ref.id}`);
+      const contents = props.id === "index" ? null : { id: "index" };
+      for (const ref of [props.prev, props.next, contents]) if (ref) ways.add(`ref:${ref.id}`);
       if (!ways.has(target)) throw new Error(`no way from ${props.id} to ${target}`);
 
       const tutorial = target.match(/^tutorial:([\w-]+)$/)?.[1];

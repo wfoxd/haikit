@@ -49,11 +49,15 @@ const LANGS = ["ts", "tsx", "js", "json", "css", "html", "bash", "text"] as cons
 /** A line of a page, and its number in the file, for errors. */
 type Line = { t: string; n: number };
 
+/** What's wrong at a line of the manual, and what to do about it: by default, teach the parser. */
 class ManualError extends Error {
-  constructor(what: string, file: string, line: number) {
-    super(`content/reference/${file}, line ${line}: ${what}. Update src/server/reference.ts to read it.`);
+  constructor(what: string, file: string, line: number, fix = "Update src/server/reference.ts to read it") {
+    super(`content/reference/${file}, line ${line}: ${what}. ${fix}.`);
   }
 }
+
+/** A link that leads nowhere is the manual's to fix, not the parser's. */
+const fixLink = (file: string) => `Fix it in docs/reference/${file}, then run npm run docs:update`;
 
 /** A heading's anchor, as GitHub makes it, so the manual's own links work unchanged. */
 export const slug = (heading: string) =>
@@ -241,8 +245,10 @@ export function readManual(files: Map<string, string>): ReferencePage[] {
       const m = href.match(/^(?:ref:([\w-]+))?(?:#([\w-]+))?$/);
       if (!m || href.startsWith("tutorial:") || /^https:/.test(href)) continue;
       const to = parsed.get(m[1] ?? id)?.page;
-      if (!to) throw new ManualError(`a link to a page there isn't: ${href}`, `${id}.md`, n);
-      if (m[2] && !to.anchors.has(m[2])) throw new ManualError(`a link to a section ${to.id}.md doesn't have: ${href}`, `${id}.md`, n);
+      if (!to) throw new ManualError(`a link to a page there isn't: ${href}`, `${id}.md`, n, fixLink(`${id}.md`));
+      if (m[2] && !to.anchors.has(m[2])) {
+        throw new ManualError(`a link to a section ${to.id}.md doesn't have: ${href}`, `${id}.md`, n, fixLink(`${id}.md`));
+      }
     }
   }
   return order.map((id) => {
