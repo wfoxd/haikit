@@ -1,0 +1,184 @@
+/* Rebook's own styles. /hai-client/hai.css styles the shell, transcript and
+   model context drawer; this sheet sets the palette through the --hai-*
+   tokens and styles the surfaces, from those same tokens, so they follow
+   light and dark.
+
+   An airline's printed things: flight numbers, codes and times in a mono
+   face, a boarding pass with its tear line. Cobalt is the airline, orange a
+   disruption, green what's settled, amber a seat waiting on someone. */
+
+/* Plain dark values first: a browser without light-dark() keeps these. */
+:root {
+  --hai-bg: #0d121a;
+  --hai-panel: #151c27;
+  --hai-panel-2: #111823;
+  --hai-line: #263142;
+  --hai-fg: #e6ebf2;
+  --hai-dim: #94a1b5;
+  --hai-accent: #8eaaff;
+  --hai-on-accent: #0b1220;
+  --hai-good: #4cd39b;
+  --hai-warn: #f0b74d;
+  --hai-bad: #ff8f5e;
+  --hai-user-bg: #18233a;
+  --hai-code-bg: #0f1520;
+
+  --sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --hai-sans: var(--sans);
+  --hai-mono: var(--mono);
+}
+
+/* One value per scheme. These follow the system, or a data-hai-theme pin. */
+@supports (color: light-dark(#000, #fff)) {
+  :root {
+    --hai-bg: light-dark(#eef1f5, #0d121a);
+    --hai-panel: light-dark(#ffffff, #151c27);
+    --hai-panel-2: light-dark(#f6f8fb, #111823);
+    --hai-line: light-dark(#d4dbe5, #263142);
+    --hai-fg: light-dark(#121a2b, #e6ebf2);
+    --hai-dim: light-dark(#59657a, #94a1b5);
+    --hai-accent: light-dark(#1d3fbf, #8eaaff);
+    --hai-on-accent: light-dark(#ffffff, #0b1220);
+    --hai-good: light-dark(#0f7a55, #4cd39b);
+    --hai-warn: light-dark(#8a5a00, #f0b74d);
+    --hai-bad: light-dark(#c2410c, #ff8f5e);
+    --hai-user-bg: light-dark(#e5ebfb, #18233a);
+    --hai-code-bg: light-dark(#f2f5f9, #0f1520);
+  }
+}
+
+:where(button, [tabindex]):focus-visible { outline: 2px solid var(--hai-accent); outline-offset: 2px; }
+
+/* ── the Airline ops bar, under the header ─────────────────────────────── */
+.ops {
+  flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
+  padding: 9px 16px; border-bottom: 1px solid var(--hai-line);
+  background: repeating-linear-gradient(-45deg, var(--hai-panel-2) 0 10px, var(--hai-panel) 10px 20px);
+}
+.ops-label { margin: 0; display: flex; align-items: baseline; gap: 8px; font: 700 12px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--hai-bad); }
+.ops-note { font: 500 12px var(--sans); letter-spacing: 0; text-transform: none; color: var(--hai-dim); }
+.ops-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+.ops-button {
+  padding: 5px 11px; border: 1px solid var(--hai-line); border-radius: 7px; background: var(--hai-panel);
+  color: var(--hai-fg); font: 600 13px var(--sans); cursor: pointer;
+}
+.ops-button:hover { border-color: var(--hai-bad); color: var(--hai-bad); }
+.ops.is-busy .ops-button { opacity: 0.6; cursor: progress; }
+.ops-status { margin: 0; flex: 1 1 260px; min-width: 0; font-size: 13px; color: var(--hai-dim); }
+.ops-status.is-refused { color: var(--hai-warn); }
+.crowd-chip {
+  padding: 3px 9px; border: 1px solid var(--hai-line); border-radius: 999px;
+  font: 12px var(--mono); color: var(--hai-dim); white-space: nowrap;
+}
+
+/* ── surfaces ──────────────────────────────────────────────────────────── */
+/* The transcript frames each surface already: a card is its contents. */
+.rb-card { padding: 18px 20px; display: grid; gap: 14px; font-family: var(--sans); }
+.rb-head { display: flex; flex-wrap: wrap; align-items: start; justify-content: space-between; gap: 6px 12px; }
+.rb-head-words { min-width: 0; }
+.rb-title { margin: 0; font: 600 16.5px/1.3 var(--sans); text-wrap: balance; }
+.rb-sub { margin: 2px 0 0; font-size: 13px; color: var(--hai-dim); }
+.rb-badge { padding: 2px 9px; border-radius: 999px; font: 600 12px var(--sans); white-space: nowrap; }
+.rb-badge-ok { color: var(--hai-good); background: color-mix(in srgb, var(--hai-good) 14%, transparent); }
+.rb-badge-alert { color: var(--hai-bad); background: color-mix(in srgb, var(--hai-bad) 14%, transparent); }
+.rb-badge-wait { color: var(--hai-warn); background: color-mix(in srgb, var(--hai-warn) 14%, transparent); }
+.rb-foot { margin: 0; font-size: 13px; color: var(--hai-dim); }
+.rb-why { margin: 0; font-weight: 600; color: var(--hai-bad); }
+.rb-code { font: 600 30px/1 var(--mono); letter-spacing: 0.02em; }
+.rb-time { font: 500 14px var(--mono); font-variant-numeric: tabular-nums; }
+.rb-arrow { color: var(--hai-dim); }
+
+/* the trip */
+.rb-route { display: flex; align-items: center; gap: 18px; }
+.rb-stop { display: grid; gap: 3px; }
+.rb-city { font-size: 13px; color: var(--hai-dim); }
+.rb-route > .rb-arrow { font-size: 22px; }
+.rb-facts { margin: 0; display: flex; flex-wrap: wrap; gap: 8px 28px; }
+.rb-facts dt { font-size: 11.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--hai-dim); }
+.rb-facts dd { margin: 2px 0 0; font: 600 15px var(--mono); }
+.rb-trip.is-cancelled { box-shadow: inset 4px 0 0 var(--hai-bad); }
+.rb-trip.is-cancelled .rb-route { opacity: 0.55; }
+.rb-trip.is-cancelled .rb-time { text-decoration: line-through; }
+
+/* the options */
+.rb-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.rb-chip {
+  padding: 3px 11px; border: 1px solid var(--hai-line); border-radius: 999px; background: none;
+  color: var(--hai-fg); font: 13px var(--sans); cursor: pointer;
+}
+.rb-chip.is-on { border-color: var(--hai-accent); color: var(--hai-accent); font-weight: 600; }
+.rb-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.rb-option {
+  box-sizing: border-box; width: 100%; display: grid; grid-template-columns: max-content minmax(0, 1fr) auto; align-items: center; gap: 4px 16px;
+  padding: 10px 12px; border: 1px solid var(--hai-line); border-radius: 10px; background: var(--hai-panel-2);
+  color: var(--hai-fg); font: inherit; text-align: left;
+}
+button.rb-option { cursor: pointer; }
+button.rb-option:not(:disabled):hover { border-color: var(--hai-accent); }
+.rb-option.is-picked { border-color: var(--hai-accent); background: color-mix(in srgb, var(--hai-accent) 10%, var(--hai-panel-2)); }
+.rb-option.is-gone { opacity: 0.5; }
+.rb-times { display: flex; gap: 6px; align-items: baseline; white-space: nowrap; }
+.rb-what { display: grid; gap: 2px; min-width: 0; }
+.rb-flights { font: 600 14px var(--mono); }
+.rb-detail { font-size: 13px; color: var(--hai-dim); }
+.rb-cost { display: grid; justify-items: end; gap: 2px; }
+.rb-fare { font: 600 14px var(--mono); }
+.rb-fare.is-free { font: 600 13px var(--sans); color: var(--hai-good); }
+.rb-left { font-size: 12px; color: var(--hai-dim); }
+.rb-left.is-low { color: var(--hai-warn); font-weight: 600; }
+.rb-left.is-out { color: var(--hai-bad); font-weight: 600; }
+@media (max-width: 560px) {
+  .rb-option { grid-template-columns: minmax(0, 1fr) auto; }
+  .rb-times { grid-column: 1 / -1; }
+}
+
+/* the seat map */
+.rb-grid { display: grid; gap: 4px; overflow-x: auto; }
+.rb-row { display: flex; align-items: center; gap: 4px; }
+.rb-rownum { width: 2em; font: 12px var(--mono); color: var(--hai-dim); text-align: right; margin-right: 4px; }
+.rb-aisle { width: 18px; }
+.rb-seat {
+  width: 30px; height: 30px; border: 1px solid var(--hai-line); border-radius: 7px 7px 4px 4px;
+  background: var(--hai-panel-2); color: var(--hai-fg); font: 600 11.5px var(--mono); cursor: pointer;
+}
+.rb-seat.is-legroom { border-color: color-mix(in srgb, var(--hai-good) 60%, var(--hai-line)); color: var(--hai-good); }
+.rb-seat:not(:disabled):hover { border-color: var(--hai-accent); color: var(--hai-accent); }
+.rb-seat.is-taken { background: var(--hai-line); color: transparent; border-color: transparent; cursor: default; }
+.rb-seat.is-picked { background: var(--hai-accent); border-color: var(--hai-accent); color: var(--hai-on-accent); }
+.rb-seat:disabled:not(.is-taken):not(.is-picked) { cursor: default; opacity: 0.7; }
+
+/* tonight */
+.rb-choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; }
+.rb-choice {
+  display: grid; gap: 4px; align-content: start; padding: 12px 14px; text-align: left;
+  border: 1px solid var(--hai-line); border-radius: 10px; background: var(--hai-panel-2); color: var(--hai-fg); font: inherit; cursor: pointer;
+}
+.rb-choice:not(:disabled):hover { border-color: var(--hai-accent); }
+.rb-choice:disabled { cursor: default; }
+.rb-choice.is-picked { border-color: var(--hai-accent); background: color-mix(in srgb, var(--hai-accent) 10%, var(--hai-panel-2)); }
+.rb-choice-title { font-weight: 600; }
+.rb-choice-detail { font-size: 13px; color: var(--hai-dim); }
+
+/* the boarding pass: a tear line between the trip and the details */
+.rb-pass { box-shadow: inset 0 4px 0 var(--hai-accent); }
+.rb-legs { display: grid; gap: 8px; }
+.rb-leg { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.rb-leg-flight { font: 13px var(--mono); color: var(--hai-dim); }
+.rb-facts-pass { padding-top: 14px; border-top: 2px dashed var(--hai-line); }
+.rb-facts-pass dd { font-size: 20px; }
+.rb-facts-pass .is-moved dd { color: var(--hai-bad); animation: moved 2.4s ease-out; }
+@keyframes moved { 0%, 30% { background: color-mix(in srgb, var(--hai-bad) 22%, transparent); } 100% { background: transparent; } }
+
+/* notices: what the airline said, beside the surface it's about */
+/* the transcript frames a notice too: a notice is its line */
+.rb-notice { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; padding: 9px 14px; font: 14px var(--sans); }
+.rb-notice span { color: var(--hai-dim); }
+.rb-notice-alert { background: color-mix(in srgb, var(--hai-bad) 9%, var(--hai-panel)); }
+.rb-notice-alert strong { color: var(--hai-bad); }
+.rb-notice-ok { background: color-mix(in srgb, var(--hai-good) 8%, var(--hai-panel)); }
+.rb-notice-ok strong { color: var(--hai-good); }
+
+@media (prefers-reduced-motion: reduce) {
+  .rb-facts-pass .is-moved dd { animation: none; }
+}
