@@ -39,8 +39,8 @@ async function reply(
   };
 }
 
-/** What the guide can know, read from the history the way a model reads it. */
-function read(messages: ModelRequest["messages"], system = "") {
+/** What the guide can know, read from the history and the tools the way a model reads them. */
+function read(messages: ModelRequest["messages"], system = "", tools: ModelRequest["tools"] = []) {
   const blocks = messages.flatMap((m) => (Array.isArray(m.content) ? (m.content as any[]) : []));
   const results: string[] = blocks
     .filter((b) => b?.type === "tool_result")
@@ -96,15 +96,25 @@ function read(messages: ModelRequest["messages"], system = "") {
       ? (uses[lastUse("show_tutorial_step")]?.input?.id as string | undefined) ?? null
       : null;
 
-  return { lessons, mapHandle, current, pages, page };
+  // The reference manual's pages: the welcome digest lists them, and a
+  // conversation saved before the manual was built in finds them in the
+  // description of today's show_reference_page instead.
+  const described = tools.find((t) => t.name === "show_reference_page")?.description ?? "";
+  const manual =
+    all.match(/built into this app: \d+ pages, ([^;]+); show_reference_page/)?.[1] ??
+    described.match(/reference manual, built into this app: ([\w, -]+)\./)?.[1] ??
+    "";
+  const reference = manual.split(/,\s*/).map((p) => p.replace(/ \(.*\)$/, "").trim()).filter(Boolean);
+
+  return { lessons, mapHandle, current, pages, page, reference };
 }
 
 export function scripted(): ModelAdapter {
   return {
     id: "scripted guide",
 
-    async generate({ messages, system, onTextDelta }: ModelRequest): Promise<ModelResponse> {
-      const { lessons, mapHandle, current, pages, page } = read(messages, system);
+    async generate({ messages, system, tools, onTextDelta }: ModelRequest): Promise<ModelResponse> {
+      const { lessons, mapHandle, current, pages, page, reference } = read(messages, system, tools);
       const find = (id: string) => lessons.find((l) => l.id === id);
       const after = (id: string | undefined) => lessons[lessons.findIndex((l) => l.id === id) + 1];
 
@@ -129,6 +139,17 @@ export function scripted(): ModelAdapter {
                 : `Tutorial step ${id}${title ? `: ${title}` : ""}. Use Next at the bottom when you're ready.`,
           onTextDelta,
           [toolUse("show_tutorial_step", { id })],
+        );
+
+      /** A page of the reference manual, which waits for the reader's link or button. */
+      const look = (id: string, title?: string, anchor?: string, section?: string) =>
+        reply(
+          id === "index"
+            ? "Here's the reference manual's contents. Its links open any page of it, right here."
+            : `Reference: ${title ?? id}${section ? `, at “${section}”` : anchor ? `, at #${anchor}` : ""}. ` +
+                "Its links, and the buttons at the bottom, take you on.",
+          onTextDelta,
+          [toolUse("show_reference_page", anchor ? { page: id, anchor } : { page: id })],
         );
 
       const last = messages.at(-1);
@@ -172,6 +193,10 @@ export function scripted(): ModelAdapter {
         const step = latest.join("\n").match(/(?:chose to open|moved to|Opened) tutorial step ([\w-]+) "([^"]+)"/);
         if (step) return tour(step[1]!, step[2]!);
 
+        // A way into the reference: the welcome's panel, or a page's link or button.
+        const ref = latest.join("\n").match(/(?:chose to open|moved to) reference page ([\w-]+) "([^"]+)"(?: at #([\w-]+) "([^"]+)")?/);
+        if (ref) return look(ref[1]!, ref[2]!, ref[3], ref[4]);
+
         const opened = latest.join("\n").match(/Opened lesson (\d+\.\d+) "([^"]+)"/);
         if (opened) return teach({ id: opened[1]!, title: opened[2]! });
 
@@ -204,6 +229,16 @@ export function scripted(): ModelAdapter {
           ? teach(l)
           : reply(`There's no lesson ${id}. The lessons are ${lessons.map((x) => x.id).join(", ")}.`, onTextDelta);
       }
+
+      // The reference manual, before the keyword rules: the menu says
+      // "Open reference page surfaces", and "contents" alone means the course map.
+      const asked = text.match(/\breference page ([\w-]+)(?: at #?([\w-]+))?/);
+      if (asked) {
+        return reference.includes(asked[1]!)
+          ? look(asked[1]!, undefined, asked[2])
+          : reply(`There's no reference page ${asked[1]}. Its pages are ${reference.join(", ")}.`, onTextDelta);
+      }
+      if (/\b(reference|manual)\b/.test(text) && reference.length) return look("index");
 
       // The tutorial, before the keyword rules: "start the tutorial" is about
       // the tutorial, and "next" means the next page while one is on screen.
@@ -282,7 +317,8 @@ export function scripted(): ModelAdapter {
 
       return reply(
         "I'm the scripted guide, so I understand a few kinds of request: a lesson (“1.3”, “next”, “part 2”), " +
-          "the tutorial (“tutorial”, “step 4”), the course map (“contents”), or a definition (“what is a handle?”). " +
+          "the tutorial (“tutorial”, “step 4”), the reference (“reference”, “reference page tools”), " +
+          "the course map (“contents”), or a definition (“what is a handle?”). " +
           "Set ANTHROPIC_API_KEY on the server to talk to Claude instead.",
         onTextDelta,
       );

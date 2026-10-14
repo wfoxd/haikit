@@ -2,7 +2,7 @@
  * HaiKIT's tutorials, built into this app.
  *
  * content/tutorial.md and content/tutorial-2.md are copies of docs/tutorial.md
- * and docs/tutorial-2.md from the haikit repository; `npm run tutorial:update`
+ * and docs/tutorial-2.md from the haikit repository; `npm run docs:update`
  * refreshes them. Each is parsed here once, when the server starts, into the
  * pages the browser shows: its introduction, its steps, and where to go next.
  * The second tutorial's page ids carry a `2-` prefix ("2-intro", "2-01"), so

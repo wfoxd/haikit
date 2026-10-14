@@ -1,7 +1,8 @@
 import { estTokens, type Cap } from "@haikit/core";
 import type { Block, CourseMapProps, Term } from "../shared/surfaces.ts";
-import { checkpoint, courseMap, lesson, nextLesson, tutorialStep, welcomeScreen } from "../shared/surfaces.ts";
+import { checkpoint, courseMap, lesson, nextLesson, referencePage, tutorialStep, welcomeScreen } from "../shared/surfaces.ts";
 import { CHECKS, OPTION_IDS, lessonProps } from "./course/index.ts";
+import { REFERENCE_TITLE, plain, referencePageOf } from "./reference.ts";
 import { tutorialPage } from "./tutorial.ts";
 
 const quote = (s: string) => `"${s}"`;
@@ -51,6 +52,12 @@ export const welcomeServer = welcomeScreen.implement({
         ? `Then the second tutorial: ${quote(props.tutorial.next.title)}, pages ${props.tutorial.next.first.id} and ` +
           `steps 2-01–2-${String(props.tutorial.next.steps).padStart(2, "0")}, then 2-next-steps. `
         : "") +
+      // a welcome stored before version 10 has no reference
+      (props.reference
+        ? `Under them, ${quote(props.reference.title)}, built into this app: ${props.reference.pages.length} pages, ` +
+          `${props.reference.pages.map((p) => (p.id === "index" ? "index (the contents)" : p.id)).join(", ")}; ` +
+          `show_reference_page opens one. `
+        : "") +
       `The course: ${parts}. It asks where to begin: lesson ${props.first.id} ` +
       `${quote(props.first.title)}, or the course map (show_course_map), which lists ` +
       `every lesson and holds the glossary.`
@@ -68,6 +75,11 @@ export const welcomeServer = welcomeScreen.implement({
       // Throwing refuses the click and leaves the welcome screen live.
       if (!page) throw new Error(`no tutorial page ${id}`);
       return `The learner chose to open tutorial step ${page.id} ${quote(page.title)}.`;
+    },
+    reference(id) {
+      const page = referencePageOf(id);
+      if (!page) throw new Error(`no reference page ${id}`);
+      return `The learner chose to open reference page ${page.id} ${quote(page.label)}.`;
     },
   },
 
@@ -133,6 +145,8 @@ export function textOf(block: Block): string {
       return block.text;
     case "list":
       return block.items.join(" ");
+    case "items":
+      return block.items.map((item) => item.map(textOf).join(" ")).join(" ");
     case "code":
       return [
         block.file,
@@ -250,6 +264,95 @@ export const tutorialStepServer = tutorialStep.implement({
   },
 });
 // #endregion tutorial-step-server
+
+/** The links on a page that lead off it, to another reference page or a tutorial page. */
+export function linksOff(blocks: Block[]): Set<string> {
+  const text = blocks.map(textOf).join(" ");
+  return new Set([...text.matchAll(/\]\(((?:ref|tutorial):[\w#-]+)\)/g)].map((m) => m[1]!));
+}
+
+/** The passages a block holds: a table's rows and a list's items one by one, anything else whole. */
+function passagesOf(block: Block): string[] {
+  if (block.kind === "table") return block.rows.map((r) => r.join(" | "));
+  if (block.kind === "items") return block.items.flatMap((item) => item.flatMap(passagesOf));
+  return [textOf(block)];
+}
+
+/**
+ * Blocks of a reference page that mention `wanted`, each with the section it's
+ * in, capped. A table of options or a long list is far too much to quote
+ * whole, so each match quotes only its rows or items that mention it, and
+ * only the words around the mention.
+ */
+function findOnPage(blocks: Block[], wanted: string, cap: Cap) {
+  const needle = wanted.toLowerCase();
+  const around = (text: string) => {
+    const from = Math.max(0, text.toLowerCase().indexOf(needle) - 80);
+    return `${from ? "…" : ""}${text.slice(from, from + 200)}${from + 200 < text.length ? "…" : ""}`;
+  };
+  const hits: string[] = [];
+  let section = "";
+  for (const block of blocks) {
+    if (block.kind === "h") section = plain(block.text);
+    const matching = passagesOf(block).map(plain).filter((t) => t.toLowerCase().includes(needle));
+    if (!matching.length) continue;
+    hits.push(block.kind === "h" ? `The section ${section}` : `${section ? `${section}: ` : ""}${matching.map(around).join(" · ")}`);
+  }
+  return cap(hits, (t) => (t.length > 320 ? `${t.slice(0, 319)}…` : t), { maxRows: 4 });
+}
+
+export const referencePageServer = referencePage.implement({
+  // A page of the manual runs to thousands of tokens. The model gets its
+  // title, what it opens with, its sections, and a query for the rest.
+  digest(props, { handle }) {
+    const page = referencePageOf(props.id);
+    const sections = props.blocks.flatMap((b) => (b.kind === "h" && b.level === 2 ? [plain(b.text)] : []));
+    const at = props.anchor ? page?.anchors.get(props.anchor) : undefined;
+    return [
+      `Reference page ${props.id} ${quote(props.title)} is on screen as ${handle}` +
+        (at ? `, opened at its section #${props.anchor} ${quote(at)}` : "") +
+        ` (page ${props.position.index} of ${props.position.total} of ${quote(REFERENCE_TITLE)};` +
+        ` about ${estTokens(props).toLocaleString("en")} tokens that stay in the browser).`,
+      page?.lead ? `It opens: ${page.lead.length > 220 ? `${page.lead.slice(0, 219)}…` : page.lead}` : "",
+      sections.length ? `Sections: ${sections.join("; ")}.` : "",
+      "The reader moves on with its links and its Previous, Next and Contents buttons;" +
+        " query_ui find answers questions about it, with the section each answer is in.",
+    ]
+      .filter(Boolean)
+      .join(" ");
+  },
+
+  actions: {
+    // Only where this page leads: its own links, Previous, Next and the
+    // contents. The page's links are the allowlist, as a tutorial page's
+    // buttons are.
+    go(target, { props }) {
+      const ways = linksOff(props.blocks);
+      for (const ref of [props.prev, props.next, { id: "index" }]) if (ref) ways.add(`ref:${ref.id}`);
+      if (!ways.has(target)) throw new Error(`no way from ${props.id} to ${target}`);
+
+      const tutorial = target.match(/^tutorial:([\w-]+)$/)?.[1];
+      if (tutorial) {
+        const step = tutorialPage(tutorial);
+        if (!step) throw new Error(`no tutorial page ${tutorial}`);
+        return `The reader moved to tutorial step ${step.id} ${quote(step.title)}.`;
+      }
+      const [, id, anchor] = target.match(/^ref:([\w-]+)(?:#([\w-]+))?$/) ?? [];
+      const page = id ? referencePageOf(id) : null;
+      // a page stored before the manual changed may link to what's gone since
+      if (!page) throw new Error(`no reference page ${id}`);
+      const section = anchor ? page.anchors.get(anchor) : undefined;
+      if (anchor && !section) throw new Error(`no section #${anchor} on reference page ${page.id}`);
+      return `The reader moved to reference page ${page.id} ${quote(page.label)}` + (section ? ` at #${anchor} ${quote(section)}.` : ".");
+    },
+  },
+
+  queries: {
+    find(args, { props, cap }) {
+      return findOnPage(props.blocks, args.text, cap);
+    },
+  },
+});
 
 // #region checkpoint-server
 export const checkpointServer = checkpoint.implement({

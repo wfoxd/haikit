@@ -1,5 +1,5 @@
 /**
- * The contract for the course's three surfaces. Both halves import this file:
+ * The contract for the course's surfaces. Both halves import this file:
  * the server implements it in ../server/surfaces.ts, and the browser renders it
  * in ../../public/components.js, typechecked against the types below.
  *
@@ -51,13 +51,39 @@ export const Prose = z.discriminatedUnion("kind", [
 ]);
 
 /**
- * One piece of a lesson or a tutorial step. Text fields allow `code`, **bold**
- * and *italic* inline; the browser turns those into elements, never into HTML.
+ * One piece of a lesson, a tutorial step or a reference page. Text fields allow
+ * `code`, **bold**, *italic* and [links](ref:tools#query_ui) inline; the browser
+ * turns those into elements, never into HTML.
+ *
+ * A link's target is one of: `#anchor` on the same page, `ref:page` or
+ * `ref:page#anchor` for a page of the reference, `tutorial:id` for a tutorial
+ * page, or an https URL. The server writes them that way when it reads the
+ * Markdown, so the browser never resolves a relative path.
  */
 export const Block = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("p"), text: z.string() }),
-  z.object({ kind: z.literal("h"), text: z.string() }),
+  z.object({
+    kind: z.literal("h"),
+    text: z.string(),
+    /** A reference page's ## is 2, ### is 3, #### is 4. A lesson's or a tutorial's heading has none. */
+    level: z.number().optional(),
+    /** The anchor a link reaches it by: GitHub's, so the manual's own links work unchanged. */
+    id: z.string().optional(),
+  }),
   z.object({ kind: z.literal("list"), items: z.array(z.string()) }),
+  /**
+   * A reference page's list, whose items can hold paragraphs, code and lists
+   * of their own: each item is its blocks.
+   */
+  z.object({
+    kind: z.literal("items"),
+    ordered: z.boolean(),
+    /** The first number of an ordered list, when it isn't 1. */
+    start: z.number().optional(),
+    get items() {
+      return z.array(z.array(Block));
+    },
+  }),
   z.object({ kind: z.literal("note"), tone: z.enum(["look", "tip", "warn"]), text: z.string() }),
   z.object({
     kind: z.literal("code"),
@@ -103,6 +129,10 @@ export type LessonRef = z.infer<typeof LessonRef>;
 export const TutorialRef = z.object({ id: z.string(), label: z.string(), title: z.string() });
 export type TutorialRef = z.infer<typeof TutorialRef>;
 
+/** A page of the reference manual: "index" (its contents), "concepts", "surfaces" … */
+export const ReferenceRef = z.object({ id: z.string(), title: z.string() });
+export type ReferenceRef = z.infer<typeof ReferenceRef>;
+
 export const Term = z.object({
   term: z.string(),
   aka: z.array(z.string()),
@@ -142,8 +172,8 @@ export const welcomeScreen = defineSurface({
   name: "welcome",
   // 2 added the diagram, 3 the sections, 4 their illustrations, 5 a source
   // link, 6 the links list, 7 a tutorial panel of links, 8 the tutorial in-app,
-  // 9 the second tutorial beside it
-  version: 9,
+  // 9 the second tutorial beside it, 10 the reference manual under them
+  version: 10,
   props: z.object({
     /** A short introduction, one paragraph per entry. The first is the lede. */
     intro: z.array(z.string()),
@@ -168,6 +198,8 @@ export const welcomeScreen = defineSurface({
       /** The tutorial that carries on from this one: its first page, and how many steps it has. */
       next: z.object({ title: z.string(), lead: z.string(), first: TutorialRef, steps: z.number() }).optional(),
     }),
+    /** HaiKIT's reference manual, built into this app: every page, its contents first. */
+    reference: z.object({ title: z.string(), lead: z.string(), pages: z.array(ReferenceRef) }),
     /** Each part's range of lessons, so the model knows which lessons exist. */
     parts: z.array(
       z.object({ n: z.number(), title: z.string(), first: z.string(), last: z.string(), lessons: z.number(), minutes: z.number() }),
@@ -179,6 +211,7 @@ export const welcomeScreen = defineSurface({
     // Its buttons are the question this screen asks: where to begin.
     begin: resolve(z.enum(["first-lesson", "course-map"])),
     tutorial: resolve(z.string()), // or a page of a tutorial, by id
+    reference: resolve(z.string()), // or a page of the reference manual, by id
   },
 });
 // #endregion welcome
@@ -274,6 +307,35 @@ export const tutorialStep = defineSurface({
 });
 // #endregion tutorial-step
 
+export const referencePage = defineSurface({
+  name: "reference_page",
+  version: 1,
+  props: z.object({
+    blocks: z.array(Block),
+    id: z.string(),
+    title: z.string(),
+    /** Where this page sits in the manual. */
+    position: z.object({ index: z.number(), total: z.number() }),
+    prev: ReferenceRef.nullable(),
+    next: ReferenceRef.nullable(),
+    /** The section to open at, by its anchor, or null for the top. */
+    anchor: z.string().nullable(),
+  }),
+  actions: {
+    // A link to another page, or Previous, Next or Contents: a page waits for
+    // the reader to move on, like a tutorial page. The value is the link's
+    // target, such as "ref:tools#query_ui".
+    go: resolve(z.string()),
+  },
+  queries: {
+    find: query(
+      z.object({ text: z.string() }),
+      "Passages of this reference page that mention a word or phrase, each with its section",
+      { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
+    ),
+  },
+});
+
 // #region next-lesson
 export const nextLesson = defineSurface({
   name: "next_lesson",
@@ -312,3 +374,4 @@ export type LessonProps = Infer<typeof lesson.props>;
 export type CheckpointProps = Infer<typeof checkpoint.props>;
 export type NextLessonProps = Infer<typeof nextLesson.props>;
 export type TutorialStepProps = Infer<typeof tutorialStep.props>;
+export type ReferencePageProps = Infer<typeof referencePage.props>;

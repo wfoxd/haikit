@@ -13,7 +13,7 @@
     "smoke": "node test/smoke.mjs",
     "test": "npm run typecheck && npm run smoke",
     "haikit:update": "npm install @haikit/core@latest @haikit/server@latest @haikit/client@latest @haikit/anthropic@latest @haikit/postgres@latest && npm test",
-    "tutorial:update": "node scripts/update-tutorial.mjs && npm test"
+    "docs:update": "node scripts/update-docs.mjs && npm test"
   },
   "dependencies": {
     "@haikit/anthropic": "^0.20.5",
