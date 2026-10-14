@@ -357,6 +357,23 @@ button.map-lesson:hover { background: var(--hai-hover); }
 .l-live { color: var(--hai-good); font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
 .l-live::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .l-path { overflow-wrap: anywhere; }
+/* the copy button: at the end of the bar above the code, or beside the code */
+.l-copy {
+  display: inline-flex; align-items: center; gap: 5px; margin-left: auto;
+  padding: 3px 9px; border: 1px solid var(--hai-line-soft); border-radius: 6px;
+  background: var(--hai-code-bg); color: var(--hai-dim); cursor: pointer;
+  font: 600 11.5px var(--display);
+}
+.l-copy:hover { color: var(--hai-fg); background: var(--hai-hover); }
+.l-copy.copied { color: var(--hai-good); }
+.l-copy svg { fill: none; stroke: currentColor; stroke-width: 1.4; }
+/* no bar: the code and its button share one box, the button level with the first line */
+.l-code-bare {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start;
+  background: var(--hai-code-bg); border: 1px solid var(--hai-line-soft); border-radius: 8px;
+}
+.l-code-bare > pre { border: 0; background: none; }
+.l-code-bare > .l-copy { margin: 11px 10px 0 8px; }
 .l-caption { margin-top: 7px; font: 14px/1.5 var(--display); color: var(--hai-dim); }
 .t-com { color: var(--hai-dim); font-style: italic; }
 .t-str { color: var(--hai-good); }
@@ -397,6 +414,8 @@ button.map-lesson:hover { background: var(--hai-hover); }
   font: 700 10.5px/1 var(--display); text-decoration: none;
 }
 .l-mark:focus-visible { outline: 2px solid var(--hai-accent); outline-offset: 2px; }
+/* a number on a line of code is a link, not code: selecting the code leaves it out */
+.l-line > .l-mark { margin-left: 0.75em; user-select: none; }
 .l-notes { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 10px; }
 .l-note-item { display: grid; grid-template-columns: 2.2em minmax(0, 1fr); gap: 4px 10px; align-items: start; border-radius: 6px; }
 .l-note-item .l-mark { margin-top: 0.25em; }

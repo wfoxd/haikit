@@ -265,7 +265,7 @@ function numbered(el, block, uid) {
         e.preventDefault();
         reveal(`${uid}-${n}`);
       };
-      line.append(" ", mark);
+      line.append(mark);
     }
     el.append(line);
     if (i < lines.length - 1) el.append("\n");
@@ -296,6 +296,69 @@ function notesList(notes, uid) {
     ol.append(li);
   }
   return ol;
+}
+
+/**
+ * Text onto the clipboard. Without the clipboard API (a page served over
+ * plain http, other than localhost) it falls back to copying from a hidden
+ * textarea, putting the focus back where it was.
+ * @param {string} text
+ * @returns {Promise<boolean>} whether it was copied
+ */
+async function toClipboard(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const back = document.activeElement;
+    const area = h("textarea");
+    area.value = text;
+    area.readOnly = true;
+    area.style.cssText = "position: fixed; top: 0; left: 0; opacity: 0";
+    document.body.append(area);
+    area.select();
+    try {
+      return document.execCommand("copy");
+    } catch {
+      return false;
+    } finally {
+      area.remove();
+      if (back instanceof HTMLElement) back.focus();
+    }
+  }
+}
+
+/**
+ * A button that copies a block's code as written: the note numbers drawn on
+ * its lines aren't part of `code`, so they never reach the clipboard.
+ * @param {string} code
+ */
+function copyButton(code) {
+  const button = h("button", "l-copy");
+  button.type = "button";
+  button.title = "Copy the code";
+  const icon = el("svg", { viewBox: "0 0 16 16", width: 14, height: 14, "aria-hidden": "true" });
+  icon.append(
+    el("rect", { x: 5.5, y: 5.5, width: 8, height: 8, rx: 1.5 }),
+    el("path", { d: "M5.5 10.5H4A1.5 1.5 0 0 1 2.5 9V4A1.5 1.5 0 0 1 4 2.5h5A1.5 1.5 0 0 1 10.5 4v1.5" }),
+  );
+  // a live region, so a screen reader hears "Copied" too
+  const label = h("span", null, "Copy");
+  label.setAttribute("aria-live", "polite");
+  button.append(icon, label);
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let reset;
+  button.onclick = async () => {
+    const copied = await toClipboard(code);
+    label.textContent = copied ? "Copied" : "Couldn't copy";
+    button.classList.toggle("copied", copied);
+    clearTimeout(reset);
+    reset = setTimeout(() => {
+      label.textContent = "Copy";
+      button.classList.remove("copied");
+    }, 2000);
+  };
+  return button;
 }
 
 /**
@@ -342,17 +405,19 @@ function renderBlock(block) {
     }
     case "code": {
       const fig = h("figure", "l-code");
+      /** @type {HTMLElement | null} */
+      let head = null;
       if (block.source) {
-        const src = h("figcaption", "l-source");
-        src.append(h("span", "l-live", "Live source"), h("span", "l-path", block.source));
-        src.title = "Read from the code this server is running, when it started";
-        fig.append(src);
+        head = h("figcaption", "l-source");
+        head.append(h("span", "l-live", "Live source"), h("span", "l-path", block.source));
+        head.title = "Read from the code this server is running, when it started";
+        fig.append(head);
       }
       if (block.file) {
-        const label = h("figcaption", "l-file");
-        label.append(h("span", "l-file-name", block.file));
-        if (block.action) label.append(inline(h("span", "l-file-action"), block.action));
-        fig.append(label);
+        head = h("figcaption", "l-file");
+        head.append(h("span", "l-file-name", block.file));
+        if (block.action) head.append(inline(h("span", "l-file-action"), block.action));
+        fig.append(head);
       }
       const pre = h("pre");
       const code = h("code");
@@ -360,7 +425,16 @@ function renderBlock(block) {
       if (block.marks?.length) numbered(code, block, uid);
       else highlight(code, block.code, block.lang);
       pre.append(code);
-      fig.append(pre);
+      // the copy button goes in the bar above the code, or beside the code
+      // when there's no bar: never over it, where it would hide a long line
+      if (head) {
+        head.append(copyButton(block.code));
+        fig.append(pre);
+      } else {
+        const bare = h("div", "l-code-bare");
+        bare.append(pre, copyButton(block.code));
+        fig.append(bare);
+      }
       if (block.caption) fig.append(inline(h("figcaption", "l-caption"), block.caption));
       if (block.notes?.length) fig.append(notesList(block.notes, uid));
       return fig;
