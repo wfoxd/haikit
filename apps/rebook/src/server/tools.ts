@@ -9,7 +9,7 @@
 import { defineTool } from "@haikit/core";
 import { z } from "zod";
 import type { RebookOption } from "../shared/surfaces.ts";
-import { chosen, optionsShown, passShown, seatsShown, stock, tripShown } from "./airline.ts";
+import { chosen, optionsShown, passShown, seatsFor, seatsShown, stock, tripShown } from "./airline.ts";
 import { CARE, OPTIONS, TRIP, bookingReference, optionById, seatRows } from "./data.ts";
 import { boardingPassServer, careOptionsServer, rebookingOptionsServer, seatMapServer, tripCardServer } from "./surfaces.ts";
 
@@ -87,7 +87,9 @@ export const showSeatMap = defineTool({
     const option = optionById(optionId);
     if (!option) return ctx.text(`No option ${optionId}.`);
     const flight = option.flights[0]!;
-    const props = { optionId, flight, airline: option.airline.split(" + ")[0]!, rows: seatRows(flight) };
+    // Shown again, a map keeps the seats other passengers have taken since.
+    const rows = seatsFor(ctx.conversationId, flight) ?? seatRows(flight);
+    const props = { optionId, flight, airline: option.airline.split(" + ")[0]!, rows };
     const shown = await ctx.render(seatMapServer, props, { mode: "elicit" });
     if (shown.handle) seatsShown(ctx.conversationId, shown.handle, props);
     return shown;

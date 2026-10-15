@@ -35,6 +35,15 @@ export function scripted(): ModelAdapter {
 
     async generate({ messages, onTextDelta }: ModelRequest): Promise<ModelResponse> {
       const last = messages.at(-1);
+      // The filters of the picker shown last: a new question narrows those, so
+      // its answer and the picker that follows show the same options.
+      const shownWith = (() => {
+        for (const m of [...messages].reverse()) {
+          const call = [...blocksOf(m)].reverse().find((b) => b?.type === "tool_use" && b.name === "find_rebooking");
+          if (call) return (call.input ?? {}) as Record<string, boolean>;
+        }
+        return {};
+      })();
       const texts = textsOf(last);
       const results = resultsOf(last).join("\n");
       // everything said so far, by either side, as one text to read from
@@ -99,12 +108,13 @@ export function scripted(): ModelAdapter {
           if (found[1] === "0") return reply("None of the options match that. All of them are still in the list above.", onTextDelta);
           if (asked?.query === "earliest") {
             const first = results.split("\n")[1] ?? "";
-            return reply(`The first to land is ${first.replace(/ \[o\d+\]$/, "")}.`, onTextDelta, [toolUse("find_rebooking", {})]);
+            return reply(`The first to land is ${first.replace(/ \[o\d+\]$/, "")}.`, onTextDelta, [toolUse("find_rebooking", shownWith)]);
           }
           const args = (asked?.args ?? {}) as { nonstop?: boolean; noExtraFare?: boolean; tonight?: boolean };
           const what = args.nonstop ? "nonstop" : args.noExtraFare ? "at no extra cost" : args.tonight ? "leaving tonight" : "matching";
           return reply(`${found[1]} of the ${found[2]} options are ${what}. Here they are, the earliest to land first.`, onTextDelta, [
-            toolUse("find_rebooking", args),
+            // the query asked the picker on screen, already filtered: keep its filters
+            toolUse("find_rebooking", { ...shownWith, ...args }),
           ]);
         }
         return reply(results.split("\n").at(-1) ?? "Done.", onTextDelta);

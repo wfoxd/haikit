@@ -49,23 +49,61 @@ function head(/** @type {string} */ title, /** @type {string} */ sub, /** @type 
 
 const badge = (/** @type {string} */ text, /** @type {string} */ tone) => h("span", `rb-badge rb-badge-${tone}`, text);
 
+/** The control that has the keyboard, by the key it was drawn with, if it's inside `el`. */
+const focusedKey = (/** @type {HTMLElement} */ el) => {
+  const active = document.activeElement;
+  return active instanceof HTMLElement && el.contains(active) ? active.dataset.key : undefined;
+};
+
+/**
+ * Redraw a surface without losing the keyboard's place. Each control is drawn
+ * with a `data-key`, such as `seat:14D`. The control with the focused key gets
+ * the focus back. If it's gone or disabled now, as a seat just taken is, the
+ * nearest enabled control of its kind does: the next one after it, or else
+ * the one before.
+ * @param {HTMLElement} el
+ * @param {() => void} draw
+ * @param {string} [key] the key to return to, when the focus has already left
+ */
+function redraw(el, draw, key = focusedKey(el)) {
+  const order = key ? [...el.querySelectorAll("button[data-key]")].map((b) => /** @type {HTMLElement} */ (b).dataset.key ?? "") : [];
+  draw();
+  if (!key) return;
+  const enabled = (/** @type {string} */ k) => {
+    const b = el.querySelector(`button[data-key="${CSS.escape(k)}"]`);
+    return b instanceof HTMLButtonElement && !b.disabled ? b : null;
+  };
+  const kind = key.slice(0, key.indexOf(":") + 1);
+  const at = order.indexOf(key);
+  const around = [...order.slice(at + 1), ...order.slice(0, Math.max(at, 0)).reverse()].filter((k) => k.startsWith(kind));
+  (enabled(key) ?? around.map(enabled).find(Boolean))?.focus({ preventScroll: true });
+}
+
 /**
  * The parked-turn pattern every question here shares: a click sends the
  * declared action and waits; if the surface is still live afterwards, the
- * server refused it, and the component lets the traveller try again.
+ * server refused it, and the component lets the traveller try again, with the
+ * keyboard back where it was. A send that fails outright does the same.
+ * @param {HTMLElement} el
  * @param {MountCtx} ctx
  * @param {{ state: string, picked: unknown, sending: boolean }} at
  * @param {() => void} draw
  */
-const asker = (ctx, at, draw) => async (/** @type {string} */ action, /** @type {unknown} */ value) => {
+const asker = (el, ctx, at, draw) => async (/** @type {string} */ action, /** @type {unknown} */ value) => {
+  const key = focusedKey(el);
   at.sending = true;
   at.picked = value;
-  draw();
-  await ctx.send(action, value);
-  at.sending = false;
-  if (at.state === "live") {
-    at.picked = undefined; // refused: the reason shows in the transcript, and this stays live
-    draw();
+  redraw(el, draw, key);
+  try {
+    await ctx.send(action, value);
+  } catch (err) {
+    console.error("[rebook] the click wasn't sent:", err);
+  } finally {
+    at.sending = false;
+    if (at.state === "live") {
+      at.picked = undefined; // refused: the reason shows in the transcript, and this stays live
+      redraw(el, draw, key);
+    }
   }
 };
 
@@ -160,8 +198,9 @@ export const registry = {
         for (const [key, label] of FILTERS) {
           const chip = h("button", `rb-chip${only === key ? " is-on" : ""}`, label);
           chip.type = "button";
+          chip.dataset.key = `filter:${key}`;
           chip.setAttribute("aria-pressed", String(only === key));
-          chip.onclick = () => { only = key; draw(); };
+          chip.onclick = () => { only = key; redraw(el, draw); };
           chips.append(chip);
         }
         card.append(chips);
@@ -173,6 +212,7 @@ export const registry = {
           const row = h(live && !gone ? "button" : "div", `rb-option${o.id === at.picked ? " is-picked" : ""}${gone ? " is-gone" : ""}`);
           if (row instanceof HTMLButtonElement) {
             row.type = "button";
+            row.dataset.key = `option:${o.id}`;
             row.disabled = at.sending;
             row.onclick = () => void ask("choose", o.id); // DECLARED: `choose` is a resolve action
           }
@@ -205,16 +245,16 @@ export const registry = {
         card.append(foot);
         el.append(card);
       };
-      const ask = asker(ctx, at, draw);
+      const ask = asker(el, ctx, at, draw);
 
       draw();
       // Fourteen options are taller than the window: open on the first.
       if (ctx.state === "live") requestAnimationFrame(() => showTop(el));
       return {
-        freeze(/** @type {unknown} */ selection) { at.state = "frozen"; at.picked = selection; draw(); },
+        freeze(/** @type {unknown} */ selection) { at.state = "frozen"; at.picked = selection; redraw(el, draw); },
         // A revision from the airline, such as its holds running out: the
-        // filter the traveller chose stays as it was.
-        update(/** @type {RebookingOptionsProps} */ next) { props = next; draw(); },
+        // filter the traveller chose stays as it was, and so does the keyboard.
+        update(/** @type {RebookingOptionsProps} */ next) { props = next; redraw(el, draw); },
       };
     },
   },
@@ -242,6 +282,7 @@ export const registry = {
             if (i === 3) line.append(h("span", "rb-aisle"));
             const b = h("button", ["rb-seat", seat.taken ? "is-taken" : "", seat.extraLegroom ? "is-legroom" : "", seat.id === at.picked ? "is-picked" : ""].filter(Boolean).join(" "), seat.letter);
             b.type = "button";
+            b.dataset.key = `seat:${seat.id}`;
             b.disabled = seat.taken || !live || at.sending;
             b.setAttribute("aria-label", `Seat ${seat.id}${seat.window ? ", window" : ""}${seat.extraLegroom ? ", extra legroom" : ""}${seat.taken ? ", taken" : ""}`);
             b.onclick = () => void ask("pick", seat.id); // DECLARED: `pick` is a resolve action
@@ -261,13 +302,14 @@ export const registry = {
         );
         el.append(card);
       };
-      const ask = asker(ctx, at, draw);
+      const ask = asker(el, ctx, at, draw);
       draw();
       if (ctx.state === "live") requestAnimationFrame(() => showTop(el));
       return {
-        freeze(/** @type {unknown} */ selection) { at.state = "frozen"; at.picked = selection; draw(); },
-        // Another passenger took a seat: the map is revised in place.
-        update(/** @type {SeatMapProps} */ next) { props = next; draw(); },
+        freeze(/** @type {unknown} */ selection) { at.state = "frozen"; at.picked = selection; redraw(el, draw); },
+        // Another passenger took a seat: the map is revised in place, every
+        // few seconds, so the keyboard stays on the seat it was on.
+        update(/** @type {SeatMapProps} */ next) { props = next; redraw(el, draw); },
       };
     },
   },
@@ -289,6 +331,7 @@ export const registry = {
         for (const c of props.choices) {
           const b = h("button", `rb-choice${c.id === at.picked ? " is-picked" : ""}`);
           b.type = "button";
+          b.dataset.key = `care:${c.id}`;
           b.disabled = !live || at.sending;
           b.onclick = () => void ask("choose", c.id); // DECLARED
           b.append(h("span", "rb-choice-title", c.title), h("span", "rb-choice-detail", c.detail));
@@ -298,10 +341,10 @@ export const registry = {
         if (at.state === "frozen" && !props.choices.some((c) => c.id === at.picked)) card.append(h("p", "rb-foot", "Closed when you typed instead."));
         el.append(card);
       };
-      const ask = asker(ctx, at, draw);
+      const ask = asker(el, ctx, at, draw);
       draw();
       if (ctx.state === "live") requestAnimationFrame(() => showTop(el));
-      return { freeze(/** @type {unknown} */ selection) { at.state = "frozen"; at.picked = selection; draw(); } };
+      return { freeze(/** @type {unknown} */ selection) { at.state = "frozen"; at.picked = selection; redraw(el, draw); } };
     },
   },
 

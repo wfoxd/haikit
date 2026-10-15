@@ -36,6 +36,10 @@ interface Desk {
   cancelled: boolean;
   /** What the airline has: whether it still holds seats for the traveller, and the seats left on each option. */
   stock: { held: boolean; seats: Map<string, number> };
+  /** A release in progress: a second, from the button and the timer at once, waits for none. */
+  releasing: boolean;
+  /** Each flight's seats as the traveller last saw them, other passengers' included. */
+  seatMaps: Map<string, SeatMapProps["rows"]>;
   options: { handle: string; props: RebookingOptionsProps; hold: ReturnType<typeof setTimeout> } | null;
   seats: { handle: string; props: SeatMapProps; others: ReturnType<typeof setInterval> } | null;
   pass: { handle: string; props: BoardingPassProps } | null;
@@ -70,12 +74,17 @@ export function tripShown(conversationId: string, handle: string) {
     trip: handle,
     cancelled: false,
     stock: { held: true, seats: new Map(OPTIONS.map((o) => [o.id, o.seatsLeft])) },
+    releasing: false,
+    seatMaps: new Map(),
     options: null,
     seats: null,
     pass: null,
     chosen: { option: null, seat: null, care: null },
   });
 }
+
+/** A flight's seats as this traveller last saw them, or null before its map was first shown. */
+export const seatsFor = (conversationId: string, flight: string) => desks.get(conversationId)?.seatMaps.get(flight) ?? null;
 
 /** Every option as the airline has it now, and whether it still holds them: a new picker shows these. */
 export function stock(conversationId: string): { held: boolean; options: RebookOption[] } {
@@ -98,6 +107,7 @@ export function seatsShown(conversationId: string, handle: string, props: SeatMa
   const d = desks.get(conversationId);
   if (!d) return;
   if (d.seats) clearInterval(d.seats.others);
+  d.seatMaps.set(props.flight, props.rows);
   let left = OTHER_PASSENGERS;
   // one revision at a time: the next is drawn from the one before it
   let revising = false;
@@ -115,7 +125,10 @@ export function seatsShown(conversationId: string, handle: string, props: SeatMa
     };
     revising = true;
     update?.(conversationId, seatMapServer, seats.handle, props, { model: `Another passenger took seat ${gone.id}.` })
-      .then((r) => (d.seats = { handle: r.handle, props, others }))
+      .then((r) => {
+        d.seats = { handle: r.handle, props, others };
+        d.seatMaps.set(props.flight, props.rows);
+      })
       .catch((err) => {
         clearInterval(others);
         if (!answered(err)) console.error(`seat map for ${conversationId} not revised: ${err.message}`);
@@ -181,26 +194,33 @@ export async function releaseHolds(conversationId: string): Promise<string> {
   const shown = d.options;
   if (!shown) throw new OpsError("No rebooking options are on screen yet.");
   if (!d.stock.held) throw new OpsError("The holds are already released.");
-  clearTimeout(shown.hold);
+  if (d.releasing) throw new OpsError("The holds are being released already.");
   // The scarcest option on screen sells out; every other loses a seat or two.
+  // Worked out on a copy: the airline's stock changes only once the picker on
+  // screen shows it, so a release that fails leaves both as they were.
   const scarce = [...shown.props.options].sort((a, b) => a.seatsLeft - b.seatsLeft)[0];
+  const seats = new Map(d.stock.seats);
   OPTIONS.forEach((o, i) => {
-    const left = d.stock.seats.get(o.id) ?? o.seatsLeft;
-    d.stock.seats.set(o.id, o.id === scarce?.id ? 0 : Math.max(1, left - (i % 3 === 2 ? 2 : 1)));
+    const left = seats.get(o.id) ?? o.seatsLeft;
+    seats.set(o.id, o.id === scarce?.id ? 0 : Math.max(1, left - (i % 3 === 2 ? 2 : 1)));
   });
-  d.stock.held = false;
-  const options = shown.props.options.map((o) => ({ ...o, seatsLeft: d.stock.seats.get(o.id) ?? o.seatsLeft }));
+  const options = shown.props.options.map((o) => ({ ...o, seatsLeft: seats.get(o.id) ?? o.seatsLeft }));
   const props: RebookingOptionsProps = { ...shown.props, options, held: false };
+  d.releasing = true;
   try {
     const revised = await update!(conversationId, rebookingOptionsServer, shown.handle, props, {
       model:
         `The airline's 5-minute holds ran out: seats left fell on every option` +
         (scarce ? `, and ${scarce.flights.join(" + ")} sold out.` : "."),
     });
+    clearTimeout(shown.hold);
+    d.stock = { held: false, seats };
     d.options = { handle: revised.handle, props, hold: shown.hold };
   } catch (err) {
     if (answered(err)) throw new OpsError("The traveller has already chosen, so nothing is on hold.");
     throw err;
+  } finally {
+    d.releasing = false;
   }
   return `Released the holds${scarce ? `: ${scarce.flights.join(" + ")} sold out` : ""}. The picker shows it now; the guide hears of it with the traveller's next click.`;
 }

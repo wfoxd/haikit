@@ -193,6 +193,17 @@ try {
       () => JSON.stringify({ ...nonstops.props, options: nonstops.props?.options.map((o) => o.id) }),
     );
 
+    // 3b · a second question narrows the picker on screen: its answer and the picker that follows agree
+    const free = await sse("/hai/chat", { conversationId: id, message: "which are free?" });
+    const freeQuery = free.find((e) => e.type === "block_update" && /^\d+ of \d+ match/.test(e.result ?? ""));
+    const narrowed = surface(free, "rebooking_options");
+    const shownIds = narrowed.props?.options.map((o) => o.id).join(",");
+    check(
+      /^3 of 5 match/.test(freeQuery?.result ?? "") && narrowed.props?.filter === "nonstops, at no extra cost" && shownIds === "o06,o05,o08",
+      "“which are free?” then asks the 5 nonstops, and shows the same 3: free nonstops",
+      () => `query: ${freeQuery?.result?.split("\n")[0]}, picker: ${narrowed.props?.filter} ${shownIds}`,
+    );
+
     // 4 · the holds run out: the picker on screen is revised, and one option sells out
     const mark = stream.events.length;
     const release = await ops("release", id);
@@ -200,7 +211,7 @@ try {
     const released = await stream.until((e) => e.type === "ui_open" && e.component === "rebooking_options" && e.replaces, 8_000, mark);
     const releasedProps = await stream.until((e) => e.type === "ui_props" && e.handle === released?.handle, 8_000, mark);
     const ua875 = releasedProps?.props?.options.find((o) => o.id === "o06");
-    check(released?.replaces === nonstops.ui?.handle && releasedProps?.props?.held === false && ua875?.seatsLeft === 0, "the picker is revised in place: holds gone, UA 875 sold out", () => JSON.stringify(releasedProps));
+    check(released?.replaces === narrowed.ui?.handle && releasedProps?.props?.held === false && ua875?.seatsLeft === 0, "the picker is revised in place: holds gone, UA 875 sold out", () => JSON.stringify(releasedProps));
     const soldOut = await sse("/hai/interact", { conversationId: id, handle: released?.handle, action: "choose", value: "o06" });
     check(/UA 875 sold out a moment ago/.test(refusal(soldOut)), "a sold-out option is refused, and the picker stays live", () => refusal(soldOut));
 
@@ -225,18 +236,18 @@ try {
     const takenSeat = all.find((s) => s.taken);
     const tookIt = await sse("/hai/interact", { conversationId: id, handle: now.handle, action: "pick", value: takenSeat?.id });
     check(new RegExp(`seat ${takenSeat?.id} was taken a moment ago`).test(refusal(tookIt)), `a taken seat (${takenSeat?.id}) is refused, and the map stays live`, () => refusal(tookIt));
-    const free = latestSeats().props.rows.flatMap((r) => r.seats).filter((s) => !s.taken).at(-1);
-    const pick = await sse("/hai/interact", { conversationId: id, handle: latestSeats().handle, action: "pick", value: free?.id });
+    const seat = latestSeats().props.rows.flatMap((r) => r.seats).filter((s) => !s.taken).at(-1);
+    const pick = await sse("/hai/interact", { conversationId: id, handle: latestSeats().handle, action: "pick", value: seat?.id });
     const care = surface(pick, "care_options");
-    check(care.ui?.mode === "elicit" && care.props?.choices.length === 3, `seat ${free?.id} picked; NH 7 leaves tomorrow, so the guide asks about tonight`, () => JSON.stringify(pick.filter((e) => e.type === "error" || e.type === "ui_open")));
+    check(care.ui?.mode === "elicit" && care.props?.choices.length === 3, `seat ${seat?.id} picked; NH 7 leaves tomorrow, so the guide asks about tonight`, () => JSON.stringify(pick.filter((e) => e.type === "error" || e.type === "ui_open")));
 
     // 6 · where to spend tonight, then the boarding pass for exactly what was clicked
     const hotel = await sse("/hai/interact", { conversationId: id, handle: care.ui?.handle, action: "choose", value: "hotel" });
     const pass = surface(hotel, "boarding_pass");
     check(
-      pass.ui?.mode === "display" && pass.props?.flight === "NH 7" && pass.props.seat === free?.id && /Hotel voucher/.test(pass.props.care ?? "") &&
+      pass.ui?.mode === "display" && pass.props?.flight === "NH 7" && pass.props.seat === seat?.id && /Hotel voucher/.test(pass.props.care ?? "") &&
         pass.props.gate === "G95" && pass.props.boards === "10:20",
-      `the boarding pass: NH 7, seat ${free?.id}, gate G95, boarding 10:20, and the hotel`,
+      `the boarding pass: NH 7, seat ${seat?.id}, gate G95, boarding 10:20, and the hotel`,
       () => JSON.stringify(pass.props),
     );
     check(lastStatus(hotel) === "idle" && /You're booked/.test(said(hotel)), `the guide wraps up: “${said(hotel).slice(0, 60)}…”`, () => said(hotel));
@@ -244,7 +255,7 @@ try {
     // the whole conversation: every digest, click and revision the model was told of, against every component's props
     check(context && context.uiTokens > 2 * context.modelTokens, `the browser holds ~${context?.uiTokens} tokens of components; the model's whole context is ~${context?.modelTokens}`, () => JSON.stringify({ model: context?.modelTokens, ui: context?.uiTokens }));
     const confirmed = await stream.until((e) => e.type === "notice" && e.name === "seat_confirmed", 6_000);
-    check(confirmed?.handle === pass.ui?.handle && confirmed.payload.seat === free?.id, "the airline confirms the seat a moment later, beside the pass", () => JSON.stringify(confirmed));
+    check(confirmed?.handle === pass.ui?.handle && confirmed.payload.seat === seat?.id, "the airline confirms the seat a moment later, beside the pass", () => JSON.stringify(confirmed));
 
     // 7 · the gate moves: the pass is revised, and the guide speaks up without being asked
     const gateMark = stream.events.length;
@@ -260,6 +271,34 @@ try {
     const count = await stream.until((e) => e.type === "signal" && e.name === "rebooking", 6_000);
     check(count?.payload?.count >= 1, `an open tab hears how many are rebooking (${count?.payload?.count})`, "no rebooking signal");
     stream.close();
+
+    // 8b · a second conversation: a release after the traveller chose changes
+    //      nothing, and a seat map shown again keeps the seats others took
+    {
+      const begin = await sse("/hai/start", {});
+      const id2 = begin.find((e) => e.type === "hello")?.conversationId;
+      const watch2 = watch(id2);
+      await ops("cancel", id2);
+      const first = await watch2.until((e) => e.type === "ui_open" && e.component === "rebooking_options");
+      await watch2.until((e) => e.type === "status" && e.status === "awaiting");
+      const chose = await sse("/hai/interact", { conversationId: id2, handle: first?.handle, action: "choose", value: "o05" });
+      const map = surface(chose, "seat_map");
+      const late = await ops("release", id2);
+      check(late.status === 409 && /already chosen/.test(late.message), `a release after the traveller chose is refused: “${late.message}”`, () => JSON.stringify(late));
+      const gone = await watch2.until((e) => e.type === "ui_props" && e.handle !== map.ui?.handle && e.props?.flight === "NH 7");
+      const takenNow = gone?.props?.rows.flatMap((r) => r.seats).filter((s) => s.taken).map((s) => s.id) ?? [];
+      const again = surface(await sse("/hai/chat", { conversationId: id2, message: "show me all the options" }), "rebooking_options");
+      const nh7 = again.props?.options.find((o) => o.id === "o05");
+      check(again.props?.held === true && nh7?.seatsLeft === 5 && again.props.options.length === 14, "…and the options shown again are as before it: still held, NH 7 still 5 seats", () => JSON.stringify({ held: again.props?.held, nh7 }));
+      const reopened = surface(await sse("/hai/interact", { conversationId: id2, handle: again.ui?.handle, action: "choose", value: "o05" }), "seat_map");
+      const takenAfter = new Set(reopened.props?.rows.flatMap((r) => r.seats).filter((s) => s.taken).map((s) => s.id));
+      check(
+        takenNow.length > 0 && takenNow.every((s) => takenAfter.has(s)),
+        `NH 7's seat map, shown again, keeps the seats other passengers took (${takenNow.length - (map.props?.rows.flatMap((r) => r.seats).filter((s) => s.taken).length ?? 0)} since it first opened)`,
+        () => `taken before: ${takenNow.join(" ")}; after: ${[...takenAfter].join(" ")}`,
+      );
+      watch2.close();
+    }
 
     // 9 · the boarding pass books only what the traveller clicked
     const { issueBoardingPass } = await import("../src/server/tools.ts");
