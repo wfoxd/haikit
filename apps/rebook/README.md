@@ -29,11 +29,17 @@ you watch the outside world act, and then the AI respond.
 The holds also run out by themselves, five minutes after the options are
 shown.
 
+Nothing happens until the airline acts, so a visitor who presses nothing
+isn't left waiting: 30 seconds after the trip opens, the bar cancels the
+flight itself, through the same route as its button. A countdown on the
+button and a line under it say so, and cancelling sooner stops it.
+
 ## The 60-second path
 
 1. The trip card shows UA 837, San Francisco to Tokyo, on time. The guide
    says nothing: nothing has happened yet.
-2. **Cancel the flight.** The card turns red, a notice appears beside it, and
+2. **Cancel the flight**, or wait: after 30 seconds the airline cancels it
+   anyway. The card turns red, a notice appears beside it, and
    the guide speaks first: "I'm sorry: your 18:05 UA 837 to Tokyo was
    cancelled because of a crew shortage…". Fourteen options appear, and the
    turn waits on them.

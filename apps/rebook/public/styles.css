@@ -65,6 +65,12 @@
 }
 .ops-button:hover { border-color: var(--hai-bad); color: var(--hai-bad); }
 .ops.is-busy .ops-button { opacity: 0.6; cursor: progress; }
+/* seconds until the airline cancels by itself, on the button that does it now */
+.ops-countdown {
+  margin-left: 7px; padding: 1px 6px; border-radius: 999px;
+  background: color-mix(in srgb, var(--hai-bad) 14%, transparent); color: var(--hai-bad);
+  font: 600 11.5px var(--mono); font-variant-numeric: tabular-nums;
+}
 .ops-status { margin: 0; flex: 1 1 260px; min-width: 0; font-size: 13px; color: var(--hai-dim); }
 .ops-status.is-refused { color: var(--hai-warn); }
 
