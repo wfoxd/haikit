@@ -1,5 +1,5 @@
 /**
- * The menu bar under the header: Home, Tutorial, Lesson and Reference.
+ * The menu bar under the header: Home, Tutorial, Lesson, Reference and Demo.
  *
  * mountChat draws the header and has no option for a menu, so this adds a bar
  * of its own just beneath it. A choice is a chat
@@ -8,6 +8,9 @@
  * by showing what was asked for. A question waiting on screen is closed by it,
  * as typing would.
  *
+ * A demo is the exception: it's a site of its own, so its item is a link that
+ * opens it in a new tab, and nothing reaches the conversation.
+ *
  * Each menu is a button that shows or hides its list (the disclosure pattern):
  * arrow keys move through the list, Escape closes it and returns to its
  * button, and a click elsewhere closes it.
@@ -15,8 +18,9 @@
 
 /** @typedef {import("@haikit/client").Chat} Chat */
 /** @typedef {{ id: string, title: string }} Ref */
-/** @typedef {{ lessons: { part: number, title: string, lessons: Ref[] }[], tutorials: { title: string, steps: Ref[] }[], reference?: { title: string, pages: Ref[] } }} MenuData */
-/** @typedef {{ n?: string, label: string, message: string }} Item */
+/** @typedef {{ title: string, detail: string, url: string }} Demo */
+/** @typedef {{ lessons: { part: number, title: string, lessons: Ref[] }[], tutorials: { title: string, steps: Ref[] }[], reference?: { title: string, pages: Ref[] }, demos?: Demo[] }} MenuData */
+/** @typedef {{ n?: string, label: string, message: string } | { label: string, detail: string, href: string }} Item */
 /** @typedef {{ heading?: string, items: Item[] }} Group */
 /** @typedef {{ label: string, icon: keyof typeof ICONS, groups: Group[] }} Section */
 
@@ -29,6 +33,7 @@ const ICONS = {
   tutorial: "M8.5 8 4.5 12l4 4M15.5 8l4 4-4 4M13.5 5.5l-3 13",
   lesson: "M3 5.5c2.5-1 5.5-1 9 1 3.5-2 6.5-2 9-1V19c-2.5-1-5.5-1-9 1-3.5-2-6.5-2-9-1zM12 6.5V20",
   reference: "M14 3.5H7A1.5 1.5 0 0 0 5.5 5v14A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.5-1.5V8zM14 3.5V8h4.5M9 12.5h6M9 16h6",
+  demo: "M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17zM10 8.6v6.8l5.6-3.4z",
   chevron: "M6 9l6 6 6-6",
 };
 
@@ -100,6 +105,21 @@ const sectionsOf = (data) => [
         },
       ]
     : []),
+  // a server from before the demos sends none
+  ...(data.demos?.length
+    ? [
+        {
+          label: "Demo",
+          icon: /** @type {const} */ ("demo"),
+          groups: [
+            {
+              heading: "Apps built with HaiKIT",
+              items: data.demos.map((d) => ({ label: d.title, detail: d.detail, href: d.url })),
+            },
+          ],
+        },
+      ]
+    : []),
 ];
 
 let panels = 0;
@@ -127,9 +147,10 @@ export function mountMenu(root, chat, data) {
     menu.panel.hidden = !open;
   };
   const closeAll = () => menus.forEach((m) => set(m, false));
-  const links = (/** @type {HTMLElement} */ panel) => [...panel.querySelectorAll("button")];
+  /** A list's items: buttons, and a demo's links. */
+  const links = (/** @type {HTMLElement} */ panel) => /** @type {HTMLElement[]} */ ([...panel.querySelectorAll("button, a")]);
 
-  /** @param {Item} item */
+  /** @param {Extract<Item, { message: string }>} item */
   const choose = (item) => {
     // closing hides the item that has focus: hand it back to the menu's button
     const open = menus.find((m) => !m.panel.hidden);
@@ -152,13 +173,28 @@ export function mountMenu(root, chat, data) {
       if (group.heading) frag.append(h("p", "menu-group-heading", group.heading));
       const ul = h("ul", "menu-list");
       for (const item of group.items) {
-        const b = h("button", item.n ? "menu-link" : "menu-link plain");
-        b.type = "button";
-        if (item.n) b.append(h("span", "menu-n", item.n));
-        b.append(h("span", null, item.label));
-        b.onclick = () => choose(item);
         const li = h("li");
-        li.append(b);
+        if ("href" in item) {
+          // A site of its own: a plain link, in a new tab. Only an https URL becomes one.
+          if (!/^https:\/\//.test(item.href)) continue;
+          const a = h("a", "menu-link plain menu-out");
+          a.href = item.href;
+          a.target = "_blank";
+          a.rel = "noopener noreferrer";
+          a.setAttribute("aria-label", `${item.label}: ${item.detail} (opens in a new tab)`);
+          const words = h("span", "menu-words");
+          words.append(h("span", "menu-title", item.label), h("span", "menu-detail", item.detail));
+          a.append(words);
+          a.onclick = () => closeAll();
+          li.append(a);
+        } else {
+          const b = h("button", item.n ? "menu-link" : "menu-link plain");
+          b.type = "button";
+          if (item.n) b.append(h("span", "menu-n", item.n));
+          b.append(h("span", null, item.label));
+          b.onclick = () => choose(item);
+          li.append(b);
+        }
         ul.append(li);
       }
       frag.append(ul);
@@ -213,7 +249,7 @@ export function mountMenu(root, chat, data) {
     }
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
     const items = links(open.panel);
-    const at = items.indexOf(/** @type {HTMLButtonElement} */ (document.activeElement));
+    const at = items.indexOf(/** @type {HTMLElement} */ (document.activeElement));
     if (at < 0) return;
     e.preventDefault();
     items[(at + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus();
