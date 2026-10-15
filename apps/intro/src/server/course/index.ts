@@ -236,6 +236,15 @@ const SECTIONS: WelcomeProps["sections"] = [
   },
 ];
 
+/** Apps built with HaiKIT, each running on its own site: the menu's Demo list. */
+const DEMOS = [
+  {
+    title: "Rebook",
+    detail: "The airline cancels your flight. The AI tells you first and rebooks you; you steer with clicks.",
+    url: "https://rebook.haikit.app/",
+  },
+];
+
 /** HaiKIT's repository and its packages. */
 const LINKS: WelcomeProps["links"] = [
   { site: "github", label: "wfoxd/haikit", url: "https://github.com/wfoxd/haikit" },
@@ -293,9 +302,10 @@ export const welcomeProps = (): WelcomeProps => ({
 
 /**
  * What the header's menu lists: every lesson by part, each tutorial's
- * numbered steps, and the reference manual's pages. Served as /menu.json; the
- * menu is navigation, not a surface, so it reaches the conversation the way
- * typing does.
+ * numbered steps, the reference manual's pages, and the demos. Served as
+ * /menu.json; the menu is navigation, not a surface, so it reaches the
+ * conversation the way typing does. A demo is a site of its own, so it's a
+ * link instead, and never reaches the conversation.
  */
 export const menu = () => ({
   lessons: PARTS.map((p) => ({ part: p.n, title: p.title, lessons: p.lessons.map((l) => ({ id: l.id, title: l.title })) })),
@@ -304,6 +314,7 @@ export const menu = () => ({
     steps: tutorialSteps(t.n).map(({ id, title }) => ({ id, title })),
   })),
   reference: { title: REFERENCE_TITLE, pages: referenceRefs() },
+  demos: DEMOS,
 });
 
 export const courseMapProps = (): CourseMapProps => ({

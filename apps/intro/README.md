@@ -30,12 +30,16 @@ shows what the model received the whole time.
 ## The menu
 
 A menu bar under the header has **Home** (the welcome screen), **Tutorial**
-(both tutorials' steps), **Lesson** (every lesson, by part) and **Reference**
-(every page of the reference manual). The menu isn't a surface, so a choice
-reaches the server the way typing does: it sends a message such as “Open
-lesson 1.3” or “Open reference page surfaces”, and the guide shows what was
-asked for. The menu's contents come from `/menu.json`, built from the course,
-the tutorials and the manual when the server starts.
+(both tutorials' steps), **Lesson** (every lesson, by part), **Reference**
+(every page of the reference manual) and **Demo** (apps built with HaiKIT).
+The menu isn't a surface, so a choice reaches the server the way typing does:
+it sends a message such as “Open lesson 1.3” or “Open reference page
+surfaces”, and the guide shows what was asked for. A demo is the exception:
+it's a site of its own, such as [Rebook](https://rebook.haikit.app/), so its
+item is a link that opens it in a new tab, and nothing reaches the
+conversation. The menu's contents come from `/menu.json`, built from the
+course, the tutorials, the manual and the list of demos in
+`src/server/course/index.ts` when the server starts.
 
 ## Who's reading
 

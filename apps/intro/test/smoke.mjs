@@ -395,6 +395,10 @@ try {
       manual.length === 16 && manual[0].id === "index" && manual[0].title === "Contents" && manual[15].id === "limits"
         ? ok("…and the reference manual's 16 pages, its contents first")
         : bad(`menu.json reference: ${JSON.stringify(manual.map((p) => p.id))}`);
+      const demos = menu.demos ?? [];
+      demos.some((d) => d.title === "Rebook" && d.url === "https://rebook.haikit.app/" && d.detail) && demos.every((d) => /^https:\/\//.test(d.url))
+        ? ok("…and the demos, Rebook among them, each at an https address")
+        : bad(`menu.json demos: ${JSON.stringify(demos)}`);
 
       const fresh = await sse("/hai/start", {});
       const id = fresh.find((e) => e.type === "hello")?.conversationId;
