@@ -12,7 +12,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHai, memoryStore, nodeHandler } from "@haikit/server";
 import { anthropic } from "@haikit/anthropic";
-import { rebooking } from "../shared/notices.ts";
 import { OpsError, cancelFlight, changeGate, connectAirline, releaseHolds } from "./airline.ts";
 import { notices } from "./notices.ts";
 import { scripted } from "./scripted.ts";
@@ -53,7 +52,6 @@ const hai = createHai({
   tools, // find_rebooking, show_seat_map, offer_care, issue_boarding_pass
   surfaces,
   notices, // flight_cancelled (wake), seat_confirmed
-  signals: [rebooking],
   // the airline revises what's on screen with hai.update
   updates: true,
   // the cancellation wakes the guide, and a gate change a minute later does again
@@ -63,21 +61,6 @@ const hai = createHai({
 connectAirline(hai.notify, hai.update);
 
 const handleHai = nodeHandler(hai, "/hai");
-
-// Everyone with Rebook open is on the same cancelled flight, so the header
-// shows how many are rebooking now. Presence counts the open tabs; the count
-// goes out at most every few seconds, and only when it has changed.
-const COUNT_EVERY_MS = 3_000;
-let latest = 0;
-let sent = -1;
-let waiting: ReturnType<typeof setTimeout> | null = null;
-hai.onPresence((count) => {
-  latest = count;
-  waiting ??= setTimeout(() => {
-    waiting = null;
-    if (latest !== sent) hai.signal(rebooking, { count: (sent = latest) });
-  }, COUNT_EVERY_MS);
-});
 
 // ─────────────────────────────────────────────────── the Airline ops panel
 

@@ -1,10 +1,10 @@
 /**
- * What the airline tells a conversation outside any request, and the one
- * signal every open tab hears. Like the surface contracts, this module
- * crosses the boundary: the server sends these, the browser renders them.
+ * What the airline tells a conversation outside any request. Like the surface
+ * contracts, this module crosses the boundary: the server sends these, the
+ * browser renders them.
  */
 
-import { defineNotice, defineSignal } from "@haikit/core";
+import { defineNotice } from "@haikit/core";
 import { z } from "zod";
 
 /**
@@ -23,14 +23,4 @@ export const seatConfirmed = defineNotice({
   name: "seat_confirmed",
   version: 1,
   payload: z.object({ flight: z.string(), seat: z.string(), reference: z.string() }),
-});
-
-/**
- * How many people are rebooking right now: everyone with Rebook open is on the
- * same cancelled flight. A signal goes to every tab and never to the model.
- */
-export const rebooking = defineSignal({
-  name: "rebooking",
-  version: 1,
-  payload: z.object({ count: z.number() }),
 });

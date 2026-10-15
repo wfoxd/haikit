@@ -63,7 +63,6 @@ shown.
 | Wake notices | The cancellation starts the guide's turn when the traveller hasn't said anything |
 | Revisions, `hai.update` | The trip card, the picker, the seat map and the boarding pass are each revised in place by the airline |
 | Passive notices | The seat confirmation arrives a moment after booking, and the model hears it with the next turn |
-| Signals and presence | "N rebooking now" in the header counts the open tabs: everyone here is on the same cancelled flight |
 | Freshness | The options' `staleAfterMs` is 20 minutes. Past that, the whole conversation is out of date, and HaiKIT refuses every request on it rather than act on old prices |
 
 The boarding pass books exactly what the traveller clicked. `issue_boarding_pass`
@@ -102,8 +101,8 @@ npm test
 That typechecks the server and the browser components against the shared
 contracts, then boots the server and drives the whole path above over HTTP,
 with the airline played by the `/ops` routes: the guide speaking first, the
-capped query, the revisions, the refused clicks, the boarding pass, the gate
-change and the presence count.
+capped query, the revisions, the refused clicks, the boarding pass and the
+gate change.
 
 ## Deploy
 
@@ -121,7 +120,7 @@ through unbuffered; behind one that holds them back, the page polls instead.
 ```
 src/shared/surfaces.ts     the contract: trip_card, rebooking_options, seat_map, care_options,
                            boarding_pass
-src/shared/notices.ts      flight_cancelled (wake), seat_confirmed, and the rebooking signal
+src/shared/notices.ts      flight_cancelled (wake), seat_confirmed
 src/server/data.ts         the booking, the 14 options, seat maps and tonight's choices
 src/server/surfaces.ts     digests, click handlers, the filter and earliest queries
 src/server/notices.ts      what the model hears of each notice

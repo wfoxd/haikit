@@ -278,9 +278,6 @@ try {
     const headsUp = said(stream.events.slice(gateMark));
     check(/^Heads up: NH 7 moved from gate G95 to gate G99\. Boarding is still 10:20\. And the airline confirmed seat/.test(headsUp), `the guide speaks up: “${headsUp.slice(0, 64)}…”`, `the guide said: ${headsUp}`);
 
-    // 8 · how many are rebooking now: presence, as a signal to every open tab
-    const count = await stream.until((e) => e.type === "signal" && e.name === "rebooking", 6_000);
-    check(count?.payload?.count >= 1, `an open tab hears how many are rebooking (${count?.payload?.count})`, "no rebooking signal");
     stream.close();
 
     // 8b · a second conversation: a release after the traveller chose changes

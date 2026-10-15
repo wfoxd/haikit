@@ -30,23 +30,6 @@
 
       // The Airline ops bar under the header plays the airline.
       mountOps(document.querySelector("#app"), chat);
-
-      // How many people are rebooking now: everyone here is on the same
-      // cancelled flight. A signal goes to every open tab and never to the
-      // model; a chip in the header shows the latest count.
-      const chip = document.createElement("span");
-      chip.className = "crowd-chip";
-      chip.hidden = true;
-      document.querySelector("#app .hai-actions")?.prepend(chip);
-      const show = (/** @type {typeof chat.state} */ state) => {
-        const count = /** @type {{ count?: number } | undefined} */ (state.signals.rebooking)?.count ?? 0;
-        chip.hidden = count < 1;
-        chip.textContent = `${count} rebooking now`;
-      };
-      chat.subscribe((state, event) => {
-        if (event.type === "signal" && event.name === "rebooking") show(state);
-      });
-      show(chat.state);
     </script>
   </body>
 </html>
