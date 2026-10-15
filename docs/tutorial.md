@@ -41,7 +41,7 @@ Everything from here on is relative to `haikit_hello/`, and that is where every 
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node src/server/main.ts",
+    "start": "node --env-file-if-exists=.env src/server/main.ts",
     "typecheck": "tsc --noEmit"
   }
 }
@@ -50,6 +50,8 @@ Everything from here on is relative to `haikit_hello/`, and that is where every 
 No dependencies listed — you install them in a moment and npm writes the current versions, which beats copying pinned ones out of a page that ages.
 
 There is no `build` script and nothing to compile either. The framework arrives from npm already built, and Node 22+ runs your own `.ts` files directly by stripping the types — so `npm start` is the whole loop.
+
+`--env-file-if-exists=.env` loads a `.env` file beside `package.json` when there is one: that's where your API key goes in step 06. Node doesn't read a `.env` file on its own. Until you make one, Node carries on without it, and may print a line saying so.
 
 **`tsconfig.json`** — *new file*
 
@@ -663,7 +665,9 @@ npm start
 > [!WARNING]
 > **You need a model here**
 >
-> `anthropic()` reads `ANTHROPIC_API_KEY` from the environment. Without one the page loads and the picker never appears — the first message fails with *“Could not resolve authentication method”* in the transcript.
+> `anthropic()` reads `ANTHROPIC_API_KEY` from the environment. Put it in a `.env` file beside `package.json`, as one line, `ANTHROPIC_API_KEY=sk-ant-…`, and `npm start` loads it: that's the `--env-file-if-exists=.env` in step 01's script. Exporting it in your shell works too. The key is a secret, so add `.env` to your `.gitignore`.
+>
+> Without a key the page loads and the picker never appears — the first message fails with *“Could not resolve authentication method”* in the transcript. If you see that with a `.env` in place, check your `start` script has the flag: started without it, Node never reads the file.
 >
 > No key? `ModelAdapter` is a one-method interface. The adapter below needs no network, drives every step in this tutorial, and is what the screenshots were taken against.
 
