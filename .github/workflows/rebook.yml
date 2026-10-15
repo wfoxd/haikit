@@ -1,0 +1,73 @@
+name: rebook
+
+# apps/rebook is a standalone demo on the published @haikit/* packages,
+# outside the workspaces, so ci.yml never builds or tests it. `test` runs its
+# own tests, only when something it's made of changes; `latest` checks daily
+# that it still works on the newest HaiKIT.
+on:
+  push:
+    branches: [main]
+    paths: ["apps/rebook/**", ".github/workflows/rebook.yml"]
+  pull_request:
+    paths: ["apps/rebook/**", ".github/workflows/rebook.yml"]
+  schedule:
+    - cron: "29 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    # a run takes under a minute; anything that hangs fails here, not in 6 hours
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        # the engines floor (type stripping on by default), and what the
+        # Dockerfile runs
+        node: ["22.18", "24"]
+    defaults:
+      run:
+        working-directory: apps/rebook
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: apps/rebook/package-lock.json
+      - run: npm ci
+
+      # server and browser typecheck against the shared contracts, then the
+      # smoke test: the real server, with the airline played by its /ops
+      # routes, driven through the whole 60-second path
+      - run: npm test
+
+  # The lockfile pins what `test` sees, so a HaiKIT release can't break it.
+  # This runs the app's own update script instead, as a maintainer would, and
+  # tests the result: red here means the next `npm run haikit:update` would
+  # fail, and why. Nothing is committed.
+  latest:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/rebook
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/rebook/package-lock.json
+      - run: npm ci
+      - run: npm run haikit:update
+      - name: Versions tested
+        if: always()
+        run: |
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          npm ls @haikit/core @haikit/server @haikit/client @haikit/anthropic --depth=0 >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
