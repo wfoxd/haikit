@@ -969,6 +969,11 @@ A little CSS, since `hai.css` styles only what the framework renders — never t
 >
 > Say *“show the hebrew one”*. The card renders inline, and the badge reads **display** rather than **awaiting selection** — the turn completes in one pass instead of parking. Click **copy** and an interaction line appears *after* the model has already finished: that is `inform`, enriching a conversation it never blocked.
 
+> [!TIP]
+> **The card after every pick**
+>
+> The card appears when you ask for it, as in the checkpoint. Picking a language still ends the way step 06's system prompt says: the model greets you and stops, because nothing tells it to show the card then. To show it after every pick, change that line in `src/server/main.ts` to `- Once they choose, show their greeting with show_greeting, then greet them in that language in one sentence and stop.`, and restart `npm start`.
+
 | Use | When | Action kind |
 | --- | --- | --- |
 | elicit | The model's next sentence depends on the answer | resolve |
