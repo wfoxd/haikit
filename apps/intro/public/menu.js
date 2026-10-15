@@ -145,18 +145,28 @@ export function mountMenu(root, chat, data) {
   const set = (menu, open) => {
     menu.trigger.setAttribute("aria-expanded", String(open));
     menu.panel.hidden = !open;
+    // A list that would run off the right edge, from a menu far along the
+    // bar, hangs from its button's right edge instead. Narrow, every list
+    // spans the bar already.
+    menu.panel.classList.remove("align-end");
+    if (open && menu.panel.getBoundingClientRect().right > document.documentElement.clientWidth - 8) {
+      menu.panel.classList.add("align-end");
+    }
   };
   const closeAll = () => menus.forEach((m) => set(m, false));
+  // Closing hides the item that has focus: hand it back to the menu's button.
+  const closeKeepingFocus = () => {
+    const open = menus.find((m) => !m.panel.hidden);
+    const refocus = open && open.panel.contains(document.activeElement) ? open.trigger : null;
+    closeAll();
+    refocus?.focus();
+  };
   /** A list's items: buttons, and a demo's links. */
   const links = (/** @type {HTMLElement} */ panel) => /** @type {HTMLElement[]} */ ([...panel.querySelectorAll("button, a")]);
 
   /** @param {Extract<Item, { message: string }>} item */
   const choose = (item) => {
-    // closing hides the item that has focus: hand it back to the menu's button
-    const open = menus.find((m) => !m.panel.hidden);
-    const refocus = open && open.panel.contains(document.activeElement) ? open.trigger : null;
-    closeAll();
-    refocus?.focus();
+    closeKeepingFocus();
     // follow the reply in, wherever the reader had scrolled to
     const transcript = root.querySelector(".hai-transcript");
     if (transcript instanceof HTMLElement) {
@@ -185,7 +195,8 @@ export function mountMenu(root, chat, data) {
           const words = h("span", "menu-words");
           words.append(h("span", "menu-title", item.label), h("span", "menu-detail", item.detail));
           a.append(words);
-          a.onclick = () => closeAll();
+          // the link opens its tab as links do; the menu closes, keeping the keyboard's place
+          a.onclick = () => closeKeepingFocus();
           li.append(a);
         } else {
           const b = h("button", item.n ? "menu-link" : "menu-link plain");

@@ -98,6 +98,10 @@ a.menu-link { box-sizing: border-box; text-decoration: none; }
 .menu-title { font-weight: 600; }
 .menu-out .menu-title::after { content: " ↗"; font-weight: 400; color: var(--hai-dim); }
 .menu-detail { font-size: 13px; color: var(--hai-dim); }
+/* a list that would run off the right edge hangs from its button's right edge (menu.js) */
+@media (min-width: 641px) {
+  .menu-panel.align-end { left: auto; right: 0; }
+}
 /* narrow: a list hangs from the whole bar, across the screen */
 @media (max-width: 640px) {
   .menu-item { position: static; }
