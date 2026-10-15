@@ -204,6 +204,17 @@ try {
       () => `query: ${freeQuery?.result?.split("\n")[0]}, picker: ${narrowed.props?.filter} ${shownIds}`,
     );
 
+    // 3c · a question nothing matches: typing closed the picker, so the guide opens it again
+    const tonight = await sse("/hai/chat", { conversationId: id, message: "which leave tonight?" });
+    const none = tonight.find((e) => e.type === "block_update" && /^0 of 3 match/.test(e.result ?? ""));
+    const reopened = surface(tonight, "rebooking_options");
+    check(
+      none && reopened.ui?.mode === "elicit" && reopened.props?.options.map((o) => o.id).join(",") === "o06,o05,o08" && lastStatus(tonight) === "awaiting",
+      "“which leave tonight?” matches none of the 3, and the guide opens the same 3 again, waiting",
+      () => `query: ${none?.result}, picker: ${reopened.props?.options.map((o) => o.id)}, status ${lastStatus(tonight)}`,
+    );
+    const narrowedOpen = reopened;
+
     // 4 · the holds run out: the picker on screen is revised, and one option sells out
     const mark = stream.events.length;
     const release = await ops("release", id);
@@ -211,7 +222,7 @@ try {
     const released = await stream.until((e) => e.type === "ui_open" && e.component === "rebooking_options" && e.replaces, 8_000, mark);
     const releasedProps = await stream.until((e) => e.type === "ui_props" && e.handle === released?.handle, 8_000, mark);
     const ua875 = releasedProps?.props?.options.find((o) => o.id === "o06");
-    check(released?.replaces === narrowed.ui?.handle && releasedProps?.props?.held === false && ua875?.seatsLeft === 0, "the picker is revised in place: holds gone, UA 875 sold out", () => JSON.stringify(releasedProps));
+    check(released?.replaces === narrowedOpen.ui?.handle && releasedProps?.props?.held === false && ua875?.seatsLeft === 0, "the picker is revised in place: holds gone, UA 875 sold out", () => JSON.stringify(releasedProps));
     const soldOut = await sse("/hai/interact", { conversationId: id, handle: released?.handle, action: "choose", value: "o06" });
     check(/UA 875 sold out a moment ago/.test(refusal(soldOut)), "a sold-out option is refused, and the picker stays live", () => refusal(soldOut));
 
@@ -287,6 +298,14 @@ try {
       check(late.status === 409 && /already chosen/.test(late.message), `a release after the traveller chose is refused: “${late.message}”`, () => JSON.stringify(late));
       const gone = await watch2.until((e) => e.type === "ui_props" && e.handle !== map.ui?.handle && e.props?.flight === "NH 7");
       const takenNow = gone?.props?.rows.flatMap((r) => r.seats).filter((s) => s.taken).map((s) => s.id) ?? [];
+      // something the scripted guide doesn't understand closes the seat map too, and it opens the map again
+      const thanks = await sse("/hai/chat", { conversationId: id2, message: "thanks" });
+      const mapAgain = surface(thanks, "seat_map");
+      check(
+        mapAgain.ui?.mode === "elicit" && mapAgain.props?.flight === "NH 7" && lastStatus(thanks) === "awaiting" && /Here's where you were/.test(said(thanks)),
+        "a message the guide doesn't understand closes the seat map, and the guide opens it again",
+        () => `${said(thanks)} · ${JSON.stringify(mapAgain.ui)}`,
+      );
       const again = surface(await sse("/hai/chat", { conversationId: id2, message: "show me all the options" }), "rebooking_options");
       const nh7 = again.props?.options.find((o) => o.id === "o05");
       check(again.props?.held === true && nh7?.seatsLeft === 5 && again.props.options.length === 14, "…and the options shown again are as before it: still held, NH 7 still 5 seats", () => JSON.stringify({ held: again.props?.held, nh7 }));

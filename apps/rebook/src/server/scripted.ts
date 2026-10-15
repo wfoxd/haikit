@@ -105,7 +105,10 @@ export function scripted(): ModelAdapter {
         const found = results.match(/^(\d+) of (\d+) match/m);
         if (found) {
           const asked = [...blocksOf(messages.at(-2))].reverse().find((b) => b?.type === "tool_use" && b.name === "query_ui")?.input;
-          if (found[1] === "0") return reply("None of the options match that. All of them are still in the list above.", onTextDelta);
+          // Typing closed the picker the question was about, so open it again: none match, but those still do.
+          if (found[1] === "0") {
+            return reply("None of these options match that. Here they are again.", onTextDelta, [toolUse("find_rebooking", shownWith)]);
+          }
           if (asked?.query === "earliest") {
             const first = results.split("\n")[1] ?? "";
             return reply(`The first to land is ${first.replace(/ \[o\d+\]$/, "")}.`, onTextDelta, [toolUse("find_rebooking", shownWith)]);
@@ -122,6 +125,17 @@ export function scripted(): ModelAdapter {
 
       // ── what the traveller typed ──
       const text = (texts.at(-1) ?? "").toLowerCase();
+      // Typing closes the question that was waiting. When what they typed isn't
+      // a request, open that question again, so there's still something to click.
+      const closed = resultsOf(messages.at(-2)).find((r) => r.includes("User did not select; they said:")) ?? "";
+      const choice = latest(/Chose (o\d+): /g)?.[1];
+      const reopen = /^Rebooking options/.test(closed)
+        ? toolUse("find_rebooking", shownWith)
+        : /^Seat map for/.test(closed) && choice
+          ? toolUse("show_seat_map", { optionId: choice })
+          : /^Choices for/.test(closed) && choice
+            ? toolUse("offer_care", { optionId: choice })
+            : null;
       const options = latest(/Rebooking options for \S+ \S+, on screen as (ui_\d+)/g)?.[1];
       const ask = (args: Record<string, boolean>, lead: string) =>
         reply(lead, onTextDelta, [toolUse("query_ui", { handle: options, query: "filter", args })]);
@@ -144,8 +158,10 @@ export function scripted(): ModelAdapter {
       }
       return reply(
         "I'm the scripted guide, so I understand a few kinds of request: “which are nonstop?”, “which are free?”, " +
-          "“what lands first?”, or “show me all the options”. Set ANTHROPIC_API_KEY on the server to talk to Claude instead.",
+          "“what lands first?”, or “show me all the options”. Set ANTHROPIC_API_KEY on the server to talk to Claude instead." +
+          (reopen ? " Here's where you were." : ""),
         onTextDelta,
+        reopen ? [reopen] : [],
       );
     },
   };
