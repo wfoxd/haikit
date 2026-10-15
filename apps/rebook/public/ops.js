@@ -89,7 +89,13 @@ export function mountOps(root, chat) {
     b.textContent = action.label;
     b.title = action.hint;
     b.onclick = () => {
-      if (action.route === "cancel") stopCountdown();
+      // Another request is still going, so this click does nothing: leave the
+      // countdown be, or nothing would cancel the flight.
+      if (busy) return;
+      if (action.route === "cancel") {
+        cancelling = true;
+        stopCountdown();
+      }
       void run(action);
     };
     if (action.route === "cancel") cancelButton = b;
@@ -99,6 +105,8 @@ export function mountOps(root, chat) {
   // ── the airline cancels by itself, if nobody does ─────────────────────
   /** @type {{ conversationId: string, tick: ReturnType<typeof setInterval>, due: ReturnType<typeof setTimeout> } | null} */
   let countdown = null;
+  /** A cancellation of this conversation's flight has been sent, or seen: the countdown stands down. */
+  let cancelling = false;
   const clock = document.createElement("span");
   clock.className = "ops-countdown";
   // the status line says it once; a number read out every second would drown it
@@ -115,6 +123,7 @@ export function mountOps(root, chat) {
   /** @param {string} conversationId */
   const startCountdown = (conversationId) => {
     stopCountdown();
+    cancelling = false;
     const ends = Date.now() + AUTO_CANCEL_MS;
     const show = () => (clock.textContent = `${Math.max(0, Math.ceil((ends - Date.now()) / 1000))}s`);
     show();
@@ -126,10 +135,12 @@ export function mountOps(root, chat) {
       due: setTimeout(() => {
         stopCountdown();
         const fire = () => {
-          // only for the conversation it was started for: a new chat starts its own
-          if (chat.state.conversationId !== conversationId) return;
+          // only for the conversation it was started for, while nobody has
+          // cancelled it: a new chat starts its own
+          if (chat.state.conversationId !== conversationId || cancelling) return;
           // another of the airline's requests is still going: cancel once it's done
           if (busy) return void setTimeout(fire, 300);
+          cancelling = true;
           void run(ACTIONS[0], `Nobody cancelled it, so after ${AUTO_CANCEL_MS / 1000} seconds the airline did. `);
         };
         fire();
@@ -143,6 +154,7 @@ export function mountOps(root, chat) {
     if (event.type === "ui_open" && event.component === "trip_card" && !event.replaces && state.conversationId) {
       startCountdown(state.conversationId);
     } else if ((event.type === "ui_open" && event.component === "trip_card") || (event.type === "notice" && event.name === "flight_cancelled")) {
+      cancelling = true;
       stopCountdown();
     } else if (["reset", "closed"].includes(/** @type {{ type: string }} */ (event).type)) {
       // the chat's own events, not the server's: a new conversation, or none

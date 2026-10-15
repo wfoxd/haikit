@@ -50,18 +50,22 @@ export function scripted(): ModelAdapter {
       const history = messages.flatMap((m) => [...textsOf(m), ...resultsOf(m)]).join("\n");
       const latest = (re: RegExp) => [...history.matchAll(re)].at(-1);
 
-      // ── news that arrived on its own: the traveller hasn't said anything ──
+      // ── the cancellation, however it arrived: usually on its own, in a wake
+      //    turn, but with the traveller's message if they typed first. Either
+      //    way it's the news, and it's read only once. ──
+      const cancelled = texts.find((t) => t.startsWith("[App notification: flight_cancelled]"));
+      if (cancelled) {
+        const [, flight, depart, reason] = cancelled.match(/\] (.+?), leaving San Francisco (.+?) for Tokyo, was cancelled because of (.+?)\./) ?? [];
+        return reply(
+          `I'm sorry: your ${depart?.slice(4) ?? ""} ${flight ?? "flight"} to Tokyo was cancelled because of ${reason ?? "a problem at the airline"}. ` +
+            "You don't need to call anyone. Here's every way I can get you there.",
+          onTextDelta,
+          [toolUse("find_rebooking", {})],
+        );
+      }
+
+      // ── other news that arrived on its own: the traveller hasn't said anything ──
       if (texts.some((t) => t.startsWith("[The user has not said anything"))) {
-        const cancelled = texts.find((t) => t.startsWith("[App notification: flight_cancelled]"));
-        if (cancelled) {
-          const [, flight, depart, reason] = cancelled.match(/\] (.+?), leaving San Francisco (.+?) for Tokyo, was cancelled because of (.+?)\./) ?? [];
-          return reply(
-            `I'm sorry: your ${depart?.slice(4) ?? ""} ${flight ?? "flight"} to Tokyo was cancelled because of ${reason ?? "a problem at the airline"}. ` +
-              "You don't need to call anyone. Here's every way I can get you there.",
-            onTextDelta,
-            [toolUse("find_rebooking", {})],
-          );
-        }
         const gate = texts.map((t) => t.match(/^\[UI update\] (.+? moved from gate \S+ to gate \S+?)\. (Boarding is still [\d:]+)\./)).find(Boolean);
         const confirmed = texts.map((t) => t.match(/^\[App notification: seat_confirmed\] (.+)$/)).find(Boolean);
         if (gate) {

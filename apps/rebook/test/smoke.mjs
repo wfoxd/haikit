@@ -316,6 +316,22 @@ try {
       watch2.close();
     }
 
+    // 8b2 · the traveller types before the wake turn starts: the cancellation
+    //       rides with their message instead, and the guide still opens the options
+    {
+      const begin = await sse("/hai/start", {});
+      const id3 = begin.find((e) => e.type === "hello")?.conversationId;
+      // no events stream is open, so no wake turn can start before the message
+      await ops("cancel", id3);
+      const typed = await sse("/hai/chat", { conversationId: id3, message: "hello?" });
+      const picker = surface(typed, "rebooking_options");
+      check(
+        /^I'm sorry: your 18:05 UA 837 to Tokyo was cancelled/.test(said(typed)) && picker.ui?.mode === "elicit" && picker.props?.options.length === 14,
+        "a cancellation that rides with a typed message still gets the apology and the options",
+        () => `${said(typed)} · ${JSON.stringify(picker.ui)}`,
+      );
+    }
+
     // 8c · a seat can only be booked on the option the traveller chose. Run
     //      here, in this process, on a conversation of its own: o05 chosen.
     {
