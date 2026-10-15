@@ -319,6 +319,35 @@ try {
       watch2.close();
     }
 
+    // 8c · a seat can only be booked on the option the traveller chose. Run
+    //      here, in this process, on a conversation of its own: o05 chosen.
+    {
+      const { tripShown, optionChosen } = await import("../src/server/airline.ts");
+      const { optionById, seatRows } = await import("../src/server/data.ts");
+      const { showSeatMap } = await import("../src/server/tools.ts");
+      const { seatMapServer } = await import("../src/server/surfaces.ts");
+      tripShown("local", "ui_01");
+      optionChosen("local", optionById("o05"));
+      const stub = { conversationId: "local", text: (model) => ({ model }), render: async () => ({ model: "a seat map was shown" }) };
+      const other = await showSeatMap.run({ optionId: "o07" }, stub);
+      check(/chose o05 \(NH 7\), not o07/.test(other.model), "show_seat_map refuses an option the traveller didn't choose", () => other.model);
+      const pick = (optionId, flight, seat) => {
+        const rows = seatRows(flight).map((r) => ({ ...r, seats: r.seats.map((s) => ({ ...s, taken: false })) }));
+        try {
+          return seatMapServer.impl.actions.pick(seat, { props: { optionId, flight, airline: "", rows }, conversationId: "local", handle: "ui_02" });
+        } catch (err) {
+          return `refused: ${err.message}`;
+        }
+      };
+      const elsewhere = pick("o07", "JL 1", "10B");
+      const chosenOne = pick("o05", "NH 7", "10B");
+      check(
+        /^refused: JL 1 isn't the flight you chose/.test(elsewhere) && /^Picked seat 10B on NH 7/.test(chosenOne),
+        "…and a seat on another option's map is refused, not taken and then not booked; on the chosen one's, it's picked",
+        () => `${elsewhere} · ${chosenOne}`,
+      );
+    }
+
     // 9 · the boarding pass books only what the traveller clicked
     const { issueBoardingPass } = await import("../src/server/tools.ts");
     const early = await issueBoardingPass.run({}, { conversationId: "nobody", text: (model) => ({ model }) });

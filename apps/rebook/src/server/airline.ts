@@ -144,9 +144,12 @@ export function optionChosen(conversationId: string, option: RebookOption) {
   if (d) d.chosen = { option, seat: null, care: null };
 }
 
-export function seatPicked(conversationId: string, optionId: string, seat: string) {
+/** Record a seat on the option the traveller chose. False when the seat is on any other option's map. */
+export function seatPicked(conversationId: string, optionId: string, seat: string): boolean {
   const d = desks.get(conversationId);
-  if (d?.chosen.option?.id === optionId) d.chosen.seat = seat;
+  if (d?.chosen.option?.id !== optionId) return false;
+  d.chosen.seat = seat;
+  return true;
 }
 
 export function careChosen(conversationId: string, care: string) {

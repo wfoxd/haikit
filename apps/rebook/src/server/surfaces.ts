@@ -105,7 +105,9 @@ export const seatMapServer = seatMap.implement({
       // Other passengers are choosing too. A seat gone since this map was
       // drawn is refused, and the traveller picks again.
       if (seat.taken) throw new Error(`seat ${seatId} was taken a moment ago: pick another`);
-      seatPicked(conversationId, props.optionId, seatId);
+      // Only a seat on the option the traveller chose can be booked: anything
+      // else is refused, rather than taken and then not booked.
+      if (!seatPicked(conversationId, props.optionId, seatId)) throw new Error(`${props.flight} isn't the flight you chose`);
       const kind = [seat.window ? "window" : "", seat.extraLegroom ? "extra legroom" : ""].filter(Boolean).join(", ");
       return `Picked seat ${seatId} on ${props.flight}${kind ? ` (${kind})` : ""}.`;
     },

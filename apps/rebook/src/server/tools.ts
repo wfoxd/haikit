@@ -79,13 +79,18 @@ export const findRebooking = defineTool({
 
 export const showSeatMap = defineTool({
   name: "show_seat_map",
-  description: "Show the seat map for an option's first flight. BLOCKS until the traveller picks a seat.",
+  description:
+    "Show the seat map for the first flight of the option the traveller chose. BLOCKS until they pick a seat.",
   input: z.object({ optionId: z.string() }),
   inputJsonSchema: optionInput,
 
   async run({ optionId }, ctx) {
     const option = optionById(optionId);
     if (!option) return ctx.text(`No option ${optionId}.`);
+    // A seat can only be booked on the option the traveller clicked.
+    const picked = chosen(ctx.conversationId)?.option;
+    if (!picked) return ctx.text("The traveller hasn't chosen an option yet: show find_rebooking.");
+    if (picked.id !== optionId) return ctx.text(`The traveller chose ${picked.id} (${picked.flights.join(" + ")}), not ${optionId}: show that one's seat map.`);
     const flight = option.flights[0]!;
     // Shown again, a map keeps the seats other passengers have taken since.
     const rows = seatsFor(ctx.conversationId, flight) ?? seatRows(flight);
