@@ -644,16 +644,25 @@ function todaySection(today) {
   return sec;
 }
 
+/** Who says each line of a scene, for a screen reader: sighted readers tell by its look. */
+const SPEAKERS = { world: "News:", you: "You type:", ai: "The AI says:", click: "You click:" };
+
 /**
  * A step's scene, as the person would see it: a line from the world, what
  * they typed, what the AI said, or what they clicked. A picture of the demo,
- * not a control: nothing in it can be clicked.
+ * not a control: nothing in it can be clicked. Its lines say more than the
+ * step's words, so a screen reader reads them too, each after its speaker.
  * @param {WelcomeProps["example"]["steps"][number]["scene"]} scene
  */
 function sceneOf(scene) {
   const box = h("div", "welcome-scene");
-  box.setAttribute("aria-hidden", "true"); // the step's words say the same
-  for (const line of scene) box.append(h("p", `scene-line scene-${line.from}`, line.text));
+  box.setAttribute("role", "group");
+  box.setAttribute("aria-label", "What you'd see");
+  for (const line of scene) {
+    const p = h("p", `scene-line scene-${line.from}`);
+    p.append(h("span", "welcome-sr", `${SPEAKERS[line.from]} `), line.text);
+    box.append(p);
+  }
   return box;
 }
 
