@@ -142,7 +142,7 @@ const INTRO = [
 ];
 
 const SUMMARY =
-  "HaiKIT is an open-source TypeScript framework for a new kind of software. People say what needs to be done. " +
+  "HaiKIT is an open-source TypeScript framework for building elicitation software. People say what needs to be done. " +
   "The AI runs the app's functions to do it, and asks people only for the decisions that are theirs.";
 
 /** First: software as people drive it today, beside software the AI drives. */
