@@ -185,10 +185,17 @@ export const WelcomeSide = z.object({
 });
 
 /**
- * A line of a step's scene, as the person sees it: something that happened
- * in the world, what they typed, what the AI said, or what they clicked.
+ * A line of a scene, as the person sees it: something that happened in the
+ * world, what they typed, what the AI said, an option on screen, or the one
+ * they clicked.
  */
-export const SceneLine = z.object({ from: z.enum(["world", "you", "ai", "click"]), text: z.string() });
+export const SceneLine = z.object({ from: z.enum(["world", "you", "ai", "option", "click"]), text: z.string() });
+
+/**
+ * One side of the chatbot comparison: its name, a short tag that labels its
+ * cells where the columns stack, and the same request as it plays there.
+ */
+export const VersusSide = z.object({ name: z.string(), tag: z.string(), scene: z.array(SceneLine) });
 
 // #region welcome
 export const welcomeScreen = defineSurface({
@@ -196,8 +203,9 @@ export const welcomeScreen = defineSurface({
   // 2 added the diagram, 3 the sections, 4 their illustrations, 5 a source
   // link, 6 the links list, 7 a tutorial panel of links, 8 the tutorial in-app,
   // 9 the second tutorial beside it, 10 the reference manual under them,
-  // 11 the story in place of the sections: today, how, and what you get
-  version: 11,
+  // 11 the story in place of the sections: today, how, and what you get,
+  // 12 a chatbot beside the app against an app the AI runs, after today
+  version: 12,
   props: z.object({
     /** A short introduction, one paragraph per entry. The first is the lede; the rest close the screen. */
     intro: z.array(z.string()),
@@ -207,7 +215,19 @@ export const welcomeScreen = defineSurface({
     links: z.array(z.object({ site: z.enum(["github", "npm"]), label: z.string(), url: z.string() })),
     /** First, software as people drive it today, beside software the AI drives. */
     today: z.object({ label: z.string(), title: z.string(), lead: z.string(), before: WelcomeSide, after: WelcomeSide }),
-    /** Second, how the AI does a job with you: one of HaiKIT's demos, step by step, then how it works underneath. */
+    /**
+     * Then a chatbot added beside an app's screens against an app the AI runs:
+     * the same request in each, then a row for each difference.
+     */
+    versus: z.object({
+      label: z.string(),
+      title: z.string(),
+      lead: z.string(),
+      chatbot: VersusSide,
+      haikit: VersusSide,
+      rows: z.array(z.object({ topic: z.string(), chatbot: z.string(), haikit: z.string() })),
+    }),
+    /** Then how the AI does a job with you: one of HaiKIT's demos, step by step, then how it works underneath. */
     example: z.object({
       label: z.string(),
       title: z.string(),
@@ -216,7 +236,7 @@ export const welcomeScreen = defineSurface({
       demo: z.object({ label: z.string(), url: z.string() }),
       underneath: z.object({ title: z.string(), text: z.string(), architecture: Architecture }),
     }),
-    /** Third, what building this way gives each audience: the people who use the software, and the team that builds it. */
+    /** Last, what building this way gives each audience: the people who use the software, and the team that builds it. */
     values: z.object({
       label: z.string(),
       title: z.string(),

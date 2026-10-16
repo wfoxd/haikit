@@ -241,10 +241,10 @@ a.menu-link { box-sizing: border-box; text-decoration: none; }
   padding: 2px 8px; border-radius: 999px; background: var(--hai-accent-soft);
   font: 600 12px var(--mono); letter-spacing: 0; font-variant-numeric: tabular-nums;
 }
-.welcome-story-title { margin: 0; max-width: 30ch; font: 600 clamp(22px, 3cqi, 30px)/1.2 var(--display); letter-spacing: -0.02em; text-wrap: balance; }
+.welcome-story-title { margin: 0; max-width: 36ch; font: 600 clamp(22px, 3cqi, 30px)/1.2 var(--display); letter-spacing: -0.02em; text-wrap: balance; }
 .welcome-story-lead { margin: 8px 0 0; max-width: 62ch; font: 17px/1.55 var(--serif); color: var(--hai-dim); text-wrap: pretty; }
 
-/* 01: today, beside software HaiKIT builds. Today is drawn in the warn
+/* today, beside software HaiKIT builds. Today is drawn in the warn
    colour, a person doing the work; HaiKIT in the accent, the model's. */
 .welcome-sides, .welcome-values { display: grid; gap: 16px; }
 @container (min-width: 760px) {
@@ -272,7 +272,56 @@ a.menu-link { box-sizing: border-box; text-decoration: none; }
 .welcome-side-points h5, .welcome-value-points h5 { margin: 0 0 3px; font: 600 15.5px/1.35 var(--display); }
 .welcome-side-points p, .welcome-value-points p { margin: 0; font: 14.5px/1.5 var(--display); color: var(--hai-dim); }
 
-/* 02: the demo, a step to a card, each with its scene; then underneath */
+/* the chatbot comparison. Wide: a table, the topic beside a column for each
+   side, the HaiKIT column in the accent. Narrower: the two heads side by
+   side, then each topic over its two cells; on a phone, all one column. Each
+   cell names its side, shown where the columns don't. */
+.welcome-versus { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+.vs-corner { display: none; }
+.vs-head {
+  display: flex; flex-direction: column; padding: 16px; border-radius: 14px;
+  background: var(--hai-panel-2); border: 1px solid var(--hai-line-soft);
+}
+.vs-head.haikit, .vs-cell.haikit { background: linear-gradient(var(--hai-accent-soft), var(--hai-accent-soft)), var(--hai-panel-2); }
+.vs-head.haikit { border-color: color-mix(in srgb, var(--hai-accent) 40%, transparent); }
+.vs-name { margin: 0 0 12px; font: 600 13px var(--display); letter-spacing: 0.06em; text-transform: uppercase; color: var(--hai-dim); }
+.vs-head.haikit .vs-name { color: var(--hai-accent); }
+.vs-head .welcome-scene { flex: 1; justify-content: flex-start; margin: 0; }
+.vs-topic { margin: 14px 0 0; font: 600 15.5px/1.35 var(--display); }
+.vs-cell {
+  margin: 0; padding: 12px 14px; border-radius: 12px; background: var(--hai-panel-2);
+  font: 14.5px/1.5 var(--display); color: var(--hai-dim);
+}
+.vs-cell.haikit { color: var(--hai-fg); }
+.vs-tag { display: block; margin-bottom: 2px; font: 600 12px var(--display); letter-spacing: 0.06em; text-transform: uppercase; color: var(--hai-dim); }
+.vs-cell.haikit .vs-tag { color: var(--hai-accent); }
+@container (min-width: 560px) {
+  .welcome-versus { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .vs-topic { grid-column: 1 / -1; }
+}
+@container (min-width: 860px) {
+  .welcome-versus { grid-template-columns: minmax(0, 0.75fr) minmax(0, 1fr) minmax(0, 1fr); gap: 0; }
+  .vs-corner { display: block; }
+  .vs-head { border: 0; border-radius: 14px 14px 0 0; padding: 18px 20px 20px; }
+  .vs-head.chatbot { margin-right: 10px; }
+  .vs-head.haikit, .vs-cell.haikit { box-shadow: inset 1px 0 color-mix(in srgb, var(--hai-accent) 40%, transparent), inset -1px 0 color-mix(in srgb, var(--hai-accent) 40%, transparent); }
+  .vs-head.haikit { box-shadow: inset 0 1px color-mix(in srgb, var(--hai-accent) 40%, transparent), inset 1px 0 color-mix(in srgb, var(--hai-accent) 40%, transparent), inset -1px 0 color-mix(in srgb, var(--hai-accent) 40%, transparent); }
+  .vs-topic, .vs-cell { grid-column: auto; margin: 0; padding: 14px 20px; border-top: 1px solid var(--hai-line-soft); border-radius: 0; }
+  .vs-topic { padding-left: 0; }
+  .vs-cell.chatbot { margin-right: 10px; }
+  .vs-cell.chatbot:nth-last-child(2) { border-radius: 0 0 14px 14px; }
+  .vs-cell.haikit:last-child {
+    border-radius: 0 0 14px 14px;
+    box-shadow: inset 1px 0 color-mix(in srgb, var(--hai-accent) 40%, transparent), inset -1px 0 color-mix(in srgb, var(--hai-accent) 40%, transparent), inset 0 -1px color-mix(in srgb, var(--hai-accent) 40%, transparent);
+  }
+  /* the column heads name each side here, so the cells don't, except to a screen reader */
+  .vs-tag {
+    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0;
+    overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+  }
+}
+
+/* the demo, a step to a card, each with its scene; then underneath */
 .welcome-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
 @container (min-width: 560px) { .welcome-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @container (min-width: 1000px) { .welcome-steps { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
@@ -301,6 +350,11 @@ a.menu-link { box-sizing: border-box; text-decoration: none; }
   border: 1.5px solid var(--hai-good); background: var(--hai-good-soft); font-weight: 600;
 }
 .scene-click::before { content: "✓ " / ""; color: var(--hai-good); }
+.scene-option {
+  align-self: flex-start; padding: 5px 10px; border-radius: 8px;
+  border: 1px solid var(--hai-line); background: var(--hai-panel-2);
+}
+.scene-option + .scene-click { margin-top: -2px; }
 .welcome-step-n { margin: 0 2px; font: 600 12px var(--mono); color: var(--hai-accent); }
 .welcome-step-title { margin: 3px 2px 5px; font: 600 16px/1.3 var(--display); text-wrap: balance; }
 .welcome-step-text { margin: 0 2px; font: 14px/1.5 var(--display); color: var(--hai-dim); }
@@ -318,7 +372,7 @@ a.menu-link { box-sizing: border-box; text-decoration: none; }
   .welcome-underneath { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); align-items: center; padding-bottom: 0; }
 }
 
-/* 03: what you get, a card for each audience */
+/* what you get, a card for each audience */
 .welcome-value-audience { margin: 0 0 16px; font: 600 13px var(--display); letter-spacing: 0.06em; text-transform: uppercase; color: var(--hai-dim); }
 .welcome-value-points { gap: 16px; }
 .welcome-value-points li { position: relative; padding-left: 32px; }
