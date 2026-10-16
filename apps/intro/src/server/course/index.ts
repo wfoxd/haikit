@@ -129,18 +129,61 @@ export function checkpointProps(id: string): CheckpointProps | null {
   };
 }
 
-/** The welcome screen's introduction: kept short, the lessons do the teaching. */
+/**
+ * The welcome screen's words. It's written for a junior developer or a
+ * product manager meeting HaiKIT for the first time: what software is like
+ * today, what changes when the AI drives it, how that looks for a person, and
+ * what it's worth. Every claim is something HaiKIT does today, and the lessons
+ * or the Rebook demo show it: keep it that way.
+ */
 const INTRO = [
   "AI drives the software. You steer.",
   "This introduction is a HaiKIT app too. Each lesson is a tool result, each checkpoint waits for your click, and **Context**, at the top right, shows exactly what the model receives.",
 ];
+
+const SUMMARY =
+  "HaiKIT is an open-source TypeScript framework for a new kind of software. People say what needs to be done. " +
+  "The AI runs the app's functions to do it, and asks people only for the decisions that are theirs.";
+
+/** First: software as people drive it today, beside software the AI drives. */
+const TODAY: WelcomeProps["today"] = {
+  label: "The idea",
+  title: "From clicking through screens to saying what you need",
+  lead: "Most software is driven by people. HaiKIT builds software that the AI drives.",
+  before: {
+    label: "Today",
+    title: "People drive the software",
+    image: {
+      kind: "screens",
+      alt: "A screen crowded with menus, tabs, form fields and buttons. A numbered trail of seven clicks jumps around it to finish one job.",
+    },
+    points: [
+      { title: "Screens full of controls", text: "Every function is a menu, a form or a button, somewhere on some screen." },
+      { title: "You figure out the way", text: "To get a job done, you learn where to type and what to click, and in what order." },
+      { title: "Nothing moves until you do", text: "The software waits at every step. Miss one, and you go back and look for it." },
+    ],
+  },
+  after: {
+    label: "With HaiKIT",
+    title: "The AI drives the software",
+    image: {
+      kind: "request",
+      alt: "One sentence asks for the job: get me to Tokyo by tomorrow. The AI answers with a card of the three flights that fit, and one click picks one.",
+    },
+    points: [
+      { title: "Say what needs to be done", text: "In your own words, the way you'd ask a colleague. There are no menus to learn first." },
+      { title: "The AI does the steps", text: "It picks the app's functions, runs them in the right order, and fills in what it already knows." },
+      { title: "You steer", text: "When a decision is yours, it shows you just the options that fit, and waits for your click." },
+    ],
+  },
+};
 
 /**
  * How a HaiKIT app works, as the welcome screen draws it. The top row is the
  * way out (a tool call, its data), the bottom row the way back (a click,
  * which reaches the LLM as the tool's answer), and the digest between them.
  */
-const ARCHITECTURE: WelcomeProps["architecture"] = {
+const ARCHITECTURE: WelcomeProps["example"]["underneath"]["architecture"] = {
   caption: "How a HaiKIT app works: one tool call, two channels.",
   description:
     "The LLM calls a tool. HaiKIT runs it, sends a short digest back to the LLM and the full data to your app. " +
@@ -164,77 +207,96 @@ const ARCHITECTURE: WelcomeProps["architecture"] = {
 };
 
 /**
- * The welcome screen's sections. Every claim here is something HaiKIT does
- * today, and the lessons show the code behind it: keep it that way.
+ * Second: how the AI does a job with you, in the Rebook demo. Each step is
+ * something Rebook does on its 60-second path (see apps/rebook's README).
  */
-const SECTIONS: WelcomeProps["sections"] = [
-  {
-    title: "Why build your product on HaiKIT",
-    lead: "For the people deciding what to build on.",
-    image: {
-      kind: "payload-split",
-      alt: "One tool call splits in two: the full data goes to your app, and a short digest goes to the LLM. 97% of the data never reaches the model.",
+const EXAMPLE: WelcomeProps["example"] = {
+  label: "How it works",
+  title: "The AI does the job with you",
+  lead: "Here's Rebook, a demo built with HaiKIT, on a bad day: the airline has just cancelled your flight to Tokyo.",
+  steps: [
+    {
+      title: "It speaks first",
+      text: "The airline's system reports the cancellation. The AI hears it and tells you before you ask, with every way to get there.",
+      scene: [
+        { from: "world", text: "Airline: UA 837 cancelled" },
+        { from: "ai", text: "I'm sorry: your flight to Tokyo was cancelled. Here are 14 ways to get there." },
+      ],
     },
-    points: [
-      {
-        title: "Smaller model bills",
-        text: "The model gets a few sentences about each result, not the data itself. In the flights example, 97% of the payload never enters its context.",
-      },
-      {
-        title: "Answers your code can act on",
-        text: "People answer by clicking, so a choice arrives as a validated value, not prose the model has to interpret.",
-      },
-      {
-        title: "Safety the compiler checks",
-        text: "A button can only send an action your contract declares, and a missing summary or an unbounded query fails the build.",
-      },
-    ],
-  },
-  {
-    title: "What the LLM brings to your app",
-    lead: "The LLM isn't a feature bolted on. It runs the app.",
-    image: {
-      kind: "llm-flow",
-      alt: "The LLM chooses between tools such as search, compare and ask you. Asking shows a component with options, and it waits for your click.",
+    {
+      title: "You ask in your own words",
+      text: "There's no filter to find. The AI looks your question up in the options on your screen, and shows the ones that match.",
+      scene: [
+        { from: "you", text: "Which are nonstop?" },
+        { from: "ai", text: "5 of the 14 options are. Here they are." },
+      ],
     },
-    points: [
-      {
-        title: "It runs the flow",
-        text: "The LLM reads each request and picks the next tool, so the app adapts to every person instead of following a fixed script.",
-      },
-      {
-        title: "It speaks plainly",
-        text: "People ask in their own words. The LLM answers from what it was shown and looks up more on demand, never from rows it hasn't seen.",
-      },
-      {
-        title: "It asks when it must",
-        text: "When a decision is needed, it shows a component and waits, for seconds or days, then carries on with the exact answer.",
-      },
-    ],
-  },
-  {
-    title: "What HaiKIT gives you",
-    lead: "The values you get by building this way.",
-    image: {
-      kind: "contract-split",
-      alt: "One contract, declared with defineSurface, feeds a server half and a browser half, and TypeScript checks both against it.",
+    {
+      title: "You decide with a click",
+      text: "Nothing is booked until you choose. The AI waits for your click, then carries on with exactly the flight you picked.",
+      scene: [
+        { from: "click", text: "NH 7 · Wed 11:00 · nonstop" },
+        { from: "ai", text: "NH 7 it is. Pick a seat." },
+      ],
     },
-    points: [
-      {
-        title: "One contract, two halves",
-        text: "Declare each component once. TypeScript holds the server and the browser to it, so a mismatch breaks the build, not production.",
-      },
-      {
-        title: "Ready for production",
-        text: "Conversations survive restarts in Postgres, several servers share them safely, and stale data is refused instead of acted on.",
-      },
-      {
-        title: "Open, and yours to change",
-        text: "MIT licensed. Claude and Postgres support ship with it; other models and stores plug in behind small interfaces.",
-      },
-    ],
+    {
+      title: "It keeps up with the world",
+      text: "When the gate moves after you've booked, your boarding pass changes in place, and the AI tells you.",
+      scene: [
+        { from: "world", text: "Airline: NH 7 gate changed" },
+        { from: "ai", text: "Heads up: your gate moved. Boarding time is the same." },
+      ],
+    },
+  ],
+  demo: { label: "Try Rebook", url: "https://rebook.haikit.app/" },
+  underneath: {
+    title: "Underneath, for developers",
+    text:
+      "The AI, an LLM such as Claude, never touches the screen. It calls your app's functions as tools. HaiKIT runs each one, " +
+      "sends the full result to the screen and a short summary to the AI, and a click goes back to the AI as the tool's answer.",
+    architecture: ARCHITECTURE,
   },
-];
+};
+
+/** Third: what building this way gives the people who use the software, and the team that builds it. */
+const VALUES: WelcomeProps["values"] = {
+  label: "Why it matters",
+  title: "What you get",
+  lead: "Building this way pays off for the people who use your software, and for the team that builds it.",
+  groups: [
+    {
+      audience: "For the people who use it",
+      points: [
+        { title: "Nothing to learn", text: "They say what they need. No menus to memorise, no manual, no training." },
+        {
+          title: "Straight to the result",
+          text: "The AI does the steps in between, so a job takes a sentence and a few clicks, not a tour of the screens.",
+        },
+        {
+          title: "Always in control",
+          text: "When a choice is theirs, the AI asks. Their click arrives as an exact value, never the AI's guess at what they meant.",
+        },
+      ],
+    },
+    {
+      audience: "For the team that builds it",
+      points: [
+        {
+          title: "Built from what you already write",
+          text: "Your functions become the AI's tools, and your components are what it shows. Plain TypeScript, open source under MIT.",
+        },
+        {
+          title: "Checked before it ships",
+          text: "Each component is declared once, and TypeScript holds the server and the browser to it. A button can send only what you declared.",
+        },
+        {
+          title: "Cheap to run, ready to scale",
+          text: "The AI reads a short summary of each result, not the data: in the flights example, 97% never reaches it. Conversations live in Postgres and survive restarts.",
+        },
+      ],
+    },
+  ],
+};
 
 /** Apps built with HaiKIT, each running on its own site: the menu's Demo list. */
 const DEMOS = [
@@ -284,11 +346,13 @@ const REFERENCE_PANEL: WelcomeProps["reference"] = {
 
 export const welcomeProps = (): WelcomeProps => ({
   intro: INTRO,
+  summary: SUMMARY,
+  links: LINKS,
+  today: TODAY,
+  example: EXAMPLE,
+  values: VALUES,
   tutorial: TUTORIAL_PANEL,
   reference: REFERENCE_PANEL,
-  links: LINKS,
-  architecture: ARCHITECTURE,
-  sections: SECTIONS,
   parts: PARTS.map((p) => ({
     n: p.n,
     title: p.title,

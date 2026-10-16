@@ -29,21 +29,24 @@ function lookup(terms: Term[], q: string | undefined): Term[] {
 
 // #region welcome-server
 export const welcomeServer = welcomeScreen.implement({
-  // The screen shows a logo, an introduction, a diagram and three sections.
-  // The model gets what it needs to act on the answer: which lessons exist,
+  // The screen shows a logo, the lede, and three sections: software today,
+  // how the AI does a job with you, and what you get. The model gets their
+  // headings, so it can answer "what is HaiKIT?" from what the visitor is
+  // looking at, and what it needs to act on the answer: which lessons exist,
   // and what each choice leads to.
   digest(props, { handle }) {
     const parts = props.parts
       .map((p) => `Part ${p.n} ${quote(p.title)}, lessons ${p.first}–${p.last}`)
       .join("; ");
-    // Section and point titles, so the model can answer "why HaiKIT?" from
-    // what the visitor is looking at.
-    const sections = props.sections
-      .map((sec) => `${sec.title} (${sec.points.map((p) => p.title).join("; ")})`)
-      .join(". ");
+    const titles = (points: { title: string }[]) => points.map((p) => p.title).join("; ");
+    const { today, example, values } = props;
     return (
-      `Welcome screen on display as ${handle}: the HaiKIT logo, a short introduction, ` +
-      `a diagram of how a HaiKIT app works, and three sections: ${sections}. ` +
+      `Welcome screen on display as ${handle}: the HaiKIT logo, the line ${quote(props.intro[0] ?? "")}, ` +
+      `then: ${props.summary} Three sections follow. 1 ${quote(today.title)}: ${today.before.label}, ${today.before.title.toLowerCase()} ` +
+      `(${titles(today.before.points)}); ${today.after.label}, ${today.after.title.toLowerCase()} (${titles(today.after.points)}). ` +
+      `2 ${quote(example.title)}: ${example.lead} Steps: ${titles(example.steps)}. A link to try it, ${example.demo.url}, ` +
+      `then a diagram of how a HaiKIT app works. ` +
+      `3 ${quote(values.title)}: ${values.groups.map((g) => `${g.audience.toLowerCase()}, ${titles(g.points)}`).join("; ")}. ` +
       `Links shown: ${props.links.map((l) => `${l.label} on ${l.site === "npm" ? "npm" : "GitHub"}, ${l.url}`).join("; ")}. ` +
       `Beside the place to start, HaiKIT's tutorial, built into this app: ${quote(props.tutorial.title)}, ` +
       `steps ${props.tutorial.steps[0]?.id}–${props.tutorial.steps.at(-1)?.id}; show_tutorial_step opens a page ` +

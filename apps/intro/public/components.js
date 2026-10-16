@@ -585,6 +585,165 @@ function siteLink(link) {
   return a;
 }
 
+// ── the welcome's story: today, how it works, what you get ────────────
+
+/**
+ * A welcome stored before version 11: the diagram beside the lede, then
+ * three sections, each a heading, an illustration and three points.
+ * @typedef {{
+ *   architecture?: import("../src/shared/surfaces.ts").Architecture,
+ *   sections?: { title: string, lead: string, image?: { kind: string, alt: string }, points: { title: string, text: string }[] }[],
+ * }} LegacyWelcome
+ */
+
+/**
+ * The top of a section of the story: its number and label, its title, its lead.
+ * @param {number} n
+ * @param {{ label: string, title: string, lead: string }} section
+ */
+function storyHead(n, section) {
+  const head = h("header", "welcome-story-head");
+  const kicker = h("p", "welcome-kicker");
+  kicker.append(h("span", "welcome-kicker-n", String(n).padStart(2, "0")), h("span", null, section.label));
+  head.append(kicker, h("h3", "welcome-story-title", section.title), inline(h("p", "welcome-story-lead"), section.lead));
+  return head;
+}
+
+/**
+ * Titled points as a list: a short heading, then a sentence or two.
+ * @param {string} className
+ * @param {{ title: string, text: string }[]} points
+ */
+function pointList(className, points) {
+  const list = h("ul", className);
+  for (const point of points) {
+    const li = h("li");
+    li.append(h("h5", null, point.title), inline(h("p"), point.text));
+    list.append(li);
+  }
+  return list;
+}
+
+/**
+ * First: software as people drive it today, beside software the AI drives.
+ * @param {WelcomeProps["today"]} today
+ */
+function todaySection(today) {
+  const sec = h("section", "welcome-story");
+  sec.append(storyHead(1, today));
+  const sides = h("div", "welcome-sides");
+  for (const [side, which] of /** @type {const} */ ([[today.before, "before"], [today.after, "after"]])) {
+    const card = h("article", `welcome-side ${which}`);
+    card.append(h("p", "welcome-side-label", side.label), h("h4", "welcome-side-title", side.title));
+    const picture = illustration(side.image);
+    if (picture) card.append(picture);
+    card.append(pointList("welcome-side-points", side.points));
+    sides.append(card);
+  }
+  sec.append(sides);
+  return sec;
+}
+
+/**
+ * A step's scene, as the person would see it: a line from the world, what
+ * they typed, what the AI said, or what they clicked. A picture of the demo,
+ * not a control: nothing in it can be clicked.
+ * @param {WelcomeProps["example"]["steps"][number]["scene"]} scene
+ */
+function sceneOf(scene) {
+  const box = h("div", "welcome-scene");
+  box.setAttribute("aria-hidden", "true"); // the step's words say the same
+  for (const line of scene) box.append(h("p", `scene-line scene-${line.from}`, line.text));
+  return box;
+}
+
+/**
+ * Second: how the AI does a job with you, step by step in one of HaiKIT's
+ * demos, a link to try it, and how it works underneath.
+ * @param {WelcomeProps["example"]} example
+ */
+function exampleSection(example) {
+  const sec = h("section", "welcome-story");
+  sec.append(storyHead(2, example));
+  const steps = h("ol", "welcome-steps");
+  example.steps.forEach((step, i) => {
+    const li = h("li", "welcome-step");
+    li.append(sceneOf(step.scene), h("p", "welcome-step-n", `Step ${i + 1}`), h("h4", "welcome-step-title", step.title), inline(h("p", "welcome-step-text"), step.text));
+    steps.append(li);
+  });
+  sec.append(steps);
+  // a site of its own, so a plain link: it never reaches the conversation
+  if (/^https:\/\//.test(example.demo.url)) {
+    const demo = h("p", "welcome-demo");
+    const a = h("a", "choice-btn primary", `${example.demo.label} ↗`);
+    a.href = example.demo.url;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.setAttribute("aria-label", `${example.demo.label} (opens in a new tab)`);
+    demo.append(a, h("span", "welcome-demo-url", example.demo.url.replace(/^https:\/\/|\/$/g, "")));
+    sec.append(demo);
+  }
+  const under = h("div", "welcome-underneath");
+  const words = h("div", "welcome-underneath-words");
+  words.append(h("h4", "welcome-underneath-title", example.underneath.title), inline(h("p"), example.underneath.text));
+  under.append(words, architecture(example.underneath.architecture));
+  sec.append(under);
+  return sec;
+}
+
+/**
+ * Third: what building this way gives each audience.
+ * @param {WelcomeProps["values"]} values
+ */
+function valuesSection(values) {
+  const sec = h("section", "welcome-story");
+  sec.append(storyHead(3, values));
+  const groups = h("div", "welcome-values");
+  for (const group of values.groups) {
+    const g = h("div", "welcome-value-group");
+    g.append(h("h4", "welcome-value-audience", group.audience), pointList("welcome-value-points", group.points));
+    groups.append(g);
+  }
+  sec.append(groups);
+  return sec;
+}
+
+/**
+ * A welcome stored before version 11: the lede beside the diagram, then its
+ * sections, each a heading, an illustration and three points.
+ * @param {HTMLElement} page
+ * @param {HTMLElement} lead
+ * @param {LegacyWelcome} props
+ */
+function legacyStory(page, lead, props) {
+  const hero = h("div", "welcome-hero");
+  hero.append(lead);
+  // Welcomes stored before versions 2 and 3 have no diagram and no
+  // sections; they still render.
+  if (props.architecture) hero.append(architecture(props.architecture));
+  page.append(hero);
+
+  for (const section of props.sections ?? []) {
+    const sec = h("section", "welcome-section");
+    const head = h("div", "welcome-section-head");
+    const words = h("div", "welcome-section-words");
+    words.append(h("h3", "welcome-section-title", section.title), h("p", "welcome-section-lead", section.lead));
+    head.append(words);
+    // version 3 sections have no image
+    const picture = section.image ? illustration(section.image) : null;
+    if (picture) head.append(picture);
+    sec.append(head);
+    const points = h("div", "welcome-points");
+    for (const point of section.points) {
+      const item = h("div", "welcome-point");
+      item.append(h("h4", null, point.title), inline(h("p"), point.text));
+      points.append(item);
+    }
+    sec.append(points);
+    page.append(sec);
+  }
+}
+
 /**
  * HaiKIT's tutorial as a panel: a button to start it, and its steps, each a
  * button that opens that step here, then the tutorial that carries on from it.
@@ -727,40 +886,21 @@ export const registry = {
         if (row.childElementCount) top.append(row);
         page.append(top);
 
-        // The hero: the lede, then the diagram of how a HaiKIT app works, side
-        // by side when the page has room for both.
+        // The lede, a sentence each, so a wide page can give each its own line.
         const [lede, ...rest] = props.intro;
-        const hero = h("div", "welcome-hero");
-        // a sentence each, so the hero can give each one its own line
         const lead = h("p", "welcome-lede");
         (lede ?? "").split(/(?<=[.!?])\s+/).forEach((sentence, i) => {
           if (i) lead.append(" ");
           lead.append(inline(h("span", "welcome-lede-sentence"), sentence));
         });
-        hero.append(lead);
-        // Welcomes stored before versions 2 and 3 have no diagram and no
-        // sections; they still render.
-        if (props.architecture) hero.append(architecture(props.architecture));
-        page.append(hero);
-
-        for (const section of props.sections ?? []) {
-          const sec = h("section", "welcome-section");
-          const head = h("div", "welcome-section-head");
-          const words = h("div", "welcome-section-words");
-          words.append(h("h3", "welcome-section-title", section.title), h("p", "welcome-section-lead", section.lead));
-          head.append(words);
-          // version 3 sections have no image
-          const picture = section.image ? illustration(section.image) : null;
-          if (picture) head.append(picture);
-          sec.append(head);
-          const points = h("div", "welcome-points");
-          for (const point of section.points) {
-            const item = h("div", "welcome-point");
-            item.append(h("h4", null, point.title), inline(h("p"), point.text));
-            points.append(item);
-          }
-          sec.append(points);
-          page.append(sec);
+        if (props.today) {
+          // The story: the lede and what HaiKIT is, then software today, how
+          // the AI does a job with you, and what you get.
+          const intro = h("div", "welcome-intro");
+          intro.append(lead, inline(h("p", "welcome-summary"), props.summary));
+          page.append(intro, todaySection(props.today), exampleSection(props.example), valuesSection(props.values));
+        } else {
+          legacyStory(page, lead, /** @type {LegacyWelcome} */ (/** @type {unknown} */ (props)));
         }
 
         // The close: what this app is, and the question it asks.
@@ -819,6 +959,11 @@ export const registry = {
         // The close: where to begin here, beside the tutorial for building
         // your own. Version 7 linked out to it, and earlier versions had none.
         const close = h("div", "welcome-close");
+        // after the story, the close is its last step: where to begin
+        if (props.today) {
+          close.classList.add("after-story");
+          close.append(h("p", "welcome-kicker welcome-close-kicker", "Start here"));
+        }
         close.append(start);
         const steps = props.tutorial?.steps ?? [];
         if (props.tutorial && steps.every((st) => typeof st.id === "string")) {

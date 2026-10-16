@@ -189,7 +189,8 @@ a.menu-link { box-sizing: border-box; text-decoration: none; }
 .choice-btn.picked:disabled { opacity: 1; }
 .welcome-closed { margin: 14px 0 0; font-size: 13px; color: var(--hai-dim); }
 
-/* the sections: why HaiKIT, what the LLM brings, what HaiKIT gives you */
+/* a welcome stored before version 11: three sections, why HaiKIT, what the
+   LLM brings, what HaiKIT gives you */
 .welcome-section {
   margin-top: 34px; padding-top: 30px; border-top: 1px solid var(--hai-line-soft);
   container-type: inline-size;
@@ -213,8 +214,118 @@ a.menu-link { box-sizing: border-box; text-decoration: none; }
 .welcome-point h4 { margin: 0 0 5px; font: 600 14.5px/1.35 var(--display); text-wrap: balance; }
 .welcome-point p { margin: 0; font: 14px/1.55 var(--display); color: var(--hai-dim); }
 
+/* ── the story: the lede, then software today, how it works, what you get ── */
+/* The lede and what HaiKIT is. With room, side by side: the lede large on
+   the left, a sentence to a line, and the summary beside its foot. */
+.welcome-intro { display: grid; gap: 14px; margin: 4px 0 0; }
+.welcome-intro .welcome-lede { margin: 0; max-width: 20ch; font-size: clamp(28px, 4.2cqi, 50px); line-height: 1.08; letter-spacing: -0.03em; }
+.welcome-summary { margin: 0; max-width: 52ch; font: 18px/1.55 var(--serif); color: var(--hai-dim); text-wrap: pretty; }
+@container welcome-page (min-width: 860px) {
+  .welcome-intro { grid-template-columns: minmax(0, 6fr) minmax(0, 5fr); gap: 48px; align-items: end; }
+  .welcome-intro .welcome-lede { max-width: none; }
+  .welcome-intro .welcome-lede-sentence { display: block; }
+}
+
+/* each section: a numbered label, a title and a lead, then its content.
+   Each is a container, so its grids answer to its own width. */
+.welcome-story {
+  margin-top: 48px; padding-top: 40px; border-top: 1px solid var(--hai-line-soft);
+  container-type: inline-size;
+}
+.welcome-story-head { margin-bottom: 26px; }
+.welcome-kicker {
+  display: flex; align-items: center; gap: 10px; margin: 0 0 10px;
+  font: 600 13px var(--display); letter-spacing: 0.06em; text-transform: uppercase; color: var(--hai-accent);
+}
+.welcome-kicker-n {
+  padding: 2px 8px; border-radius: 999px; background: var(--hai-accent-soft);
+  font: 600 12px var(--mono); letter-spacing: 0; font-variant-numeric: tabular-nums;
+}
+.welcome-story-title { margin: 0; max-width: 30ch; font: 600 clamp(22px, 3cqi, 30px)/1.2 var(--display); letter-spacing: -0.02em; text-wrap: balance; }
+.welcome-story-lead { margin: 8px 0 0; max-width: 62ch; font: 17px/1.55 var(--serif); color: var(--hai-dim); text-wrap: pretty; }
+
+/* 01: today, beside software HaiKIT builds. Today is drawn in the warn
+   colour, a person doing the work; HaiKIT in the accent, the model's. */
+.welcome-sides, .welcome-values { display: grid; gap: 16px; }
+@container (min-width: 760px) {
+  .welcome-sides, .welcome-values { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; }
+}
+.welcome-side, .welcome-value-group {
+  display: flex; flex-direction: column; padding: 22px 24px 22px;
+  border-radius: 16px; background: var(--hai-panel-2); border: 1px solid var(--hai-line-soft);
+}
+.welcome-side.after {
+  border-color: color-mix(in srgb, var(--hai-accent) 40%, transparent);
+  background: linear-gradient(var(--hai-accent-soft), transparent 55%), var(--hai-panel-2);
+}
+.welcome-side-label { margin: 0; font: 600 13px var(--display); letter-spacing: 0.06em; text-transform: uppercase; color: var(--hai-warn); }
+.welcome-side.after .welcome-side-label { color: var(--hai-accent); }
+.welcome-side-title { margin: 4px 0 16px; font: 600 20px/1.25 var(--display); letter-spacing: -0.01em; }
+.welcome-side .welcome-ill { margin: 0 0 18px; }
+.welcome-side .ill { max-width: 440px; margin: 0 auto; }
+.welcome-side-points, .welcome-value-points { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
+.welcome-side-points li { position: relative; padding-left: 20px; }
+.welcome-side-points li::before {
+  content: ""; position: absolute; left: 0; top: 0.42em; width: 8px; height: 8px; border-radius: 50%; background: var(--hai-warn);
+}
+.welcome-side.after .welcome-side-points li::before { background: var(--hai-accent); }
+.welcome-side-points h5, .welcome-value-points h5 { margin: 0 0 3px; font: 600 15.5px/1.35 var(--display); }
+.welcome-side-points p, .welcome-value-points p { margin: 0; font: 14.5px/1.5 var(--display); color: var(--hai-dim); }
+
+/* 02: the demo, a step to a card, each with its scene; then underneath */
+.welcome-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
+@container (min-width: 560px) { .welcome-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@container (min-width: 1000px) { .welcome-steps { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.welcome-step {
+  display: flex; flex-direction: column; padding: 14px 14px 18px;
+  border-radius: 14px; background: var(--hai-panel-2); border: 1px solid var(--hai-line-soft);
+}
+.welcome-scene {
+  display: flex; flex-direction: column; justify-content: center; gap: 7px; min-height: 112px; margin-bottom: 14px;
+  padding: 12px; border-radius: 10px; background: var(--hai-panel); border: 1px solid var(--hai-line-soft);
+}
+.scene-line { margin: 0; max-width: 92%; font: 13px/1.4 var(--display); }
+.scene-world {
+  align-self: flex-start; padding: 3px 10px; border-radius: 999px;
+  background: color-mix(in srgb, var(--hai-warn) 14%, transparent); color: var(--hai-warn); font-size: 12px; font-weight: 600;
+}
+.scene-you { align-self: flex-end; padding: 6px 11px; border-radius: 12px 12px 4px 12px; background: var(--hai-user-bg); }
+.scene-ai { align-self: flex-start; padding: 6px 11px; border-radius: 4px 12px 12px 12px; background: var(--hai-panel-2); border-left: 3px solid var(--hai-accent); }
+.scene-click {
+  align-self: flex-start; padding: 5px 10px; border-radius: 8px;
+  border: 1.5px solid var(--hai-good); background: var(--hai-good-soft); font-weight: 600;
+}
+.scene-click::before { content: "✓ "; color: var(--hai-good); }
+.welcome-step-n { margin: 0 2px; font: 600 12px var(--mono); color: var(--hai-accent); }
+.welcome-step-title { margin: 3px 2px 5px; font: 600 16px/1.3 var(--display); text-wrap: balance; }
+.welcome-step-text { margin: 0 2px; font: 14px/1.5 var(--display); color: var(--hai-dim); }
+.welcome-demo { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 22px 0 0; }
+.welcome-demo-url { font: 13px var(--mono); color: var(--hai-dim); }
+/* underneath: the words beside the diagram once the diagram's wide drawing
+   fits its column (580px of 3/5, less the padding and the gap) */
+.welcome-underneath {
+  display: grid; gap: 4px 40px; margin-top: 30px; padding: 22px 24px 4px;
+  border-radius: 14px; border: 1px dashed var(--hai-line);
+}
+.welcome-underneath-title { margin: 0 0 5px; font: 600 16px/1.3 var(--display); }
+.welcome-underneath-words p { margin: 0; max-width: 54ch; font: 15px/1.55 var(--serif); color: var(--hai-dim); }
+@container (min-width: 1060px) {
+  .welcome-underneath { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); align-items: center; padding-bottom: 0; }
+}
+
+/* 03: what you get, a card for each audience */
+.welcome-value-audience { margin: 0 0 16px; font: 600 13px var(--display); letter-spacing: 0.06em; text-transform: uppercase; color: var(--hai-dim); }
+.welcome-value-points { gap: 16px; }
+.welcome-value-points li { position: relative; padding-left: 32px; }
+.welcome-value-points li::before {
+  content: "✓"; position: absolute; left: 0; top: 0; width: 21px; height: 21px; border-radius: 50%;
+  background: var(--hai-good-soft); color: var(--hai-good); font: 700 12px/21px var(--display); text-align: center;
+}
+
 /* the close: what this app is, and where to begin */
 .welcome-close { display: grid; gap: 16px; margin-top: 36px; }
+.welcome-close.after-story { margin-top: 48px; padding-top: 40px; border-top: 1px solid var(--hai-line-soft); }
+.welcome-close-kicker { grid-column: 1 / -1; margin: 0 0 -4px; }
 @container (min-width: 620px) {
   .welcome-close { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 }
@@ -304,6 +415,17 @@ a.choice-btn { display: inline-flex; align-items: center; align-self: flex-start
 .ill-dot { fill: currentColor; }
 .ill-check-dot { fill: currentColor; }
 .ill-check { fill: none; stroke: var(--hai-panel); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+/* the window in the today and request drawings */
+.ill .ill-sep { stroke: var(--hai-line); stroke-width: 1; }
+.ill-chrome { fill: var(--hai-line); }
+.ill-tab { fill: var(--hai-panel); stroke: var(--hai-dim); }
+.ill-button { fill: var(--hai-dim); opacity: 0.55; }
+.ill-chevron { fill: none; stroke: currentColor; stroke-width: 1.5; }
+.ill-trail { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-dasharray: 3 3; }
+.ill .ill-step-n { fill: var(--hai-panel); font-size: 10px; font-weight: 700; }
+.ill-bubble { fill: var(--hai-user-bg); }
+.ill .ill-say { font-size: 13.5px; }
+.ill .ill-opt { font-size: 12px; }
 
 /* the architecture diagram: the model channel in the accent, the browser's in
    good, as everywhere else in the course; boxes and names in the text colour */
@@ -669,6 +791,9 @@ button.map-lesson:hover { background: var(--hai-hover); }
   .welcome-lede { font-size: 22px; }
   .welcome-p { font-size: 16px; }
   .welcome-start, .welcome-tutorial { padding: 18px 16px; }
+  .welcome-summary { font-size: 16.5px; }
+  .welcome-story, .welcome-close.after-story { margin-top: 36px; padding-top: 30px; }
+  .welcome-side, .welcome-value-group, .welcome-underneath { padding-left: 16px; padding-right: 16px; }
   .map { padding: 14px 14px 12px; }
   .lesson { padding: 20px 16px 18px; }
   .lesson-body { font-size: 16.5px; }

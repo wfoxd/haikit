@@ -158,38 +158,71 @@ export const ArchArrow = z.object({
   label: z.string(),
 });
 
-/** A section of the welcome screen: a heading, a short lead, an illustration, and its points. */
-export const WelcomeSection = z.object({
-  title: z.string(),
-  lead: z.string(),
-  /** Which drawing the browser makes, and the same idea in words for readers who can't see it. */
-  image: z.object({ kind: z.enum(["payload-split", "llm-flow", "contract-split"]), alt: z.string() }),
-  points: z.array(z.object({ title: z.string(), text: z.string() })),
+/** How a HaiKIT app works, as a diagram: three boxes and the labelled arrows between them. */
+export const Architecture = z.object({
+  caption: z.string(),
+  /** The same claim in words, for readers who can't see the drawing. */
+  description: z.string(),
+  nodes: z.array(ArchNode),
+  /** links[i] joins nodes[i] and nodes[i + 1]. */
+  links: z.array(z.array(ArchArrow)),
 });
+export type Architecture = z.infer<typeof Architecture>;
+
+/** A point the welcome screen makes: a short heading, and a sentence or two. */
+export const WelcomePoint = z.object({ title: z.string(), text: z.string() });
+
+/**
+ * One side of the welcome screen's comparison: software as people drive it
+ * today, or as HaiKIT builds it.
+ */
+export const WelcomeSide = z.object({
+  label: z.string(),
+  title: z.string(),
+  /** Which drawing the browser makes, and the same idea in words for readers who can't see it. */
+  image: z.object({ kind: z.enum(["screens", "request"]), alt: z.string() }),
+  points: z.array(WelcomePoint),
+});
+
+/**
+ * A line of a step's scene, as the person sees it: something that happened
+ * in the world, what they typed, what the AI said, or what they clicked.
+ */
+export const SceneLine = z.object({ from: z.enum(["world", "you", "ai", "click"]), text: z.string() });
 
 // #region welcome
 export const welcomeScreen = defineSurface({
   name: "welcome",
   // 2 added the diagram, 3 the sections, 4 their illustrations, 5 a source
   // link, 6 the links list, 7 a tutorial panel of links, 8 the tutorial in-app,
-  // 9 the second tutorial beside it, 10 the reference manual under them
-  version: 10,
+  // 9 the second tutorial beside it, 10 the reference manual under them,
+  // 11 the story in place of the sections: today, how, and what you get
+  version: 11,
   props: z.object({
-    /** A short introduction, one paragraph per entry. The first is the lede. */
+    /** A short introduction, one paragraph per entry. The first is the lede; the rest close the screen. */
     intro: z.array(z.string()),
+    /** Under the lede: what HaiKIT is, in a sentence or two. */
+    summary: z.string(),
     /** Where HaiKIT lives, linked beside the logo: its source and its packages. */
     links: z.array(z.object({ site: z.enum(["github", "npm"]), label: z.string(), url: z.string() })),
-    /** How a HaiKIT app works, drawn under the lede. */
-    architecture: z.object({
-      caption: z.string(),
-      /** The same claim in words, for readers who can't see the drawing. */
-      description: z.string(),
-      nodes: z.array(ArchNode),
-      /** links[i] joins nodes[i] and nodes[i + 1]. */
-      links: z.array(z.array(ArchArrow)),
+    /** First, software as people drive it today, beside software the AI drives. */
+    today: z.object({ label: z.string(), title: z.string(), lead: z.string(), before: WelcomeSide, after: WelcomeSide }),
+    /** Second, how the AI does a job with you: one of HaiKIT's demos, step by step, then how it works underneath. */
+    example: z.object({
+      label: z.string(),
+      title: z.string(),
+      lead: z.string(),
+      steps: z.array(z.object({ title: z.string(), text: z.string(), scene: z.array(SceneLine) })),
+      demo: z.object({ label: z.string(), url: z.string() }),
+      underneath: z.object({ title: z.string(), text: z.string(), architecture: Architecture }),
     }),
-    /** Why HaiKIT, for the people deciding; what the LLM brings; what HaiKIT gives you. */
-    sections: z.array(WelcomeSection),
+    /** Third, what building this way gives each audience: the people who use the software, and the team that builds it. */
+    values: z.object({
+      label: z.string(),
+      title: z.string(),
+      lead: z.string(),
+      groups: z.array(z.object({ audience: z.string(), points: z.array(WelcomePoint) })),
+    }),
     /** HaiKIT's tutorial, built into this app, shown beside the place to start. */
     tutorial: z.object({
       title: z.string(),
