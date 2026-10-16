@@ -709,6 +709,9 @@ export const registry = {
         el.replaceChildren();
 
         const root = h("div", "welcome");
+        // the content, on a page at most 1180px wide, centred in however wide a card
+        const page = h("div", "welcome-page");
+        root.append(page);
         const top = h("div", "welcome-top");
         const title = h("h2", "welcome-title");
         title.append(logo("welcome-logo"));
@@ -722,13 +725,23 @@ export const registry = {
           if (a) row.append(a);
         }
         if (row.childElementCount) top.append(row);
-        root.append(top);
+        page.append(top);
 
+        // The hero: the lede, then the diagram of how a HaiKIT app works, side
+        // by side when the page has room for both.
         const [lede, ...rest] = props.intro;
-        root.append(inline(h("p", "welcome-lede"), lede));
+        const hero = h("div", "welcome-hero");
+        // a sentence each, so the hero can give each one its own line
+        const lead = h("p", "welcome-lede");
+        (lede ?? "").split(/(?<=[.!?])\s+/).forEach((sentence, i) => {
+          if (i) lead.append(" ");
+          lead.append(inline(h("span", "welcome-lede-sentence"), sentence));
+        });
+        hero.append(lead);
         // Welcomes stored before versions 2 and 3 have no diagram and no
         // sections; they still render.
-        if (props.architecture) root.append(architecture(props.architecture));
+        if (props.architecture) hero.append(architecture(props.architecture));
+        page.append(hero);
 
         for (const section of props.sections ?? []) {
           const sec = h("section", "welcome-section");
@@ -747,7 +760,7 @@ export const registry = {
             points.append(item);
           }
           sec.append(points);
-          root.append(sec);
+          page.append(sec);
         }
 
         // The close: what this app is, and the question it asks.
@@ -819,7 +832,7 @@ export const registry = {
             referencePanel(props.reference, { live: live && !sending, picked, choose: (id) => void pick("reference", id) }),
           );
         }
-        root.append(close);
+        page.append(close);
         el.append(root);
       };
 

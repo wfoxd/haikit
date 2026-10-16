@@ -136,7 +136,24 @@ a.menu-link { box-sizing: border-box; text-decoration: none; }
 .brand-paper-dim { fill: var(--hai-logo-paper, var(--hai-panel)); opacity: 0.5; }
 .brand-hot { fill: var(--hai-logo-hot, #ff5a1f); }
 
-.welcome { padding: 40px 40px 34px; container-type: inline-size; }
+.welcome { padding: 40px 40px 34px; }
+/* The content: a page at most 1180px wide, centred in a card as wide as the
+   window. The layout below answers to the page's width, not the window's.
+   Named, because the diagram is a container of its own: a rule for the
+   diagram's insides would otherwise be measured against the diagram. */
+.welcome-page { max-width: 1180px; margin: 0 auto; container: welcome-page / inline-size; }
+
+/* The hero: the lede, then the diagram. With room for both they sit side by
+   side, the lede set large. The diagram's wide drawing needs 580px, and its
+   column (6/11 of the page, less the gap) reaches that at 1120px of page,
+   a window of about 1240px. */
+.welcome-hero { display: grid; }
+@container welcome-page (min-width: 1120px) {
+  .welcome-hero { grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 48px; align-items: center; margin: 10px 0 8px; }
+  .welcome-hero .welcome-lede { margin: 0; max-width: none; font-size: 40px; line-height: 1.1; letter-spacing: -0.025em; }
+  .welcome-hero .welcome-lede-sentence { display: block; }
+  .welcome-hero .arch { margin: 0; }
+}
 .welcome-top {
   display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
   gap: 14px 20px; margin-bottom: 26px;
@@ -180,9 +197,11 @@ a.menu-link { box-sizing: border-box; text-decoration: none; }
 .welcome-section-head { display: grid; gap: 16px; margin-bottom: 22px; }
 @container (min-width: 600px) {
   .welcome-section-head { grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr); gap: 28px; align-items: center; }
+  /* its illustration to the right edge, across from its title */
+  .welcome-section-head .welcome-ill .ill { margin-left: auto; }
 }
 .welcome-section-title { margin: 0; font: 600 21px/1.25 var(--display); letter-spacing: -0.015em; text-wrap: balance; }
-.welcome-section-lead { margin: 6px 0 0; max-width: 34ch; font: 16px/1.5 var(--serif); color: var(--hai-dim); }
+.welcome-section-lead { margin: 6px 0 0; max-width: 38ch; font: 16px/1.5 var(--serif); color: var(--hai-dim); text-wrap: pretty; }
 /* Each point spans two rows of the section's grid, title and text, as a
    subgrid: side by side, the texts line up even when a title wraps. */
 .welcome-points { display: grid; grid-template-columns: minmax(0, 1fr); column-gap: 22px; row-gap: 0; }
@@ -291,7 +310,7 @@ a.choice-btn { display: inline-flex; align-items: center; align-self: flex-start
 .arch { margin: 22px 0 20px; container-type: inline-size; }
 /* An SVG grows with its width, labels and all: drawn at about the size the
    old column gave it, however wide the window. */
-.arch svg { width: 100%; height: auto; max-width: 720px; }
+.arch svg { display: block; width: 100%; height: auto; max-width: 720px; }
 /* one drawing at a time, chosen by the card's width; same specificity as each
    other, so the container query below is what decides. The wide drawing is
    600 units across, so below 580px its 11.5px labels would shrink past 11px:
