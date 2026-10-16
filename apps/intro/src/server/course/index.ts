@@ -142,7 +142,7 @@ const INTRO = [
 ];
 
 const SUMMARY =
-  "HaiKIT is an open-source TypeScript framework for a new kind of software. People say what needs to be done. " +
+  "HaiKIT is an open-source TypeScript framework for building elicitation software. People say what needs to be done. " +
   "The AI runs the app's functions to do it, and asks people only for the decisions that are theirs.";
 
 /** First: software as people drive it today, beside software the AI drives. */
@@ -179,6 +179,66 @@ const TODAY: WelcomeProps["today"] = {
 };
 
 /**
+ * Then: a chatbot added beside an app's screens, the usual way to add AI to
+ * software today, against an app the AI runs. Each HaiKIT cell is something
+ * HaiKIT does today; each chatbot cell is how such a chatbot usually works.
+ */
+const VERSUS: WelcomeProps["versus"] = {
+  label: "Not a chatbot",
+  title: "A chatbot beside the app, or an app the AI runs",
+  lead: "Adding AI to software usually means adding a chatbot next to the same screens. HaiKIT builds the software around the AI instead. Here's one request in each.",
+  chatbot: {
+    name: "A chatbot added to the app",
+    tag: "Chatbot",
+    scene: [
+      { from: "you", text: "Move me to a flight tomorrow" },
+      {
+        from: "ai",
+        text: "Sure! Open My Trips, select UA 837 and click Change flight. Set the date to tomorrow, pick a flight from the list, then click Confirm.",
+      },
+    ],
+  },
+  haikit: {
+    name: "An app built with HaiKIT",
+    tag: "HaiKIT",
+    scene: [
+      { from: "you", text: "Move me to a flight tomorrow" },
+      { from: "ai", text: "These 3 fit. Which one?" },
+      { from: "option", text: "UA 875 · Wed 10:30 · nonstop" },
+      { from: "click", text: "NH 7 · Wed 11:00 · nonstop" },
+      { from: "ai", text: "NH 7 it is. Pick a seat." },
+    ],
+  },
+  rows: [
+    {
+      topic: "Who works the app",
+      chatbot: "You do. The chatbot sits beside the screens and tells you where to click.",
+      haikit: "The AI does. It runs the app's functions for you and shows you what you need.",
+    },
+    {
+      topic: "How the AI answers",
+      chatbot: "In paragraphs, which you read and then act on yourself.",
+      haikit: "With components made for the moment: the options, a seat map, a boarding pass.",
+    },
+    {
+      topic: "How you answer back",
+      chatbot: "You type, and the AI has to work out what you meant.",
+      haikit: "You click. Your choice arrives as an exact value, which the app checks before it acts.",
+    },
+    {
+      topic: "What the AI reads",
+      chatbot: "Whatever is put into the chat: often all of the data, or not enough of it.",
+      haikit: "A short summary of each result, and it looks up more when it needs to. The full data goes to the screen.",
+    },
+    {
+      topic: "When it speaks",
+      chatbot: "Only when you ask it something.",
+      haikit: "When something changes, it speaks first: a cancelled flight, a gate that moved.",
+    },
+  ],
+};
+
+/**
  * How a HaiKIT app works, as the welcome screen draws it. The top row is the
  * way out (a tool call, its data), the bottom row the way back (a click,
  * which reaches the LLM as the tool's answer), and the digest between them.
@@ -207,7 +267,7 @@ const ARCHITECTURE: WelcomeProps["example"]["underneath"]["architecture"] = {
 };
 
 /**
- * Second: how the AI does a job with you, in the Rebook demo. Each step is
+ * Then: how the AI does a job with you, in the Rebook demo. Each step is
  * something Rebook does on its 60-second path (see apps/rebook's README).
  */
 const EXAMPLE: WelcomeProps["example"] = {
@@ -258,7 +318,7 @@ const EXAMPLE: WelcomeProps["example"] = {
   },
 };
 
-/** Third: what building this way gives the people who use the software, and the team that builds it. */
+/** Last: what building this way gives the people who use the software, and the team that builds it. */
 const VALUES: WelcomeProps["values"] = {
   label: "Why it matters",
   title: "What you get",
@@ -349,6 +409,7 @@ export const welcomeProps = (): WelcomeProps => ({
   summary: SUMMARY,
   links: LINKS,
   today: TODAY,
+  versus: VERSUS,
   example: EXAMPLE,
   values: VALUES,
   tutorial: TUTORIAL_PANEL,

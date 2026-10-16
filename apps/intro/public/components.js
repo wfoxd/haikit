@@ -625,12 +625,13 @@ function pointList(className, points) {
 }
 
 /**
- * First: software as people drive it today, beside software the AI drives.
+ * Software as people drive it today, beside software the AI drives.
  * @param {WelcomeProps["today"]} today
+ * @param {number} n its place in the story
  */
-function todaySection(today) {
+function todaySection(today, n) {
   const sec = h("section", "welcome-story");
-  sec.append(storyHead(1, today));
+  sec.append(storyHead(n, today));
   const sides = h("div", "welcome-sides");
   for (const [side, which] of /** @type {const} */ ([[today.before, "before"], [today.after, "after"]])) {
     const card = h("article", `welcome-side ${which}`);
@@ -645,7 +646,7 @@ function todaySection(today) {
 }
 
 /** Who says each line of a scene, for a screen reader: sighted readers tell by its look. */
-const SPEAKERS = { world: "News:", you: "You type:", ai: "The AI says:", click: "You click:" };
+const SPEAKERS = { world: "News:", you: "You type:", ai: "The AI says:", option: "Option:", click: "You click:" };
 
 /**
  * A step's scene, as the person would see it: a line from the world, what
@@ -667,13 +668,47 @@ function sceneOf(scene) {
 }
 
 /**
- * Second: how the AI does a job with you, step by step in one of HaiKIT's
- * demos, a link to try it, and how it works underneath.
- * @param {WelcomeProps["example"]} example
+ * A chatbot added beside an app's screens against an app the AI runs: each
+ * side's name over the same request as it plays there, then a row for each
+ * difference. Wide, a table of three columns; narrower, the topic over the
+ * two cells, each cell naming its side.
+ * @param {WelcomeProps["versus"]} versus
+ * @param {number} n its place in the story
  */
-function exampleSection(example) {
+function versusSection(versus, n) {
   const sec = h("section", "welcome-story");
-  sec.append(storyHead(2, example));
+  sec.append(storyHead(n, versus));
+  const grid = h("div", "welcome-versus");
+  const sides = /** @type {const} */ (["chatbot", "haikit"]);
+  grid.append(h("div", "vs-corner"));
+  for (const which of sides) {
+    const head = h("div", `vs-head ${which}`);
+    head.append(h("h4", "vs-name", versus[which].name), sceneOf(versus[which].scene));
+    grid.append(head);
+  }
+  for (const row of versus.rows) {
+    grid.append(h("h5", "vs-topic", row.topic));
+    for (const which of sides) {
+      const cell = h("p", `vs-cell ${which}`);
+      const tag = h("span", "vs-tag", versus[which].tag);
+      tag.append(h("span", "welcome-sr", ": ")); // heard, not shown
+      cell.append(tag, row[which]);
+      grid.append(cell);
+    }
+  }
+  sec.append(grid);
+  return sec;
+}
+
+/**
+ * How the AI does a job with you, step by step in one of HaiKIT's demos, a
+ * link to try it, and how it works underneath.
+ * @param {WelcomeProps["example"]} example
+ * @param {number} n its place in the story
+ */
+function exampleSection(example, n) {
+  const sec = h("section", "welcome-story");
+  sec.append(storyHead(n, example));
   const steps = h("ol", "welcome-steps");
   example.steps.forEach((step, i) => {
     const li = h("li", "welcome-step");
@@ -701,12 +736,13 @@ function exampleSection(example) {
 }
 
 /**
- * Third: what building this way gives each audience.
+ * What building this way gives each audience.
  * @param {WelcomeProps["values"]} values
+ * @param {number} n its place in the story
  */
-function valuesSection(values) {
+function valuesSection(values, n) {
   const sec = h("section", "welcome-story");
-  sec.append(storyHead(3, values));
+  sec.append(storyHead(n, values));
   const groups = h("div", "welcome-values");
   for (const group of values.groups) {
     const g = h("div", "welcome-value-group");
@@ -903,11 +939,19 @@ export const registry = {
           lead.append(inline(h("span", "welcome-lede-sentence"), sentence));
         });
         if (props.today) {
-          // The story: the lede and what HaiKIT is, then software today, how
-          // the AI does a job with you, and what you get.
+          // The story: the lede and what HaiKIT is, then software today, a
+          // chatbot beside an app against an app the AI runs, how the AI does
+          // a job with you, and what you get.
           const intro = h("div", "welcome-intro");
           intro.append(lead, inline(h("p", "welcome-summary"), props.summary));
-          page.append(intro, todaySection(props.today), exampleSection(props.example), valuesSection(props.values));
+          // numbered in order; a welcome stored at version 11 has no comparison
+          const sections = [
+            (/** @type {number} */ n) => todaySection(props.today, n),
+            props.versus ? (/** @type {number} */ n) => versusSection(props.versus, n) : null,
+            (/** @type {number} */ n) => exampleSection(props.example, n),
+            (/** @type {number} */ n) => valuesSection(props.values, n),
+          ].filter((draw) => draw !== null);
+          page.append(intro, ...sections.map((draw, i) => draw(i + 1)));
         } else {
           legacyStory(page, lead, /** @type {LegacyWelcome} */ (/** @type {unknown} */ (props)));
         }

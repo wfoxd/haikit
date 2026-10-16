@@ -122,11 +122,16 @@ try {
     tutorial?.next?.first?.id === "2-intro" && tutorial.next.steps === 9 && tutorial.next.title === "Tell them later"
       ? ok("…and the second tutorial after it, nine steps from 2-intro")
       : bad(`welcome's next tutorial: ${JSON.stringify(tutorial?.next)}`);
-    const { today, example, values } = welcomeProps ?? {};
+    const { today, versus, example, values } = welcomeProps ?? {};
     welcomeProps?.summary?.length > 40 ? ok("welcome says what HaiKIT is under the lede") : bad("welcome has no summary");
     [today?.before, today?.after].every((side) => side?.title && side.points?.length === 3 && side.image?.kind && side.image.alt?.length > 40)
       ? ok("welcome sets software today beside software HaiKIT builds, each drawn and described in words")
       : bad(`welcome's comparison: ${JSON.stringify(today)}`);
+    [versus?.chatbot, versus?.haikit].every((side) => side?.name && side.tag && side.scene?.some((l) => l.from === "you")) &&
+    versus.haikit.scene.some((l) => l.from === "click") &&
+    versus.rows?.length >= 4 && versus.rows.every((r) => r.topic && r.chatbot && r.haikit)
+      ? ok("welcome sets a chatbot beside an app against an app built with HaiKIT: one request in each, then row by row")
+      : bad(`welcome's comparison with a chatbot: ${JSON.stringify(versus)}`);
     example?.steps?.length === 4 && example.steps.every((st) => st.title && st.text && st.scene?.length) && example.demo?.url === "https://rebook.haikit.app/"
       ? ok("welcome walks through the Rebook demo in four steps, each with its scene, and links to it")
       : bad(`welcome's example: ${JSON.stringify(example)}`);
@@ -137,7 +142,7 @@ try {
     values?.groups?.length === 2 && values.groups.every((g) => g.audience && g.points?.length === 3)
       ? ok("welcome lists what you get, three values for each audience")
       : bad(`welcome's values: ${JSON.stringify(values)}`);
-    const sections = [today, example, values].filter(Boolean);
+    const sections = [today, versus, example, values].filter(Boolean);
     const welcomeDigest = start.find((e) => e.type === "block_update")?.result ?? "";
     /lessons 1\.1–1\.\d.*lessons 2\.1–2\.\d/.test(welcomeDigest)
       ? ok("welcome digest tells the model which lessons exist")
@@ -145,7 +150,7 @@ try {
     ["https://github.com/wfoxd/haikit", "https://www.npmjs.com/search?q=haikit"].every((u) => welcomeDigest.includes(u))
       ? ok("the digest gives the model both links")
       : bad("a link is missing from the welcome digest");
-    sections.length === 3 && sections.every((sec) => welcomeDigest.includes(sec.title))
+    sections.length === 4 && sections.every((sec) => welcomeDigest.includes(sec.title))
       ? ok("the digest names each section, so the model can talk about them")
       : bad("a section is missing from the welcome digest");
 
