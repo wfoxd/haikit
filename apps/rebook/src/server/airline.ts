@@ -30,7 +30,7 @@ import type {
   TripCardProps,
   BoardingPassProps,
 } from "../shared/surfaces.ts";
-import { CANCEL_REASON, OPTIONS, TRIP, ticketNumber, usd } from "./data.ts";
+import { CANCEL_REASON, MIN_STAY_MIN, OPTIONS, TRIP, ticketNumber, tokyoMinutes, usd } from "./data.ts";
 import { flightCancelledServer, seatConfirmedServer, ticketIssuedServer } from "./notices.ts";
 import { boardingPassServer, bookingReviewServer, rebookingOptionsServer, seatMapServer, tripCardServer } from "./surfaces.ts";
 
@@ -55,7 +55,7 @@ interface Booking {
   flight: HomeFlight | null;
   fare: Fare | null;
   seat: string | null;
-  /** How much the airline has raised each fare, by flight and fare: `r01:basic`. */
+  /** How much the airline has raised each fare, by day, flight and fare: `Sun:r01:basic`. A flight's id is the same every day. */
   rises: Map<string, number>;
   review: { handle: string; props: BookingReviewProps } | null;
   /** The total the traveller confirmed, once they have. */
@@ -239,10 +239,25 @@ export function passShown(conversationId: string, handle: string, props: Boardin
 export const booking = (conversationId: string) => desks.get(conversationId)?.booking ?? null;
 
 /** A fare at its price now, with whatever the airline has added to it. */
+/** Where a fare's raises are kept: the same flight on another day wasn't raised. */
+const riseKey = (flight: HomeFlight, fare: { id: string }) => `${flight.depart.slice(0, 3)}:${flight.id}:${fare.id}`;
+
 export function priced(conversationId: string, flight: HomeFlight, fare: Fare): Fare {
-  const rise = desks.get(conversationId)?.booking.rises.get(`${flight.id}:${fare.id}`) ?? 0;
+  const rise = desks.get(conversationId)?.booking.rises.get(riseKey(flight, fare)) ?? 0;
   return { ...fare, price: fare.price + rise };
 }
+
+/**
+ * When the traveller lands in Tokyo: on the flight they were rebooked onto,
+ * once its boarding pass is issued, otherwise on the trip as booked.
+ */
+export function outboundLands(conversationId: string): string {
+  return desks.get(conversationId)?.pass?.props.arrive ?? TRIP.arrive;
+}
+
+/** Whether a flight home leaves long enough after the traveller lands in Tokyo. */
+export const leavesAfterLanding = (conversationId: string, flight: HomeFlight) =>
+  tokyoMinutes(flight.depart) >= tokyoMinutes(outboundLands(conversationId)) + MIN_STAY_MIN;
 
 /** The traveller searched: what they had chosen after it no longer stands. */
 export function searched(conversationId: string, search: { from: TokyoAirport; date: Day }) {
@@ -394,7 +409,7 @@ export async function raiseFare(conversationId: string): Promise<string> {
         `The airline raised the ${b.fare.name} fare on ${b.flight.flights.join(" + ")} by ${usd(FARE_RISE)} while the traveller was reviewing: ` +
         `the total is now ${usd(props.price.total)}, up from ${usd(old.total)}.`,
     });
-    const key = `${b.flight.id}:${b.fare.id}`;
+    const key = riseKey(b.flight, b.fare);
     b.rises.set(key, (b.rises.get(key) ?? 0) + FARE_RISE);
     b.fare = { ...b.fare, price: b.fare.price + FARE_RISE };
     b.review = { handle: revised.handle, props };

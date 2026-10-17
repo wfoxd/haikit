@@ -109,6 +109,17 @@ export const DAY_NAMES: Record<Day, string> = { Thu: "Thursday", Fri: "Friday", 
 export const AIRPORT_NAMES = { TYO: "any Tokyo airport", NRT: "Tokyo Narita", HND: "Tokyo Haneda" } as const;
 export const HOME = { code: "SFO", city: "San Francisco" };
 
+/** The days of the trip in order, Tuesday's departure to next Monday: a day and time sort by them. */
+const TRIP_DAYS = ["Tue", "Wed", "Thu", "Fri", "Sat", "Sun", "Mon"];
+/** "Thu 14:25", Tokyo time, as minutes from the start of the trip's Tuesday. */
+export function tokyoMinutes(dayTime: string): number {
+  const [day, time] = dayTime.split(" ");
+  const [h, m] = (time ?? "0:0").split(":").map(Number) as [number, number];
+  return TRIP_DAYS.indexOf(day!) * 1440 + h * 60 + m;
+}
+/** The least time between landing in Tokyo and the flight home leaving: through the airport and back. */
+export const MIN_STAY_MIN = 2 * 60;
+
 /** How fares move with the day: weekends cost more. */
 const DAY_PRICE: Record<Day, number> = { Thu: 1, Fri: 1.12, Sat: 1.05, Sun: 1.18, Mon: 0.94 };
 /** Taxes and fees on every fare, the same for each. */

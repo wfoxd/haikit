@@ -9,7 +9,7 @@
 import { defineTool } from "@haikit/core";
 import { z } from "zod";
 import { Day, TokyoAirport, type HomeFlight, type RebookOption } from "../shared/surfaces.ts";
-import { booking, chosen, optionsShown, passShown, priced, reviewShown, seatsFor, seatsShown, stock, ticketShown, tripShown } from "./airline.ts";
+import { booking, chosen, leavesAfterLanding, optionsShown, outboundLands, passShown, priced, reviewShown, seatsFor, seatsShown, stock, ticketShown, tripShown } from "./airline.ts";
 import {
   CARE,
   DAY_NAMES,
@@ -259,10 +259,15 @@ export const showFlights = defineTool({
     // The flights are for the search the traveller made, not one the model makes up.
     const search = booking(ctx.conversationId)?.search;
     if (!search) return ctx.text("The traveller hasn't searched yet: show start_booking.");
-    // each at its Basic fare as the airline has it now, raises included
+    // each at its Basic fare as the airline has it now, raises included, and
+    // only those that leave after the traveller has landed in Tokyo
     const day = flightsHome(search.date)
       .filter((f) => search.from === "TYO" || f.from === search.from)
+      .filter((f) => leavesAfterLanding(ctx.conversationId, f))
       .map((f) => ({ ...f, price: priced(ctx.conversationId, f, faresFor(f)[0]!).price }));
+    if (!day.length) {
+      return ctx.text(`No flights home on ${DAY_NAMES[search.date]} leave long enough after the traveller lands in Tokyo (${outboundLands(ctx.conversationId)}): show start_booking for a later day.`);
+    }
     const flights = day.filter((f) => (!filters.nonstop || !f.via) && (!filters.airport || f.from === filters.airport));
     const filter = [filters.nonstop && "nonstops", filters.airport && `from ${filters.airport}`].filter(Boolean).join(", ") || null;
     if (!flights.length) return ctx.text(`No flights home on ${DAY_NAMES[search.date]} are ${filter}. All ${day.length} are still there without the filter.`);
@@ -376,6 +381,13 @@ export const issueTicket = defineTool({
     if (done) return ctx.text(done);
     const b = booking(ctx.conversationId);
     if (!b?.flight || !b.fare || b.confirmed === null) return ctx.text("The traveller hasn't confirmed a booking yet: show review_booking.");
+    // Checked again here: the flight to Tokyo may have changed since the flights were shown.
+    if (!leavesAfterLanding(ctx.conversationId, b.flight)) {
+      return ctx.text(
+        `${b.flight.flights.join(" + ")} leaves ${b.flight.depart}, too soon after the traveller lands in Tokyo (${outboundLands(ctx.conversationId)}): ` +
+          "nothing was booked. Show show_flights for another.",
+      );
+    }
     const props = {
       passenger: TRIP.passenger,
       reference: bookingReference(),

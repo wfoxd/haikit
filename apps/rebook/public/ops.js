@@ -160,11 +160,14 @@ export function mountOps(root, chat) {
     } else if ((event.type === "ui_open" && event.component === "trip_card") || (event.type === "notice" && event.name === "flight_cancelled")) {
       cancelling = true;
       stopCountdown();
-    } else if (event.type === "ui_open" && event.component === "flight_search" && countdown) {
-      // The visitor is booking the flight home: the airline doesn't interrupt.
+    } else if (event.type === "ui_open" && event.component === "flight_search") {
+      // The visitor is booking the flight home: the airline doesn't interrupt,
+      // and that includes a cancellation already due, waiting on a busy
+      // request to retry. Only a countdown still showing needs the word.
+      const counting = countdown !== null;
       cancelling = true;
       stopCountdown();
-      say("You're booking the flight home, so the airline won't cancel UA 837 by itself. Press Cancel the flight whenever you like.");
+      if (counting) say("You're booking the flight home, so the airline won't cancel UA 837 by itself. Press Cancel the flight whenever you like.");
     } else if (["reset", "closed"].includes(/** @type {{ type: string }} */ (event).type)) {
       // the chat's own events, not the server's: a new conversation, or none
       stopCountdown();

@@ -16,7 +16,7 @@ import {
   seatMap,
   tripCard,
 } from "../shared/surfaces.ts";
-import { booking, bookingConfirmedAt, careChosen, fareChosen, homeFlightChosen, homeSeatPicked, optionChosen, searched, seatPicked } from "./airline.ts";
+import { booking, bookingConfirmedAt, careChosen, fareChosen, homeFlightChosen, homeSeatPicked, leavesAfterLanding, optionChosen, searched, seatPicked } from "./airline.ts";
 import { AIRPORT_NAMES, DAY_NAMES, duration, later, usd } from "./data.ts";
 
 /** One option, as the model reads it: everything it needs to talk about it. */
@@ -214,6 +214,8 @@ export const flightResultsServer = flightResults.implement({
     choose(flightId, { props, conversationId }) {
       const f = props.flights.find((x) => x.id === flightId);
       if (!f) throw new Error(`no flight ${flightId}`);
+      // the flight to Tokyo may have changed since these were shown
+      if (!leavesAfterLanding(conversationId, f)) throw new Error(`${f.flights.join(" + ")} leaves before you'd be through the airport in Tokyo: pick a later one`);
       homeFlightChosen(conversationId, f);
       return `Chose flight ${f.id}: ${fmtHome(f)}.`;
     },

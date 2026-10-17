@@ -72,9 +72,11 @@ starting to book the flight home: the visitor is doing something already.
    Francisco, each marked "from your trip". The day says "from your message"
    if you named one, and "choose one" if you didn't. Change the day or the
    airport here, in the browser, then **Search flights**.
-3. Ten flights home, the earliest to leave first. Type "which are nonstop?"
-   or "which is cheapest?": the guide asks `query_ui` about the flights, and
-   shows the answer as a new picker.
+3. Ten flights home, the earliest to leave first. Only flights leaving at
+   least two hours after you land in Tokyo are offered: rebooked onto NH 7,
+   which lands on Thursday at 14:25, a Thursday search starts at 16:55. Type
+   "which are nonstop?" or "which is cheapest?": the guide asks `query_ui`
+   about the flights, and shows the answer as a new picker.
 4. Pick UA 838, then a fare: Basic, Standard or Flex. Basic assigns your
    seat at check-in, so the guide goes straight to the review; Standard and
    Flex show the seat map first.

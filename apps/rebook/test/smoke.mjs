@@ -286,14 +286,22 @@ try {
     //      can start, so the news rides with the next click, and the guide
     //      says it before answering the click
     {
-      const search = surface(await sse("/hai/chat", { conversationId: id, message: "book my flight home on Sunday" }), "flight_search");
+      const search = surface(await sse("/hai/chat", { conversationId: id, message: "book my flight home on Thursday" }), "flight_search");
       const moved = await ops("gate", id);
-      const go = await sse("/hai/interact", { conversationId: id, handle: search.ui?.handle, action: "search", value: { from: "TYO", date: "Sun" } });
+      const go = await sse("/hai/interact", { conversationId: id, handle: search.ui?.handle, action: "search", value: { from: "TYO", date: "Thu" } });
+      const thursday = surface(go, "flight_results");
       check(
-        moved.status === 200 && /^Heads up: NH 7 moved from gate G99 to gate G103\. Boarding is still 10:20\. Here are the flights home on Sunday/.test(said(go)) &&
-          surface(go, "flight_results").ui?.mode === "elicit",
+        moved.status === 200 && /^Heads up: NH 7 moved from gate G99 to gate G103\. Boarding is still 10:20\. Here are the flights home on Thursday/.test(said(go)) &&
+          thursday.ui?.mode === "elicit",
         `a gate change that rode in with a booking click is told first: “${said(go).slice(0, 70)}…”`,
         () => `${moved.message} · ${said(go)}`,
+      );
+      // rebooked onto NH 7, Alex lands Thursday at 14:25: no flight home leaves before 16:25
+      const departs = thursday.props?.flights.map((f) => f.depart) ?? [];
+      check(
+        departs.length === 5 && departs.every((d) => d >= "Thu 16:25"),
+        `rebooked onto NH 7, which lands Thu 14:25, the Thursday flights home start two hours later: ${departs.join(", ")}`,
+        () => departs.join(", "),
       );
     }
 
@@ -578,6 +586,10 @@ try {
         "…the model reads $1,020 too, and its fares count the raise once, on Basic only: $1,020, $1,100, $1,380",
         () => `${heard} · ${JSON.stringify(fares2.props?.fares.map((f) => [f.id, f.price]))}`,
       );
+      // the same flight on another day wasn't raised
+      const friday = surface(await sse("/hai/chat", { conversationId: id6, message: "book my flight home on Friday" }), "flight_search");
+      const fri = surface(await sse("/hai/interact", { conversationId: id6, handle: friday.ui?.handle, action: "search", value: { from: "TYO", date: "Fri" } }), "flight_results");
+      check(fri.props?.flights.find((f) => f.id === "r01")?.price === 910, "…and on Friday, UA 838 is its own $910: the raise was Sunday's", () => JSON.stringify(fri.props?.flights.find((f) => f.id === "r01")));
     }
 
     // 11f · the flight is cancelled while the flight home is being booked. No
@@ -668,9 +680,40 @@ try {
       const stored = airline.booking("raises");
       check(
         both.filter((r) => r.status === "fulfilled").length === 1 && /being raised already/.test(both.find((r) => r.status === "rejected")?.reason?.message) &&
-          stored.review.props.price.total === 1088 && stored.fare.price === 1020 && stored.rises.get("r01:basic") === 60,
+          stored.review.props.price.total === 1088 && stored.fare.price === 1020 && stored.rises.get("Sun:r01:basic") === 60,
         "two raises at once: one is refused, and the review, the fare and the rise all say $60 more, once",
-        () => JSON.stringify({ both: both.map((r) => r.status === "fulfilled" ? r.value : r.reason.message), total: stored?.review?.props.price.total, fare: stored?.fare?.price, rise: stored?.rises.get("r01:basic") }),
+        () => JSON.stringify({ both: both.map((r) => r.status === "fulfilled" ? r.value : r.reason.message), total: stored?.review?.props.price.total, fare: stored?.fare?.price, rise: stored?.rises.get("Sun:r01:basic") }),
+      );
+    }
+
+    // 11g · a flight home that leaves before the traveller lands can't be
+    //       chosen or ticketed, even if it was on screen before a rebooking.
+    {
+      const airline = await import("../src/server/airline.ts");
+      const { flightsHome } = await import("../src/server/data.ts");
+      const { issueTicket } = await import("../src/server/tools.ts");
+      const { flightResultsServer } = await import("../src/server/surfaces.ts");
+      airline.tripShown("late", "ui_01");
+      airline.passShown("late", "ui_02", {
+        passenger: "Alex Morgan", reference: "PASS22", flight: "NH 7", airline: "ANA", legs: [{ flight: "NH 7", from: "SFO", to: "NRT", depart: "Wed 11:00" }],
+        arrive: "Thu 14:25", seat: "10A", gate: "G95", boards: "10:20", care: null,
+      });
+      const ke704 = flightsHome("Thu").find((f) => f.id === "r07"); // leaves Thu 09:30
+      let chose;
+      try {
+        chose = flightResultsServer.impl.actions.choose("r07", { props: { flights: [ke704], date: "Thu", from: "TYO", total: 1, filter: null }, conversationId: "late", handle: "ui_03" });
+      } catch (err) {
+        chose = `refused: ${err.message}`;
+      }
+      airline.searched("late", { from: "TYO", date: "Thu" });
+      airline.homeFlightChosen("late", ke704);
+      airline.fareChosen("late", { id: "basic", name: "Basic", price: 640, seatChoice: false, includes: [] });
+      airline.bookingConfirmedAt("late", 708);
+      const ticket = await issueTicket.run({}, { conversationId: "late", text: (model) => ({ model }), render: async () => ({ model: "an e-ticket was shown" }) });
+      check(
+        /^refused: KE 704 \+ KE 25 leaves before you'd be through the airport in Tokyo/.test(chose) && /too soon after the traveller lands in Tokyo \(Thu 14:25\): nothing was booked/.test(ticket.model),
+        "a flight home leaving before the traveller lands (KE 704, Thu 09:30, after NH 7 lands at 14:25) can't be chosen or ticketed",
+        () => `${chose} · ${ticket.model}`,
       );
     }
 
