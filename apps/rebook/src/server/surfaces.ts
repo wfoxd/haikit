@@ -16,7 +16,20 @@ import {
   seatMap,
   tripCard,
 } from "../shared/surfaces.ts";
-import { booking, bookingConfirmedAt, careChosen, fareChosen, homeFlightChosen, homeSeatPicked, leavesAfterLanding, optionChosen, searched, seatPicked } from "./airline.ts";
+import {
+  booking,
+  bookingConfirmedAt,
+  careChosen,
+  fareChosen,
+  homeFlightChosen,
+  homeSeatPicked,
+  homeTicket,
+  landsInTimeForHome,
+  leavesAfterLanding,
+  optionChosen,
+  searched,
+  seatPicked,
+} from "./airline.ts";
 import { AIRPORT_NAMES, DAY_NAMES, duration, later, usd } from "./data.ts";
 
 /** One option, as the model reads it: everything it needs to talk about it. */
@@ -85,6 +98,11 @@ export const rebookingOptionsServer = rebookingOptions.implement({
       // Throwing refuses the click: nothing is recorded, and the picker stays live.
       if (!o) throw new Error(`no option ${optionId}`);
       if (o.seatsLeft === 0) throw new Error(`${o.flights.join(" + ")} sold out a moment ago: pick another`);
+      // with the flight home already ticketed, the new flight must land in time for it
+      const home = homeTicket(conversationId);
+      if (home && !landsInTimeForHome(conversationId, o.arrive)) {
+        throw new Error(`${o.flights.join(" + ")} lands ${o.arrive}, too late for your flight home at ${home.depart}: pick another`);
+      }
       optionChosen(conversationId, o);
       return (
         `Chose ${o.id}: ${fmt(o)}. ` +

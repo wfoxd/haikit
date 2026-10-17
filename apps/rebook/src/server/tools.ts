@@ -9,11 +9,29 @@
 import { defineTool } from "@haikit/core";
 import { z } from "zod";
 import { Day, TokyoAirport, type HomeFlight, type RebookOption } from "../shared/surfaces.ts";
-import { booking, chosen, leavesAfterLanding, optionsShown, outboundLands, passShown, priced, reviewShown, seatsFor, seatsShown, stock, ticketShown, tripShown } from "./airline.ts";
+import {
+  booking,
+  chosen,
+  daysHome,
+  homeTicket,
+  landsInTimeForHome,
+  leavesAfterLanding,
+  optionsShown,
+  outboundLands,
+  passShown,
+  priced,
+  reviewShown,
+  seatKey,
+  seatsFor,
+  seatsShown,
+  stock,
+  ticketShown,
+  tripShown,
+} from "./airline.ts";
 import {
   CARE,
+  AIRPORT_NAMES,
   DAY_NAMES,
-  DAYS_HOME,
   HOME,
   OPTIONS,
   PAYMENT,
@@ -120,10 +138,11 @@ export const showSeatMap = defineTool({
     if (picked.id !== optionId) return ctx.text(`The traveller chose ${picked.id} (${picked.flights.join(" + ")}), not ${optionId}: show that one's seat map.`);
     const flight = option.flights[0]!;
     // Shown again, a map keeps the seats other passengers have taken since.
-    const rows = seatsFor(ctx.conversationId, flight) ?? seatRows(flight);
+    const key = seatKey(option.depart, flight);
+    const rows = seatsFor(ctx.conversationId, key) ?? seatRows(flight);
     const props = { purpose: "rebook" as const, optionId, flight, airline: option.airline.split(" + ")[0]!, rows };
     const shown = await ctx.render(seatMapServer, props, { mode: "elicit" });
-    if (shown.handle) seatsShown(ctx.conversationId, shown.handle, props);
+    if (shown.handle) seatsShown(ctx.conversationId, shown.handle, props, key);
     return shown;
   },
 });
@@ -163,6 +182,11 @@ export const issueBoardingPass = defineTool({
     if (!option) return ctx.text("The traveller hasn't chosen an option yet: show find_rebooking.");
     if (!picked.seat) return ctx.text(`The traveller hasn't picked a seat on ${option.flights[0]} yet: show show_seat_map.`);
     if (!option.tonight && !picked.care) return ctx.text("The traveller hasn't said where they'll spend tonight yet: show offer_care.");
+    // Checked again here: a flight home may have been ticketed since the option was chosen.
+    const home = homeTicket(ctx.conversationId);
+    if (home && !landsInTimeForHome(ctx.conversationId, option.arrive)) {
+      return ctx.text(`${option.flights.join(" + ")} lands ${option.arrive}, too late for the flight home, ${home.flight} at ${home.depart}: nothing was booked. Show find_rebooking for another.`);
+    }
 
     const [hh, mm] = option.depart.slice(4).split(":").map(Number) as [number, number];
     const boarding = hh * 60 + mm - 40;
@@ -223,15 +247,20 @@ export const startBooking = defineTool({
   async run({ date, from }, ctx) {
     const done = ticketed(ctx.conversationId);
     if (done) return ctx.text(done);
+    // the days with a flight home after the traveller lands, nights counted from then
+    const days = daysHome(ctx.conversationId);
+    if (!days.length) return ctx.text(`No flight home leaves long enough after the traveller lands in Tokyo (${outboundLands(ctx.conversationId)}).`);
+    // a day asked for that no flight works on isn't filled in: the traveller chooses
+    const day = date && days.some((d) => d.id === date) ? date : null;
     return ctx.render(
       flightSearchServer,
       {
         passenger: TRIP.passenger,
         from: from ?? "TYO",
         to: HOME,
-        date: date ?? null,
-        days: DAYS_HOME,
-        sources: { passenger: "your trip", from: from ? "your message" : "your trip", to: "your trip", date: date ? "your message" : null },
+        date: day,
+        days,
+        sources: { passenger: "your trip", from: from ? "your message" : "your trip", to: "your trip", date: day ? "your message" : null },
       },
       { mode: "elicit" },
     );
@@ -266,7 +295,10 @@ export const showFlights = defineTool({
       .filter((f) => leavesAfterLanding(ctx.conversationId, f))
       .map((f) => ({ ...f, price: priced(ctx.conversationId, f, faresFor(f)[0]!).price }));
     if (!day.length) {
-      return ctx.text(`No flights home on ${DAY_NAMES[search.date]} leave long enough after the traveller lands in Tokyo (${outboundLands(ctx.conversationId)}): show start_booking for a later day.`);
+      return ctx.text(
+        `No flights home on ${DAY_NAMES[search.date]} (${search.date}) from ${AIRPORT_NAMES[search.from]} (${search.from}) leave long enough ` +
+          `after the traveller lands in Tokyo (${outboundLands(ctx.conversationId)}): show start_booking, with that airport, for a later day.`,
+      );
     }
     const flights = day.filter((f) => (!filters.nonstop || !f.via) && (!filters.airport || f.from === filters.airport));
     const filter = [filters.nonstop && "nonstops", filters.airport && `from ${filters.airport}`].filter(Boolean).join(", ") || null;
@@ -325,10 +357,11 @@ export const showHomeSeats = defineTool({
     if (!b.fare) return ctx.text(`The traveller hasn't chosen a fare yet: show show_fares for ${flightId}.`);
     if (!b.fare.seatChoice) return ctx.text(`The ${b.fare.name} fare assigns the seat at check-in: show review_booking.`);
     const flight = b.flight.flights[0]!;
-    const rows = seatsFor(ctx.conversationId, flight) ?? seatRows(flight);
+    const key = seatKey(b.flight.depart, flight);
+    const rows = seatsFor(ctx.conversationId, key) ?? seatRows(flight);
     const props = { purpose: "book" as const, optionId: flightId, flight, airline: b.flight.airline.split(" + ")[0]!, rows };
     const shown = await ctx.render(seatMapServer, props, { mode: "elicit" });
-    if (shown.handle) seatsShown(ctx.conversationId, shown.handle, props);
+    if (shown.handle) seatsShown(ctx.conversationId, shown.handle, props, key);
     return shown;
   },
 });

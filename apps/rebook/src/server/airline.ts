@@ -30,7 +30,7 @@ import type {
   TripCardProps,
   BoardingPassProps,
 } from "../shared/surfaces.ts";
-import { CANCEL_REASON, MIN_STAY_MIN, OPTIONS, TRIP, ticketNumber, tokyoMinutes, usd } from "./data.ts";
+import { CANCEL_REASON, DAYS_HOME, MIN_STAY_MIN, OPTIONS, TRIP, flightsHome, ticketNumber, tokyoMinutes, usd } from "./data.ts";
 import { flightCancelledServer, seatConfirmedServer, ticketIssuedServer } from "./notices.ts";
 import { boardingPassServer, bookingReviewServer, rebookingOptionsServer, seatMapServer, tripCardServer } from "./surfaces.ts";
 
@@ -76,10 +76,10 @@ interface Desk {
   stock: { held: boolean; seats: Map<string, number> };
   /** A release in progress: a second, from the button and the timer at once, waits for none. */
   releasing: boolean;
-  /** Each flight's seats as the traveller last saw them, other passengers' included. */
+  /** Each departure's seats as the traveller last saw them, other passengers' included, by day and flight: `Sun:JL 2`. */
   seatMaps: Map<string, SeatMapProps["rows"]>;
   options: { handle: string; props: RebookingOptionsProps; hold: ReturnType<typeof setTimeout> } | null;
-  seats: { handle: string; props: SeatMapProps; others: ReturnType<typeof setInterval> } | null;
+  seats: { handle: string; props: SeatMapProps; key: string; others: ReturnType<typeof setInterval> } | null;
   pass: { handle: string; props: BoardingPassProps } | null;
   /** What the traveller clicked. */
   chosen: { option: RebookOption | null; seat: string | null; care: string | null };
@@ -145,8 +145,14 @@ export function tripShown(conversationId: string, handle: string) {
   });
 }
 
-/** A flight's seats as this traveller last saw them, or null before its map was first shown. */
-export const seatsFor = (conversationId: string, flight: string) => desks.get(conversationId)?.seatMaps.get(flight) ?? null;
+/**
+ * Where a departure's seats are kept: its day and flight. The same flight on
+ * another day is another plane, with its own seats.
+ */
+export const seatKey = (depart: string, flight: string) => `${depart.slice(0, 3)}:${flight}`;
+
+/** A departure's seats as this traveller last saw them, or null before its map was first shown. */
+export const seatsFor = (conversationId: string, key: string) => desks.get(conversationId)?.seatMaps.get(key) ?? null;
 
 /** Every option as the airline has it now, and whether it still holds them: a new picker shows these. */
 export function stock(conversationId: string): { held: boolean; options: RebookOption[] } {
@@ -165,11 +171,11 @@ export function optionsShown(conversationId: string, handle: string, props: Rebo
   d.options = { handle, props, hold };
 }
 
-export function seatsShown(conversationId: string, handle: string, props: SeatMapProps) {
+export function seatsShown(conversationId: string, handle: string, props: SeatMapProps, key: string) {
   const d = desks.get(conversationId);
   if (!d) return;
   if (d.seats) clearInterval(d.seats.others);
-  d.seatMaps.set(props.flight, props.rows);
+  d.seatMaps.set(key, props.rows);
   let left = OTHER_PASSENGERS;
   // one revision at a time: the next is drawn from the one before it
   let revising = false;
@@ -188,8 +194,8 @@ export function seatsShown(conversationId: string, handle: string, props: SeatMa
     revising = true;
     update?.(conversationId, seatMapServer, seats.handle, props, { model: `Another passenger took seat ${gone.id}.` })
       .then((r) => {
-        d.seats = { handle: r.handle, props, others };
-        d.seatMaps.set(props.flight, props.rows);
+        d.seats = { handle: r.handle, props, key, others };
+        d.seatMaps.set(key, props.rows);
       })
       .catch((err) => {
         clearInterval(others);
@@ -198,7 +204,7 @@ export function seatsShown(conversationId: string, handle: string, props: SeatMa
       .finally(() => (revising = false));
   }, SEAT_EVERY_MS);
   others.unref();
-  d.seats = { handle, props, others };
+  d.seats = { handle, props, key, others };
 }
 
 export function optionChosen(conversationId: string, option: RebookOption) {
@@ -253,6 +259,34 @@ export function priced(conversationId: string, flight: HomeFlight, fare: Fare): 
  */
 export function outboundLands(conversationId: string): string {
   return desks.get(conversationId)?.pass?.props.arrive ?? TRIP.arrive;
+}
+
+/**
+ * Whether landing in Tokyo at `arrive` leaves time for the flight home, once
+ * that's ticketed: a rebooking that lands too late for it would strand the
+ * ticket. True while there's no ticket.
+ */
+export function landsInTimeForHome(conversationId: string, arrive: string): boolean {
+  const home = desks.get(conversationId)?.booking.ticket;
+  return !home || tokyoMinutes(home.depart) >= tokyoMinutes(arrive) + MIN_STAY_MIN;
+}
+
+/** The flight home, once ticketed: its flight and when it leaves. */
+export function homeTicket(conversationId: string): { flight: string; depart: string } | null {
+  const home = desks.get(conversationId)?.booking.ticket;
+  return home ? { flight: home.legs.map((l) => l.flight).join(" + "), depart: home.depart } : null;
+}
+
+/**
+ * The days the flight home can leave on, now: those with a flight leaving long
+ * enough after the traveller lands, each with the nights in Tokyo it gives.
+ */
+export function daysHome(conversationId: string): { id: Day; nights: number }[] {
+  const landed = Math.floor(tokyoMinutes(outboundLands(conversationId)) / 1440);
+  return DAYS_HOME.filter((day) => flightsHome(day).some((f) => leavesAfterLanding(conversationId, f))).map((id) => ({
+    id,
+    nights: Math.floor(tokyoMinutes(`${id} 00:00`) / 1440) - landed,
+  }));
 }
 
 /** Whether a flight home leaves long enough after the traveller lands in Tokyo. */

@@ -272,6 +272,15 @@ type Call = ReturnType<typeof toolUse>;
  * needs, such as the flight's id, so the guide reads nothing else.
  */
 function homeStep(results: string, texts: string[], latest: (re: RegExp) => RegExpMatchArray | undefined): { say: string; call?: Call } | null {
+  // nothing that day leaves after the traveller lands: the search again, for another day
+  const none = results.match(/No flights home on (\w+) \(\w+\) from .+? \((TYO|NRT|HND)\) leave long enough after the traveller lands in Tokyo \(([^)]+)\)/);
+  if (none) {
+    return {
+      say: `Nothing on ${none[1]} leaves long enough after you land (${none[3]}). Pick a later day.`,
+      call: toolUse("start_booking", none[2] === "TYO" ? {} : { from: none[2] }),
+    };
+  }
+
   const searched = results.match(/Searched flights home: .+? to SFO on (\w+) \(/);
   if (searched) return { say: `Here are the flights home on ${searched[1]}. The prices are the Basic fare; pick one to see the others.`, call: toolUse("show_flights", {}) };
 

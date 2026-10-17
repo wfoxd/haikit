@@ -97,14 +97,8 @@ export const bookingReference = () =>
 
 // ───────────────────────────────────────────── the flights home
 
-/** The days the flight home can leave, and how many nights in Tokyo each gives: the outbound lands Wednesday night. */
-export const DAYS_HOME: { id: Day; nights: number }[] = [
-  { id: "Thu", nights: 1 },
-  { id: "Fri", nights: 2 },
-  { id: "Sat", nights: 3 },
-  { id: "Sun", nights: 4 },
-  { id: "Mon", nights: 5 },
-];
+/** The days the flight home can leave: the outbound lands Wednesday night, or later once rebooked. */
+export const DAYS_HOME: Day[] = ["Thu", "Fri", "Sat", "Sun", "Mon"];
 export const DAY_NAMES: Record<Day, string> = { Thu: "Thursday", Fri: "Friday", Sat: "Saturday", Sun: "Sunday", Mon: "Monday" };
 export const AIRPORT_NAMES = { TYO: "any Tokyo airport", NRT: "Tokyo Narita", HND: "Tokyo Haneda" } as const;
 export const HOME = { code: "SFO", city: "San Francisco" };
