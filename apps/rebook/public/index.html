@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Rebook · a HaiKIT demo</title>
-    <meta name="description" content="Rebook, built with HaiKIT: the airline cancels your flight, the AI tells you before you ask and finds every way there, and you steer with clicks." />
+    <meta name="description" content="Rebook, built with HaiKIT: the airline cancels your flight, the AI tells you before you ask and finds every way there, or books your flight home, and you steer with clicks." />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -21,11 +21,14 @@
 
       const chat = mountChat({
         root: document.querySelector("#app"),
-        registry, // trip_card, rebooking_options, seat_map, care_options, boarding_pass
-        notices, // flight_cancelled, seat_confirmed
+        // trip_card, rebooking_options, seat_map, care_options, boarding_pass, and for
+        // the flight home, flight_search, flight_results, fare_options, booking_review,
+        // booking_confirmed
+        registry,
+        notices, // flight_cancelled, seat_confirmed, ticket_issued
         title: "Rebook",
         subtitle: "a HaiKIT demo · AI drives, you steer",
-        placeholder: "Ask about the options: “which are nonstop?”",
+        placeholder: "Try “book my flight home on Sunday”, or “which are nonstop?”",
       });
 
       // The Airline ops bar under the header plays the airline.

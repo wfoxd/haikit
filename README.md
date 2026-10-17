@@ -49,8 +49,9 @@ answer. **97% of the payload never enters context.**
   a standalone app you can run or deploy yourself.
 - **A demo:** [`apps/rebook`](apps/rebook) is Rebook. Your flight is
   cancelled, and the AI tells you before you ask, finds every way there, and
-  books the one you click, while an Airline ops bar plays the airline. Run it
-  with `npm install && npm start` in that folder, no API key needed.
+  books the one you click, while an Airline ops bar plays the airline. Or ask
+  it to book your flight home: the search arrives filled in from your trip.
+  Run it with `npm install && npm start` in that folder, no API key needed.
 - **Locally:** the examples run with no API key, on a scripted model that
   sees exactly what Claude would. Node 22.18 or later.
 

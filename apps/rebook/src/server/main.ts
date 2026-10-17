@@ -1,6 +1,7 @@
 /**
  * Rebook: the airline cancels your flight, and the AI tells you before you
- * ask, finds every way there, and books the one you click.
+ * ask, finds every way there, and books the one you click. Or ask it to book
+ * your flight home: it fills in what it already knows, and you steer.
  *
  * Everything here is app code. HaiKIT contributes the agent loop, the two
  * channels, the parked turn, the notices and revisions, and query_ui.
@@ -12,7 +13,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHai, memoryStore, nodeHandler } from "@haikit/server";
 import { anthropic } from "@haikit/anthropic";
-import { OpsError, cancelFlight, changeGate, connectAirline, releaseHolds } from "./airline.ts";
+import { OpsError, cancelFlight, changeGate, connectAirline, raiseFare, releaseHolds } from "./airline.ts";
 import { notices } from "./notices.ts";
 import { scripted } from "./scripted.ts";
 import { surfaces } from "./surfaces.ts";
@@ -43,15 +44,30 @@ ending with its handle (e.g. ui_02); the full data stays in the browser.
 - A [UI update] means the airline revised something on screen: seats taken,
   holds released, a gate moved. Its new digest replaces the old one. If it
   matters to the traveller, tell them in one sentence.
+- The traveller can also book their flight home, Tokyo to San Francisco: they
+  ask, or click Book my flight home on the trip card. Call start_booking,
+  passing the day if they named one. It shows the search filled in from the
+  trip; don't ask for anything it already has.
+- After they search, call show_flights. After they pick a flight, call
+  show_fares for it. After a fare, call show_home_seats if the fare lets them
+  choose a seat, otherwise review_booking; after a seat, review_booking.
+- Nothing is booked until the traveller confirms the review. Then call
+  issue_ticket, which books exactly what they confirmed. If they ask to change
+  the flight, fare or seat, show that step again.
+- Never state a price or a flight you haven't been told: use query_ui filter
+  or cheapest on the flights' handle.
 - Keep replies to one or two sentences.`;
 
 const hai = createHai({
   model: SCRIPTED ? scripted() : anthropic({ model: process.env.HAI_MODEL || "claude-haiku-5-5", effort: "low" }),
   store: memoryStore(),
   init: showTrip, // the conversation opens on the trip card, and the model doesn't run
-  tools, // find_rebooking, show_seat_map, offer_care, issue_boarding_pass
+  // find_rebooking, show_seat_map, offer_care, issue_boarding_pass; and for the
+  // flight home, start_booking, show_flights, show_fares, show_home_seats,
+  // review_booking, issue_ticket
+  tools,
   surfaces,
-  notices, // flight_cancelled (wake), seat_confirmed
+  notices, // flight_cancelled (wake), seat_confirmed, ticket_issued
   // the airline revises what's on screen with hai.update
   updates: true,
   // the cancellation wakes the guide, and a gate change a minute later does again
@@ -69,6 +85,7 @@ const OPS: Record<string, (conversationId: string) => Promise<string>> = {
   "/ops/cancel": cancelFlight,
   "/ops/release": releaseHolds,
   "/ops/gate": changeGate,
+  "/ops/fare": raiseFare,
 };
 
 async function readBody(req: http.IncomingMessage): Promise<unknown> {

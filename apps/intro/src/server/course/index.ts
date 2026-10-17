@@ -362,7 +362,7 @@ const VALUES: WelcomeProps["values"] = {
 const DEMOS = [
   {
     title: "Rebook",
-    detail: "The airline cancels your flight. The AI tells you first and rebooks you; you steer with clicks.",
+    detail: "The airline cancels your flight, and the AI tells you first and rebooks you. Or it books your flight home. You steer with clicks.",
     url: "https://rebook.haikit.app/",
   },
 ];

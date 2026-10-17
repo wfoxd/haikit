@@ -6,46 +6,87 @@
  * airline would: `hai.notify` for news, `hai.update` to revise what's already
  * on screen.
  *
+ * For the flight home, it raises a fare while the traveller is reviewing it,
+ * issues the ticket a moment after the booking, and shows the flight home on
+ * the trip card.
+ *
  * It also keeps what the traveller clicked, so the boarding pass can only be
- * issued for the option, seat and night they chose. The model asks; the
- * traveller decides.
+ * issued for the option, seat and night they chose, and the flight home
+ * booked for the flight, fare, seat and total they confirmed. The model
+ * asks; the traveller decides.
  */
 
 import type { Notify, Update } from "@haikit/core";
-import type { BoardingPassProps, RebookingOptionsProps, RebookOption, SeatMapProps } from "../shared/surfaces.ts";
-import { CANCEL_REASON, OPTIONS, TRIP } from "./data.ts";
-import { flightCancelledServer, seatConfirmedServer } from "./notices.ts";
-import { boardingPassServer, rebookingOptionsServer, seatMapServer, tripCardServer } from "./surfaces.ts";
+import type {
+  BookingConfirmedProps,
+  BookingReviewProps,
+  Day,
+  Fare,
+  HomeFlight,
+  RebookingOptionsProps,
+  RebookOption,
+  SeatMapProps,
+  TokyoAirport,
+  TripCardProps,
+  BoardingPassProps,
+} from "../shared/surfaces.ts";
+import { CANCEL_REASON, DAYS_HOME, MIN_STAY_MIN, OPTIONS, TRIP, flightsHome, ticketNumber, tokyoMinutes, usd } from "./data.ts";
+import { flightCancelledServer, seatConfirmedServer, ticketIssuedServer } from "./notices.ts";
+import { boardingPassServer, bookingReviewServer, rebookingOptionsServer, seatMapServer, tripCardServer } from "./surfaces.ts";
 
 /** How long the airline holds a seat on each option for the traveller. */
 export const HOLD_MS = 5 * 60_000;
 /** How often another passenger takes a seat on the map the traveller is looking at, and how many do. */
 const SEAT_EVERY_MS = 3_500;
 const OTHER_PASSENGERS = 4;
-/** How long the airline takes to confirm a seat. */
+/** How long the airline takes to confirm a seat, or issue a ticket. */
 const CONFIRM_MS = 1_500;
+/** How much the airline raises a fare by, each time the ops panel asks. */
+export const FARE_RISE = 60;
 /** Conversations whose state the airline keeps, the oldest dropped first. */
 const MAX_DESKS = 5_000;
 
 /** A request the airline can't act on now, with the reason, for the ops panel. */
 export class OpsError extends Error {}
 
+/** The flight home, as far as the traveller has booked it: each step clears the ones after it. */
+interface Booking {
+  search: { from: TokyoAirport; date: Day } | null;
+  flight: HomeFlight | null;
+  fare: Fare | null;
+  seat: string | null;
+  /** How much the airline has raised each fare, by day, flight and fare: `Sun:r01:basic`. A flight's id is the same every day. */
+  rises: Map<string, number>;
+  review: { handle: string; props: BookingReviewProps } | null;
+  /** The total the traveller confirmed, once they have. */
+  confirmed: number | null;
+  ticket: BookingConfirmedProps | null;
+}
+
 interface Desk {
-  /** The trip card's latest handle. */
+  /** The trip card's latest handle, and its props: a revision starts from these. */
   trip: string;
+  tripProps: TripCardProps;
+  /** The trip card's revisions, one at a time: each reads the props the last one saved. */
+  tripQueue: Promise<void>;
+  /** A fare rise in progress: a second at once waits for none. */
+  raising: boolean;
   cancelled: boolean;
   /** What the airline has: whether it still holds seats for the traveller, and the seats left on each option. */
   stock: { held: boolean; seats: Map<string, number> };
   /** A release in progress: a second, from the button and the timer at once, waits for none. */
   releasing: boolean;
-  /** Each flight's seats as the traveller last saw them, other passengers' included. */
+  /** Each departure's seats as the traveller last saw them, other passengers' included, by day and flight: `Sun:JL 2`. */
   seatMaps: Map<string, SeatMapProps["rows"]>;
   options: { handle: string; props: RebookingOptionsProps; hold: ReturnType<typeof setTimeout> } | null;
-  seats: { handle: string; props: SeatMapProps; others: ReturnType<typeof setInterval> } | null;
+  seats: { handle: string; props: SeatMapProps; key: string; others: ReturnType<typeof setInterval> } | null;
   pass: { handle: string; props: BoardingPassProps } | null;
   /** What the traveller clicked. */
   chosen: { option: RebookOption | null; seat: string | null; care: string | null };
+  booking: Booking;
 }
+
+const noBooking = (): Booking => ({ search: null, flight: null, fare: null, seat: null, rises: new Map(), review: null, confirmed: null, ticket: null });
 
 const desks = new Map<string, Desk>();
 let notify: Notify | null = null;
@@ -63,6 +104,23 @@ const desk = (conversationId: string) => {
   return found;
 };
 
+/**
+ * Revise the trip card, after any revision of it already under way: the
+ * cancellation and the flight home each change one thing, and neither may
+ * start from props the other is about to replace.
+ */
+function reviseTrip(conversationId: string, d: Desk, change: (props: TripCardProps) => TripCardProps, model: string): Promise<void> {
+  const run = async () => {
+    const props = change(d.tripProps);
+    const revised = await update!(conversationId, tripCardServer, d.trip, props, { model });
+    d.trip = revised.handle;
+    d.tripProps = props;
+  };
+  const done = d.tripQueue.then(run);
+  d.tripQueue = done.catch(() => {});
+  return done;
+}
+
 /** A revision the conversation has moved past is refused: the airline's message then says so. */
 const answered = (err: unknown) => err instanceof Error && /was answered/.test(err.message);
 
@@ -72,6 +130,9 @@ export function tripShown(conversationId: string, handle: string) {
   if (desks.size >= MAX_DESKS) desks.delete(desks.keys().next().value!);
   desks.set(conversationId, {
     trip: handle,
+    tripProps: TRIP,
+    tripQueue: Promise.resolve(),
+    raising: false,
     cancelled: false,
     stock: { held: true, seats: new Map(OPTIONS.map((o) => [o.id, o.seatsLeft])) },
     releasing: false,
@@ -80,11 +141,18 @@ export function tripShown(conversationId: string, handle: string) {
     seats: null,
     pass: null,
     chosen: { option: null, seat: null, care: null },
+    booking: noBooking(),
   });
 }
 
-/** A flight's seats as this traveller last saw them, or null before its map was first shown. */
-export const seatsFor = (conversationId: string, flight: string) => desks.get(conversationId)?.seatMaps.get(flight) ?? null;
+/**
+ * Where a departure's seats are kept: its day and flight. The same flight on
+ * another day is another plane, with its own seats.
+ */
+export const seatKey = (depart: string, flight: string) => `${depart.slice(0, 3)}:${flight}`;
+
+/** A departure's seats as this traveller last saw them, or null before its map was first shown. */
+export const seatsFor = (conversationId: string, key: string) => desks.get(conversationId)?.seatMaps.get(key) ?? null;
 
 /** Every option as the airline has it now, and whether it still holds them: a new picker shows these. */
 export function stock(conversationId: string): { held: boolean; options: RebookOption[] } {
@@ -103,11 +171,11 @@ export function optionsShown(conversationId: string, handle: string, props: Rebo
   d.options = { handle, props, hold };
 }
 
-export function seatsShown(conversationId: string, handle: string, props: SeatMapProps) {
+export function seatsShown(conversationId: string, handle: string, props: SeatMapProps, key: string) {
   const d = desks.get(conversationId);
   if (!d) return;
   if (d.seats) clearInterval(d.seats.others);
-  d.seatMaps.set(props.flight, props.rows);
+  d.seatMaps.set(key, props.rows);
   let left = OTHER_PASSENGERS;
   // one revision at a time: the next is drawn from the one before it
   let revising = false;
@@ -126,8 +194,8 @@ export function seatsShown(conversationId: string, handle: string, props: SeatMa
     revising = true;
     update?.(conversationId, seatMapServer, seats.handle, props, { model: `Another passenger took seat ${gone.id}.` })
       .then((r) => {
-        d.seats = { handle: r.handle, props, others };
-        d.seatMaps.set(props.flight, props.rows);
+        d.seats = { handle: r.handle, props, key, others };
+        d.seatMaps.set(key, props.rows);
       })
       .catch((err) => {
         clearInterval(others);
@@ -136,7 +204,7 @@ export function seatsShown(conversationId: string, handle: string, props: SeatMa
       .finally(() => (revising = false));
   }, SEAT_EVERY_MS);
   others.unref();
-  d.seats = { handle, props, others };
+  d.seats = { handle, props, key, others };
 }
 
 export function optionChosen(conversationId: string, option: RebookOption) {
@@ -171,6 +239,114 @@ export function passShown(conversationId: string, handle: string, props: Boardin
   }, CONFIRM_MS).unref();
 }
 
+// ─────────────────────────────────────────── booking the flight home
+
+/** The flight home as far as it's booked, or null for a conversation the airline doesn't know. */
+export const booking = (conversationId: string) => desks.get(conversationId)?.booking ?? null;
+
+/** A fare at its price now, with whatever the airline has added to it. */
+/** Where a fare's raises are kept: the same flight on another day wasn't raised. */
+const riseKey = (flight: HomeFlight, fare: { id: string }) => `${flight.depart.slice(0, 3)}:${flight.id}:${fare.id}`;
+
+export function priced(conversationId: string, flight: HomeFlight, fare: Fare): Fare {
+  const rise = desks.get(conversationId)?.booking.rises.get(riseKey(flight, fare)) ?? 0;
+  return { ...fare, price: fare.price + rise };
+}
+
+/**
+ * When the traveller lands in Tokyo: on the flight they were rebooked onto,
+ * once its boarding pass is issued, otherwise on the trip as booked.
+ */
+export function outboundLands(conversationId: string): string {
+  return desks.get(conversationId)?.pass?.props.arrive ?? TRIP.arrive;
+}
+
+/**
+ * Whether landing in Tokyo at `arrive` leaves time for the flight home, once
+ * that's ticketed: a rebooking that lands too late for it would strand the
+ * ticket. True while there's no ticket.
+ */
+export function landsInTimeForHome(conversationId: string, arrive: string): boolean {
+  const home = desks.get(conversationId)?.booking.ticket;
+  return !home || tokyoMinutes(home.depart) >= tokyoMinutes(arrive) + MIN_STAY_MIN;
+}
+
+/** The flight home, once ticketed: its flight and when it leaves. */
+export function homeTicket(conversationId: string): { flight: string; depart: string } | null {
+  const home = desks.get(conversationId)?.booking.ticket;
+  return home ? { flight: home.legs.map((l) => l.flight).join(" + "), depart: home.depart } : null;
+}
+
+/**
+ * The days the flight home can leave on, now: those with a flight leaving long
+ * enough after the traveller lands, each with the nights in Tokyo it gives.
+ */
+export function daysHome(conversationId: string): { id: Day; nights: number }[] {
+  const landed = Math.floor(tokyoMinutes(outboundLands(conversationId)) / 1440);
+  return DAYS_HOME.filter((day) => flightsHome(day).some((f) => leavesAfterLanding(conversationId, f))).map((id) => ({
+    id,
+    nights: Math.floor(tokyoMinutes(`${id} 00:00`) / 1440) - landed,
+  }));
+}
+
+/** Whether a flight home leaves long enough after the traveller lands in Tokyo. */
+export const leavesAfterLanding = (conversationId: string, flight: HomeFlight) =>
+  tokyoMinutes(flight.depart) >= tokyoMinutes(outboundLands(conversationId)) + MIN_STAY_MIN;
+
+/** The traveller searched: what they had chosen after it no longer stands. */
+export function searched(conversationId: string, search: { from: TokyoAirport; date: Day }) {
+  const d = desks.get(conversationId);
+  if (d) d.booking = { ...noBooking(), rises: d.booking.rises, ticket: d.booking.ticket, search };
+}
+
+export function homeFlightChosen(conversationId: string, flight: HomeFlight) {
+  const b = booking(conversationId);
+  if (b) Object.assign(b, { flight, fare: null, seat: null, review: null, confirmed: null });
+}
+
+export function fareChosen(conversationId: string, fare: Fare) {
+  const b = booking(conversationId);
+  if (b) Object.assign(b, { fare, seat: null, review: null, confirmed: null });
+}
+
+/** Record a seat on the flight home. False when the seat is on any other flight's map. */
+export function homeSeatPicked(conversationId: string, flightId: string, seat: string): boolean {
+  const b = booking(conversationId);
+  if (b?.flight?.id !== flightId || !b.fare?.seatChoice) return false;
+  Object.assign(b, { seat, review: null, confirmed: null });
+  return true;
+}
+
+export function reviewShown(conversationId: string, handle: string, props: BookingReviewProps) {
+  const b = booking(conversationId);
+  if (b) b.review = { handle, props };
+}
+
+export function bookingConfirmedAt(conversationId: string, total: number) {
+  const b = booking(conversationId);
+  if (b) b.confirmed = total;
+}
+
+/**
+ * The ticket is on screen. The airline issues it a moment later, as a webhook
+ * would, and the trip card is revised to show the flight home.
+ */
+export function ticketShown(conversationId: string, handle: string, props: BookingConfirmedProps) {
+  const d = desks.get(conversationId);
+  if (!d) return;
+  d.booking.ticket = props;
+  const flight = props.legs.map((l) => l.flight).join(" + ");
+  setTimeout(async () => {
+    try {
+      const home = { flight, depart: props.depart, reference: props.reference };
+      await reviseTrip(conversationId, d, (trip) => ({ ...trip, home }), `The trip card now shows the flight home, ${flight}.`);
+      await notify!(conversationId, ticketIssuedServer, { reference: props.reference, ticket: ticketNumber(), flight }, { handle });
+    } catch (err) {
+      console.error(`ticket for ${conversationId} not issued: ${(err as Error).message}`);
+    }
+  }, CONFIRM_MS).unref();
+}
+
 // ─────────────────────────────────────────── what the ops panel asks of it
 
 /** Cancel the flight: the trip card shows it, and a wake notice has the guide tell the traveller. */
@@ -179,10 +355,7 @@ export async function cancelFlight(conversationId: string): Promise<string> {
   if (d.cancelled) throw new OpsError(`${TRIP.flight} is already cancelled.`);
   d.cancelled = true;
   try {
-    const revised = await update!(conversationId, tripCardServer, d.trip, { ...TRIP, status: "cancelled", reason: CANCEL_REASON }, {
-      model: `The airline marked ${TRIP.flight} cancelled.`,
-    });
-    d.trip = revised.handle;
+    await reviseTrip(conversationId, d, (trip) => ({ ...trip, status: "cancelled", reason: CANCEL_REASON }), `The airline marked ${TRIP.flight} cancelled.`);
     await notify!(conversationId, flightCancelledServer, { flight: TRIP.flight, depart: TRIP.depart, reason: CANCEL_REASON }, { handle: d.trip });
   } catch (err) {
     d.cancelled = false;
@@ -232,7 +405,7 @@ export async function releaseHolds(conversationId: string): Promise<string> {
 export async function changeGate(conversationId: string): Promise<string> {
   const d = desk(conversationId);
   const pass = d.pass;
-  if (!pass) throw new OpsError("There's no boarding pass yet: book a new flight first.");
+  if (!pass) throw new OpsError("There's no boarding pass yet: rebook the cancelled flight first.");
   const gate = `G${Number(pass.props.gate.slice(1)) + 4}`;
   const props: BoardingPassProps = { ...pass.props, gate };
   const revised = await update!(conversationId, boardingPassServer, pass.handle, props, {
@@ -240,5 +413,45 @@ export async function changeGate(conversationId: string): Promise<string> {
     wake: true,
   });
   d.pass = { handle: revised.handle, props };
-  return `Moved ${props.flight} to gate ${gate}. The guide tells the traveller now.`;
+  return `Moved ${props.flight} to gate ${gate}. The guide tells the traveller now, or with their next click if a question is waiting.`;
+}
+
+/**
+ * Raise the fare the traveller is reviewing: the review is revised in place to
+ * the new total. No turn can start while a question waits, so the guide hears
+ * of it with the traveller's next click; a Confirm at the old total is refused.
+ */
+export async function raiseFare(conversationId: string): Promise<string> {
+  const d = desk(conversationId);
+  const b = d.booking;
+  const shown = b.review;
+  if (!shown || !b.flight || !b.fare) throw new OpsError("No booking is waiting on its review yet: start booking the flight home.");
+  if (b.confirmed !== null) throw new OpsError("The traveller has already confirmed: the fare is theirs.");
+  // From reading the review to saving the rise, one at a time: two at once
+  // would both start from the same total, and the rise would count twice.
+  if (d.raising) throw new OpsError("The fare is being raised already.");
+  const old = shown.props.price;
+  const props: BookingReviewProps = {
+    ...shown.props,
+    price: { ...old, fare: old.fare + FARE_RISE, total: old.total + FARE_RISE },
+    previousTotal: shown.props.previousTotal ?? old.total,
+  };
+  d.raising = true;
+  try {
+    const revised = await update!(conversationId, bookingReviewServer, shown.handle, props, {
+      model:
+        `The airline raised the ${b.fare.name} fare on ${b.flight.flights.join(" + ")} by ${usd(FARE_RISE)} while the traveller was reviewing: ` +
+        `the total is now ${usd(props.price.total)}, up from ${usd(old.total)}.`,
+    });
+    const key = riseKey(b.flight, b.fare);
+    b.rises.set(key, (b.rises.get(key) ?? 0) + FARE_RISE);
+    b.fare = { ...b.fare, price: b.fare.price + FARE_RISE };
+    b.review = { handle: revised.handle, props };
+  } catch (err) {
+    if (answered(err)) throw new OpsError("The traveller has already answered the review.");
+    throw err;
+  } finally {
+    d.raising = false;
+  }
+  return `Raised the ${b.fare.name} fare by ${usd(FARE_RISE)}: the review shows ${usd(props.price.total)} now. The guide hears of it with the traveller's next click.`;
 }
