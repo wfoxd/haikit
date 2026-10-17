@@ -364,7 +364,7 @@ export async function changeGate(conversationId: string): Promise<string> {
     wake: true,
   });
   d.pass = { handle: revised.handle, props };
-  return `Moved ${props.flight} to gate ${gate}. The guide tells the traveller now.`;
+  return `Moved ${props.flight} to gate ${gate}. The guide tells the traveller now, or with their next click if a question is waiting.`;
 }
 
 /**

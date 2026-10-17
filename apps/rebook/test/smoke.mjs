@@ -282,6 +282,21 @@ try {
 
     stream.close();
 
+    // 7b · the gate moves while a question on the flight home waits: no turn
+    //      can start, so the news rides with the next click, and the guide
+    //      says it before answering the click
+    {
+      const search = surface(await sse("/hai/chat", { conversationId: id, message: "book my flight home on Sunday" }), "flight_search");
+      const moved = await ops("gate", id);
+      const go = await sse("/hai/interact", { conversationId: id, handle: search.ui?.handle, action: "search", value: { from: "TYO", date: "Sun" } });
+      check(
+        moved.status === 200 && /^Heads up: NH 7 moved from gate G99 to gate G103\. Boarding is still 10:20\. Here are the flights home on Sunday/.test(said(go)) &&
+          surface(go, "flight_results").ui?.mode === "elicit",
+        `a gate change that rode in with a booking click is told first: “${said(go).slice(0, 70)}…”`,
+        () => `${moved.message} · ${said(go)}`,
+      );
+    }
+
     // 8b · a second conversation: a release after the traveller chose changes
     //      nothing, and a seat map shown again keeps the seats others took
     {
@@ -416,8 +431,17 @@ try {
         () => said(cheapest),
       );
 
+      // naming the flight home in a question doesn't start a new search
+      const phrased = await sse("/hai/chat", { conversationId: id4, message: "which flight home is cheapest?" });
+      const picker = surface(phrased, "flight_results");
+      check(
+        !opened(phrased, "flight_search").length && /Checking which costs least\..*The cheapest is ZG 26/.test(said(phrased)) && picker.ui?.mode === "elicit",
+        "“which flight home is cheapest?” is a question about the flights on screen, not a new search",
+        () => said(phrased),
+      );
+
       // the flight, then the fares; Basic assigns the seat at check-in, so there's no seat map
-      const flight = await sse("/hai/interact", { conversationId: id4, handle: cheap.ui?.handle, action: "choose", value: "r01" });
+      const flight = await sse("/hai/interact", { conversationId: id4, handle: picker.ui?.handle, action: "choose", value: "r01" });
       const fares = surface(flight, "fare_options");
       check(
         fares.ui?.mode === "elicit" && fares.props?.flight === "UA 838" && fares.props.fares.map((f) => `${f.id} ${f.price}`).join(", ") === "basic 960, standard 1100, flex 1380",
@@ -469,6 +493,12 @@ try {
       const latestCard = watch4.events.filter((e) => e.type === "ui_open" && e.component === "trip_card").at(-1)?.handle;
       const booked = await sse("/hai/interact", { conversationId: id4, handle: latestCard, action: "book_home", value: "home" });
       check(/the flight home is already booked: UA 838/.test(refusal(booked)), "the trip card's button is refused once the flight home is booked", () => refusal(booked));
+      const after = await sse("/hai/chat", { conversationId: id4, message: "show all flights" });
+      check(
+        !opened(after, "flight_results").length && /already booked: UA 838, booking /.test(said(after)),
+        "once ticketed, the flights home aren't shown again: the guide says it's booked",
+        () => said(after),
+      );
       watch4.close();
     }
 

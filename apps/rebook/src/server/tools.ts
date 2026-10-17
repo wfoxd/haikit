@@ -191,6 +191,15 @@ export const issueBoardingPass = defineTool({
 
 // ───────────────────────────────────────────── booking the flight home
 
+/**
+ * Once the flight home is ticketed, no step of booking it runs again: a
+ * second Confirm could only be refused. Null while it isn't.
+ */
+const ticketed = (conversationId: string) => {
+  const done = booking(conversationId)?.ticket;
+  return done ? `The flight home is already booked: ${done.legs.map((l) => l.flight).join(" + ")}, booking ${done.reference}.` : null;
+};
+
 /** Each leg of a flight home, from its Tokyo airport to San Francisco. */
 const legsOf = (f: HomeFlight) =>
   f.flights.map((flight, i) => ({ flight, from: i === 0 ? f.from : f.via!, to: i === f.flights.length - 1 ? HOME.code : f.via! }));
@@ -212,8 +221,8 @@ export const startBooking = defineTool({
   },
 
   async run({ date, from }, ctx) {
-    const done = booking(ctx.conversationId)?.ticket;
-    if (done) return ctx.text(`The flight home is already booked: ${done.legs.map((l) => l.flight).join(" + ")}, booking ${done.reference}.`);
+    const done = ticketed(ctx.conversationId);
+    if (done) return ctx.text(done);
     return ctx.render(
       flightSearchServer,
       {
@@ -245,6 +254,8 @@ export const showFlights = defineTool({
   },
 
   async run(filters, ctx) {
+    const done = ticketed(ctx.conversationId);
+    if (done) return ctx.text(done);
     // The flights are for the search the traveller made, not one the model makes up.
     const search = booking(ctx.conversationId)?.search;
     if (!search) return ctx.text("The traveller hasn't searched yet: show start_booking.");
@@ -273,6 +284,8 @@ export const showFares = defineTool({
   inputJsonSchema: flightInput,
 
   async run({ flightId }, ctx) {
+    const done = ticketed(ctx.conversationId);
+    if (done) return ctx.text(done);
     const b = booking(ctx.conversationId);
     const chosen = b?.flight;
     if (!chosen || !b.search) return ctx.text("The traveller hasn't chosen a flight home yet: show show_flights.");
@@ -299,6 +312,8 @@ export const showHomeSeats = defineTool({
   inputJsonSchema: flightInput,
 
   async run({ flightId }, ctx) {
+    const done = ticketed(ctx.conversationId);
+    if (done) return ctx.text(done);
     const b = booking(ctx.conversationId);
     if (!b?.flight) return ctx.text("The traveller hasn't chosen a flight home yet: show show_flights.");
     if (b.flight.id !== flightId) return ctx.text(`The traveller chose ${b.flight.id} (${b.flight.flights.join(" + ")}), not ${flightId}.`);
@@ -322,6 +337,8 @@ export const reviewBooking = defineTool({
   inputJsonSchema: none,
 
   async run(_input, ctx) {
+    const done = ticketed(ctx.conversationId);
+    if (done) return ctx.text(done);
     const b = booking(ctx.conversationId);
     if (!b?.flight) return ctx.text("The traveller hasn't chosen a flight home yet: show show_flights.");
     if (!b.fare) return ctx.text(`The traveller hasn't chosen a fare yet: show show_fares for ${b.flight.id}.`);
@@ -355,8 +372,9 @@ export const issueTicket = defineTool({
 
   async run(_input, ctx) {
     // The model can ask for the ticket; only the traveller's Confirm says what it's for.
+    const done = ticketed(ctx.conversationId);
+    if (done) return ctx.text(done);
     const b = booking(ctx.conversationId);
-    if (b?.ticket) return ctx.text(`The flight home is already booked: booking ${b.ticket.reference}.`);
     if (!b?.flight || !b.fare || b.confirmed === null) return ctx.text("The traveller hasn't confirmed a booking yet: show review_booking.");
     const props = {
       passenger: TRIP.passenger,

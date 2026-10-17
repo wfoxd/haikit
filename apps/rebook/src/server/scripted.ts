@@ -91,6 +91,12 @@ export function scripted(): ModelAdapter {
         return reply("Something changed on the airline's side, but there's nothing you need to do.", onTextDelta);
       }
 
+      // A gate change can't wake the guide while a question waits: it rides
+      // with the next click or message instead. Say it first, then answer.
+      const moved = texts.map((t) => t.match(/^\[UI update\] (.+? moved from gate \S+ to gate \S+?)\. (Boarding is still [\d:]+)\./)).find(Boolean);
+      const news = moved ? `Heads up: ${moved[1]}. ${moved[2]}. ` : "";
+      const answer = (text: string, d: (t: string) => void, calls: Call[] = []) => reply(news + text, d, calls);
+
       // ── a click answered a question, or a tool came back ──
       if (results) {
         // the flight home first: its labels say so, and the rebooking ones don't
@@ -99,14 +105,14 @@ export function scripted(): ModelAdapter {
           // The flight was cancelled while the traveller was booking it: with the
           // ticket issued, the options to Tokyo they haven't seen yet are next.
           if (!home.call && history.includes("[App notification: flight_cancelled]") && !/Rebooking options for /.test(history)) {
-            return reply(`${home.say} Now your flight to Tokyo: here's every way I can get you there.`, onTextDelta, [toolUse("find_rebooking", {})]);
+            return answer(`${home.say} Now your flight to Tokyo: here's every way I can get you there.`, onTextDelta, [toolUse("find_rebooking", {})]);
           }
-          return reply(home.say, onTextDelta, home.call ? [home.call] : []);
+          return answer(home.say, onTextDelta, home.call ? [home.call] : []);
         }
 
         const option = results.match(/Chose (o\d+): (.+?) \(/);
         if (option) {
-          return reply(`${option[2]} it is. Pick a seat: other passengers are choosing too, so the map changes as you look.`, onTextDelta, [
+          return answer(`${option[2]} it is. Pick a seat: other passengers are choosing too, so the map changes as you look.`, onTextDelta, [
             toolUse("show_seat_map", { optionId: option[1] }),
           ]);
         }
@@ -114,21 +120,21 @@ export function scripted(): ModelAdapter {
         if (seat) {
           const choice = latest(/Chose (o\d+): .*? (It leaves this evening|It leaves tomorrow)/g);
           if (choice?.[2] === "It leaves tomorrow") {
-            return reply(`Seat ${seat[1]} is yours. Your new flight leaves tomorrow, so where would you like to spend tonight?`, onTextDelta, [
+            return answer(`Seat ${seat[1]} is yours. Your new flight leaves tomorrow, so where would you like to spend tonight?`, onTextDelta, [
               toolUse("offer_care", { optionId: choice[1] }),
             ]);
           }
-          return reply(`Seat ${seat[1]} is yours. Here's your new boarding pass.`, onTextDelta, [toolUse("issue_boarding_pass", {})]);
+          return answer(`Seat ${seat[1]} is yours. Here's your new boarding pass.`, onTextDelta, [toolUse("issue_boarding_pass", {})]);
         }
         const care = results.match(/Chose (Hotel voucher|Lounge and dinner|I'll sort it myself)/);
         if (care) {
-          return reply(care[1] === "I'll sort it myself" ? "Understood. Here's your boarding pass." : `${care[1]} it is. Here's your boarding pass.`, onTextDelta, [
+          return answer(care[1] === "I'll sort it myself" ? "Understood. Here's your boarding pass." : `${care[1]} it is. Here's your boarding pass.`, onTextDelta, [
             toolUse("issue_boarding_pass", {}),
           ]);
         }
         const pass = results.match(/Boarding pass on screen as \S+ .*?Seat (\w+), gate (\w+), boarding ([\d:]+)/);
         if (pass) {
-          return reply(
+          return answer(
             `You're booked: seat ${pass[1]}, gate ${pass[2]}, boarding at ${pass[3]}. I'll tell you if anything changes.`,
             onTextDelta,
           );
@@ -139,42 +145,44 @@ export function scripted(): ModelAdapter {
           const asked = [...blocksOf(messages.at(-2))].reverse().find((b) => b?.type === "tool_use" && b.name === "query_ui")?.input;
           // about the flights home: the same, with their picker
           if (asked?.handle === latest(/Flights home on \w+, on screen as (ui_\d+)/g)?.[1]) {
-            if (found[1] === "0") return reply("None of these flights match that. Here they are again.", onTextDelta, [toolUse("show_flights", flightsWith)]);
+            if (found[1] === "0") return answer("None of these flights match that. Here they are again.", onTextDelta, [toolUse("show_flights", flightsWith)]);
             if (asked.query === "cheapest") {
               const first = (results.split("\n")[1] ?? "").replace(/ \[r\d+\]$/, "");
-              return reply(`The cheapest is ${first}.`, onTextDelta, [toolUse("show_flights", flightsWith)]);
+              return answer(`The cheapest is ${first}.`, onTextDelta, [toolUse("show_flights", flightsWith)]);
             }
             const args = (asked.args ?? {}) as { nonstop?: boolean; airport?: string };
             const what = args.nonstop ? "nonstop" : args.airport === "HND" ? "from Haneda" : args.airport === "NRT" ? "from Narita" : "matching";
-            return reply(`${found[1]} of the ${found[2]} flights are ${what}. Here they are.`, onTextDelta, [toolUse("show_flights", { ...flightsWith, ...args })]);
+            return answer(`${found[1]} of the ${found[2]} flights are ${what}. Here they are.`, onTextDelta, [toolUse("show_flights", { ...flightsWith, ...args })]);
           }
           // Typing closed the picker the question was about, so open it again: none match, but those still do.
           if (found[1] === "0") {
-            return reply("None of these options match that. Here they are again.", onTextDelta, [toolUse("find_rebooking", shownWith)]);
+            return answer("None of these options match that. Here they are again.", onTextDelta, [toolUse("find_rebooking", shownWith)]);
           }
           if (asked?.query === "earliest") {
             const first = results.split("\n")[1] ?? "";
-            return reply(`The first to land is ${first.replace(/ \[o\d+\]$/, "")}.`, onTextDelta, [toolUse("find_rebooking", shownWith)]);
+            return answer(`The first to land is ${first.replace(/ \[o\d+\]$/, "")}.`, onTextDelta, [toolUse("find_rebooking", shownWith)]);
           }
           const args = (asked?.args ?? {}) as { nonstop?: boolean; noExtraFare?: boolean; tonight?: boolean };
           const what = args.nonstop ? "nonstop" : args.noExtraFare ? "at no extra cost" : args.tonight ? "leaving tonight" : "matching";
-          return reply(`${found[1]} of the ${found[2]} options are ${what}. Here they are, the earliest to land first.`, onTextDelta, [
+          return answer(`${found[1]} of the ${found[2]} options are ${what}. Here they are, the earliest to land first.`, onTextDelta, [
             // the query asked the picker on screen, already filtered: keep its filters
             toolUse("find_rebooking", { ...shownWith, ...args }),
           ]);
         }
-        return reply(results.split("\n").at(-1) ?? "Done.", onTextDelta);
+        return answer(results.split("\n").at(-1) ?? "Done.", onTextDelta);
       }
 
       // ── what the traveller typed ──
       const text = (texts.at(-1) ?? "").toLowerCase();
       // Booking the flight home, by asking or by the trip card's button: the
       // day and the airport if they named them; the search fills in the rest.
-      if (/\b(book|fly|flight|going|get me)\b.*\b(home|return|san francisco|sfo)\b|\bflight home\b/.test(text)) {
+      // A request needs a verb that books: "which flight home is cheapest?"
+      // asks about the flights on screen, and is answered below.
+      if (/\b(book|fly|need|get me|going)\b.*\b(home|return|san francisco|sfo)\b/.test(text)) {
         const day = text.match(/\b(thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?|mon(?:day)?)\b/)?.[1];
         const date = day ? day.charAt(0).toUpperCase() + day.slice(1, 3) : undefined;
         const from = /haneda|\bhnd\b/.test(text) ? "HND" : /narita|\bnrt\b/.test(text) ? "NRT" : undefined;
-        return reply(
+        return answer(
           date
             ? "Here's the search, filled in from your trip and your message. Check it, then search."
             : "Which day would you like to fly home? I've filled in the rest from your trip.",
@@ -215,35 +223,35 @@ export function scripted(): ModelAdapter {
       const rebooking = [...history.matchAll(/Rebooking options for \S+ \S+, on screen as (ui_\d+)/g)].at(-1);
       if (flights && (flights.index ?? 0) > (rebooking?.index ?? -1)) {
         const ask = (query: string, args: Record<string, unknown>, lead: string) =>
-          reply(lead, onTextDelta, [toolUse("query_ui", { handle: flights[1], query, args })]);
+          answer(lead, onTextDelta, [toolUse("query_ui", { handle: flights[1], query, args })]);
         if (/non-?stop|direct/.test(text)) return ask("filter", { nonstop: true }, "Checking every flight for nonstops.");
         if (/cheap|lowest|least|price/.test(text)) return ask("cheapest", {}, "Checking which costs least.");
         if (/haneda|\bhnd\b/.test(text)) return ask("filter", { airport: "HND" }, "Checking which leave from Haneda.");
         if (/narita|\bnrt\b/.test(text)) return ask("filter", { airport: "NRT" }, "Checking which leave from Narita.");
-        if (/flights|all of them|list|every/.test(text)) return reply("Here are all of them again.", onTextDelta, [toolUse("show_flights", {})]);
+        if (/flights|all of them|list|every/.test(text)) return answer("Here are all of them again.", onTextDelta, [toolUse("show_flights", {})]);
       }
       const options = rebooking?.[1];
       const ask = (args: Record<string, boolean>, lead: string) =>
-        reply(lead, onTextDelta, [toolUse("query_ui", { handle: options, query: "filter", args })]);
+        answer(lead, onTextDelta, [toolUse("query_ui", { handle: options, query: "filter", args })]);
       if (options) {
         if (/non-?stop|direct/.test(text)) return ask({ nonstop: true }, "Checking every option for nonstops.");
         if (/free|no extra|cost|cheap|pay/.test(text)) return ask({ noExtraFare: true }, "Checking which cost nothing extra.");
         if (/tonight|today|this evening/.test(text)) return ask({ tonight: true }, "Checking which leave tonight.");
         if (/earliest|soonest|first|fastest|quickest/.test(text)) {
-          return reply("Checking which lands first.", onTextDelta, [toolUse("query_ui", { handle: options, query: "earliest", args: {} })]);
+          return answer("Checking which lands first.", onTextDelta, [toolUse("query_ui", { handle: options, query: "earliest", args: {} })]);
         }
         if (/option|rebook|alternative|other way|all of them|list/.test(text)) {
-          return reply("Here are all of them again.", onTextDelta, [toolUse("find_rebooking", {})]);
+          return answer("Here are all of them again.", onTextDelta, [toolUse("find_rebooking", {})]);
         }
       }
       if (!history.includes("[App notification: flight_cancelled]") && !reopen) {
-        return reply(
+        return answer(
           "Your flight is on time, so there's nothing to do yet. In this demo the airline is played by the Airline ops panel: try Cancel the flight. " +
             "Or ask me to book your flight home.",
           onTextDelta,
         );
       }
-      return reply(
+      return answer(
         "I'm the scripted guide, so I understand a few kinds of request: “book my flight home on Sunday”, “which are nonstop?”, " +
           "“which is cheapest?”, “what lands first?”, or “show me all the options”. Set ANTHROPIC_API_KEY on the server to talk to Claude instead." +
           (reopen ? " Here's where you were." : ""),
