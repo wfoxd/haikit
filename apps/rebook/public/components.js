@@ -153,8 +153,6 @@ export const registry = {
      * @param {MountCtx} ctx
      */
     mount(el, props, ctx) {
-      /** The button was clicked: the booking goes on below, so it says so instead. */
-      let asked = false;
       let sending = false;
       const draw = () => {
         el.replaceChildren();
@@ -185,19 +183,20 @@ export const registry = {
         if (props.home) {
           home.append(h("span", "rb-home-label", "Flight home"), h("span", "rb-home-what", `${props.home.flight} · ${props.home.depart} · booking ${props.home.reference}`));
         } else {
-          home.append(h("span", "rb-home-label", "Flight home"), h("span", "rb-home-what", asked ? "Booking it below…" : "Not booked yet"));
+          home.append(h("span", "rb-home-label", "Flight home"), h("span", "rb-home-what", "Not booked yet"));
           const b = h("button", "rb-button", "Book my flight home");
           b.type = "button";
           b.dataset.key = "home:book";
-          b.disabled = asked || sending || ctx.state !== "live";
+          b.disabled = sending || ctx.state !== "live";
           // DECLARED: `book_home` is an inform action. It tells the guide, which
-          // starts the booking; nothing waits on this card.
+          // starts the booking; nothing waits on this card. A click the server
+          // refuses, such as one while a question waits, resolves all the same,
+          // so the button stays: the card is revised once the flight is booked.
           b.onclick = async () => {
             sending = true;
             redraw(el, draw);
             try {
               await ctx.send("book_home", "home");
-              asked = true;
             } catch (err) {
               console.error("[rebook] the click wasn't sent:", err);
             } finally {

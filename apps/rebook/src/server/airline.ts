@@ -67,6 +67,10 @@ interface Desk {
   /** The trip card's latest handle, and its props: a revision starts from these. */
   trip: string;
   tripProps: TripCardProps;
+  /** The trip card's revisions, one at a time: each reads the props the last one saved. */
+  tripQueue: Promise<void>;
+  /** A fare rise in progress: a second at once waits for none. */
+  raising: boolean;
   cancelled: boolean;
   /** What the airline has: whether it still holds seats for the traveller, and the seats left on each option. */
   stock: { held: boolean; seats: Map<string, number> };
@@ -100,6 +104,23 @@ const desk = (conversationId: string) => {
   return found;
 };
 
+/**
+ * Revise the trip card, after any revision of it already under way: the
+ * cancellation and the flight home each change one thing, and neither may
+ * start from props the other is about to replace.
+ */
+function reviseTrip(conversationId: string, d: Desk, change: (props: TripCardProps) => TripCardProps, model: string): Promise<void> {
+  const run = async () => {
+    const props = change(d.tripProps);
+    const revised = await update!(conversationId, tripCardServer, d.trip, props, { model });
+    d.trip = revised.handle;
+    d.tripProps = props;
+  };
+  const done = d.tripQueue.then(run);
+  d.tripQueue = done.catch(() => {});
+  return done;
+}
+
 /** A revision the conversation has moved past is refused: the airline's message then says so. */
 const answered = (err: unknown) => err instanceof Error && /was answered/.test(err.message);
 
@@ -110,6 +131,8 @@ export function tripShown(conversationId: string, handle: string) {
   desks.set(conversationId, {
     trip: handle,
     tripProps: TRIP,
+    tripQueue: Promise.resolve(),
+    raising: false,
     cancelled: false,
     stock: { held: true, seats: new Map(OPTIONS.map((o) => [o.id, o.seatsLeft])) },
     releasing: false,
@@ -267,10 +290,7 @@ export function ticketShown(conversationId: string, handle: string, props: Booki
   setTimeout(async () => {
     try {
       const home = { flight, depart: props.depart, reference: props.reference };
-      const trip: TripCardProps = { ...d.tripProps, home };
-      const revised = await update!(conversationId, tripCardServer, d.trip, trip, { model: `The trip card now shows the flight home, ${flight}.` });
-      d.trip = revised.handle;
-      d.tripProps = trip;
+      await reviseTrip(conversationId, d, (trip) => ({ ...trip, home }), `The trip card now shows the flight home, ${flight}.`);
       await notify!(conversationId, ticketIssuedServer, { reference: props.reference, ticket: ticketNumber(), flight }, { handle });
     } catch (err) {
       console.error(`ticket for ${conversationId} not issued: ${(err as Error).message}`);
@@ -286,12 +306,7 @@ export async function cancelFlight(conversationId: string): Promise<string> {
   if (d.cancelled) throw new OpsError(`${TRIP.flight} is already cancelled.`);
   d.cancelled = true;
   try {
-    const props: TripCardProps = { ...d.tripProps, status: "cancelled", reason: CANCEL_REASON };
-    const revised = await update!(conversationId, tripCardServer, d.trip, props, {
-      model: `The airline marked ${TRIP.flight} cancelled.`,
-    });
-    d.trip = revised.handle;
-    d.tripProps = props;
+    await reviseTrip(conversationId, d, (trip) => ({ ...trip, status: "cancelled", reason: CANCEL_REASON }), `The airline marked ${TRIP.flight} cancelled.`);
     await notify!(conversationId, flightCancelledServer, { flight: TRIP.flight, depart: TRIP.depart, reason: CANCEL_REASON }, { handle: d.trip });
   } catch (err) {
     d.cancelled = false;
@@ -363,12 +378,16 @@ export async function raiseFare(conversationId: string): Promise<string> {
   const shown = b.review;
   if (!shown || !b.flight || !b.fare) throw new OpsError("No booking is waiting on its review yet: start booking the flight home.");
   if (b.confirmed !== null) throw new OpsError("The traveller has already confirmed: the fare is theirs.");
+  // From reading the review to saving the rise, one at a time: two at once
+  // would both start from the same total, and the rise would count twice.
+  if (d.raising) throw new OpsError("The fare is being raised already.");
   const old = shown.props.price;
   const props: BookingReviewProps = {
     ...shown.props,
     price: { ...old, fare: old.fare + FARE_RISE, total: old.total + FARE_RISE },
     previousTotal: shown.props.previousTotal ?? old.total,
   };
+  d.raising = true;
   try {
     const revised = await update!(conversationId, bookingReviewServer, shown.handle, props, {
       model:
@@ -382,6 +401,8 @@ export async function raiseFare(conversationId: string): Promise<string> {
   } catch (err) {
     if (answered(err)) throw new OpsError("The traveller has already answered the review.");
     throw err;
+  } finally {
+    d.raising = false;
   }
   return `Raised the ${b.fare.name} fare by ${usd(FARE_RISE)}: the review shows ${usd(props.price.total)} now. The guide hears of it with the traveller's next click.`;
 }

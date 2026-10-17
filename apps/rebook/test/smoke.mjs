@@ -484,7 +484,14 @@ try {
         "“Book my flight home on Friday from Haneda” fills in the day and the airport from the message",
         () => JSON.stringify(search.props),
       );
-      const go = await sse("/hai/interact", { conversationId: id5, handle: search.ui?.handle, action: "search", value: { from: "HND", date: "Fri" } });
+      // something the guide doesn't understand closes the search, and it shows it again as it was
+      const hello = surface(await sse("/hai/chat", { conversationId: id5, message: "hello" }), "flight_search");
+      check(
+        hello.ui?.mode === "elicit" && hello.props?.date === "Fri" && hello.props.from === "HND",
+        "a message the guide doesn't understand closes the search, and it's shown again with its day and its airport",
+        () => JSON.stringify(hello.props),
+      );
+      const go = await sse("/hai/interact", { conversationId: id5, handle: hello.ui?.handle, action: "search", value: { from: "HND", date: "Fri" } });
       const results = surface(go, "flight_results");
       check(results.props?.flights.length === 5 && results.props.flights.every((f) => f.from === "HND"), "Haneda on Friday: 5 flights, all from HND", () => JSON.stringify(results.props?.flights.map((f) => f.id)));
       const fares = surface(await sse("/hai/interact", { conversationId: id5, handle: results.ui?.handle, action: "choose", value: "r03" }), "fare_options");
@@ -506,6 +513,88 @@ try {
         ticket.props?.seat === second?.id && ticket.props.bags === "1 checked bag" && ticket.props.total === review2.props?.price.total,
         `the e-ticket books seat ${second?.id}, 1 checked bag, $${review2.props?.price.total}`,
         () => JSON.stringify(ticket.props),
+      );
+    }
+
+    // 11d · a raised Basic fare is the price everywhere after: the flights
+    //       shown again, and the fares, which count it once
+    {
+      const begin = await sse("/hai/start", {});
+      const id6 = begin.find((e) => e.type === "hello")?.conversationId;
+      const search = surface(await sse("/hai/chat", { conversationId: id6, message: "book my flight home on Sunday" }), "flight_search");
+      const results = surface(await sse("/hai/interact", { conversationId: id6, handle: search.ui?.handle, action: "search", value: { from: "TYO", date: "Sun" } }), "flight_results");
+      const fares = surface(await sse("/hai/interact", { conversationId: id6, handle: results.ui?.handle, action: "choose", value: "r01" }), "fare_options");
+      const review = surface(await sse("/hai/interact", { conversationId: id6, handle: fares.ui?.handle, action: "choose", value: "basic" }), "booking_review");
+      await ops("fare", id6);
+      const revised = await (async () => {
+        for (let i = 0; i < 40; i++) {
+          const r = await sse("/hai/interact", { conversationId: id6, handle: review.ui?.handle, action: "change", value: "flight" });
+          const latest = refusal(r).match(/superseded by (ui_\d+)/)?.[1];
+          if (latest) return latest;
+          await new Promise((r) => setTimeout(r, 100));
+        }
+      })();
+      const change = await sse("/hai/interact", { conversationId: id6, handle: revised, action: "change", value: "flight" });
+      const again = surface(change, "flight_results");
+      const r01 = again.props?.flights.find((f) => f.id === "r01");
+      check(r01?.price === 1020, "after the raise, Change flight shows UA 838 at its new Basic fare, $1,020", () => JSON.stringify(r01));
+      const chose = await sse("/hai/interact", { conversationId: id6, handle: again.ui?.handle, action: "choose", value: "r01" });
+      const fares2 = surface(chose, "fare_options");
+      // the second time UA 838 is chosen, after the raise
+      const heard = [...JSON.stringify(chose.find((e) => e.type === "context")?.messages ?? "").matchAll(/Chose flight r01: [^"]*/g)].at(-1)?.[0] ?? "";
+      check(
+        /from \$1,020/.test(heard) &&
+          fares2.props?.fares.map((f) => `${f.id} ${f.price}`).join(", ") === "basic 1020, standard 1100, flex 1380",
+        "…the model reads $1,020 too, and its fares count the raise once, on Basic only: $1,020, $1,100, $1,380",
+        () => `${heard} · ${JSON.stringify(fares2.props?.fares.map((f) => [f.id, f.price]))}`,
+      );
+    }
+
+    // 11e · the trip card's revisions take turns: a cancellation and the
+    //       flight home, overlapping, both stay on the card. In this process,
+    //       with an airline whose revisions are slow.
+    {
+      const airline = await import("../src/server/airline.ts");
+      const saved = [];
+      airline.connectAirline(
+        async () => ({ seq: 1 }),
+        async (_id, _surface, handle, props) => {
+          await new Promise((r) => setTimeout(r, 2_000));
+          saved.push(props);
+          return { handle: `${handle}+`, model: "" };
+        },
+      );
+      airline.tripShown("overlap", "ui_01");
+      const cancelling = airline.cancelFlight("overlap");
+      airline.ticketShown("overlap", "ui_09", { passenger: "Alex Morgan", reference: "ABC234", legs: [{ flight: "UA 838", from: "NRT", to: "SFO" }], depart: "Sun 16:55", arrive: "Sun 10:50", fare: "Basic", seat: null, bags: "carry-on only", total: 1028 });
+      await cancelling;
+      await new Promise((r) => setTimeout(r, 3_000)); // the ticket's revision starts at 1.5 s, and takes 2
+      const last = saved.at(-1);
+      check(
+        saved.length === 2 && last?.status === "cancelled" && last.home?.reference === "ABC234",
+        "a cancellation and the flight home, overlapping, both stay on the trip card",
+        () => JSON.stringify(saved.map((t) => ({ status: t.status, home: t.home }))),
+      );
+
+      // two raises at once, against the same slow airline: one is refused, so the rise counts once
+      const { flightsHome } = await import("../src/server/data.ts");
+      airline.tripShown("raises", "ui_01");
+      airline.searched("raises", { from: "TYO", date: "Sun" });
+      airline.homeFlightChosen("raises", flightsHome("Sun").find((f) => f.id === "r01"));
+      airline.fareChosen("raises", { id: "basic", name: "Basic", price: 960, seatChoice: false, includes: [] });
+      const review = {
+        passenger: "Alex Morgan", flightId: "r01", airline: "United", legs: [{ flight: "UA 838", from: "NRT", to: "SFO" }], depart: "Sun 16:55",
+        arrive: "Sun 10:50", fare: { id: "basic", name: "Basic", seatChoice: false }, seat: null, price: { fare: 960, taxes: 68, total: 1028 },
+        previousTotal: null, payment: "",
+      };
+      airline.reviewShown("raises", "ui_05", review);
+      const both = await Promise.allSettled([airline.raiseFare("raises"), airline.raiseFare("raises")]);
+      const stored = airline.booking("raises");
+      check(
+        both.filter((r) => r.status === "fulfilled").length === 1 && /being raised already/.test(both.find((r) => r.status === "rejected")?.reason?.message) &&
+          stored.review.props.price.total === 1088 && stored.fare.price === 1020 && stored.rises.get("r01:basic") === 60,
+        "two raises at once: one is refused, and the review, the fare and the rise all say $60 more, once",
+        () => JSON.stringify({ both: both.map((r) => r.status === "fulfilled" ? r.value : r.reason.message), total: stored?.review?.props.price.total, fare: stored?.fare?.price, rise: stored?.rises.get("r01:basic") }),
       );
     }
 

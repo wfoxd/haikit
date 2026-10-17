@@ -178,7 +178,7 @@ export const boardingPassServer = boardingPass.implement({
 export const flightSearchServer = flightSearch.implement({
   digest(p, { handle }) {
     return (
-      `Search for flights home on screen as ${handle}: ${p.passenger}, ${AIRPORT_NAMES[p.from]} to ${p.to.city} (${p.to.code}), ` +
+      `Search for flights home on screen as ${handle}: ${p.passenger}, ${AIRPORT_NAMES[p.from]} (${p.from}) to ${p.to.city} (${p.to.code}), ` +
       (p.date ? `on ${DAY_NAMES[p.date]} (${p.date}). ` : "no day chosen yet: the traveller picks one. ") +
       `Filled in from the trip: the traveller and the airports${p.date ? `; the day from ${p.sources.date}` : ""}. ` +
       `The traveller can change the day and the Tokyo airport, then searches.`

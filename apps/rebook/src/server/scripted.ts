@@ -171,8 +171,14 @@ export function scripted(): ModelAdapter {
       const closed = resultsOf(messages.at(-2)).find((r) => r.includes("User did not select; they said:")) ?? "";
       const choice = latest(/Chose (o\d+): /g)?.[1];
       const homeFlight = latest(/Chose flight (r\d+): /g)?.[1];
+      // the search shown again as it was: its day, and its airport
+      const searchAgain = () => {
+        const date = closed.match(/ \((Thu|Fri|Sat|Sun|Mon)\)\./)?.[1];
+        const from = closed.match(/ \((NRT|HND)\) to /)?.[1];
+        return toolUse("start_booking", { ...(date && { date }), ...(from && { from }) });
+      };
       const reopen = /^Search for flights home/.test(closed)
-        ? toolUse("start_booking", { ...(closed.match(/ \((Thu|Fri|Sat|Sun|Mon)\)\./) && { date: closed.match(/ \((Thu|Fri|Sat|Sun|Mon)\)\./)![1] }) })
+        ? searchAgain()
         : /^Flights home on/.test(closed)
           ? toolUse("show_flights", flightsWith)
           : /^Fares for/.test(closed) && homeFlight

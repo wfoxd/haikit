@@ -23,6 +23,7 @@ import {
   bookingReference,
   faresFor,
   flightsHome,
+  homeFlight,
   optionById,
   seatRows,
 } from "./data.ts";
@@ -247,7 +248,10 @@ export const showFlights = defineTool({
     // The flights are for the search the traveller made, not one the model makes up.
     const search = booking(ctx.conversationId)?.search;
     if (!search) return ctx.text("The traveller hasn't searched yet: show start_booking.");
-    const day = flightsHome(search.date).filter((f) => search.from === "TYO" || f.from === search.from);
+    // each at its Basic fare as the airline has it now, raises included
+    const day = flightsHome(search.date)
+      .filter((f) => search.from === "TYO" || f.from === search.from)
+      .map((f) => ({ ...f, price: priced(ctx.conversationId, f, faresFor(f)[0]!).price }));
     const flights = day.filter((f) => (!filters.nonstop || !f.via) && (!filters.airport || f.from === filters.airport));
     const filter = [filters.nonstop && "nonstops", filters.airport && `from ${filters.airport}`].filter(Boolean).join(", ") || null;
     if (!flights.length) return ctx.text(`No flights home on ${DAY_NAMES[search.date]} are ${filter}. All ${day.length} are still there without the filter.`);
@@ -269,13 +273,18 @@ export const showFares = defineTool({
   inputJsonSchema: flightInput,
 
   async run({ flightId }, ctx) {
-    const flight = booking(ctx.conversationId)?.flight;
-    if (!flight) return ctx.text("The traveller hasn't chosen a flight home yet: show show_flights.");
-    if (flight.id !== flightId) return ctx.text(`The traveller chose ${flight.id} (${flight.flights.join(" + ")}), not ${flightId}: show that one's fares.`);
+    const b = booking(ctx.conversationId);
+    const chosen = b?.flight;
+    if (!chosen || !b.search) return ctx.text("The traveller hasn't chosen a flight home yet: show show_flights.");
+    if (chosen.id !== flightId) return ctx.text(`The traveller chose ${chosen.id} (${chosen.flights.join(" + ")}), not ${flightId}: show that one's fares.`);
+    // The fares start from the flight's own price, not the one the picker
+    // showed, which already has the Basic raises in it: priced() adds each
+    // fare's raises once.
+    const flight = homeFlight(b.search.date, flightId) ?? chosen;
     const fares = faresFor(flight).map((f) => priced(ctx.conversationId, flight, f));
     return ctx.render(
       fareOptionsServer,
-      { flightId, flight: flight.flights.join(" + "), airline: flight.airline, date: booking(ctx.conversationId)!.search!.date, fares },
+      { flightId, flight: flight.flights.join(" + "), airline: flight.airline, date: b.search.date, fares },
       { mode: "elicit" },
     );
   },
