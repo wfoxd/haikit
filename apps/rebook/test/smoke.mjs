@@ -550,6 +550,52 @@ try {
       );
     }
 
+    // 11f · the flight is cancelled while the flight home is being booked. No
+    //       events stream is open, so no wake turn: the news rides with the
+    //       next click, and that click still gets its answer.
+    {
+      const bookTo = async (id, until) => {
+        const search = surface(await sse("/hai/chat", { conversationId: id, message: "book my flight home on Sunday" }), "flight_search");
+        const results = surface(await sse("/hai/interact", { conversationId: id, handle: search.ui?.handle, action: "search", value: { from: "TYO", date: "Sun" } }), "flight_results");
+        const fares = surface(await sse("/hai/interact", { conversationId: id, handle: results.ui?.handle, action: "choose", value: "r01" }), "fare_options");
+        if (until === "fares") return fares;
+        return surface(await sse("/hai/interact", { conversationId: id, handle: fares.ui?.handle, action: "choose", value: "basic" }), "booking_review");
+      };
+
+      // with Confirm: the ticket is issued, and the options to Tokyo open in the same reply
+      const id7 = (await sse("/hai/start", {})).find((e) => e.type === "hello")?.conversationId;
+      const review = await bookTo(id7, "review");
+      await ops("cancel", id7);
+      const confirm = await sse("/hai/interact", { conversationId: id7, handle: review.ui?.handle, action: "confirm", value: { total: 1028 } });
+      const ticket = surface(confirm, "booking_confirmed");
+      const options = surface(confirm, "rebooking_options");
+      check(
+        ticket.props?.total === 1028 && options.ui?.mode === "elicit" && /^I'm sorry: .*First, your flight home: Booked\./.test(said(confirm)),
+        "cancelled while the review waits: Confirm still issues the ticket, and the options to Tokyo open with it",
+        () => `${said(confirm)} · ${JSON.stringify({ ticket: ticket.props?.total, options: options.ui?.mode })}`,
+      );
+      const choose = await sse("/hai/interact", { conversationId: id7, handle: options.ui?.handle, action: "choose", value: "o05" });
+      check(surface(choose, "seat_map").props?.flight === "NH 7", "…and choosing an option carries on to its seat map, with the ticket's result held until then", () => said(choose));
+
+      // with an earlier step: the booking is finished first, and the options follow the ticket
+      const id8 = (await sse("/hai/start", {})).find((e) => e.type === "hello")?.conversationId;
+      const fares = await bookTo(id8, "fares");
+      await ops("cancel", id8);
+      const basic = await sse("/hai/interact", { conversationId: id8, handle: fares.ui?.handle, action: "choose", value: "basic" });
+      const review2 = surface(basic, "booking_review");
+      check(
+        review2.ui?.mode === "elicit" && /^I'm sorry: .*Let's finish booking your flight home first/.test(said(basic)) && !opened(basic, "rebooking_options").length,
+        "cancelled while the fares wait: the guide says so, and finishes the flight home first",
+        () => said(basic),
+      );
+      const done = await sse("/hai/interact", { conversationId: id8, handle: review2.ui?.handle, action: "confirm", value: { total: 1028 } });
+      check(
+        opened(done, "booking_confirmed").length === 1 && surface(done, "rebooking_options").ui?.mode === "elicit",
+        "…then, with the ticket issued, the options to Tokyo open",
+        () => said(done),
+      );
+    }
+
     // 11e · the trip card's revisions take turns: a cancellation and the
     //       flight home, overlapping, both stay on the card. In this process,
     //       with an airline whose revisions are slow.

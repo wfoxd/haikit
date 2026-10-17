@@ -64,11 +64,20 @@ export function scripted(): ModelAdapter {
       const cancelled = texts.find((t) => t.startsWith("[App notification: flight_cancelled]"));
       if (cancelled) {
         const [, flight, depart, reason] = cancelled.match(/\] (.+?), leaving San Francisco (.+?) for Tokyo, was cancelled because of (.+?)\./) ?? [];
-        return reply(
+        const sorry =
           `I'm sorry: your ${depart?.slice(4) ?? ""} ${flight ?? "flight"} to Tokyo was cancelled because of ${reason ?? "a problem at the airline"}. ` +
-            "You don't need to call anyone. Here's every way I can get you there.",
+          "You don't need to call anyone.";
+        // A click on the flight home that rode in with the news still gets its
+        // answer. The ticket is shown, not asked, so it goes with the options;
+        // a step that asks goes first, and the options follow the ticket.
+        const home = results ? homeStep(results, texts, latest) : null;
+        if (home?.call && home.call.name !== "issue_ticket") {
+          return reply(`${sorry} Let's finish booking your flight home first, then I'll find you a way to Tokyo. ${home.say}`, onTextDelta, [home.call]);
+        }
+        return reply(
+          `${sorry} ${home ? `First, your flight home: ${home.say} And here's` : "Here's"} every way I can get you to Tokyo.`,
           onTextDelta,
-          [toolUse("find_rebooking", {})],
+          [...(home?.call ? [home.call] : []), toolUse("find_rebooking", {})],
         );
       }
 
@@ -86,7 +95,14 @@ export function scripted(): ModelAdapter {
       if (results) {
         // the flight home first: its labels say so, and the rebooking ones don't
         const home = homeStep(results, texts, latest);
-        if (home) return reply(home.say, onTextDelta, home.call ? [home.call] : []);
+        if (home) {
+          // The flight was cancelled while the traveller was booking it: with the
+          // ticket issued, the options to Tokyo they haven't seen yet are next.
+          if (!home.call && history.includes("[App notification: flight_cancelled]") && !/Rebooking options for /.test(history)) {
+            return reply(`${home.say} Now your flight to Tokyo: here's every way I can get you there.`, onTextDelta, [toolUse("find_rebooking", {})]);
+          }
+          return reply(home.say, onTextDelta, home.call ? [home.call] : []);
+        }
 
         const option = results.match(/Chose (o\d+): (.+?) \(/);
         if (option) {
@@ -282,7 +298,11 @@ function homeStep(results: string, texts: string[], latest: (re: RegExp) => RegE
     return { say: "Pick another seat.", call: toolUse("show_home_seats", { flightId: id }) };
   }
 
+  // The ticket's result can come back with a later answer, held while that
+  // question waited, such as the rebooking options shown in the same reply:
+  // then the answer is what's new, and the ticket was already spoken of.
   const ticket = results.match(/E-ticket on screen as \S+: .+?, booking (\w+), (.+?), leaving (\w+ [\d:]+)/);
+  if (ticket && /Chose o\d+: |Picked seat |Chose (Hotel voucher|Lounge and dinner|I'll sort it myself)/.test(results)) return null;
   if (ticket) return { say: `You're booked home: ${ticket[2]}, leaving ${ticket[3]}, booking ${ticket[1]}. The airline will issue the ticket in a moment.` };
 
   return null;

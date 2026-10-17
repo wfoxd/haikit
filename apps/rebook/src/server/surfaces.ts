@@ -205,7 +205,7 @@ export const flightResultsServer = flightResults.implement({
       cheapest ? `Cheapest: ${fmtHome(cheapest)}.` : "",
       fastest && fastest !== cheapest ? `Fastest: ${fmtHome(fastest)}.` : "",
       `Nonstop: ${count((f) => !f.via)}. From Narita: ${count((f) => f.from === "NRT")}. From Haneda: ${count((f) => f.from === "HND")}.`,
-      "Prices are the Basic fare before taxes; Standard and Flex cost more. The traveller picks one; query_ui filter and cheapest answer about the rest.",
+      "Prices are the Basic fare before taxes; the other fares show once a flight is chosen. The traveller picks one; query_ui filter and cheapest answer about the rest.",
     ]
       .filter(Boolean)
       .join(" ");
