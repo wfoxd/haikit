@@ -44,6 +44,14 @@ export function scripted(): ModelAdapter {
         }
         return {};
       })();
+      // …and of the flights home shown last, for the same reason
+      const flightsWith = (() => {
+        for (const m of [...messages].reverse()) {
+          const call = [...blocksOf(m)].reverse().find((b) => b?.type === "tool_use" && b.name === "show_flights");
+          if (call) return (call.input ?? {}) as Record<string, unknown>;
+        }
+        return {};
+      })();
       const texts = textsOf(last);
       const results = resultsOf(last).join("\n");
       // everything said so far, by either side, as one text to read from
@@ -76,6 +84,10 @@ export function scripted(): ModelAdapter {
 
       // ── a click answered a question, or a tool came back ──
       if (results) {
+        // the flight home first: its labels say so, and the rebooking ones don't
+        const home = homeStep(results, texts, latest);
+        if (home) return reply(home.say, onTextDelta, home.call ? [home.call] : []);
+
         const option = results.match(/Chose (o\d+): (.+?) \(/);
         if (option) {
           return reply(`${option[2]} it is. Pick a seat: other passengers are choosing too, so the map changes as you look.`, onTextDelta, [
@@ -109,6 +121,17 @@ export function scripted(): ModelAdapter {
         const found = results.match(/^(\d+) of (\d+) match/m);
         if (found) {
           const asked = [...blocksOf(messages.at(-2))].reverse().find((b) => b?.type === "tool_use" && b.name === "query_ui")?.input;
+          // about the flights home: the same, with their picker
+          if (asked?.handle === latest(/Flights home on \w+, on screen as (ui_\d+)/g)?.[1]) {
+            if (found[1] === "0") return reply("None of these flights match that. Here they are again.", onTextDelta, [toolUse("show_flights", flightsWith)]);
+            if (asked.query === "cheapest") {
+              const first = (results.split("\n")[1] ?? "").replace(/ \[r\d+\]$/, "");
+              return reply(`The cheapest is ${first}.`, onTextDelta, [toolUse("show_flights", flightsWith)]);
+            }
+            const args = (asked.args ?? {}) as { nonstop?: boolean; airport?: string };
+            const what = args.nonstop ? "nonstop" : args.airport === "HND" ? "from Haneda" : args.airport === "NRT" ? "from Narita" : "matching";
+            return reply(`${found[1]} of the ${found[2]} flights are ${what}. Here they are.`, onTextDelta, [toolUse("show_flights", { ...flightsWith, ...args })]);
+          }
           // Typing closed the picker the question was about, so open it again: none match, but those still do.
           if (found[1] === "0") {
             return reply("None of these options match that. Here they are again.", onTextDelta, [toolUse("find_rebooking", shownWith)]);
@@ -129,18 +152,55 @@ export function scripted(): ModelAdapter {
 
       // ── what the traveller typed ──
       const text = (texts.at(-1) ?? "").toLowerCase();
+      // Booking the flight home, by asking or by the trip card's button: the
+      // day and the airport if they named them; the search fills in the rest.
+      if (/\b(book|fly|flight|going|get me)\b.*\b(home|return|san francisco|sfo)\b|\bflight home\b/.test(text)) {
+        const day = text.match(/\b(thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?|mon(?:day)?)\b/)?.[1];
+        const date = day ? day.charAt(0).toUpperCase() + day.slice(1, 3) : undefined;
+        const from = /haneda|\bhnd\b/.test(text) ? "HND" : /narita|\bnrt\b/.test(text) ? "NRT" : undefined;
+        return reply(
+          date
+            ? "Here's the search, filled in from your trip and your message. Check it, then search."
+            : "Which day would you like to fly home? I've filled in the rest from your trip.",
+          onTextDelta,
+          [toolUse("start_booking", { ...(date && { date }), ...(from && { from }) })],
+        );
+      }
       // Typing closes the question that was waiting. When what they typed isn't
       // a request, open that question again, so there's still something to click.
       const closed = resultsOf(messages.at(-2)).find((r) => r.includes("User did not select; they said:")) ?? "";
       const choice = latest(/Chose (o\d+): /g)?.[1];
-      const reopen = /^Rebooking options/.test(closed)
+      const homeFlight = latest(/Chose flight (r\d+): /g)?.[1];
+      const reopen = /^Search for flights home/.test(closed)
+        ? toolUse("start_booking", { ...(closed.match(/ \((Thu|Fri|Sat|Sun|Mon)\)\./) && { date: closed.match(/ \((Thu|Fri|Sat|Sun|Mon)\)\./)![1] }) })
+        : /^Flights home on/.test(closed)
+          ? toolUse("show_flights", flightsWith)
+          : /^Fares for/.test(closed) && homeFlight
+            ? toolUse("show_fares", { flightId: homeFlight })
+            : /^Seat map for .+, for the flight home,/.test(closed) && homeFlight
+              ? toolUse("show_home_seats", { flightId: homeFlight })
+              : /^Review of the booking/.test(closed)
+                ? toolUse("review_booking", {})
+                : /^Rebooking options/.test(closed)
         ? toolUse("find_rebooking", shownWith)
         : /^Seat map for/.test(closed) && choice
           ? toolUse("show_seat_map", { optionId: choice })
           : /^Choices for/.test(closed) && choice
             ? toolUse("offer_care", { optionId: choice })
             : null;
-      const options = latest(/Rebooking options for \S+ \S+, on screen as (ui_\d+)/g)?.[1];
+      // Questions about the picker shown last: the flights home, or the rebooking options.
+      const flights = [...history.matchAll(/Flights home on \w+, on screen as (ui_\d+)/g)].at(-1);
+      const rebooking = [...history.matchAll(/Rebooking options for \S+ \S+, on screen as (ui_\d+)/g)].at(-1);
+      if (flights && (flights.index ?? 0) > (rebooking?.index ?? -1)) {
+        const ask = (query: string, args: Record<string, unknown>, lead: string) =>
+          reply(lead, onTextDelta, [toolUse("query_ui", { handle: flights[1], query, args })]);
+        if (/non-?stop|direct/.test(text)) return ask("filter", { nonstop: true }, "Checking every flight for nonstops.");
+        if (/cheap|lowest|least|price/.test(text)) return ask("cheapest", {}, "Checking which costs least.");
+        if (/haneda|\bhnd\b/.test(text)) return ask("filter", { airport: "HND" }, "Checking which leave from Haneda.");
+        if (/narita|\bnrt\b/.test(text)) return ask("filter", { airport: "NRT" }, "Checking which leave from Narita.");
+        if (/flights|all of them|list|every/.test(text)) return reply("Here are all of them again.", onTextDelta, [toolUse("show_flights", {})]);
+      }
+      const options = rebooking?.[1];
       const ask = (args: Record<string, boolean>, lead: string) =>
         reply(lead, onTextDelta, [toolUse("query_ui", { handle: options, query: "filter", args })]);
       if (options) {
@@ -154,15 +214,16 @@ export function scripted(): ModelAdapter {
           return reply("Here are all of them again.", onTextDelta, [toolUse("find_rebooking", {})]);
         }
       }
-      if (!history.includes("[App notification: flight_cancelled]")) {
+      if (!history.includes("[App notification: flight_cancelled]") && !reopen) {
         return reply(
-          "Your flight is on time, so there's nothing to do yet. In this demo the airline is played by the Airline ops panel: try Cancel the flight.",
+          "Your flight is on time, so there's nothing to do yet. In this demo the airline is played by the Airline ops panel: try Cancel the flight. " +
+            "Or ask me to book your flight home.",
           onTextDelta,
         );
       }
       return reply(
-        "I'm the scripted guide, so I understand a few kinds of request: “which are nonstop?”, “which are free?”, " +
-          "“what lands first?”, or “show me all the options”. Set ANTHROPIC_API_KEY on the server to talk to Claude instead." +
+        "I'm the scripted guide, so I understand a few kinds of request: “book my flight home on Sunday”, “which are nonstop?”, " +
+          "“which is cheapest?”, “what lands first?”, or “show me all the options”. Set ANTHROPIC_API_KEY on the server to talk to Claude instead." +
           (reopen ? " Here's where you were." : ""),
         onTextDelta,
         reopen ? [reopen] : [],
@@ -172,3 +233,51 @@ export function scripted(): ModelAdapter {
 }
 
 const lower = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
+
+type Call = ReturnType<typeof toolUse>;
+
+/**
+ * The next step of booking the flight home, from a click's label or a tool's
+ * result, or null when it isn't one. Each step's label names what the next
+ * needs, such as the flight's id, so the guide reads nothing else.
+ */
+function homeStep(results: string, texts: string[], latest: (re: RegExp) => RegExpMatchArray | undefined): { say: string; call?: Call } | null {
+  const searched = results.match(/Searched flights home: .+? to SFO on (\w+) \(/);
+  if (searched) return { say: `Here are the flights home on ${searched[1]}. The prices are the Basic fare; pick one to see the others.`, call: toolUse("show_flights", {}) };
+
+  const flight = results.match(/Chose flight (r\d+): (.+?) \(/);
+  if (flight) return { say: `${flight[2]} it is. Pick a fare.`, call: toolUse("show_fares", { flightId: flight[1] }) };
+
+  const fare = results.match(/Chose the (\w+) fare, \$[\d,]+, on (.+?) \[(r\d+)\]: (the traveller chooses a seat)?/);
+  if (fare) {
+    return fare[4]
+      ? { say: `${fare[1]} it is. Pick a seat on ${fare[2]}.`, call: toolUse("show_home_seats", { flightId: fare[3] }) }
+      : { say: `${fare[1]} assigns your seat at check-in, so here's your booking to check. Nothing is booked until you confirm.`, call: toolUse("review_booking", {}) };
+  }
+
+  const seat = results.match(/Picked seat (\w+) on .+?, for the flight home\./);
+  if (seat) return { say: `Seat ${seat[1]}. Here's your booking to check. Nothing is booked until you confirm.`, call: toolUse("review_booking", {}) };
+
+  const confirmed = results.match(/Confirmed the booking at (\$[\d,]+)\./);
+  if (confirmed) {
+    // a rise the airline made while the review was waiting rides with the click
+    const rose = texts.some((t) => /^\[UI update\] The airline raised/.test(t));
+    return {
+      say: rose ? `Booked at the new total, ${confirmed[1]}: the fare went up while you were looking. Here's your e-ticket.` : "Booked. Here's your e-ticket.",
+      call: toolUse("issue_ticket", {}),
+    };
+  }
+
+  const change = results.match(/Asked to change the (flight|fare|seat)\./);
+  if (change) {
+    const id = latest(/Chose flight (r\d+): /g)?.[1];
+    if (change[1] === "flight" || !id) return { say: "Here are the flights again.", call: toolUse("show_flights", {}) };
+    if (change[1] === "fare") return { say: "Here are the fares again.", call: toolUse("show_fares", { flightId: id }) };
+    return { say: "Pick another seat.", call: toolUse("show_home_seats", { flightId: id }) };
+  }
+
+  const ticket = results.match(/E-ticket on screen as \S+: .+?, booking (\w+), (.+?), leaving (\w+ [\d:]+)/);
+  if (ticket) return { say: `You're booked home: ${ticket[2]}, leaving ${ticket[3]}, booking ${ticket[1]}. The airline will issue the ticket in a moment.` };
+
+  return null;
+}

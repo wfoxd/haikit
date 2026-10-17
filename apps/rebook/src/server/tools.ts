@@ -8,10 +8,36 @@
 
 import { defineTool } from "@haikit/core";
 import { z } from "zod";
-import type { RebookOption } from "../shared/surfaces.ts";
-import { chosen, optionsShown, passShown, seatsFor, seatsShown, stock, tripShown } from "./airline.ts";
-import { CARE, OPTIONS, TRIP, bookingReference, optionById, seatRows } from "./data.ts";
-import { boardingPassServer, careOptionsServer, rebookingOptionsServer, seatMapServer, tripCardServer } from "./surfaces.ts";
+import { Day, TokyoAirport, type HomeFlight, type RebookOption } from "../shared/surfaces.ts";
+import { booking, chosen, optionsShown, passShown, priced, reviewShown, seatsFor, seatsShown, stock, ticketShown, tripShown } from "./airline.ts";
+import {
+  CARE,
+  DAY_NAMES,
+  DAYS_HOME,
+  HOME,
+  OPTIONS,
+  PAYMENT,
+  TAXES,
+  TRIP,
+  bagsFor,
+  bookingReference,
+  faresFor,
+  flightsHome,
+  optionById,
+  seatRows,
+} from "./data.ts";
+import {
+  boardingPassServer,
+  bookingConfirmedServer,
+  bookingReviewServer,
+  careOptionsServer,
+  fareOptionsServer,
+  flightResultsServer,
+  flightSearchServer,
+  rebookingOptionsServer,
+  seatMapServer,
+  tripCardServer,
+} from "./surfaces.ts";
 
 const none = { type: "object", properties: {}, additionalProperties: false } as const;
 const optionInput = {
@@ -94,7 +120,7 @@ export const showSeatMap = defineTool({
     const flight = option.flights[0]!;
     // Shown again, a map keeps the seats other passengers have taken since.
     const rows = seatsFor(ctx.conversationId, flight) ?? seatRows(flight);
-    const props = { optionId, flight, airline: option.airline.split(" + ")[0]!, rows };
+    const props = { purpose: "rebook" as const, optionId, flight, airline: option.airline.split(" + ")[0]!, rows };
     const shown = await ctx.render(seatMapServer, props, { mode: "elicit" });
     if (shown.handle) seatsShown(ctx.conversationId, shown.handle, props);
     return shown;
@@ -162,4 +188,193 @@ export const issueBoardingPass = defineTool({
   },
 });
 
-export const tools = [findRebooking, showSeatMap, offerCare, issueBoardingPass];
+// ───────────────────────────────────────────── booking the flight home
+
+/** Each leg of a flight home, from its Tokyo airport to San Francisco. */
+const legsOf = (f: HomeFlight) =>
+  f.flights.map((flight, i) => ({ flight, from: i === 0 ? f.from : f.via!, to: i === f.flights.length - 1 ? HOME.code : f.via! }));
+
+export const startBooking = defineTool({
+  name: "start_booking",
+  description:
+    "Book the traveller's flight home, Tokyo to San Francisco. Shows the search, filled in from their trip: the traveller " +
+    "and the airports. Pass the day if they named one, and a Tokyo airport if they asked for one; otherwise they choose " +
+    "on the search. BLOCKS until they search.",
+  input: z.object({ date: Day.optional(), from: TokyoAirport.optional() }),
+  inputJsonSchema: {
+    type: "object",
+    properties: {
+      date: { type: "string", enum: Day.options, description: "the day to fly home, if the traveller named one" },
+      from: { type: "string", enum: TokyoAirport.options, description: "NRT or HND if they asked for one; TYO, either, by default" },
+    },
+    additionalProperties: false,
+  },
+
+  async run({ date, from }, ctx) {
+    const done = booking(ctx.conversationId)?.ticket;
+    if (done) return ctx.text(`The flight home is already booked: ${done.legs.map((l) => l.flight).join(" + ")}, booking ${done.reference}.`);
+    return ctx.render(
+      flightSearchServer,
+      {
+        passenger: TRIP.passenger,
+        from: from ?? "TYO",
+        to: HOME,
+        date: date ?? null,
+        days: DAYS_HOME,
+        sources: { passenger: "your trip", from: from ? "your message" : "your trip", to: "your trip", date: date ? "your message" : null },
+      },
+      { mode: "elicit" },
+    );
+  },
+});
+
+export const showFlights = defineTool({
+  name: "show_flights",
+  description:
+    "Show the flights home for the search the traveller made, as a picker. BLOCKS until they pick one: don't also ask " +
+    "them to type a choice. Pass filters to show only some of the flights.",
+  input: z.object({ nonstop: z.boolean().optional(), airport: z.enum(["NRT", "HND"]).optional() }),
+  inputJsonSchema: {
+    type: "object",
+    properties: {
+      nonstop: { type: "boolean", description: "only nonstops" },
+      airport: { type: "string", enum: ["NRT", "HND"], description: "only flights from Narita or Haneda" },
+    },
+    additionalProperties: false,
+  },
+
+  async run(filters, ctx) {
+    // The flights are for the search the traveller made, not one the model makes up.
+    const search = booking(ctx.conversationId)?.search;
+    if (!search) return ctx.text("The traveller hasn't searched yet: show start_booking.");
+    const day = flightsHome(search.date).filter((f) => search.from === "TYO" || f.from === search.from);
+    const flights = day.filter((f) => (!filters.nonstop || !f.via) && (!filters.airport || f.from === filters.airport));
+    const filter = [filters.nonstop && "nonstops", filters.airport && `from ${filters.airport}`].filter(Boolean).join(", ") || null;
+    if (!flights.length) return ctx.text(`No flights home on ${DAY_NAMES[search.date]} are ${filter}. All ${day.length} are still there without the filter.`);
+    return ctx.render(flightResultsServer, { flights, date: search.date, from: search.from, total: day.length, filter }, { mode: "elicit" });
+  },
+});
+
+const flightInput = {
+  type: "object",
+  properties: { flightId: { type: "string", description: "the flight home's id from the flights shown, such as r01" } },
+  required: ["flightId"],
+  additionalProperties: false,
+} as const;
+
+export const showFares = defineTool({
+  name: "show_fares",
+  description: "Show the fares on the flight home the traveller chose: Basic, Standard and Flex. BLOCKS until they pick one.",
+  input: z.object({ flightId: z.string() }),
+  inputJsonSchema: flightInput,
+
+  async run({ flightId }, ctx) {
+    const flight = booking(ctx.conversationId)?.flight;
+    if (!flight) return ctx.text("The traveller hasn't chosen a flight home yet: show show_flights.");
+    if (flight.id !== flightId) return ctx.text(`The traveller chose ${flight.id} (${flight.flights.join(" + ")}), not ${flightId}: show that one's fares.`);
+    const fares = faresFor(flight).map((f) => priced(ctx.conversationId, flight, f));
+    return ctx.render(
+      fareOptionsServer,
+      { flightId, flight: flight.flights.join(" + "), airline: flight.airline, date: booking(ctx.conversationId)!.search!.date, fares },
+      { mode: "elicit" },
+    );
+  },
+});
+
+export const showHomeSeats = defineTool({
+  name: "show_home_seats",
+  description:
+    "Show the seat map for the flight home, when the fare the traveller chose lets them choose a seat (Standard or Flex). " +
+    "BLOCKS until they pick a seat.",
+  input: z.object({ flightId: z.string() }),
+  inputJsonSchema: flightInput,
+
+  async run({ flightId }, ctx) {
+    const b = booking(ctx.conversationId);
+    if (!b?.flight) return ctx.text("The traveller hasn't chosen a flight home yet: show show_flights.");
+    if (b.flight.id !== flightId) return ctx.text(`The traveller chose ${b.flight.id} (${b.flight.flights.join(" + ")}), not ${flightId}.`);
+    if (!b.fare) return ctx.text(`The traveller hasn't chosen a fare yet: show show_fares for ${flightId}.`);
+    if (!b.fare.seatChoice) return ctx.text(`The ${b.fare.name} fare assigns the seat at check-in: show review_booking.`);
+    const flight = b.flight.flights[0]!;
+    const rows = seatsFor(ctx.conversationId, flight) ?? seatRows(flight);
+    const props = { purpose: "book" as const, optionId: flightId, flight, airline: b.flight.airline.split(" + ")[0]!, rows };
+    const shown = await ctx.render(seatMapServer, props, { mode: "elicit" });
+    if (shown.handle) seatsShown(ctx.conversationId, shown.handle, props);
+    return shown;
+  },
+});
+
+export const reviewBooking = defineTool({
+  name: "review_booking",
+  description:
+    "Show the booking of the flight home for the traveller to check: flight, fare, seat and total. Nothing is booked until " +
+    "they confirm. BLOCKS until they confirm or ask to change the flight, fare or seat.",
+  input: z.object({}),
+  inputJsonSchema: none,
+
+  async run(_input, ctx) {
+    const b = booking(ctx.conversationId);
+    if (!b?.flight) return ctx.text("The traveller hasn't chosen a flight home yet: show show_flights.");
+    if (!b.fare) return ctx.text(`The traveller hasn't chosen a fare yet: show show_fares for ${b.flight.id}.`);
+    if (b.fare.seatChoice && !b.seat) return ctx.text(`The traveller hasn't picked a seat yet: show show_home_seats for ${b.flight.id}.`);
+    const props = {
+      passenger: TRIP.passenger,
+      flightId: b.flight.id,
+      airline: b.flight.airline,
+      legs: legsOf(b.flight),
+      depart: b.flight.depart,
+      arrive: b.flight.arrive,
+      fare: { id: b.fare.id, name: b.fare.name, seatChoice: b.fare.seatChoice },
+      seat: b.fare.seatChoice ? b.seat : null,
+      price: { fare: b.fare.price, taxes: TAXES, total: b.fare.price + TAXES },
+      previousTotal: null,
+      payment: PAYMENT,
+    };
+    const shown = await ctx.render(bookingReviewServer, props, { mode: "elicit" });
+    if (shown.handle) reviewShown(ctx.conversationId, shown.handle, props);
+    return shown;
+  },
+});
+
+export const issueTicket = defineTool({
+  name: "issue_ticket",
+  description:
+    "Book the flight home the traveller confirmed and show the e-ticket. It books exactly what they confirmed: the flight, " +
+    "fare, seat and total. Display-only.",
+  input: z.object({}),
+  inputJsonSchema: none,
+
+  async run(_input, ctx) {
+    // The model can ask for the ticket; only the traveller's Confirm says what it's for.
+    const b = booking(ctx.conversationId);
+    if (b?.ticket) return ctx.text(`The flight home is already booked: booking ${b.ticket.reference}.`);
+    if (!b?.flight || !b.fare || b.confirmed === null) return ctx.text("The traveller hasn't confirmed a booking yet: show review_booking.");
+    const props = {
+      passenger: TRIP.passenger,
+      reference: bookingReference(),
+      legs: legsOf(b.flight),
+      depart: b.flight.depart,
+      arrive: b.flight.arrive,
+      fare: b.fare.name,
+      seat: b.fare.seatChoice ? b.seat : null,
+      bags: bagsFor(b.fare.id),
+      total: b.confirmed,
+    };
+    const shown = await ctx.render(bookingConfirmedServer, props);
+    if (shown.handle) ticketShown(ctx.conversationId, shown.handle, props);
+    return shown;
+  },
+});
+
+export const tools = [
+  findRebooking,
+  showSeatMap,
+  offerCare,
+  issueBoardingPass,
+  startBooking,
+  showFlights,
+  showFares,
+  showHomeSeats,
+  reviewBooking,
+  issueTicket,
+];

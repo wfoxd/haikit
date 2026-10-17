@@ -8,7 +8,9 @@
  *
  * Nothing happens until the airline acts, so a visitor who doesn't press
  * anything isn't left waiting: 30 seconds after the trip opens, the panel
- * cancels the flight itself, through the same route as its button.
+ * cancels the flight itself, through the same route as its button. A visitor
+ * who starts booking the flight home is doing something already, so then it
+ * doesn't.
  */
 
 /** @typedef {import("@haikit/client").Chat} Chat */
@@ -18,6 +20,7 @@ const ACTIONS = [
   { route: "cancel", label: "Cancel the flight", hint: "The airline cancels UA 837. The guide hears of it and speaks first." },
   { route: "release", label: "Release the holds", hint: "The 5-minute seat holds run out now: seats left fall, and one option sells out." },
   { route: "gate", label: "Change the gate", hint: "The new flight's gate moves. The boarding pass is revised, and the guide speaks up." },
+  { route: "fare", label: "Raise the fare", hint: "While you review the flight home, its fare goes up $60. The review is revised in place; a Confirm at the old total is refused." },
 ];
 
 /** How long after the trip opens the airline cancels the flight by itself. */
@@ -105,7 +108,7 @@ export function mountOps(root, chat) {
   // ── the airline cancels by itself, if nobody does ─────────────────────
   /** @type {{ conversationId: string, tick: ReturnType<typeof setInterval>, due: ReturnType<typeof setTimeout> } | null} */
   let countdown = null;
-  /** A cancellation of this conversation's flight has been sent, or seen: the countdown stands down. */
+  /** The countdown stands down: a cancellation was sent or seen, or the visitor is booking the flight home. */
   let cancelling = false;
   const clock = document.createElement("span");
   clock.className = "ops-countdown";
@@ -150,12 +153,18 @@ export function mountOps(root, chat) {
 
   chat.subscribe((state, event) => {
     // A trip opens: the countdown starts. Its revision, or the cancellation
-    // notice, means the flight is cancelled, whoever did it.
+    // notice, means the flight is cancelled, whoever did it, or the flight
+    // home is booked: either way, nothing is left to start.
     if (event.type === "ui_open" && event.component === "trip_card" && !event.replaces && state.conversationId) {
       startCountdown(state.conversationId);
     } else if ((event.type === "ui_open" && event.component === "trip_card") || (event.type === "notice" && event.name === "flight_cancelled")) {
       cancelling = true;
       stopCountdown();
+    } else if (event.type === "ui_open" && event.component === "flight_search" && countdown) {
+      // The visitor is booking the flight home: the airline doesn't interrupt.
+      cancelling = true;
+      stopCountdown();
+      say("You're booking the flight home, so the airline won't cancel UA 837 by itself. Press Cancel the flight whenever you like.");
     } else if (["reset", "closed"].includes(/** @type {{ type: string }} */ (event).type)) {
       // the chat's own events, not the server's: a new conversation, or none
       stopCountdown();

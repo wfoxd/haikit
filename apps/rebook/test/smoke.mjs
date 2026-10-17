@@ -4,7 +4,9 @@
  * opens, the airline cancels, the guide speaks first, a typed question is
  * answered from data the model never saw, holds run out, seats go, the
  * traveller picks, the boarding pass is issued, and a gate change has the
- * guide speak up again.
+ * guide speak up again. Then the flight home is booked: the search filled in
+ * from the trip, a capped query, a fare, a seat, a fare raised while the
+ * review waits, and the e-ticket for exactly what was confirmed.
  *
  * Catches what typechecking can't: wire protocol drift after a HaiKIT
  * upgrade, a wake turn that never starts, a revision that doesn't reach the
@@ -142,9 +144,9 @@ try {
     const start = await sse("/hai/start", {});
     const id = start.find((e) => e.type === "hello")?.conversationId;
     const trip = surface(start, "trip_card");
-    check(trip.ui?.mode === "display" && trip.props?.status === "on-time", "the conversation opens on the trip card, on time", () => JSON.stringify(trip));
+    check(trip.ui?.mode === "display" && trip.props?.status === "on-time" && trip.props.home === null, "the conversation opens on the trip card, on time, no flight home yet", () => JSON.stringify(trip));
     check(lastStatus(start) === "idle" && !said(start), "the guide doesn't speak until something happens", `status ${lastStatus(start)}, said ${said(start)}`);
-    for (const [action, why] of [["release", /No rebooking options/], ["gate", /no boarding pass yet/]]) {
+    for (const [action, why] of [["release", /No rebooking options/], ["gate", /no boarding pass yet/], ["fare", /No booking is waiting on its review/]]) {
       const r = await ops(action, id);
       check(r.status === 409 && why.test(r.message), `ops ${action} before its time is refused: “${r.message}”`, () => JSON.stringify(r));
     }
@@ -361,6 +363,187 @@ try {
       );
     }
 
+    // 11 · the flight home, from the trip card's button: the search is filled
+    //      in from the trip, and the day is left to choose
+    {
+      const begin = await sse("/hai/start", {});
+      const id4 = begin.find((e) => e.type === "hello")?.conversationId;
+      const card = surface(begin, "trip_card");
+      const watch4 = watch(id4);
+      const click = await sse("/hai/interact", { conversationId: id4, handle: card.ui?.handle, action: "book_home", value: "home" });
+      const search = surface(click, "flight_search");
+      check(
+        search.ui?.mode === "elicit" && search.props?.passenger === "Alex Morgan" && search.props.from === "TYO" && search.props.to.code === "SFO" &&
+          search.props.date === null && search.props.sources.date === null && search.props.sources.passenger === "your trip",
+        "Book my flight home on the trip card tells the guide, which shows the search filled in from the trip, the day left to choose",
+        () => JSON.stringify(search),
+      );
+      check(/^Which day would you like to fly home\?/.test(said(click)), `the guide asks only for what it doesn't know: “${said(click)}”`, () => said(click));
+      const tuesday = await sse("/hai/interact", { conversationId: id4, handle: search.ui?.handle, action: "search", value: { from: "TYO", date: "Tue" } });
+      check(/invalid action payload/.test(refusal(tuesday)), "a day the search doesn't offer is refused by the contract", () => refusal(tuesday));
+      const twice = await sse("/hai/interact", { conversationId: id4, handle: card.ui?.handle, action: "book_home", value: "home" });
+      check(/a question is waiting to be answered first/.test(refusal(twice)), "the trip card's button is refused while the search waits", () => refusal(twice));
+
+      const go = await sse("/hai/interact", { conversationId: id4, handle: search.ui?.handle, action: "search", value: { from: "TYO", date: "Sun" } });
+      const results = surface(go, "flight_results");
+      const departs = results.props?.flights.map((f) => f.depart) ?? [];
+      check(
+        results.ui?.mode === "elicit" && results.props?.flights.length === 10 && results.props.date === "Sun" && departs.every((d, i) => i === 0 || departs[i - 1] <= d),
+        "searching shows the 10 flights home on Sunday, the earliest to leave first, waiting for a pick",
+        () => JSON.stringify(results.props?.flights.map((f) => `${f.id} ${f.depart}`)),
+      );
+      const flightsDigest = digestOf(go, /^Flights home on/);
+      check(
+        /Cheapest: ZG 26 .*from \$590.*Nonstop: 5\. From Narita: 5\. From Haneda: 5\./.test(flightsDigest),
+        `the model gets a digest (~${Math.ceil(flightsDigest.length / 4)} tok) of flights that stay in the browser (~${Math.ceil(JSON.stringify(results.props).length / 4)} tok)`,
+        () => flightsDigest,
+      );
+
+      // a typed question, answered from the stored flights and capped, then shown as a picker
+      const nonstop = await sse("/hai/chat", { conversationId: id4, message: "which are nonstop?" });
+      const answer = nonstop.find((e) => e.type === "block_update" && /^5 of 10 match/.test(e.result ?? ""));
+      const nonstops = surface(nonstop, "flight_results");
+      check(
+        answer && nonstops.ui?.mode === "elicit" && nonstops.props?.flights.length === 5 && nonstops.props.filter === "nonstops",
+        "“which are nonstop?” is answered from the stored flights, “5 of 10 match”, and the 5 are shown as a new picker",
+        () => `${answer?.result?.split("\n")[0]} · ${JSON.stringify(nonstops.props?.flights.map((f) => f.id))}`,
+      );
+      const cheapest = await sse("/hai/chat", { conversationId: id4, message: "which is cheapest?" });
+      const cheap = surface(cheapest, "flight_results");
+      check(
+        /^The cheapest is ZG 26 /.test(said(cheapest).replace(/^Checking which costs least\./, "")) && cheap.props?.filter === "nonstops",
+        `“which is cheapest?” asks the nonstops on screen: “${said(cheapest).replace(/^Checking which costs least\./, "").slice(0, 50)}…”`,
+        () => said(cheapest),
+      );
+
+      // the flight, then the fares; Basic assigns the seat at check-in, so there's no seat map
+      const flight = await sse("/hai/interact", { conversationId: id4, handle: cheap.ui?.handle, action: "choose", value: "r01" });
+      const fares = surface(flight, "fare_options");
+      check(
+        fares.ui?.mode === "elicit" && fares.props?.flight === "UA 838" && fares.props.fares.map((f) => `${f.id} ${f.price}`).join(", ") === "basic 960, standard 1100, flex 1380",
+        "choosing UA 838 shows its three fares: Basic $960, Standard $1,100, Flex $1,380",
+        () => JSON.stringify(fares.props?.fares.map((f) => [f.id, f.price])),
+      );
+      const basic = await sse("/hai/interact", { conversationId: id4, handle: fares.ui?.handle, action: "choose", value: "basic" });
+      const review = surface(basic, "booking_review");
+      check(
+        !opened(basic, "seat_map").length && review.ui?.mode === "elicit" && review.props?.seat === null && review.props.price.total === 1028 && /nothing is charged/.test(review.props.payment),
+        "Basic skips the seat map: the review waits, seat at check-in, $1,028 with taxes, nothing charged",
+        () => JSON.stringify(review.props),
+      );
+
+      // the airline raises the fare while the review waits: revised in place, and the old total is refused
+      const mark = watch4.events.length;
+      const raise = await ops("fare", id4);
+      check(raise.status === 200 && /\$1,088/.test(raise.message), `ops fare: “${raise.message}”`, () => JSON.stringify(raise));
+      const raised = await watch4.until((e) => e.type === "ui_open" && e.component === "booking_review" && e.replaces, 8_000, mark);
+      const raisedProps = await watch4.until((e) => e.type === "ui_props" && e.handle === raised?.handle, 8_000, mark);
+      check(
+        raised?.replaces === review.ui?.handle && raisedProps?.props?.price.total === 1088 && raisedProps.props.previousTotal === 1028,
+        "the review is revised in place: $1,088 now, and it says it was $1,028",
+        () => JSON.stringify(raisedProps?.props?.price),
+      );
+      const stale = await sse("/hai/interact", { conversationId: id4, handle: raised?.handle, action: "confirm", value: { total: 1028 } });
+      check(/the total is \$1,088 now, not \$1,028/.test(refusal(stale)), "a Confirm carrying the old total is refused, not charged", () => refusal(stale));
+      const old = await sse("/hai/interact", { conversationId: id4, handle: review.ui?.handle, action: "confirm", value: { total: 1088 } });
+      check(/superseded by/.test(refusal(old)), "…and a click on the review before the raise is refused as superseded", () => refusal(old));
+
+      const confirm = await sse("/hai/interact", { conversationId: id4, handle: raised?.handle, action: "confirm", value: { total: 1088 } });
+      const ticket = surface(confirm, "booking_confirmed");
+      check(
+        ticket.ui?.mode === "display" && ticket.props?.total === 1088 && ticket.props.fare === "Basic" && ticket.props.seat === null && ticket.props.legs[0]?.flight === "UA 838",
+        "confirming at $1,088 books exactly that: the e-ticket, UA 838, Basic, $1,088",
+        () => JSON.stringify(ticket.props),
+      );
+      check(
+        /The airline raised the Basic fare/.test(JSON.stringify(confirm.find((e) => e.type === "context")?.messages ?? "")) && /^Booked at the new total, \$1,088/.test(said(confirm)),
+        `the model hears of the raise with the click: “${said(confirm).slice(0, 60)}…”`,
+        () => said(confirm),
+      );
+      const issued = await watch4.until((e) => e.type === "notice" && e.name === "ticket_issued", 6_000);
+      check(issued?.handle === ticket.ui?.handle && /^016-\d{10}$/.test(issued.payload.ticket), "the airline issues the ticket a moment later, beside the e-ticket", () => JSON.stringify(issued));
+      const home = await watch4.until((e) => e.type === "ui_props" && e.props?.home, 6_000);
+      check(home?.props?.home?.flight === "UA 838" && home.props.home.reference === ticket.props?.reference, "the trip card is revised to show the flight home", () => JSON.stringify(home?.props?.home));
+      const late = await ops("fare", id4);
+      check(late.status === 409 && /already confirmed/.test(late.message), `a raise after the traveller confirmed is refused: “${late.message}”`, () => JSON.stringify(late));
+      const latestCard = watch4.events.filter((e) => e.type === "ui_open" && e.component === "trip_card").at(-1)?.handle;
+      const booked = await sse("/hai/interact", { conversationId: id4, handle: latestCard, action: "book_home", value: "home" });
+      check(/the flight home is already booked: UA 838/.test(refusal(booked)), "the trip card's button is refused once the flight home is booked", () => refusal(booked));
+      watch4.close();
+    }
+
+    // 11b · the flight home, asked for in words, with a seat: the day and the
+    //       airport come from the message, and a seat can be changed at the review
+    {
+      const begin = await sse("/hai/start", {});
+      const id5 = begin.find((e) => e.type === "hello")?.conversationId;
+      const asked = await sse("/hai/chat", { conversationId: id5, message: "Book my flight home on Friday from Haneda" });
+      const search = surface(asked, "flight_search");
+      check(
+        search.props?.date === "Fri" && search.props.from === "HND" && search.props.sources.date === "your message" && search.props.sources.from === "your message",
+        "“Book my flight home on Friday from Haneda” fills in the day and the airport from the message",
+        () => JSON.stringify(search.props),
+      );
+      const go = await sse("/hai/interact", { conversationId: id5, handle: search.ui?.handle, action: "search", value: { from: "HND", date: "Fri" } });
+      const results = surface(go, "flight_results");
+      check(results.props?.flights.length === 5 && results.props.flights.every((f) => f.from === "HND"), "Haneda on Friday: 5 flights, all from HND", () => JSON.stringify(results.props?.flights.map((f) => f.id)));
+      const fares = surface(await sse("/hai/interact", { conversationId: id5, handle: results.ui?.handle, action: "choose", value: "r03" }), "fare_options");
+      const standard = await sse("/hai/interact", { conversationId: id5, handle: fares.ui?.handle, action: "choose", value: "standard" });
+      const map = surface(standard, "seat_map");
+      check(map.ui?.mode === "elicit" && map.props?.purpose === "book" && map.props.flight === "JL 2", "Standard lets the traveller choose: JL 2's seat map, for the flight home", () => JSON.stringify(map.ui));
+      const free = () => map.props.rows.flatMap((r) => r.seats).filter((s) => !s.taken);
+      const first = free().at(-1);
+      const review = surface(await sse("/hai/interact", { conversationId: id5, handle: map.ui?.handle, action: "pick", value: first?.id }), "booking_review");
+      check(review.props?.seat === first?.id && review.props.fare.name === "Standard", `seat ${first?.id} picked: the review shows it`, () => JSON.stringify(review.props));
+      const change = await sse("/hai/interact", { conversationId: id5, handle: review.ui?.handle, action: "change", value: "seat" });
+      const again = surface(change, "seat_map");
+      const seatsNow = again.props?.rows.flatMap((r) => r.seats).filter((s) => !s.taken) ?? [];
+      const second = seatsNow.find((s) => s.id !== first?.id);
+      const review2 = surface(await sse("/hai/interact", { conversationId: id5, handle: again.ui?.handle, action: "pick", value: second?.id }), "booking_review");
+      check(again.props?.purpose === "book" && review2.props?.seat === second?.id, `Change seat opens the map again, and the review shows seat ${second?.id}`, () => JSON.stringify(review2.props));
+      const ticket = surface(await sse("/hai/interact", { conversationId: id5, handle: review2.ui?.handle, action: "confirm", value: { total: review2.props?.price.total } }), "booking_confirmed");
+      check(
+        ticket.props?.seat === second?.id && ticket.props.bags === "1 checked bag" && ticket.props.total === review2.props?.price.total,
+        `the e-ticket books seat ${second?.id}, 1 checked bag, $${review2.props?.price.total}`,
+        () => JSON.stringify(ticket.props),
+      );
+    }
+
+    // 11c · each step of the flight home books only what the traveller clicked.
+    //       Run in this process, on a conversation of its own.
+    {
+      const airline = await import("../src/server/airline.ts");
+      const { flightsHome } = await import("../src/server/data.ts");
+      const { issueTicket, reviewBooking, showFares, showHomeSeats } = await import("../src/server/tools.ts");
+      const { fareOptionsServer } = await import("../src/server/surfaces.ts");
+      const stub = { conversationId: "home", text: (model) => ({ model }), render: async () => ({ model: "shown" }) };
+      airline.tripShown("home", "ui_01");
+      const before = await issueTicket.run({}, stub);
+      airline.searched("home", { from: "TYO", date: "Sun" });
+      const noFlight = await showFares.run({ flightId: "r01" }, stub);
+      const [r01, r02] = flightsHome("Sun").filter((f) => f.id === "r01" || f.id === "r02");
+      airline.homeFlightChosen("home", r01);
+      const otherFlight = await showFares.run({ flightId: "r02" }, stub);
+      const noFare = await reviewBooking.run({}, stub);
+      const fareProps = { flightId: "r02", flight: r02.flights[0], airline: r02.airline, date: "Sun", fares: [{ id: "basic", name: "Basic", price: 1, seatChoice: false, includes: [] }] };
+      let wrongFare;
+      try {
+        wrongFare = fareOptionsServer.impl.actions.choose("basic", { props: fareProps, conversationId: "home", handle: "ui_02" });
+      } catch (err) {
+        wrongFare = `refused: ${err.message}`;
+      }
+      airline.fareChosen("home", { id: "basic", name: "Basic", price: 960, seatChoice: false, includes: [] });
+      const basicSeats = await showHomeSeats.run({ flightId: "r01" }, stub);
+      const unconfirmed = await issueTicket.run({}, stub);
+      check(
+        /hasn't confirmed a booking yet/.test(before.model) && /hasn't chosen a flight home yet/.test(noFlight.model) && /chose r01 \(UA 838\), not r02/.test(otherFlight.model) &&
+          /hasn't chosen a fare yet/.test(noFare.model) && /^refused: NH 8 isn't the flight you chose/.test(wrongFare) && /assigns the seat at check-in/.test(basicSeats.model) &&
+          /hasn't confirmed a booking yet/.test(unconfirmed.model),
+        "no step of the flight home runs ahead of the clicks: fares, a fare, seats, the review and the ticket each refuse",
+        () => [before.model, noFlight.model, otherFlight.model, noFare.model, wrongFare, basicSeats.model, unconfirmed.model].join(" · "),
+      );
+    }
+
     // 9 · the boarding pass books only what the traveller clicked
     const { issueBoardingPass } = await import("../src/server/tools.ts");
     const early = await issueBoardingPass.run({}, { conversationId: "nobody", text: (model) => ({ model }) });
@@ -368,7 +551,10 @@ try {
 
     // 10 · each surface and notice has a component in the browser registry
     const registry = await fetch(`${BASE}/components.js`).then((r) => r.text());
-    for (const component of ["trip_card", "rebooking_options", "seat_map", "care_options", "boarding_pass", "flight_cancelled", "seat_confirmed"]) {
+    for (const component of [
+      "trip_card", "rebooking_options", "seat_map", "care_options", "boarding_pass", "flight_cancelled", "seat_confirmed",
+      "flight_search", "flight_results", "fare_options", "booking_review", "booking_confirmed", "ticket_issued",
+    ]) {
       check(new RegExp(`\\b${component}\\s*:`).test(registry), `${component} is registered in components.js`, `${component} missing from components.js`);
     }
   }

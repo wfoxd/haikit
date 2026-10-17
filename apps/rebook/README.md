@@ -10,6 +10,10 @@ flight leaves tomorrow, and issues the boarding pass. When the gate moves
 later, it speaks up again. Each step is a component the AI chose for this
 case, and each answer is a click.
 
+Or ask it to book your flight home. It already knows who you are, where home
+is and when you land in Tokyo, so the search is filled in before you see it,
+and it asks only for what it doesn't know: the day.
+
 This folder is a complete, self-contained app: copy it anywhere, install, and
 run. It depends only on the published `@haikit/*` packages.
 
@@ -25,6 +29,7 @@ you watch the outside world act, and then the AI respond.
 | **Cancel the flight** | Revises the trip card to *Cancelled*, and sends the `flight_cancelled` wake notice | The guide speaks first, without being asked, and shows the options |
 | **Release the holds** | Lets its 5-minute seat holds run out now: seats left fall on every option, and the scarcest on screen sells out | The picker you're looking at is revised in place. The guide hears of it with your next click |
 | **Change the gate** | Moves the new flight's gate, with `wake: true` | The boarding pass is revised in place, and the guide speaks up |
+| **Raise the fare** | Raises the fare on the flight home by $60 while its review waits | The review is revised in place to the new total. The guide hears of it with your next click, and a Confirm at the old total is refused |
 
 The holds also run out by themselves, five minutes after the options are
 shown.
@@ -32,7 +37,8 @@ shown.
 Nothing happens until the airline acts, so a visitor who presses nothing
 isn't left waiting: 30 seconds after the trip opens, the bar cancels the
 flight itself, through the same route as its button. A countdown on the
-button and a line under it say so, and cancelling sooner stops it.
+button and a line under it say so, and cancelling sooner stops it. So does
+starting to book the flight home: the visitor is doing something already.
 
 ## The 60-second path
 
@@ -57,6 +63,31 @@ button and a line under it say so, and cancelling sooner stops it.
    says so.
 9. Open **Context**, top right, to see everything the model received.
 
+## Book the flight home
+
+1. Click **Book my flight home** on the trip card, or type "book my flight
+   home on Sunday". The button is an `inform` action: it tells the guide,
+   and nothing waits on the card.
+2. The search is already filled in: Alex Morgan, any Tokyo airport, San
+   Francisco, each marked "from your trip". The day says "from your message"
+   if you named one, and "choose one" if you didn't. Change the day or the
+   airport here, in the browser, then **Search flights**.
+3. Ten flights home, the earliest to leave first. Type "which are nonstop?"
+   or "which is cheapest?": the guide asks `query_ui` about the flights, and
+   shows the answer as a new picker.
+4. Pick UA 838, then a fare: Basic, Standard or Flex. Basic assigns your
+   seat at check-in, so the guide goes straight to the review; Standard and
+   Flex show the seat map first.
+5. The review: the flight, fare, seat and total. Nothing is booked until you
+   confirm, and Change flight, fare or seat goes back a step.
+6. **Raise the fare.** The review changes while you look: $60 more, and it
+   says what it was. A Confirm carrying the old total is refused.
+7. Confirm. The e-ticket appears, the airline issues the ticket a moment
+   later, and the trip card shows your flight home.
+
+Nothing is charged, and no card details are ever asked for: the review says
+the card on file pays, and that this is a demo.
+
 ## What each HaiKIT feature does here
 
 | Feature | In Rebook |
@@ -70,11 +101,17 @@ button and a line under it say so, and cancelling sooner stops it.
 | Revisions, `hai.update` | The trip card, the picker, the seat map and the boarding pass are each revised in place by the airline |
 | Passive notices | The seat confirmation arrives a moment after booking, and the model hears it with the next turn |
 | Freshness | The options' `staleAfterMs` is 20 minutes. Past that, the whole conversation is out of date, and HaiKIT refuses every request on it rather than act on old prices |
+| `inform` | The trip card's Book my flight home tells the guide without anything waiting on the card. It's refused while a question waits, and once the flight home is booked |
+| Filled in, not asked | The search arrives filled in from the trip. Only the day is left to the traveller, unless they named it |
+| A value the click carries | Confirm sends the total on screen. A total the airline has just raised is refused rather than charged |
+| Two answers to one question | The review waits on Confirm or Change: either `resolve` action answers it |
 
 The boarding pass books exactly what the traveller clicked. `issue_boarding_pass`
 takes no input: the server reads the option, seat and night the traveller
 chose from their clicks, so the model can ask for a booking but can't decide
-what it is.
+what it is. The flight home works the same way: each step's tool refuses to
+run ahead of the clicks, and `issue_ticket` books the flight, fare, seat and
+total the traveller confirmed.
 
 ## Run it
 
@@ -105,10 +142,11 @@ npm test
 ```
 
 That typechecks the server and the browser components against the shared
-contracts, then boots the server and drives the whole path above over HTTP,
+contracts, then boots the server and drives both paths above over HTTP,
 with the airline played by the `/ops` routes: the guide speaking first, the
 capped query, the revisions, the refused clicks, the boarding pass and the
-gate change.
+gate change; then the filled-in search, the fares, the seat, the raised fare
+and the e-ticket.
 
 ## Deploy
 
@@ -125,15 +163,18 @@ through unbuffered; behind one that holds them back, the page polls instead.
 
 ```
 src/shared/surfaces.ts     the contract: trip_card, rebooking_options, seat_map, care_options,
-                           boarding_pass
-src/shared/notices.ts      flight_cancelled (wake), seat_confirmed
-src/server/data.ts         the booking, the 14 options, seat maps and tonight's choices
+                           boarding_pass; for the flight home, flight_search, flight_results,
+                           fare_options, booking_review, booking_confirmed
+src/shared/notices.ts      flight_cancelled (wake), seat_confirmed, ticket_issued
+src/server/data.ts         the booking, the 14 options, seat maps and tonight's choices; the
+                           flights home and their fares
 src/server/surfaces.ts     digests, click handlers, the filter and earliest queries
 src/server/notices.ts      what the model hears of each notice
 src/server/airline.ts      the airline's side: cancel, holds, other passengers, confirmation,
-                           the gate, and what the traveller clicked
+                           the gate, the fare and the ticket, and what the traveller clicked
 src/server/tools.ts        show_trip (init), find_rebooking, show_seat_map, offer_care,
-                           issue_boarding_pass
+                           issue_boarding_pass; start_booking, show_flights, show_fares,
+                           show_home_seats, review_booking, issue_ticket
 src/server/scripted.ts     the scripted guide, a ModelAdapter
 src/server/main.ts         createHai, the /ops routes, static files
 public/                    the page, the components, the Airline ops bar, the styles

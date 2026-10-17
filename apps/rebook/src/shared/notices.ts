@@ -24,3 +24,10 @@ export const seatConfirmed = defineNotice({
   version: 1,
   payload: z.object({ flight: z.string(), seat: z.string(), reference: z.string() }),
 });
+
+/** The airline issued the ticket for the flight home, a moment after it was booked. */
+export const ticketIssued = defineNotice({
+  name: "ticket_issued",
+  version: 1,
+  payload: z.object({ reference: z.string(), ticket: z.string(), flight: z.string() }),
+});

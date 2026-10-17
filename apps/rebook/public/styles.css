@@ -172,6 +172,64 @@ button.rb-option:not(:disabled):hover { border-color: var(--hai-accent); }
 .rb-facts-pass .is-moved dd { color: var(--hai-bad); animation: moved 2.4s ease-out; }
 @keyframes moved { 0%, 30% { background: color-mix(in srgb, var(--hai-bad) 22%, transparent); } 100% { background: transparent; } }
 
+/* buttons that aren't a row of a list */
+.rb-button {
+  justify-self: start; padding: 8px 14px; border: 1px solid var(--hai-line); border-radius: 9px;
+  background: var(--hai-panel-2); color: var(--hai-fg); font: 600 14px var(--sans); cursor: pointer;
+}
+.rb-button:not(:disabled):hover { border-color: var(--hai-accent); color: var(--hai-accent); }
+.rb-button.is-primary { background: var(--hai-accent); border-color: var(--hai-accent); color: var(--hai-on-accent); }
+.rb-button.is-primary:not(:disabled):hover { color: var(--hai-on-accent); background: color-mix(in srgb, var(--hai-accent) 88%, var(--hai-fg)); }
+.rb-button:disabled { cursor: default; opacity: 0.5; }
+.rb-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* the trip card's flight home */
+.rb-home { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding-top: 12px; border-top: 1px solid var(--hai-line); }
+.rb-home-label { font-size: 11.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--hai-dim); }
+.rb-home-what { flex: 1 1 auto; font: 600 14px var(--mono); }
+.rb-home .rb-button { padding: 5px 12px; font-size: 13px; }
+
+/* the search, each value beside where it came from */
+.rb-fields { display: grid; gap: 10px; }
+.rb-field { display: grid; grid-template-columns: 6.5em minmax(0, 1fr) auto; align-items: center; gap: 6px 12px; }
+.rb-field-label { font-size: 11.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--hai-dim); }
+.rb-field-value { font: 600 15px var(--mono); }
+.rb-segments { display: flex; flex-wrap: wrap; gap: 6px; }
+.rb-chip:disabled { cursor: default; opacity: 0.7; }
+.rb-day { display: grid; justify-items: center; gap: 1px; min-width: 4.4em; padding: 4px 10px; border-radius: 10px; }
+.rb-day-nights { font-size: 11px; color: var(--hai-dim); font-weight: 400; }
+.rb-source { justify-self: end; padding: 2px 8px; border-radius: 999px; font-size: 12px; white-space: nowrap; color: var(--hai-good); background: color-mix(in srgb, var(--hai-good) 12%, transparent); }
+.rb-source.is-missing { color: var(--hai-warn); background: color-mix(in srgb, var(--hai-warn) 14%, transparent); font-weight: 600; }
+@media (max-width: 560px) {
+  .rb-field { grid-template-columns: minmax(0, 1fr) auto; }
+  .rb-field > :nth-child(2) { grid-column: 1 / -1; grid-row: 2; }
+}
+
+/* the fares, side by side */
+.rb-fare-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; }
+.rb-fare-card {
+  display: grid; grid-template-rows: auto auto 1fr auto; gap: 6px; padding: 14px;
+  border: 1px solid var(--hai-line); border-radius: 10px; background: var(--hai-panel-2);
+}
+.rb-fare-card.is-picked { border-color: var(--hai-accent); background: color-mix(in srgb, var(--hai-accent) 10%, var(--hai-panel-2)); }
+.rb-fare-name { margin: 0; font-weight: 600; }
+.rb-fare-price { margin: 0; font: 600 22px var(--mono); }
+.rb-includes { list-style: none; margin: 0 0 6px; padding: 0; display: grid; align-content: start; gap: 4px; font-size: 13px; }
+.rb-includes li { display: flex; gap: 7px; }
+.rb-includes .is-no { color: var(--hai-dim); }
+.rb-mark { width: 1em; font-weight: 700; text-align: center; }
+.rb-includes .is-yes .rb-mark { color: var(--hai-good); }
+
+/* the review's price */
+.rb-price { margin: 0; display: grid; gap: 4px; max-width: 320px; }
+.rb-price div { display: flex; justify-content: space-between; gap: 16px; }
+.rb-price dt { color: var(--hai-dim); font-size: 14px; }
+.rb-price dd { margin: 0; font: 500 14px var(--mono); }
+.rb-price .is-total { padding-top: 6px; border-top: 1px solid var(--hai-line); }
+.rb-price .is-total dt { color: var(--hai-fg); font-weight: 600; }
+.rb-price .is-total dd { font: 600 20px var(--mono); }
+.rb-review:has(.rb-badge-alert) .is-total dd { color: var(--hai-bad); }
+
 /* notices: what the airline said, beside the surface it's about */
 /* the transcript frames a notice too: a notice is its line */
 .rb-notice { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; padding: 9px 14px; font: 14px var(--sans); }

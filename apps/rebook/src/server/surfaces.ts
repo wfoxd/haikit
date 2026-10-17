@@ -3,10 +3,21 @@
  * what a click on it means. This file never reaches the browser.
  */
 
-import type { RebookOption } from "../shared/surfaces.ts";
-import { boardingPass, careOptions, rebookingOptions, seatMap, tripCard } from "../shared/surfaces.ts";
-import { careChosen, optionChosen, seatPicked } from "./airline.ts";
-import { later } from "./data.ts";
+import type { HomeFlight, RebookOption } from "../shared/surfaces.ts";
+import {
+  boardingPass,
+  bookingConfirmed,
+  bookingReview,
+  careOptions,
+  fareOptions,
+  flightResults,
+  flightSearch,
+  rebookingOptions,
+  seatMap,
+  tripCard,
+} from "../shared/surfaces.ts";
+import { booking, bookingConfirmedAt, careChosen, fareChosen, homeFlightChosen, homeSeatPicked, optionChosen, searched, seatPicked } from "./airline.ts";
+import { AIRPORT_NAMES, DAY_NAMES, duration, later, usd } from "./data.ts";
 
 /** One option, as the model reads it: everything it needs to talk about it. */
 export const fmt = (o: RebookOption) =>
@@ -14,14 +25,27 @@ export const fmt = (o: RebookOption) =>
   `lands ${o.to} ${o.arrive} (${later(o.laterMin)} later), ` +
   `${o.extraFare ? `$${o.extraFare} extra` : "no extra cost"}, ${o.seatsLeft ? `${o.seatsLeft} seats left` : "sold out"} [${o.id}]`;
 
+/** One flight home, as the model reads it. */
+export const fmtHome = (f: HomeFlight) =>
+  `${f.flights.join(" + ")} (${f.airline}) ${f.via ? `via ${f.via}` : "nonstop"}, leaves ${f.from} ${f.depart}, ` +
+  `lands SFO ${f.arrive} (${duration(f.durationMin)}), from ${usd(f.price)}, ${f.seatsLeft} seat${f.seatsLeft === 1 ? "" : "s"} left [${f.id}]`;
+
 export const tripCardServer = tripCard.implement({
   digest(p, { handle }) {
     const trip = `${p.passenger}, booking ${p.reference}: ${p.airline} ${p.flight}, ${p.from.city} ${p.depart} to ${p.to.city} ${p.arrive}, seat ${p.seat}`;
-    return p.status === "cancelled"
-      ? `Trip on screen as ${handle}: ${trip}. CANCELLED, because of ${p.reason}.`
-      : `Trip on screen as ${handle}: ${trip}. On time.`;
+    const status = p.status === "cancelled" ? ` CANCELLED, because of ${p.reason}.` : " On time.";
+    const home = p.home
+      ? ` Flight home booked: ${p.home.flight}, leaving ${p.home.depart}, booking ${p.home.reference}.`
+      : " No flight home yet: a Book my flight home button on the card starts booking one.";
+    return `Trip on screen as ${handle}: ${trip}.${status}${home}`;
   },
-  actions: {},
+  actions: {
+    // An inform: it tells the guide, and the guide starts the booking.
+    book_home(_value, { props }) {
+      if (props.home) throw new Error(`the flight home is already booked: ${props.home.flight}, booking ${props.home.reference}`);
+      return "The traveller clicked Book my flight home.";
+    },
+  },
   queries: {},
 });
 
@@ -92,7 +116,7 @@ export const seatMapServer = seatMap.implement({
     const free = seats.filter((s) => !s.taken);
     const legroomRows = [...new Set(p.rows.filter((r) => r.seats.some((s) => s.extraLegroom)).map((r) => r.row))];
     return (
-      `Seat map for ${p.airline} ${p.flight} on screen as ${handle}: ${free.length} of ${seats.length} seats free, ` +
+      `Seat map for ${p.airline} ${p.flight}${p.purpose === "book" ? ", for the flight home," : ""} on screen as ${handle}: ${free.length} of ${seats.length} seats free, ` +
       `${free.filter((s) => s.window).length} of them by a window and ${free.filter((s) => s.extraLegroom).length} ` +
       `with extra legroom (rows ${legroomRows.join(" and ")}). The traveller picks one.`
     );
@@ -105,11 +129,13 @@ export const seatMapServer = seatMap.implement({
       // Other passengers are choosing too. A seat gone since this map was
       // drawn is refused, and the traveller picks again.
       if (seat.taken) throw new Error(`seat ${seatId} was taken a moment ago: pick another`);
-      // Only a seat on the option the traveller chose can be booked: anything
+      // Only a seat on the flight the traveller chose can be booked: anything
       // else is refused, rather than taken and then not booked.
-      if (!seatPicked(conversationId, props.optionId, seatId)) throw new Error(`${props.flight} isn't the flight you chose`);
+      const home = props.purpose === "book";
+      const recorded = home ? homeSeatPicked(conversationId, props.optionId, seatId) : seatPicked(conversationId, props.optionId, seatId);
+      if (!recorded) throw new Error(`${props.flight} isn't the flight you chose`);
       const kind = [seat.window ? "window" : "", seat.extraLegroom ? "extra legroom" : ""].filter(Boolean).join(", ");
-      return `Picked seat ${seatId} on ${props.flight}${kind ? ` (${kind})` : ""}.`;
+      return `Picked seat ${seatId} on ${props.flight}${kind ? ` (${kind})` : ""}${home ? ", for the flight home" : ""}.`;
     },
   },
   queries: {},
@@ -147,4 +173,136 @@ export const boardingPassServer = boardingPass.implement({
   queries: {},
 });
 
-export const surfaces = [tripCardServer, rebookingOptionsServer, seatMapServer, careOptionsServer, boardingPassServer];
+// ───────────────────────────────────────────── booking the flight home
+
+export const flightSearchServer = flightSearch.implement({
+  digest(p, { handle }) {
+    return (
+      `Search for flights home on screen as ${handle}: ${p.passenger}, ${AIRPORT_NAMES[p.from]} to ${p.to.city} (${p.to.code}), ` +
+      (p.date ? `on ${DAY_NAMES[p.date]} (${p.date}). ` : "no day chosen yet: the traveller picks one. ") +
+      `Filled in from the trip: the traveller and the airports${p.date ? `; the day from ${p.sources.date}` : ""}. ` +
+      `The traveller can change the day and the Tokyo airport, then searches.`
+    );
+  },
+  actions: {
+    search(value, { conversationId }) {
+      searched(conversationId, value);
+      return `Searched flights home: ${AIRPORT_NAMES[value.from]} to SFO on ${DAY_NAMES[value.date]} (${value.date}).`;
+    },
+  },
+  queries: {},
+});
+
+export const flightResultsServer = flightResults.implement({
+  // Like the rebooking options: what the next sentence needs, the rest by query.
+  digest(p, { handle }) {
+    const cheapest = [...p.flights].sort((a, b) => a.price - b.price)[0];
+    const fastest = [...p.flights].sort((a, b) => a.durationMin - b.durationMin)[0];
+    const count = (keep: (f: HomeFlight) => boolean) => p.flights.filter(keep).length;
+    return [
+      `Flights home on ${DAY_NAMES[p.date]}, on screen as ${handle}: ${p.flights.length} flights, ${AIRPORT_NAMES[p.from]} to SFO` +
+        (p.filter ? ` (${p.filter}, of ${p.total}).` : "."),
+      cheapest ? `Cheapest: ${fmtHome(cheapest)}.` : "",
+      fastest && fastest !== cheapest ? `Fastest: ${fmtHome(fastest)}.` : "",
+      `Nonstop: ${count((f) => !f.via)}. From Narita: ${count((f) => f.from === "NRT")}. From Haneda: ${count((f) => f.from === "HND")}.`,
+      "Prices are the Basic fare before taxes; Standard and Flex cost more. The traveller picks one; query_ui filter and cheapest answer about the rest.",
+    ]
+      .filter(Boolean)
+      .join(" ");
+  },
+  actions: {
+    choose(flightId, { props, conversationId }) {
+      const f = props.flights.find((x) => x.id === flightId);
+      if (!f) throw new Error(`no flight ${flightId}`);
+      homeFlightChosen(conversationId, f);
+      return `Chose flight ${f.id}: ${fmtHome(f)}.`;
+    },
+  },
+  queries: {
+    filter(args, { props, cap }) {
+      const rows = props.flights
+        .filter((f) => (args.nonstop ? !f.via : true))
+        .filter((f) => (args.airport ? f.from === args.airport : true))
+        .filter((f) => (args.maxPrice !== undefined ? f.price <= args.maxPrice : true))
+        .filter((f) => (args.airline ? f.airline.toLowerCase().includes(args.airline.toLowerCase()) : true));
+      return cap(rows, fmtHome);
+    },
+    cheapest(_args, { props, cap }) {
+      return cap([...props.flights].sort((a, b) => a.price - b.price).slice(0, 1), fmtHome);
+    },
+  },
+});
+
+export const fareOptionsServer = fareOptions.implement({
+  digest(p, { handle }) {
+    const fares = p.fares
+      .map((f) => `${f.name} ${usd(f.price)} (${f.includes.filter((i) => i.yes).map((i) => i.text.toLowerCase()).join(", ")}${f.seatChoice ? "" : "; seat assigned at check-in"})`)
+      .join("; ");
+    return `Fares for ${p.airline} ${p.flight} on ${DAY_NAMES[p.date]}, on screen as ${handle}: ${fares}. Before taxes. The traveller picks one.`;
+  },
+  actions: {
+    choose(fareId, { props, conversationId }) {
+      const fare = props.fares.find((f) => f.id === fareId);
+      if (!fare) throw new Error(`no fare ${fareId}`);
+      if (booking(conversationId)?.flight?.id !== props.flightId) throw new Error(`${props.flight} isn't the flight you chose`);
+      fareChosen(conversationId, fare);
+      return (
+        `Chose the ${fare.name} fare, ${usd(fare.price)}, on ${props.flight} [${props.flightId}]: ` +
+        (fare.seatChoice ? "the traveller chooses a seat." : "the seat is assigned at check-in, so there's no seat to choose.")
+      );
+    },
+  },
+  queries: {},
+});
+
+export const bookingReviewServer = bookingReview.implement({
+  digest(p, { handle }) {
+    const legs = p.legs.map((l) => `${l.flight} ${l.from}→${l.to}`).join(", then ");
+    return (
+      `Review of the booking on screen as ${handle}: ${p.passenger}, ${legs}, leaving ${p.depart}, landing SFO ${p.arrive}. ` +
+      `${p.fare.name} fare, seat ${p.seat ?? "assigned at check-in"}. Total ${usd(p.price.total)} (${usd(p.price.fare)} fare and ${usd(p.price.taxes)} taxes), ` +
+      `paid with the card on file; nothing is charged in this demo.` +
+      (p.previousTotal !== null ? ` The airline raised the fare while it was on screen: it was ${usd(p.previousTotal)}.` : "") +
+      ` Nothing is booked until the traveller confirms, or asks to change the flight, fare${p.fare.seatChoice ? " or seat" : ""}.`
+    );
+  },
+  actions: {
+    // The click carries the total the traveller saw. One that isn't the total
+    // now, because the airline has just raised it, is refused, not charged.
+    confirm({ total }, { props, conversationId }) {
+      if (total !== props.price.total) throw new Error(`the total is ${usd(props.price.total)} now, not ${usd(total)}: check it and confirm again`);
+      bookingConfirmedAt(conversationId, total);
+      return `Confirmed the booking at ${usd(total)}.`;
+    },
+    change(what, { props }) {
+      if (what === "seat" && !props.fare.seatChoice) throw new Error(`the ${props.fare.name} fare assigns the seat at check-in`);
+      return `Asked to change the ${what}.`;
+    },
+  },
+  queries: {},
+});
+
+export const bookingConfirmedServer = bookingConfirmed.implement({
+  digest(p, { handle }) {
+    const legs = p.legs.map((l) => `${l.flight} ${l.from}→${l.to}`).join(", then ");
+    return (
+      `E-ticket on screen as ${handle}: ${p.passenger}, booking ${p.reference}, ${legs}, leaving ${p.depart}, landing SFO ${p.arrive}. ` +
+      `${p.fare} fare, seat ${p.seat ?? "assigned at check-in"}, ${p.bags}. Paid ${usd(p.total)}.`
+    );
+  },
+  actions: {},
+  queries: {},
+});
+
+export const surfaces = [
+  tripCardServer,
+  rebookingOptionsServer,
+  seatMapServer,
+  careOptionsServer,
+  boardingPassServer,
+  flightSearchServer,
+  flightResultsServer,
+  fareOptionsServer,
+  bookingReviewServer,
+  bookingConfirmedServer,
+];

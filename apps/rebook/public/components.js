@@ -16,8 +16,17 @@
 /** @typedef {import("../src/shared/surfaces.ts").SeatMapProps} SeatMapProps */
 /** @typedef {import("../src/shared/surfaces.ts").CareOptionsProps} CareOptionsProps */
 /** @typedef {import("../src/shared/surfaces.ts").BoardingPassProps} BoardingPassProps */
+/** @typedef {import("../src/shared/surfaces.ts").FlightSearchProps} FlightSearchProps */
+/** @typedef {import("../src/shared/surfaces.ts").FlightResultsProps} FlightResultsProps */
+/** @typedef {import("../src/shared/surfaces.ts").HomeFlight} HomeFlight */
+/** @typedef {import("../src/shared/surfaces.ts").FareOptionsProps} FareOptionsProps */
+/** @typedef {import("../src/shared/surfaces.ts").BookingReviewProps} BookingReviewProps */
+/** @typedef {import("../src/shared/surfaces.ts").BookingConfirmedProps} BookingConfirmedProps */
+/** @typedef {import("../src/shared/surfaces.ts").Day} Day */
+/** @typedef {import("../src/shared/surfaces.ts").TokyoAirport} TokyoAirport */
 /** @typedef {import("@haikit/core").Infer<typeof import("../src/shared/notices.ts").flightCancelled.payload>} FlightCancelled */
 /** @typedef {import("@haikit/core").Infer<typeof import("../src/shared/notices.ts").seatConfirmed.payload>} SeatConfirmed */
+/** @typedef {import("@haikit/core").Infer<typeof import("../src/shared/notices.ts").ticketIssued.payload>} TicketIssued */
 /** @typedef {import("@haikit/client").MountCtx} MountCtx */
 
 /**
@@ -36,6 +45,16 @@ const h = (tag, className, text) => {
 
 /** "16h45" */
 const later = (/** @type {number} */ min) => `${Math.floor(min / 60)}h${String(min % 60).padStart(2, "0")}`;
+
+/** "$1,250" */
+const dollars = (/** @type {number} */ n) => `$${n.toLocaleString("en-US")}`;
+
+/** @type {Record<Day, string>} */
+const DAY_NAMES = { Thu: "Thursday", Fri: "Friday", Sat: "Saturday", Sun: "Sunday", Mon: "Monday" };
+/** @type {Record<TokyoAirport, string>} */
+const AIRPORTS = { TYO: "Any Tokyo airport", NRT: "Narita · NRT", HND: "Haneda · HND" };
+/** @type {Record<TokyoAirport, string>} the airport in a sentence */
+const FROM = { TYO: "any Tokyo airport", NRT: "Narita", HND: "Haneda" };
 
 /** A surface's head: what it is, a line under it, and its state on the right. */
 function head(/** @type {string} */ title, /** @type {string} */ sub, /** @type {HTMLElement | null} */ badge) {
@@ -131,8 +150,12 @@ export const registry = {
     /**
      * @param {HTMLElement} el
      * @param {TripCardProps} props
+     * @param {MountCtx} ctx
      */
-    mount(el, props) {
+    mount(el, props, ctx) {
+      /** The button was clicked: the booking goes on below, so it says so instead. */
+      let asked = false;
+      let sending = false;
       const draw = () => {
         el.replaceChildren();
         const cancelled = props.status === "cancelled";
@@ -156,11 +179,41 @@ export const registry = {
         }
         card.append(facts);
         if (cancelled && props.reason) card.append(h("p", "rb-why", `Cancelled because of ${props.reason}.`));
+
+        // the flight home: booked, or a button that asks the guide to book it
+        const home = h("div", "rb-home");
+        if (props.home) {
+          home.append(h("span", "rb-home-label", "Flight home"), h("span", "rb-home-what", `${props.home.flight} · ${props.home.depart} · booking ${props.home.reference}`));
+        } else {
+          home.append(h("span", "rb-home-label", "Flight home"), h("span", "rb-home-what", asked ? "Booking it below…" : "Not booked yet"));
+          const b = h("button", "rb-button", "Book my flight home");
+          b.type = "button";
+          b.dataset.key = "home:book";
+          b.disabled = asked || sending || ctx.state !== "live";
+          // DECLARED: `book_home` is an inform action. It tells the guide, which
+          // starts the booking; nothing waits on this card.
+          b.onclick = async () => {
+            sending = true;
+            redraw(el, draw);
+            try {
+              await ctx.send("book_home", "home");
+              asked = true;
+            } catch (err) {
+              console.error("[rebook] the click wasn't sent:", err);
+            } finally {
+              sending = false;
+              redraw(el, draw);
+            }
+          };
+          home.append(b);
+        }
+        card.append(home);
         el.append(card);
       };
       draw();
-      // The airline revises the card in place when it cancels the flight.
-      return { update(/** @type {TripCardProps} */ next) { props = next; draw(); } };
+      // The airline revises the card in place when it cancels the flight, and
+      // when the flight home is booked.
+      return { update(/** @type {TripCardProps} */ next) { props = next; redraw(el, draw); } };
     },
   },
 
@@ -391,6 +444,336 @@ export const registry = {
       };
     },
   },
+
+  // ── booking the flight home ──────────────────────────────────────────
+
+  flight_search: {
+    /**
+     * The search, filled in from what the guide knows. Changing the day or
+     * the airport is LOCAL: it stays here until Search sends the whole search
+     * through the declared `search` action.
+     * @param {HTMLElement} el
+     * @param {FlightSearchProps} props
+     * @param {MountCtx} ctx
+     */
+    mount(el, props, ctx) {
+      const at = { state: /** @type {string} */ (ctx.state), picked: ctx.selection, sending: false };
+      let from = props.from;
+      let date = props.date;
+      const draw = () => {
+        const live = at.state === "live" && ctx.mode === "elicit";
+        el.replaceChildren();
+        const card = h("div", "rb-card rb-search");
+        card.append(head("Book your flight home", "Filled in from what Rebook already knows. Change anything, then search.", null));
+
+        const fields = h("div", "rb-fields");
+        /** @param {string} label @param {HTMLElement | string} value @param {string | null} source */
+        const field = (label, value, source) => {
+          const row = h("div", "rb-field");
+          row.append(h("span", "rb-field-label", label));
+          row.append(typeof value === "string" ? h("span", "rb-field-value", value) : value);
+          row.append(h("span", source ? "rb-source" : "rb-source is-missing", source ? `from ${source}` : "choose one"));
+          fields.append(row);
+        };
+        field("Traveller", props.passenger, props.sources.passenger);
+
+        const airports = h("div", "rb-segments");
+        airports.setAttribute("role", "group");
+        airports.setAttribute("aria-label", "From");
+        for (const id of /** @type {TokyoAirport[]} */ (["TYO", "NRT", "HND"])) {
+          const b = h("button", `rb-chip${from === id ? " is-on" : ""}`, AIRPORTS[id]);
+          b.type = "button";
+          b.dataset.key = `from:${id}`;
+          b.disabled = !live || at.sending;
+          b.setAttribute("aria-pressed", String(from === id));
+          b.onclick = () => { from = id; redraw(el, draw); }; // LOCAL
+          airports.append(b);
+        }
+        field("From", airports, from === props.from ? props.sources.from : "you");
+        field("To", `${props.to.city} · ${props.to.code}`, props.sources.to);
+
+        const days = h("div", "rb-segments");
+        days.setAttribute("role", "group");
+        days.setAttribute("aria-label", "Day");
+        for (const d of props.days) {
+          const b = h("button", `rb-chip rb-day${date === d.id ? " is-on" : ""}`);
+          b.type = "button";
+          b.dataset.key = `day:${d.id}`;
+          b.disabled = !live || at.sending;
+          b.setAttribute("aria-pressed", String(date === d.id));
+          b.append(h("span", null, d.id), h("span", "rb-day-nights", `${d.nights} night${d.nights === 1 ? "" : "s"}`));
+          b.onclick = () => { date = d.id; redraw(el, draw); }; // LOCAL
+          days.append(b);
+        }
+        field("Day", days, date === null ? null : date === props.date ? props.sources.date : "you");
+        card.append(fields);
+
+        if (at.state === "frozen") {
+          const sel = /** @type {{ from?: TokyoAirport, date?: Day } | undefined} */ (at.picked);
+          card.append(h("p", "rb-foot", sel?.date && sel.from ? `You searched from ${FROM[sel.from]} to San Francisco on ${DAY_NAMES[sel.date]}.` : "Closed when you typed instead."));
+        } else {
+          const go = h("button", "rb-button is-primary", date ? `Search flights on ${DAY_NAMES[date]}` : "Choose a day to search");
+          go.type = "button";
+          go.dataset.key = "search:go";
+          go.disabled = !live || at.sending || !date;
+          go.onclick = () => { if (date) void ask("search", { from, date }); }; // DECLARED: `search` is a resolve action
+          card.append(go);
+        }
+        el.append(card);
+      };
+      const ask = asker(el, ctx, at, draw);
+      draw();
+      if (ctx.state === "live") requestAnimationFrame(() => showTop(el));
+      return { freeze(/** @type {unknown} */ selection) { at.state = "frozen"; at.picked = selection; redraw(el, draw); } };
+    },
+  },
+
+  flight_results: {
+    /**
+     * @param {HTMLElement} el
+     * @param {FlightResultsProps} props
+     * @param {MountCtx} ctx
+     */
+    mount(el, props, ctx) {
+      const at = { state: /** @type {string} */ (ctx.state), picked: ctx.selection, sending: false };
+      // LOCAL: no action is declared for filtering, so it stays in the browser.
+      /** @type {"all" | "nonstop" | "NRT" | "HND"} */
+      let only = "all";
+      const FILTERS = /** @type {const} */ ([
+        ["all", "All", (/** @type {HomeFlight} */ _f) => true],
+        ["nonstop", "Nonstop", (/** @type {HomeFlight} */ f) => !f.via],
+        ["NRT", "Narita", (/** @type {HomeFlight} */ f) => f.from === "NRT"],
+        ["HND", "Haneda", (/** @type {HomeFlight} */ f) => f.from === "HND"],
+      ]);
+      const draw = () => {
+        const live = at.state === "live" && ctx.mode === "elicit";
+        el.replaceChildren();
+        const card = h("div", "rb-card rb-options");
+        const sub = props.filter ? `${props.flights.length} ${props.filter}, of ${props.total}` : `${props.flights.length} flights to San Francisco`;
+        card.append(head(`Flights home · ${DAY_NAMES[props.date]}`, sub, null));
+
+        const chips = h("div", "rb-chips");
+        chips.setAttribute("role", "group");
+        chips.setAttribute("aria-label", "Show");
+        for (const [key, label] of FILTERS) {
+          const chip = h("button", `rb-chip${only === key ? " is-on" : ""}`, label);
+          chip.type = "button";
+          chip.dataset.key = `filter:${key}`;
+          chip.setAttribute("aria-pressed", String(only === key));
+          chip.onclick = () => { only = key; redraw(el, draw); };
+          chips.append(chip);
+        }
+        card.append(chips);
+
+        const keep = FILTERS.find(([key]) => key === only)?.[2] ?? (() => true);
+        const list = h("ol", "rb-list");
+        for (const f of props.flights.filter(keep)) {
+          const row = h(live ? "button" : "div", `rb-option${f.id === at.picked ? " is-picked" : ""}`);
+          if (row instanceof HTMLButtonElement) {
+            row.type = "button";
+            row.dataset.key = `flight:${f.id}`;
+            row.disabled = at.sending;
+            row.onclick = () => void ask("choose", f.id); // DECLARED: `choose` is a resolve action
+          }
+          const times = h("span", "rb-times");
+          times.append(h("span", "rb-time", f.depart.slice(4)), h("span", "rb-arrow", "→"), h("span", "rb-time", f.arrive.slice(4)));
+          const what = h("span", "rb-what");
+          what.append(
+            h("span", "rb-flights", `${f.flights.join(" + ")} · ${f.airline}`),
+            h("span", "rb-detail", `${f.from} · ${f.via ? `via ${f.via}` : "Nonstop"} · ${later(f.durationMin)} · lands the same day`),
+          );
+          const cost = h("span", "rb-cost");
+          cost.append(h("span", "rb-fare", `from ${dollars(f.price)}`), h("span", f.seatsLeft <= 2 ? "rb-left is-low" : "rb-left", `${f.seatsLeft} seat${f.seatsLeft === 1 ? "" : "s"} left`));
+          row.append(times, what, cost);
+          const li = h("li");
+          li.append(row);
+          list.append(li);
+        }
+        card.append(list);
+        const foot = h("p", "rb-foot");
+        if (at.state === "frozen") {
+          const f = props.flights.find((x) => x.id === at.picked);
+          foot.textContent = f ? `You chose ${f.flights.join(" + ")}.` : "Closed when you typed instead.";
+        } else {
+          foot.textContent = "Times are local: Tokyo when it leaves, San Francisco when it lands. Prices are the Basic fare, before taxes.";
+        }
+        card.append(foot);
+        el.append(card);
+      };
+      const ask = asker(el, ctx, at, draw);
+      draw();
+      if (ctx.state === "live") requestAnimationFrame(() => showTop(el));
+      return { freeze(/** @type {unknown} */ selection) { at.state = "frozen"; at.picked = selection; redraw(el, draw); } };
+    },
+  },
+
+  fare_options: {
+    /**
+     * @param {HTMLElement} el
+     * @param {FareOptionsProps} props
+     * @param {MountCtx} ctx
+     */
+    mount(el, props, ctx) {
+      const at = { state: /** @type {string} */ (ctx.state), picked: ctx.selection, sending: false };
+      const draw = () => {
+        const live = at.state === "live" && ctx.mode === "elicit";
+        el.replaceChildren();
+        const card = h("div", "rb-card rb-fares");
+        card.append(head(`Choose a fare on ${props.flight}`, `${props.airline} · ${DAY_NAMES[props.date]} · before taxes`, null));
+        const grid = h("div", "rb-fare-grid");
+        for (const fare of props.fares) {
+          const col = h("div", `rb-fare-card${fare.id === at.picked ? " is-picked" : ""}`);
+          col.append(h("p", "rb-fare-name", fare.name), h("p", "rb-fare-price", dollars(fare.price)));
+          const list = h("ul", "rb-includes");
+          for (const item of fare.includes) {
+            const li = h("li", item.yes ? "is-yes" : "is-no");
+            li.append(h("span", "rb-mark", item.yes ? "✓" : "✕"), h("span", null, item.text));
+            li.setAttribute("aria-label", `${item.yes ? "Includes" : "Doesn't include"}: ${item.text}`);
+            list.append(li);
+          }
+          if (!fare.seatChoice) {
+            const li = h("li", "is-no");
+            li.append(h("span", "rb-mark", "·"), h("span", null, "Seat assigned at check-in"));
+            list.append(li);
+          }
+          col.append(list);
+          const b = h("button", `rb-button${fare.id === "standard" ? " is-primary" : ""}`, `Choose ${fare.name}`);
+          b.type = "button";
+          b.dataset.key = `fare:${fare.id}`;
+          b.disabled = !live || at.sending;
+          b.onclick = () => void ask("choose", fare.id); // DECLARED
+          col.append(b);
+          grid.append(col);
+        }
+        card.append(grid);
+        if (at.state === "frozen") {
+          const fare = props.fares.find((f) => f.id === at.picked);
+          card.append(h("p", "rb-foot", fare ? `You chose ${fare.name}, ${dollars(fare.price)}.` : "Closed when you typed instead."));
+        }
+        el.append(card);
+      };
+      const ask = asker(el, ctx, at, draw);
+      draw();
+      if (ctx.state === "live") requestAnimationFrame(() => showTop(el));
+      return { freeze(/** @type {unknown} */ selection) { at.state = "frozen"; at.picked = selection; redraw(el, draw); } };
+    },
+  },
+
+  booking_review: {
+    /**
+     * Nothing is booked until Confirm. Its click carries the total on screen,
+     * so a total the airline has just raised is refused, not charged.
+     * @param {HTMLElement} el
+     * @param {BookingReviewProps} props
+     * @param {MountCtx} ctx
+     */
+    mount(el, props, ctx) {
+      const at = { state: /** @type {string} */ (ctx.state), picked: ctx.selection, sending: false };
+      const draw = () => {
+        const live = at.state === "live" && ctx.mode === "elicit";
+        el.replaceChildren();
+        const card = h("div", "rb-card rb-review");
+        card.append(head("Check your booking", "Nothing is booked until you confirm", props.previousTotal !== null ? badge("Fare went up", "alert") : null));
+
+        const legs = h("div", "rb-legs");
+        for (const leg of props.legs) {
+          const row = h("div", "rb-leg");
+          row.append(h("span", "rb-code", leg.from), h("span", "rb-arrow", "→"), h("span", "rb-code", leg.to), h("span", "rb-leg-flight", leg.flight));
+          legs.append(row);
+        }
+        card.append(legs);
+
+        const facts = h("dl", "rb-facts");
+        for (const [k, v] of [["Traveller", props.passenger], ["Leaves", props.depart], ["Lands", props.arrive], ["Fare", props.fare.name], ["Seat", props.seat ?? "At check-in"]]) {
+          const pair = h("div");
+          pair.append(h("dt", null, k), h("dd", null, v));
+          facts.append(pair);
+        }
+        card.append(facts);
+
+        const price = h("dl", "rb-price");
+        for (const [k, v, cls] of [["Fare", dollars(props.price.fare), ""], ["Taxes and fees", dollars(props.price.taxes), ""], ["Total", dollars(props.price.total), "is-total"]]) {
+          const pair = h("div", cls || null);
+          pair.append(h("dt", null, k), h("dd", null, v));
+          price.append(pair);
+        }
+        card.append(price);
+        if (props.previousTotal !== null) {
+          card.append(h("p", "rb-why", `It was ${dollars(props.previousTotal)}: the airline raised the fare a moment ago.`));
+        }
+        card.append(h("p", "rb-foot", props.payment));
+
+        if (at.state === "frozen") {
+          const sel = at.picked;
+          card.append(
+            h(
+              "p",
+              "rb-foot",
+              sel && typeof sel === "object" && "total" in sel
+                ? `You confirmed, at ${dollars(Number(/** @type {{ total: number }} */ (sel).total))}.`
+                : typeof sel === "string" ? `You asked to change the ${sel}.` : "Closed when you typed instead.",
+            ),
+          );
+        } else {
+          const actions = h("div", "rb-actions");
+          const confirm = h("button", "rb-button is-primary", `Confirm and book · ${dollars(props.price.total)}`);
+          confirm.type = "button";
+          confirm.dataset.key = "review:confirm";
+          confirm.disabled = !live || at.sending;
+          // DECLARED: `confirm` carries the total on screen
+          confirm.onclick = () => void ask("confirm", { total: props.price.total });
+          actions.append(confirm);
+          for (const what of /** @type {const} */ (["flight", "fare", "seat"])) {
+            if (what === "seat" && !props.fare.seatChoice) continue;
+            const b = h("button", "rb-button", `Change ${what}`);
+            b.type = "button";
+            b.dataset.key = `review:${what}`;
+            b.disabled = !live || at.sending;
+            b.onclick = () => void ask("change", what); // DECLARED
+            actions.append(b);
+          }
+          card.append(actions);
+        }
+        el.append(card);
+      };
+      const ask = asker(el, ctx, at, draw);
+      draw();
+      if (ctx.state === "live") requestAnimationFrame(() => showTop(el));
+      return {
+        freeze(/** @type {unknown} */ selection) { at.state = "frozen"; at.picked = selection; redraw(el, draw); },
+        // The airline raised the fare: the review is revised in place, and says so.
+        update(/** @type {BookingReviewProps} */ next) { props = next; redraw(el, draw); },
+      };
+    },
+  },
+
+  booking_confirmed: {
+    /**
+     * @param {HTMLElement} el
+     * @param {BookingConfirmedProps} props
+     * @param {MountCtx} ctx
+     */
+    mount(el, props, ctx) {
+      const card = h("div", "rb-card rb-pass");
+      card.append(head("E-ticket · flight home", `${props.passenger} · booking ${props.reference}`, badge("Booked", "ok")));
+      const legs = h("div", "rb-legs");
+      for (const leg of props.legs) {
+        const row = h("div", "rb-leg");
+        row.append(h("span", "rb-code", leg.from), h("span", "rb-arrow", "→"), h("span", "rb-code", leg.to), h("span", "rb-leg-flight", leg.flight));
+        legs.append(row);
+      }
+      card.append(legs);
+      const facts = h("dl", "rb-facts rb-facts-pass");
+      for (const [k, v] of [["Leaves", props.depart], ["Lands", props.arrive], ["Fare", props.fare], ["Seat", props.seat ?? "At check-in"], ["Bags", props.bags], ["Paid", dollars(props.total)]]) {
+        const pair = h("div");
+        pair.append(h("dt", null, k), h("dd", null, v));
+        facts.append(pair);
+      }
+      card.append(facts);
+      el.append(card);
+      if (ctx.state === "live") requestAnimationFrame(() => showTop(el));
+    },
+  },
 };
 
 /**
@@ -417,6 +800,17 @@ export const notices = {
     mount(el, p) {
       const box = h("div", "rb-notice rb-notice-ok");
       box.append(h("strong", null, `Seat ${p.seat} confirmed`), h("span", null, `${p.flight} · booking ${p.reference}`));
+      el.append(box);
+    },
+  },
+  ticket_issued: {
+    /**
+     * @param {HTMLElement} el
+     * @param {TicketIssued} p
+     */
+    mount(el, p) {
+      const box = h("div", "rb-notice rb-notice-ok");
+      box.append(h("strong", null, "Ticket issued"), h("span", null, `${p.ticket} · ${p.flight} · booking ${p.reference}`));
       el.append(box);
     },
   },
