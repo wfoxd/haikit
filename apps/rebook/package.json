@@ -7,8 +7,8 @@
     "node": ">=22.18"
   },
   "scripts": {
-    "start": "node src/server/main.ts",
-    "dev": "node --watch src/server/main.ts",
+    "start": "node --env-file-if-exists=.env src/server/main.ts",
+    "dev": "node --watch --env-file-if-exists=.env src/server/main.ts",
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.browser.json",
     "smoke": "node test/smoke.mjs",
     "test": "npm run typecheck && npm run smoke",
