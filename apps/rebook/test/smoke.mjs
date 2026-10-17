@@ -303,6 +303,19 @@ try {
         `rebooked onto NH 7, which lands Thu 14:25, the Thursday flights home start two hours later: ${departs.join(", ")}`,
         () => departs.join(", "),
       );
+      // questions while the flights home are on screen are about them, not the rebooking options shown earlier
+      const fastest = await sse("/hai/chat", { conversationId: id, message: "which is fastest?" });
+      check(
+        /^The fastest is /.test(said(fastest)) && surface(fastest, "flight_results").ui?.mode === "elicit" && !opened(fastest, "rebooking_options").length,
+        `“which is fastest?” is about the flights home on screen: “${said(fastest).slice(0, 60)}…”`,
+        () => said(fastest),
+      );
+      const first = await sse("/hai/chat", { conversationId: id, message: "what lands first?" });
+      check(
+        surface(first, "flight_results").ui?.mode === "elicit" && !opened(first, "rebooking_options").length,
+        "“what lands first?”, which the guide can't answer about the flights home, brings them back, not the rebooking options",
+        () => said(first),
+      );
     }
 
     // 8b · a second conversation: a release after the traveller chose changes
@@ -635,6 +648,44 @@ try {
         opened(done, "booking_confirmed").length === 1 && surface(done, "rebooking_options").ui?.mode === "elicit",
         "…then, with the ticket issued, the options to Tokyo open",
         () => said(done),
+      );
+    }
+
+    // 11i · a request to book the flight home that rides in with the
+    //       cancellation is booked first; the options follow the ticket, or
+    //       come when asked for by name
+    {
+      const begin = await sse("/hai/start", {});
+      const id12 = begin.find((e) => e.type === "hello")?.conversationId;
+      await ops("cancel", id12); // no events stream: no wake turn, so the news waits for the click
+      // the cancellation revised the trip card, so the click names its newest handle
+      const revised = await sse("/hai/interact", { conversationId: id12, handle: surface(begin, "trip_card").ui?.handle, action: "book_home", value: "home" });
+      const tripNow = refusal(revised).match(/superseded by (ui_\d+)/)?.[1];
+      const click = await sse("/hai/interact", { conversationId: id12, handle: tripNow, action: "book_home", value: "home" });
+      const search = surface(click, "flight_search");
+      check(
+        /^I'm sorry: .*Let's book your flight home first/.test(said(click)) && search.ui?.mode === "elicit" && !opened(click, "rebooking_options").length,
+        "Book my flight home, clicked as the cancellation arrives: the guide says so, and books the flight home first",
+        () => said(click),
+      );
+      const results = surface(await sse("/hai/interact", { conversationId: id12, handle: search.ui?.handle, action: "search", value: { from: "TYO", date: "Sun" } }), "flight_results");
+      const fares = surface(await sse("/hai/interact", { conversationId: id12, handle: results.ui?.handle, action: "choose", value: "r01" }), "fare_options");
+      const review = surface(await sse("/hai/interact", { conversationId: id12, handle: fares.ui?.handle, action: "choose", value: "basic" }), "booking_review");
+      const done = await sse("/hai/interact", { conversationId: id12, handle: review.ui?.handle, action: "confirm", value: { total: review.props?.price.total } });
+      check(
+        opened(done, "booking_confirmed").length === 1 && surface(done, "rebooking_options").ui?.mode === "elicit",
+        "…and once the ticket is issued, the options to Tokyo open",
+        () => said(done),
+      );
+
+      const id13 = (await sse("/hai/start", {})).find((e) => e.type === "hello")?.conversationId;
+      await ops("cancel", id13);
+      const typed = await sse("/hai/chat", { conversationId: id13, message: "book my flight home on Sunday" });
+      const rebook = await sse("/hai/chat", { conversationId: id13, message: "show me the rebooking options" });
+      check(
+        surface(typed, "flight_search").props?.date === "Sun" && /Let's book your flight home first/.test(said(typed)) && surface(rebook, "rebooking_options").ui?.mode === "elicit",
+        "typed as the cancellation arrives, the booking goes first; asked for by name, the rebooking options open",
+        () => `${said(typed)} · ${said(rebook)}`,
       );
     }
 

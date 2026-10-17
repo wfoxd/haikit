@@ -74,6 +74,15 @@ export function scripted(): ModelAdapter {
         if (home?.call && home.call.name !== "issue_ticket") {
           return reply(`${sorry} Let's finish booking your flight home first, then I'll find you a way to Tokyo. ${home.say}`, onTextDelta, [home.call]);
         }
+        // So does a request to book it, typed or from the trip card's button:
+        // the search asks, so it goes first, and the options follow the ticket.
+        const said = texts.filter((t) => !t.startsWith("[App notification:")).at(-1)?.toLowerCase() ?? "";
+        const asked = home ? null : bookingRequest(said);
+        if (asked) {
+          return reply(`${sorry} Let's book your flight home first, then I'll find you a way to Tokyo. ${searchLead(asked)}`, onTextDelta, [
+            toolUse("start_booking", asked),
+          ]);
+        }
         return reply(
           `${sorry} ${home ? `First, your flight home: ${home.say} And here's` : "Here's"} every way I can get you to Tokyo.`,
           onTextDelta,
@@ -176,20 +185,8 @@ export function scripted(): ModelAdapter {
       const text = (texts.at(-1) ?? "").toLowerCase();
       // Booking the flight home, by asking or by the trip card's button: the
       // day and the airport if they named them; the search fills in the rest.
-      // A request needs a verb that books: "which flight home is cheapest?"
-      // asks about the flights on screen, and is answered below.
-      if (/\b(book|fly|need|get me|going)\b.*\b(home|return|san francisco|sfo)\b/.test(text)) {
-        const day = text.match(/\b(thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?|mon(?:day)?)\b/)?.[1];
-        const date = day ? day.charAt(0).toUpperCase() + day.slice(1, 3) : undefined;
-        const from = /haneda|\bhnd\b/.test(text) ? "HND" : /narita|\bnrt\b/.test(text) ? "NRT" : undefined;
-        return answer(
-          date
-            ? "Here's the search, filled in from your trip and your message. Check it, then search."
-            : "Which day would you like to fly home? I've filled in the rest from your trip.",
-          onTextDelta,
-          [toolUse("start_booking", { ...(date && { date }), ...(from && { from }) })],
-        );
-      }
+      const asked = bookingRequest(text);
+      if (asked) return answer(searchLead(asked), onTextDelta, [toolUse("start_booking", asked)]);
       // Typing closes the question that was waiting. When what they typed isn't
       // a request, open that question again, so there's still something to click.
       const closed = resultsOf(messages.at(-2)).find((r) => r.includes("User did not select; they said:")) ?? "";
@@ -218,19 +215,35 @@ export function scripted(): ModelAdapter {
           : /^Choices for/.test(closed) && choice
             ? toolUse("offer_care", { optionId: choice })
             : null;
-      // Questions about the picker shown last: the flights home, or the rebooking options.
+      // Questions about the picker shown last: the flights home, or the rebooking
+      // options. Asked while the flights home are the last, a question goes to
+      // them, unless it names the rebooking.
       const flights = [...history.matchAll(/Flights home on \w+, on screen as (ui_\d+)/g)].at(-1);
       const rebooking = [...history.matchAll(/Rebooking options for \S+ \S+, on screen as (ui_\d+)/g)].at(-1);
-      if (flights && (flights.index ?? 0) > (rebooking?.index ?? -1)) {
+      const homeLast = !!flights && (flights.index ?? 0) > (rebooking?.index ?? -1);
+      const aboutRebooking = /\brebook|\btokyo\b|\bcancell?ed\b/.test(text);
+      // The flight was cancelled while the flight home was being booked, and the
+      // options haven't been shown yet: asked for, they are.
+      if (aboutRebooking && !rebooking && history.includes("[App notification: flight_cancelled]")) {
+        return answer("Here's every way I can get you to Tokyo.", onTextDelta, [toolUse("find_rebooking", {})]);
+      }
+      if (homeLast && flights && !aboutRebooking) {
         const ask = (query: string, args: Record<string, unknown>, lead: string) =>
           answer(lead, onTextDelta, [toolUse("query_ui", { handle: flights[1], query, args })]);
         if (/non-?stop|direct/.test(text)) return ask("filter", { nonstop: true }, "Checking every flight for nonstops.");
         if (/cheap|lowest|least|price/.test(text)) return ask("cheapest", {}, "Checking which costs least.");
         if (/haneda|\bhnd\b/.test(text)) return ask("filter", { airport: "HND" }, "Checking which leave from Haneda.");
         if (/narita|\bnrt\b/.test(text)) return ask("filter", { airport: "NRT" }, "Checking which leave from Narita.");
-        if (/flights|all of them|list|every/.test(text)) return answer("Here are all of them again.", onTextDelta, [toolUse("show_flights", {})]);
+        if (/fast|quick|shortest/.test(text)) {
+          // the digest of the flights on screen names the fastest, or the cheapest when it's both
+          const digest = [...messages].reverse().flatMap((m) => resultsOf(m)).find((r) => r.startsWith("Flights home on")) ?? "";
+          const fastest = (digest.match(/Fastest: (.+?) \[r\d+\]\./) ?? digest.match(/Cheapest: (.+?) \[r\d+\]\./))?.[1];
+          if (fastest) return answer(`The fastest is ${fastest}.`, onTextDelta, [toolUse("show_flights", flightsWith)]);
+        }
+        if (/flights|all of them|list|every|options/.test(text)) return answer("Here are all of them again.", onTextDelta, [toolUse("show_flights", {})]);
       }
-      const options = rebooking?.[1];
+      // the rebooking options, when they were shown last or are asked for by name
+      const options = homeLast && !aboutRebooking ? undefined : rebooking?.[1];
       const ask = (args: Record<string, boolean>, lead: string) =>
         answer(lead, onTextDelta, [toolUse("query_ui", { handle: options, query: "filter", args })]);
       if (options) {
@@ -265,6 +278,25 @@ export function scripted(): ModelAdapter {
 const lower = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 
 type Call = ReturnType<typeof toolUse>;
+
+/**
+ * A request to book the flight home, typed or from the trip card's button,
+ * with the day and the airport if it names them; null when it isn't one. It
+ * needs a verb that books: "which flight home is cheapest?" asks about the
+ * flights on screen.
+ */
+function bookingRequest(text: string): { date?: string; from?: string } | null {
+  if (!/\b(book|fly|need|get me|going)\b.*\b(home|return|san francisco|sfo)\b/.test(text)) return null;
+  const day = text.match(/\b(thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?|mon(?:day)?)\b/)?.[1];
+  const from = /haneda|\bhnd\b/.test(text) ? "HND" : /narita|\bnrt\b/.test(text) ? "NRT" : undefined;
+  return { ...(day && { date: day.charAt(0).toUpperCase() + day.slice(1, 3) }), ...(from && { from }) };
+}
+
+/** What the guide says as it shows the search for a request. */
+const searchLead = (asked: { date?: string }) =>
+  asked.date
+    ? "Here's the search, filled in from your trip and your message. Check it, then search."
+    : "Which day would you like to fly home? I've filled in the rest from your trip.";
 
 /**
  * The next step of booking the flight home, from a click's label or a tool's
