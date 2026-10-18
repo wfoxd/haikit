@@ -29,9 +29,9 @@ function lookup(terms: Term[], q: string | undefined): Term[] {
 
 // #region welcome-server
 export const welcomeServer = welcomeScreen.implement({
-  // The screen shows a logo, the lede, and four sections: software today, a
+  // The screen shows a logo, the lede, and five sections: software today, a
   // chatbot beside an app against an app the AI runs, how the AI does a job
-  // with you, and what you get. The model gets their
+  // with you, how HaiKIT saves tokens, and what you get. The model gets their
   // headings, so it can answer "what is HaiKIT?" from what the visitor is
   // looking at, and what it needs to act on the answer: which lessons exist,
   // and what each choice leads to.
@@ -40,16 +40,19 @@ export const welcomeServer = welcomeScreen.implement({
       .map((p) => `Part ${p.n} ${quote(p.title)}, lessons ${p.first}–${p.last}`)
       .join("; ");
     const titles = (points: { title: string }[]) => points.map((p) => p.title).join("; ");
-    const { today, versus, example, values } = props;
+    const { today, versus, example, tokens, values } = props;
+    const kept = (e: { screen: number; model: number }) => Math.round((1 - e.model / e.screen) * 100);
     return (
       `Welcome screen on display as ${handle}: the HaiKIT logo, the line ${quote(props.intro[0] ?? "")}, ` +
-      `then: ${props.summary} Four sections follow. 1 ${quote(today.title)}: ${today.before.label}, ${today.before.title.toLowerCase()} ` +
+      `then: ${props.summary} Five sections follow. 1 ${quote(today.title)}: ${today.before.label}, ${today.before.title.toLowerCase()} ` +
       `(${titles(today.before.points)}); ${today.after.label}, ${today.after.title.toLowerCase()} (${titles(today.after.points)}). ` +
       `2 ${quote(versus.title)}: the same request to ${versus.chatbot.name.toLowerCase()} and to ${versus.haikit.name.toLowerCase()}, ` +
       `then how they differ: ${versus.rows.map((r) => r.topic).join("; ")}. ` +
       `3 ${quote(example.title)}: ${example.lead} Steps: ${titles(example.steps)}. A link to try it, ${example.demo.url}, ` +
       `then a diagram of how a HaiKIT app works. ` +
-      `4 ${quote(values.title)}: ${values.groups.map((g) => `${g.audience.toLowerCase()}, ${titles(g.points)}`).join("; ")}. ` +
+      `4 ${quote(tokens.title)}: measured, ${tokens.examples.map((e) => `${e.name}, ~${e.screen} tokens on screen and ~${e.model} for the AI (${kept(e)}% kept out)`).join("; ")}. ` +
+      `How: ${titles(tokens.points)}. It points at the Context drawer, which counts this page's tokens. ` +
+      `5 ${quote(values.title)}: ${values.groups.map((g) => `${g.audience.toLowerCase()}, ${titles(g.points)}`).join("; ")}. ` +
       `Links shown: ${props.links.map((l) => `${l.label} on ${l.site === "npm" ? "npm" : "GitHub"}, ${l.url}`).join("; ")}. ` +
       `Beside the place to start, HaiKIT's tutorial, built into this app: ${quote(props.tutorial.title)}, ` +
       `steps ${props.tutorial.steps[0]?.id}–${props.tutorial.steps.at(-1)?.id}; show_tutorial_step opens a page ` +

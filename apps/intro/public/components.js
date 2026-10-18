@@ -700,6 +700,51 @@ function versusSection(versus, n) {
   return sec;
 }
 
+/** "1,958" */
+const count = (/** @type {number} */ n) => n.toLocaleString("en-US");
+
+/**
+ * How HaiKIT saves tokens: a meter for each measured example, the tokens on
+ * screen beside the tokens the AI read, then the ways it saves them, and where
+ * to watch it on this page. The screen's bar is drawn in good, what stays in
+ * the browser; the AI's in the accent, what the model receives.
+ * @param {WelcomeProps["tokens"]} tokens
+ * @param {number} n its place in the story
+ */
+function tokensSection(tokens, n) {
+  const sec = h("section", "welcome-story");
+  sec.append(storyHead(n, tokens));
+  const meters = h("div", "welcome-meters");
+  for (const example of tokens.examples) {
+    const kept = Math.round((1 - example.model / example.screen) * 100);
+    const meter = h("figure", "welcome-meter");
+    meter.setAttribute(
+      "aria-label",
+      `${example.name}: about ${count(example.screen)} tokens on screen, about ${count(example.model)} for the AI. ${kept}% never reaches the AI.`,
+    );
+    const top = h("figcaption", "welcome-meter-top");
+    const share = h("span", "welcome-meter-kept");
+    share.append(h("strong", "welcome-meter-pct", `${kept}%`), " never reaches the AI");
+    top.append(h("span", "welcome-meter-name", example.name), share);
+    meter.append(top);
+    const bars = h("div", "welcome-meter-bars");
+    bars.setAttribute("aria-hidden", "true"); // the figure's label says the same
+    for (const [label, value, which] of /** @type {const} */ ([["On screen", example.screen, "screen"], ["The AI reads", example.model, "model"]])) {
+      const row = h("div", `meter-row ${which}`);
+      const track = h("span", "meter-track");
+      const bar = h("span", "meter-bar");
+      bar.style.width = `${Math.max(1.5, (value / example.screen) * 100)}%`;
+      track.append(bar);
+      row.append(h("span", "meter-label", label), track, h("span", "meter-n", `~${count(value)} tokens`));
+      bars.append(row);
+    }
+    meter.append(bars);
+    meters.append(meter);
+  }
+  sec.append(meters, pointList("welcome-token-points", tokens.points), inline(h("p", "welcome-see"), tokens.see));
+  return sec;
+}
+
 /**
  * How the AI does a job with you, step by step in one of HaiKIT's demos, a
  * link to try it, and how it works underneath.
@@ -941,7 +986,7 @@ export const registry = {
         if (props.today) {
           // The story: the lede and what HaiKIT is, then software today, a
           // chatbot beside an app against an app the AI runs, how the AI does
-          // a job with you, and what you get.
+          // a job with you, how it saves tokens, and what you get.
           const intro = h("div", "welcome-intro");
           intro.append(lead, inline(h("p", "welcome-summary"), props.summary));
           // numbered in order; a welcome stored at version 11 has no comparison
@@ -949,6 +994,8 @@ export const registry = {
             (/** @type {number} */ n) => todaySection(props.today, n),
             props.versus ? (/** @type {number} */ n) => versusSection(props.versus, n) : null,
             (/** @type {number} */ n) => exampleSection(props.example, n),
+            // a welcome stored before version 13 has no tokens section
+            props.tokens ? (/** @type {number} */ n) => tokensSection(props.tokens, n) : null,
             (/** @type {number} */ n) => valuesSection(props.values, n),
           ].filter((draw) => draw !== null);
           page.append(intro, ...sections.map((draw, i) => draw(i + 1)));

@@ -122,7 +122,7 @@ try {
     tutorial?.next?.first?.id === "2-intro" && tutorial.next.steps === 9 && tutorial.next.title === "Tell them later"
       ? ok("…and the second tutorial after it, nine steps from 2-intro")
       : bad(`welcome's next tutorial: ${JSON.stringify(tutorial?.next)}`);
-    const { today, versus, example, values } = welcomeProps ?? {};
+    const { today, versus, example, tokens, values } = welcomeProps ?? {};
     welcomeProps?.summary?.length > 40 ? ok("welcome says what HaiKIT is under the lede") : bad("welcome has no summary");
     [today?.before, today?.after].every((side) => side?.title && side.points?.length === 3 && side.image?.kind && side.image.alt?.length > 40)
       ? ok("welcome sets software today beside software HaiKIT builds, each drawn and described in words")
@@ -139,10 +139,14 @@ try {
     arch?.nodes?.length === 3 && arch.links?.length === arch.nodes.length - 1 && arch.links.flat().every((a) => a.label)
       ? ok("welcome carries the architecture diagram, every arrow labelled")
       : bad("architecture diagram missing or malformed");
+    tokens?.examples?.length >= 2 && tokens.examples.every((e) => e.name && e.screen > e.model && e.model > 0) &&
+    tokens.points?.length >= 4 && tokens.points.every((pt) => pt.title && pt.text) && /\*\*Context\*\*/.test(tokens.see ?? "")
+      ? ok("welcome shows how HaiKIT saves tokens: measured examples, the ways it does, and the Context drawer to watch it")
+      : bad(`welcome's tokens section: ${JSON.stringify(tokens)}`);
     values?.groups?.length === 2 && values.groups.every((g) => g.audience && g.points?.length === 3)
       ? ok("welcome lists what you get, three values for each audience")
       : bad(`welcome's values: ${JSON.stringify(values)}`);
-    const sections = [today, versus, example, values].filter(Boolean);
+    const sections = [today, versus, example, tokens, values].filter(Boolean);
     const welcomeDigest = start.find((e) => e.type === "block_update")?.result ?? "";
     /lessons 1\.1–1\.\d.*lessons 2\.1–2\.\d/.test(welcomeDigest)
       ? ok("welcome digest tells the model which lessons exist")
@@ -150,9 +154,12 @@ try {
     ["https://github.com/wfoxd/haikit", "https://www.npmjs.com/search?q=haikit"].every((u) => welcomeDigest.includes(u))
       ? ok("the digest gives the model both links")
       : bad("a link is missing from the welcome digest");
-    sections.length === 4 && sections.every((sec) => welcomeDigest.includes(sec.title))
+    sections.length === 5 && sections.every((sec) => welcomeDigest.includes(sec.title))
       ? ok("the digest names each section, so the model can talk about them")
       : bad("a section is missing from the welcome digest");
+    /~1958 tokens on screen and ~67 for the AI \(97% kept out\).*~665 tokens on screen and ~135 for the AI \(80% kept out\)/.test(welcomeDigest)
+      ? ok("the digest gives the model the measured examples, so it can quote them")
+      : bad(`tokens in the welcome digest: ${welcomeDigest}`);
 
     const odd = await sse("/hai/interact", { conversationId, handle: welcome.handle, action: "begin", value: "somewhere" });
     /invalid action payload/.test(odd.find((e) => e.type === "error")?.message ?? "")

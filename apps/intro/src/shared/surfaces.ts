@@ -192,6 +192,12 @@ export const WelcomeSide = z.object({
 export const SceneLine = z.object({ from: z.enum(["world", "you", "ai", "option", "click"]), text: z.string() });
 
 /**
+ * A measured example of the two channels: the tokens a result took on screen,
+ * beside the tokens the AI read of it.
+ */
+export const TokenExample = z.object({ name: z.string(), screen: z.number(), model: z.number() });
+
+/**
  * One side of the chatbot comparison: its name, a short tag that labels its
  * cells where the columns stack, and the same request as it plays there.
  */
@@ -204,8 +210,9 @@ export const welcomeScreen = defineSurface({
   // link, 6 the links list, 7 a tutorial panel of links, 8 the tutorial in-app,
   // 9 the second tutorial beside it, 10 the reference manual under them,
   // 11 the story in place of the sections: today, how, and what you get,
-  // 12 a chatbot beside the app against an app the AI runs, after today
-  version: 12,
+  // 12 a chatbot beside the app against an app the AI runs, after today,
+  // 13 how HaiKIT saves tokens, after how it works
+  version: 13,
   props: z.object({
     /** A short introduction, one paragraph per entry. The first is the lede; the rest close the screen. */
     intro: z.array(z.string()),
@@ -235,6 +242,16 @@ export const welcomeScreen = defineSurface({
       steps: z.array(z.object({ title: z.string(), text: z.string(), scene: z.array(SceneLine) })),
       demo: z.object({ label: z.string(), url: z.string() }),
       underneath: z.object({ title: z.string(), text: z.string(), architecture: Architecture }),
+    }),
+    /** Then how HaiKIT saves tokens: measured examples, the ways it does, and where to see it on this page. */
+    tokens: z.object({
+      label: z.string(),
+      title: z.string(),
+      lead: z.string(),
+      examples: z.array(TokenExample),
+      points: z.array(WelcomePoint),
+      /** Where to watch it happen on this page. */
+      see: z.string(),
     }),
     /** Last, what building this way gives each audience: the people who use the software, and the team that builds it. */
     values: z.object({
