@@ -126,11 +126,18 @@ npm start                # http://localhost:5190
 
 With no API key it uses a scripted guide, so anyone can use the demo at no
 model cost. The scripted guide reads only what a real model would: digests,
-click labels, notices and query answers. To use Claude:
+click labels, notices and query answers. To use Claude, put your key in a
+`.env` file in this folder:
 
 ```bash
-ANTHROPIC_API_KEY=… npm start
+ANTHROPIC_API_KEY=sk-ant-…
 ```
+
+`npm start` reads it (with Node's `--env-file-if-exists`; Node doesn't read
+`.env` by itself), and a variable already set in your shell wins over the
+file. Or pass the key for one run: `ANTHROPIC_API_KEY=… npm start`. `.env` is
+in `.gitignore` and `.dockerignore`, so it's never committed and never built
+into the image.
 
 It runs Claude Haiku 5.5 (`claude-haiku-5-5`) at low effort. Set `HAI_MODEL`
 to use another model.
@@ -154,10 +161,15 @@ and the e-ticket.
 
 ```bash
 docker build -t haikit-rebook .
-docker run -p 8080:8080 haikit-rebook
+docker run --env-file .env -p 8080:8080 haikit-rebook
 ```
 
-Without `ANTHROPIC_API_KEY` it runs the scripted guide. A wake turn needs the
+The image never contains `.env`: `.dockerignore` leaves it out, so a key
+isn't baked into an image that might be pushed or shared. Docker doesn't read
+`.env` by itself either. `--env-file .env` hands its variables to the
+container when it starts, and `-e ANTHROPIC_API_KEY` passes one from your
+shell instead. Without `ANTHROPIC_API_KEY` it runs the scripted guide, so
+leave both off for the free demo. A wake turn needs the
 browser's events stream, so a proxy in front must pass server-sent events
 through unbuffered; behind one that holds them back, the page polls instead.
 

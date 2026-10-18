@@ -1,9 +1,11 @@
 # Rebook, as a container. Build from this folder:
 #
 #   docker build -t haikit-rebook .
-#   docker run -p 8080:8080 haikit-rebook
+#   docker run --env-file .env -p 8080:8080 haikit-rebook
 #
-# With no ANTHROPIC_API_KEY it runs the scripted guide, at no model cost.
+# .env never goes into the image (.dockerignore leaves it out): --env-file
+# passes its variables when the container starts. With no ANTHROPIC_API_KEY
+# it runs the scripted guide, at no model cost.
 FROM node:24-slim
 ENV NODE_ENV=production PORT=8080
 WORKDIR /app
