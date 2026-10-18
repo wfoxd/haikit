@@ -8,7 +8,7 @@ It depends only on the published `@haikit/*` packages.
 The introduction is a HaiKIT conversation. It opens on a welcome screen that asks
 where to begin, lesson 1.1 or the course map. Before the question, it tells the
 story of HaiKIT for someone meeting it for the first time, a junior developer or
-a product manager, in four numbered sections under the lede, "AI drives the
+a product manager, in five numbered sections under the lede, "AI drives the
 software. You steer.":
 
 1. **The idea.** Software today, which people drive through screens of menus,
@@ -21,7 +21,12 @@ software. You steer.":
 3. **How it works.** The [Rebook](https://rebook.haikit.app/) demo in four
    steps, each with a scene of what you'd see, a link to try it, and, for
    developers, the diagram of how a HaiKIT app works.
-4. **Why it matters.** What you get, for the people who use the software and for
+4. **Fewer tokens.** How HaiKIT keeps the AI's bill small: a meter for two
+   measured examples (a flight search's 47 results, about 1,958 tokens on
+   screen and 67 for the AI; Rebook's 14 options, about 665 and 135), the six
+   ways it saves tokens, and a pointer to the Context drawer, which counts this
+   page's tokens.
+5. **Why it matters.** What you get, for the people who use the software and for
    the team that builds it.
 
 It ends with the place to start, beside a Tutorial panel whose steps open
@@ -29,8 +34,8 @@ HaiKIT's tutorials right here, and under them a Reference panel whose buttons
 open each page of HaiKIT's reference manual. The text lives in
 `src/server/course/index.ts`, and the drawings are SVG in
 `public/illustrations.js` and `public/architecture.js`. A welcome saved before
-this layout (version 10 or earlier), or before the chatbot comparison (version
-11), still renders as it was.
+this layout (version 10 or earlier), before the chatbot comparison (version 11),
+or before the tokens section (version 12) still renders as it was.
 
 From there a guide opens lessons with tools: each lesson is a `display`
 surface, and each checkpoint question is an `elicit` surface that parks the

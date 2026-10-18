@@ -318,6 +318,53 @@ const EXAMPLE: WelcomeProps["example"] = {
   },
 };
 
+/**
+ * Then: how HaiKIT saves tokens. The examples' numbers are measured by the
+ * tests, which print them: the repository's `npm run smoke` for the flights
+ * example ("digest 67 tok vs payload 1958 tok", the AI's whole context on
+ * that turn), and apps/rebook's `npm test` for its options ("a digest
+ * (~135 tok) of options that stay in the browser (~665 tok)"). Measure again
+ * when either changes.
+ */
+const TOKENS: WelcomeProps["tokens"] = {
+  label: "Fewer tokens",
+  title: "How HaiKIT keeps the AI's bill small",
+  lead:
+    "An AI is paid by the token, for every word it reads and writes. Whatever it has read is sent to it again, and billed again, " +
+    "on every turn after. So HaiKIT gives the AI only what it needs to decide the next step.",
+  examples: [
+    { name: "A flight search, 47 results", screen: 1958, model: 67 },
+    { name: "Rebook's 14 ways to Tokyo", screen: 665, model: 135 },
+  ],
+  points: [
+    {
+      title: "A summary, not the data",
+      text: "Each result goes two ways: all of it to the screen, a few sentences to the AI. People see everything; the AI reads, and is paid for, the summary.",
+    },
+    {
+      title: "Small on every turn after",
+      text: "Data a chatbot loads into the conversation is sent again with every message that follows. A summary is small from the start, so each later turn stays cheap too.",
+    },
+    {
+      title: "Clicks, not clarifications",
+      text: "A choice arrives as one exact line, so no turns are spent working out what the person meant.",
+    },
+    {
+      title: "Look up, don't load",
+      text: "When the AI needs a detail, it asks the data on screen a question, and the answer is capped: “5 of 14 match”, eight rows at most.",
+    },
+    {
+      title: "Local stays local",
+      text: "Filtering, sorting and switching tabs happen in the browser, and never cost a turn.",
+    },
+    {
+      title: "Waiting costs nothing",
+      text: "While a question waits for a person, nothing runs: no tokens are spent until they answer.",
+    },
+  ],
+  see: "See it on this page: open **Context**, at the top right. It counts every token the AI has received here, beside what stayed in your browser.",
+};
+
 /** Last: what building this way gives the people who use the software, and the team that builds it. */
 const VALUES: WelcomeProps["values"] = {
   label: "Why it matters",
@@ -411,6 +458,7 @@ export const welcomeProps = (): WelcomeProps => ({
   today: TODAY,
   versus: VERSUS,
   example: EXAMPLE,
+  tokens: TOKENS,
   values: VALUES,
   tutorial: TUTORIAL_PANEL,
   reference: REFERENCE_PANEL,
