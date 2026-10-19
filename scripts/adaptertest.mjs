@@ -165,7 +165,13 @@ console.log("\noutput → content");
   );
   check("a cancelled one throws too", throws(() => fromOutput({ status: "cancelled", output: [] }), /the response cancelled$/));
 
-  check("arguments that aren't an object become {}", same(fromOutput({ output: [{ type: "function_call", call_id: "c", name: "n", arguments: "[1]" }] }).content[0].input, {}));
+  check(
+    "in a complete reply, arguments that aren't a JSON object fail the call",
+    throws(() => fromOutput({ status: "completed", output: [{ type: "function_call", call_id: "c", name: "search", arguments: "[1]" }] }), /called search with arguments that aren't a JSON object/) &&
+      throws(() => fromOutput({ status: "completed", output: [{ type: "function_call", call_id: "c", name: "search", arguments: '{"q":' }] }), /aren't a JSON object/),
+  );
+  const cutOther = fromOutput({ status: "incomplete", incomplete_details: { reason: "content_filter" }, output: [{ type: "function_call", call_id: "c", name: "n", arguments: "[1]" }] });
+  check("in an incomplete one, for any reason, they become {}", same(cutOther.content[0].input, {}) && cutOther.stop_reason !== "tool_use", cutOther);
 }
 
 // ── tools ───────────────────────────────────────────────────────────────
@@ -267,8 +273,8 @@ console.log("\nrequest");
       tools: [{ type: "function", name: "a", description: "d", parameters: { type: "object" }, strict: false }],
       input: [{ role: "user", content: "hi" }],
       max_output_tokens: 16000,
-      reasoning: { effort: "medium" },
       store: false,
+      reasoning: { effort: "medium" },
       include: ["reasoning.encrypted_content"],
     }),
     fake.sent[0],
@@ -285,6 +291,14 @@ console.log("\nrequest");
     "options become model, max_output_tokens, reasoning.effort and prompt_cache_key",
     custom.id === "gpt-x" && p.model === "gpt-x" && p.max_output_tokens === 500 && p.reasoning.effort === "low" && p.prompt_cache_key === "app",
     p,
+  );
+
+  const plain = fakeClient([{ events: [], final: { status: "completed", output: [] } }]);
+  await createAdapter({ model: "gpt-4.1", effort: null }, () => plain.make()).generate(request);
+  check(
+    "effort: null sends neither reasoning nor its include, for a model that doesn't reason",
+    !("reasoning" in plain.sent[0]) && !("include" in plain.sent[0]) && plain.sent[0].store === false,
+    plain.sent[0],
   );
 
   check("openai() builds an adapter without loading the SDK or a key", openai().id === "gpt-6-luna");

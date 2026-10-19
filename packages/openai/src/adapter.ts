@@ -18,8 +18,11 @@ export interface OpenAIOptions {
   /** Any OpenAI model ID. Defaults to `gpt-6-luna`. */
   model?: string;
   maxTokens?: number;
-  /** Defaults to `medium`. */
-  effort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+  /**
+   * Defaults to `medium`. `null` sends no reasoning settings at all, for a
+   * model that doesn't reason and so refuses them.
+   */
+  effort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | null;
   apiKey?: string;
   baseURL?: string;
   /** Sent as `prompt_cache_key`, to route calls that share a prefix together. */
@@ -29,6 +32,7 @@ export interface OpenAIOptions {
 /** The adapter, given a way to make the client: tests pass a fake one. */
 export function createAdapter(options: OpenAIOptions, makeClient: () => Promise<any>): ModelAdapter {
   const model = options.model ?? "gpt-6-luna";
+  const effort = options.effort === undefined ? "medium" : options.effort;
   let client: any = null;
 
   return {
@@ -45,9 +49,10 @@ export function createAdapter(options: OpenAIOptions, makeClient: () => Promise<
         tools: toTools(request.tools),
         input: toInput(request.messages),
         max_output_tokens: options.maxTokens ?? 16000,
-        reasoning: { effort: options.effort ?? "medium" },
         store: false,
-        include: ["reasoning.encrypted_content"],
+        // Encrypted reasoning comes back only when asked for, and a model that
+        // doesn't reason refuses both.
+        ...(effort === null ? {} : { reasoning: { effort }, include: ["reasoning.encrypted_content"] }),
         ...(options.promptCacheKey ? { prompt_cache_key: options.promptCacheKey } : {}),
       });
 

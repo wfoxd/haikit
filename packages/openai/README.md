@@ -8,8 +8,9 @@ createHai({ model: openai({ model: "gpt-6-luna", effort: "medium" }), … });
 ```
 
 With no `model`, it uses `gpt-6-luna`; pass any other model ID to change it.
-`effort` defaults to `medium`. The key comes from `OPENAI_API_KEY` unless you
-pass `apiKey`.
+`effort` defaults to `medium`; pass `effort: null` for a model that doesn't
+reason, such as `gpt-4.1`, and no reasoning settings are sent. The key comes
+from `OPENAI_API_KEY` unless you pass `apiKey`.
 
 Note it imports only `@haikit/core`, never `@haikit/server`. Adapters implement an
 interface the contract layer declares — that is what keeps the runtime

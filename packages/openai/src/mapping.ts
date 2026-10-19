@@ -110,12 +110,13 @@ export function toTools(tools: ModelRequest["tools"]): any[] {
   }));
 }
 
-function parseArguments(text: unknown): Record<string, unknown> {
+/** A call's arguments as an object, or `null` when they aren't a JSON object. */
+function parseArguments(text: unknown): Record<string, unknown> | null {
   try {
     const value = JSON.parse(String(text));
-    return value !== null && typeof value === "object" && !Array.isArray(value) ? value : {};
+    return value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
   } catch {
-    return {};
+    return null;
   }
 }
 
@@ -127,6 +128,9 @@ export function fromOutput(response: any): ModelResponse {
     throw new Error(`[haikit] openai: the response ${response.status}${why}`);
   }
 
+  // The runtime never runs the calls of an incomplete reply, so a call cut
+  // off part way can stand with `{}`. In a complete one it would be run.
+  const incomplete = response?.status === "incomplete";
   const content: any[] = [];
 
   for (const item of response?.output ?? []) {
@@ -136,7 +140,11 @@ export function fromOutput(response: any): ModelResponse {
         else if (part?.type === "refusal") content.push({ type: "text", text: part.refusal });
       }
     } else if (item?.type === "function_call") {
-      content.push({ type: "tool_use", id: item.call_id, name: item.name, input: parseArguments(item.arguments) });
+      const input = parseArguments(item.arguments);
+      if (input === null && !incomplete) {
+        throw new Error(`[haikit] openai: the model called ${item.name} with arguments that aren't a JSON object`);
+      }
+      content.push({ type: "tool_use", id: item.call_id, name: item.name, input: input ?? {} });
     } else if (item?.type === "reasoning" && item.encrypted_content) {
       // With `store: false`, OpenAI keeps nothing, so a reasoning item can only
       // be sent back with its encrypted content. One without it is dropped.

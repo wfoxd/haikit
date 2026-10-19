@@ -84,7 +84,7 @@ Checked against `@haikit/*` 0.20.0. Durations are in milliseconds.
 | --- | --- | --- |
 | `model` | `"gpt-6-luna"` | [Models](models.md#openaioptions) |
 | `maxTokens` | `16000` | [Models](models.md#openaioptions) |
-| `effort` | `"medium"`: one of `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"` | [Models](models.md#openaioptions) |
+| `effort` | `"medium"`: one of `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`, or `null` to send no reasoning settings | [Models](models.md#openaioptions) |
 | `apiKey` | the SDK's default, from `OPENAI_API_KEY` | [Models](models.md#openaioptions) |
 | `baseURL` | the SDK's default, from `OPENAI_BASE_URL`, else `https://api.openai.com/v1` | [Models](models.md#openaioptions) |
 | `promptCacheKey` | none: no `prompt_cache_key` is sent | [Models](models.md#openaioptions) |

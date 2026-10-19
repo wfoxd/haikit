@@ -208,9 +208,9 @@ const hai = createHai({ model: openai({ model: "gpt-6-luna", effort: "medium" })
   | `tools` | each tool as `{ type: "function", name, description, parameters: input_schema, strict }`. `strict` is always sent: `true` only when the tool's `strict` is truthy and its schema [allows it](#strict-mode), and `false` otherwise. `query_ui` is `false` |
   | `input` | `request.messages`, translated (see [The history, sent](#the-history-sent)) |
   | `max_output_tokens` | `options.maxTokens`, default `16000` |
-  | `reasoning` | `{ effort: options.effort }`, default `"medium"` |
   | `store` | `false` |
-  | `include` | `["reasoning.encrypted_content"]` |
+  | `reasoning` | `{ effort: options.effort }`, default `"medium"`. Not sent when `effort` is `null` |
+  | `include` | `["reasoning.encrypted_content"]`. Not sent when `effort` is `null` |
   | `prompt_cache_key` | `options.promptCacheKey`, sent only when it's a non-empty string |
 
 - **Each text delta and refusal delta** in the stream goes to `onTextDelta`.
@@ -258,7 +258,7 @@ The response's `output` items become `content` blocks, in order:
 | --- | --- |
 | A `message`'s `output_text` part | `{ type: "text", text }` |
 | A `message`'s `refusal` part | `{ type: "text", text: refusal }` |
-| A `function_call` | `{ type: "tool_use", id: call_id, name, input }`. `input` is `arguments` parsed as JSON, or `{}` when it doesn't parse to an object, as when the reply was cut off part way through the call |
+| A `function_call` | `{ type: "tool_use", id: call_id, name, input }`. `input` is `arguments` parsed as JSON. When they don't parse to an object, `input` is `{}` if the response is incomplete, as when it was cut off part way through the call: the runtime doesn't run an incomplete reply's calls. In a response that isn't incomplete, where the call would be run, the call fails instead (see below) |
 | A `reasoning` item with `encrypted_content` | `{ type: "openai_reasoning", id, summary, encrypted_content }`, so the next call can send it back. One without `encrypted_content` is dropped, since with `store: false` there's nothing it could refer to |
 
 Other output items are dropped: the adapter offers no built-in OpenAI tools,
@@ -282,7 +282,11 @@ answers each of its calls with `Not run: …` and calls the model again (see
 
 A response with `status: "failed"` or `"cancelled"` fails the call with
 `[haikit] openai: the response <status>`, followed by `: <message>` when the
-response has an error message. The SDK's stream doesn't reject on these
+response has an error message. A function call whose arguments aren't a JSON
+object, in a response that isn't incomplete, fails it with
+`[haikit] openai: the model called <name> with arguments that aren't a JSON object`,
+rather than run the tool on input the model didn't give. Either way the turn
+fails, and the reply isn't recorded. The SDK's stream doesn't reject on these
 itself. An error the API sends instead of a response, or one from the
 network, rejects with the SDK's error.
 
@@ -311,7 +315,7 @@ error.
 interface OpenAIOptions {
   model?: string;
   maxTokens?: number;
-  effort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+  effort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | null;
   apiKey?: string;
   baseURL?: string;
   promptCacheKey?: string;
@@ -322,7 +326,7 @@ interface OpenAIOptions {
 | --- | --- | --- |
 | `model` | `"gpt-6-luna"` | Any OpenAI model id. Also the adapter's `id` |
 | `maxTokens` | `16000` | The reply's `max_output_tokens`, which counts reasoning tokens as well as the reply's own. A reply that reaches it ends the turn, unless it was cut off part way through a tool call: that call isn't run, and the model is told and called again (see above) |
-| `effort` | `"medium"` | Sent as `reasoning.effort`. Lower is faster and cheaper. Which values a model accepts is up to the model |
+| `effort` | `"medium"` | Sent as `reasoning.effort`. Lower is faster and cheaper. Which values a model accepts is up to the model. `null` sends neither `reasoning` nor `include`, for a model that doesn't reason and refuses them, such as `gpt-4.1`; with it, no reasoning items come back |
 | `apiKey` | the SDK's default (`OPENAI_API_KEY`) | The API key. An empty string counts as not given |
 | `baseURL` | the SDK's default (`OPENAI_BASE_URL`, else `https://api.openai.com/v1`) | Where requests go, for a proxy or another host that serves the Responses API. An empty string counts as not given |
 | `promptCacheKey` | none | Sent as `prompt_cache_key`, which OpenAI uses to route requests that share a prefix to the same cache. An empty string counts as not given |
