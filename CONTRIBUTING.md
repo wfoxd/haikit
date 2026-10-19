@@ -13,17 +13,18 @@ npm run pgtest    # @haikit/postgres on PGlite; set HAIKIT_PG_URL to add a real 
 packages/core        contracts — the four type guarantees live here
 packages/server      runtime, elicit state machine, routes
 packages/client      browser runtime + default UI (plain ESM, no build)
-packages/anthropic   model adapter
+packages/anthropic   model adapter for Claude
+packages/openai      model adapter for OpenAI models
 packages/postgres    durable store adapter (bring your own driver)
 examples/*           demonstrations. private, never published
-scripts/             typetest.mjs, storetest.mjs, smoke.mjs, packtest.mjs
+scripts/             typetest.mjs, adaptertest.mjs, storetest.mjs, smoke.mjs, packtest.mjs
 ```
 
 ## Two rules with teeth
 
-**Adapters never import the runtime.** `@haikit/anthropic` and any store adapter
-depend on `@haikit/core` only. If an adapter needs something from `@haikit/server`,
-that something belongs in core as an interface.
+**Adapters never import the runtime.** `@haikit/anthropic`, `@haikit/openai` and any
+store adapter depend on `@haikit/core` only. If an adapter needs something from
+`@haikit/server`, that something belongs in core as an interface.
 
 **`@haikit/client` never imports `@haikit/server`.** The only thing crossing that line
 is an app's own contract module. If the client needs a type, it comes from

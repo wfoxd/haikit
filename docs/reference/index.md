@@ -20,6 +20,7 @@ of 0.20.0, statement by statement.
 | `@haikit/server` | The runtime (`Hai`), the HTTP routes and the in-memory store | Node |
 | `@haikit/postgres` | A Postgres store for production and for running several servers | Node |
 | `@haikit/anthropic` | The model adapter for Claude | Node |
+| `@haikit/openai` | The model adapter for OpenAI models, over the Responses API | Node |
 | `@haikit/client` | The browser runtime, the default chat UI and its stylesheet | browser, no build step |
 | `@haikit/react` | Write surfaces and notices as React components | browser |
 
@@ -36,7 +37,7 @@ of 0.20.0, statement by statement.
 | [Conversations](conversations.md) | The stored conversation: its fields, statuses and lifecycle, leases, and the errors stores raise | written |
 | [The server](server.md) | `createHai`, the `Hai` class and every `HaiConfig` option | written |
 | [HTTP routes and the wire](http.md) | `nodeHandler`, each route's requests, responses and errors, the events stream and its polling mode, and every wire event | written |
-| [Models](models.md) | The model adapter interface, and `@haikit/anthropic` | written |
+| [Models](models.md) | The model adapter interface, `@haikit/anthropic` and `@haikit/openai` | written |
 | [Stores](stores.md) | The store interface every store implements, `memoryStore`, and `@haikit/postgres`: schema, migration, cross-server channels, cleanup | written |
 | [The browser client](client.md) | `createChat`, the `Chat` object and its state, and the registries for surfaces, notices and signals | written |
 | [The default UI](ui.md) | `mountChat`, the transcript and inspector renderers, and the `hai.css` tokens | written |
@@ -200,6 +201,13 @@ Every export of every package, with the page that documents it.
 | --- | --- | --- |
 | `anthropic` | function | [Models](models.md) |
 | `AnthropicOptions` | interface | [Models](models.md) |
+
+### `@haikit/openai`
+
+| Symbol | Kind | Page |
+| --- | --- | --- |
+| `openai` | function | [Models](models.md) |
+| `OpenAIOptions` | interface | [Models](models.md) |
 
 ### `@haikit/client`
 

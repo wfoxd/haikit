@@ -19,7 +19,7 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const PACKAGES = ["core", "server", "client", "anthropic", "postgres", "react"];
+const PACKAGES = ["core", "server", "client", "anthropic", "openai", "postgres", "react"];
 
 let pass = 0;
 const failures = [];
@@ -153,6 +153,7 @@ try {
           "@haikit/server": fileDep("server"),
           "@haikit/client": fileDep("client"),
           "@haikit/anthropic": fileDep("anthropic"),
+          "@haikit/openai": fileDep("openai"),
           "@haikit/postgres": fileDep("postgres"),
           "@haikit/react": fileDep("react"),
           // @haikit/react's peers, and the types its .d.ts is checked against
@@ -182,6 +183,7 @@ try {
 import { defineSurface, resolve as resolveAction, query, makeCap, defineTool } from "@haikit/core";
 import { createHai, memoryStore, nodeHandler } from "@haikit/server";
 import { anthropic } from "@haikit/anthropic";
+import { openai } from "@haikit/openai";
 import { pgStore, migrate, schema, sweepOrphans } from "@haikit/postgres";
 import { createChat } from "@haikit/client";
 import { mountChat } from "@haikit/client/app.js";
@@ -193,6 +195,9 @@ const out = {};
 out.coreExports = [defineSurface, resolveAction, query, makeCap, defineTool].every(f => typeof f === "function");
 out.serverExports = [createHai, memoryStore, nodeHandler].every(f => typeof f === "function");
 out.anthropicExport = typeof anthropic === "function";
+// builds without a key or the network: the SDK loads on the first call
+const gpt = openai();
+out.openaiAdapter = gpt.id === "gpt-6-luna" && typeof gpt.generate === "function";
 out.postgresExports = [pgStore, migrate, sweepOrphans].every((f) => typeof f === "function") && Array.isArray(schema);
 // a store built from the tarball satisfies the adapter shape, with any driver
 const pgShaped = pgStore({ query: async () => ({ rows: [] }) });
@@ -254,6 +259,7 @@ console.log(JSON.stringify(out));
   check("@haikit/core named exports", () => runtime.coreExports === true);
   check("@haikit/server named exports", () => runtime.serverExports === true);
   check("@haikit/anthropic named export", () => runtime.anthropicExport === true);
+  check("@haikit/openai builds a ModelAdapter", () => runtime.openaiAdapter === true);
   check("@haikit/postgres named exports", () => runtime.postgresExports === true);
   check("@haikit/postgres builds a StoreAdapter", () => runtime.postgresIsStore === true);
   check("@haikit/client named exports (incl. subpaths)", () => runtime.clientExports === true);
@@ -297,9 +303,10 @@ console.log(JSON.stringify(out));
   writeFileSync(
     join(consumer, "use.ts"),
     `
-import { defineSurface, resolve as resolveAction, query, makeCap, type Capped, type StoreAdapter } from "@haikit/core";
+import { defineSurface, resolve as resolveAction, query, makeCap, type Capped, type StoreAdapter, type ModelAdapter } from "@haikit/core";
 import { createHai, memoryStore, nodeHandler } from "@haikit/server";
 import { anthropic } from "@haikit/anthropic";
+import { openai } from "@haikit/openai";
 import { pgStore } from "@haikit/postgres";
 import { createChat, type Registry, type MountCtx } from "@haikit/client";
 import { mountChat } from "@haikit/client/app.js";
@@ -361,6 +368,9 @@ void notice; void deadline;
 // the store type-checks as a StoreAdapter, with a structurally-typed driver
 const durable: StoreAdapter = pgStore({ query: async (_text: string, _params?: unknown[]) => ({ rows: [] }) });
 void durable;
+// the OpenAI adapter type-checks as a ModelAdapter
+const gpt: ModelAdapter = openai({ model: "gpt-6-luna", effort: "low", promptCacheKey: "packtest" });
+void gpt;
 void createChat; void mountChat; void createHai; void memoryStore; void nodeHandler; void anthropic; void makeCap;
 `,
   );

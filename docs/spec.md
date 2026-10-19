@@ -156,8 +156,8 @@ Core is isomorphic and has no runtime dependencies, because both halves import i
         │            │              │
 @haikit/server  @haikit/client   adapters
 agent loop      createChat()     @haikit/anthropic
-state machine   mountChat()      @haikit/postgres
-turn leases     renderTranscript
+state machine   mountChat()      @haikit/openai
+turn leases     renderTranscript @haikit/postgres
 routes + SSE
 handle store
 

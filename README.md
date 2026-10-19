@@ -124,6 +124,7 @@ finished result, about 150 lines.
 | [`@haikit/server`](packages/server) | Agent loop, elicit state machine, derived `query_ui`, HTTP routes |
 | [`@haikit/client`](packages/client) | Browser runtime and the [default UI](docs/default-ui.md). Plain ESM, no build step |
 | [`@haikit/anthropic`](packages/anthropic) | Claude model adapter. Defaults to `claude-haiku-5-5` |
+| [`@haikit/openai`](packages/openai) | OpenAI model adapter, over the Responses API. Defaults to `gpt-6-luna` |
 | [`@haikit/postgres`](packages/postgres) | Durable store adapter. Bring your own driver |
 | [`@haikit/react`](packages/react) | Write surface components in React, typed from the surface contract |
 
