@@ -1,0 +1,53 @@
+{
+  "name": "@haikit/openai",
+  "version": "0.20.5",
+  "description": "OpenAI model adapter for haikit. Imports only @haikit/core, never the server runtime.",
+  "keywords": [
+    "haikit",
+    "openai",
+    "gpt",
+    "llm",
+    "agent",
+    "agentic-ui",
+    "tool-use",
+    "ai"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "prepack": "npm --prefix ../.. run build"
+  },
+  "dependencies": {
+    "@haikit/core": "0.20.5",
+    "openai": "^7.28.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/wfoxd/haikit/tree/main/packages/openai#readme",
+  "bugs": {
+    "url": "https://github.com/wfoxd/haikit/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wfoxd/haikit.git",
+    "directory": "packages/openai"
+  }
+}

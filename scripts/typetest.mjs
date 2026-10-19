@@ -27,7 +27,7 @@ const tsc = (args) => {
 };
 
 console.log("building packages…");
-const build = tsc(["-b", "packages/core", "packages/server", "packages/anthropic"]);
+const build = tsc(["-b", "packages/core", "packages/server", "packages/anthropic", "packages/openai"]);
 if (!build.ok) {
   console.error(build.out);
   process.exit(1);

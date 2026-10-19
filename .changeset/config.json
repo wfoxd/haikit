@@ -16,6 +16,7 @@
       "@haikit/server",
       "@haikit/client",
       "@haikit/anthropic",
+      "@haikit/openai",
       "@haikit/postgres",
       "@haikit/react"
     ]

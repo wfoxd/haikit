@@ -222,7 +222,8 @@ HaiKIT ships two: `memoryStore`, for development in one process, and
 
 **Model adapter.** An implementation of `ModelAdapter`: an `id`, and a
 `generate` method shaped like the Anthropic Messages API. `@haikit/anthropic`
-provides one for Claude. See [Models](models.md).
+provides one for Claude, and `@haikit/openai` one for OpenAI models. See
+[Models](models.md).
 
 **Wire event.** One JSON object in a server-sent events `data:` frame, of one
 of the 15 `WireEvent` types. Both the POST routes and the events stream send
