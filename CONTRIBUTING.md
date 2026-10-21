@@ -53,7 +53,7 @@ public signature, run it.
 
 ## Releasing
 
-Changesets, with the six packages version-locked:
+Changesets, with the seven packages version-locked:
 
 ```bash
 npx changeset          # describe the change
@@ -64,7 +64,7 @@ release workflow runs `npm test` and `npm run packtest` before it will publish
 anything.
 
 Auth is **trusted publishing**: npm verifies the release workflow's OIDC identity
-against a trusted publisher configured on each of the four packages
+against a trusted publisher configured on each of the seven packages
 (npmjs.com → package → Settings → Trusted Publisher → `wfoxd/haikit`,
 `release.yml`). There is no `NPM_TOKEN` anywhere — nothing to rotate, nothing to
 leak. Provenance comes with it, so published tarballs carry a signed attestation
@@ -72,7 +72,25 @@ tying them to the workflow run that built them.
 
 Two things that quietly break it: removing `id-token: write` from the workflow
 permissions, and renaming `release.yml` without updating the trusted publisher
-config on all four packages.
+config on all seven packages.
+
+**A new package's first version is published by hand.** npm only lets you
+configure a trusted publisher on a package that already exists, so the release
+workflow can't create one: its publish fails with `E404 Not Found` while the
+other packages go out. Add the package to `fixed` in `.changeset/config.json`
+and merge as usual, then, from an up-to-date `main`:
+
+```bash
+npm run prepublish-check
+npm login
+npm publish --workspace @haikit/<name> --access public
+git tag @haikit/<name>@<version> && git push origin @haikit/<name>@<version>
+```
+
+The tag is the one changesets would have made. Then configure the trusted
+publisher on the new package, as above, and set its publishing access to match
+the others. Later releases publish it with the rest. The hand-published version
+has no provenance attestation, since it wasn't built by the workflow.
 
 Before the first publish, run the whole gate locally:
 
