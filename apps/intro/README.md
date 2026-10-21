@@ -18,9 +18,12 @@ software. You steer.":
    built with HaiKIT: the same request in each, then a row for each
    difference (who works the app, how the AI answers, how you answer back,
    what the AI reads, when it speaks).
-3. **How it works.** The [Rebook](https://rebook.haikit.app/) demo in four
-   steps, each with a scene of what you'd see, a link to try it, and, for
-   developers, the diagram of how a HaiKIT app works.
+3. **How it works.** The [Rebook](https://rebook.haikit.app/) demo in six
+   steps on a timeline. Each step's scene draws what you'd see: the AI's
+   words, your clicks, and Rebook's own components, drawn small under the
+   tool that rendered them (the trip card, the options, the seat map, the
+   night's question, the boarding pass; `public/minis.js`). Then a link to
+   try it, and, for developers, the diagram of how a HaiKIT app works.
 4. **Fewer tokens.** How HaiKIT keeps the AI's bill small: a meter for two
    measured examples (a flight search's 47 results, about 1,958 tokens on
    screen and 67 for the AI; Rebook's 14 options, about 665 and 135), the six
@@ -33,9 +36,12 @@ It ends with the place to start, beside a Tutorial panel whose steps open
 HaiKIT's tutorials right here, and under them a Reference panel whose buttons
 open each page of HaiKIT's reference manual. The text lives in
 `src/server/course/index.ts`, and the drawings are SVG in
-`public/illustrations.js` and `public/architecture.js`. A welcome saved before
-this layout (version 10 or earlier), before the chatbot comparison (version 11),
-or before the tokens section (version 12) still renders as it was.
+`public/illustrations.js` and `public/architecture.js`, and Rebook's
+components, drawn small, in `public/minis.js`. A welcome saved before this
+layout (version 10 or earlier), before the chatbot comparison (version 11), or
+before the tokens section (version 12) still renders as it was; one saved
+before the walkthrough drew Rebook's components (version 13) shows its four
+steps, words only, on the same timeline.
 
 From there a guide opens lessons with tools: each lesson is a `display`
 surface, and each checkpoint question is an `elicit` surface that parks the
@@ -316,7 +322,7 @@ src/server/tutorial.ts     reads content/tutorial.md and tutorial-2.md into the 
 src/server/reference.ts    reads content/reference/ into the manual's pages, and checks its links
 src/server/main.ts         createHai, routes, static files
 public/                    the page, the components, the header menu, the styles, the HaiKIT logo,
-                           the welcome screen's diagram and illustrations
+                           the welcome screen's diagram, illustrations and Rebook's components drawn small
 test/guarantees.ts         what haikit refuses to compile, quoted by lesson 2.7
 test/smoke.mjs             the end-to-end check
 content/tutorial.md        HaiKIT's tutorials, copied from the haikit repository

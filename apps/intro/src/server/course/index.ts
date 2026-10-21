@@ -266,45 +266,196 @@ const ARCHITECTURE: WelcomeProps["example"]["underneath"]["architecture"] = {
   ],
 };
 
+/** Rebook's first options, as its picker lists them: the earliest to land first. */
+const ZG_25 = {
+  depart: "Tue 22:35",
+  arrive: "Thu 01:35",
+  flights: "ZG 25 · Zipair",
+  detail: "Nonstop · lands 3h55 later · leaves tonight",
+  fare: "+$140",
+  free: false,
+  left: "9 seats left",
+};
+
 /**
  * Then: how the AI does a job with you, in the Rebook demo. Each step is
- * something Rebook does on its 60-second path (see apps/rebook's README).
+ * something Rebook does on its 60-second path (see apps/rebook's README), and
+ * each scene draws the components it shows there, with Rebook's own data
+ * (apps/rebook/src/server/data.ts: the trip, the options, NH 7's seats, the
+ * night's choices) and its guide's own words (its scripted.ts). Change them
+ * together when Rebook changes.
  */
 const EXAMPLE: WelcomeProps["example"] = {
   label: "How it works",
   title: "The AI does the job with you",
-  lead: "Here's Rebook, a demo built with HaiKIT, on a bad day: the airline has just cancelled your flight to Tokyo.",
+  lead:
+    "Here's Rebook, a demo built with HaiKIT, on a bad day: the airline has just cancelled your flight to Tokyo. " +
+    "Each step shows what Rebook puts on your screen.",
   steps: [
     {
       title: "It speaks first",
-      text: "The airline's system reports the cancellation. The AI hears it and tells you before you ask, with every way to get there.",
+      text: "The airline cancels UA 837. Rebook hears it before you do: your trip turns red, and the AI tells you without being asked.",
       scene: [
         { from: "world", text: "Airline: UA 837 cancelled" },
-        { from: "ai", text: "I'm sorry: your flight to Tokyo was cancelled. Here are 14 ways to get there." },
+        {
+          ui: "trip",
+          tool: "show_trip",
+          title: "Your trip",
+          sub: "Alex Morgan · booking K7Q2MX",
+          badge: { text: "Cancelled", tone: "alert" },
+          from: { code: "SFO", city: "San Francisco", time: "Tue 18:05" },
+          to: { code: "NRT", city: "Tokyo Narita", time: "Wed 21:40" },
+          facts: [
+            { k: "Flight", v: "United UA 837" },
+            { k: "Seat", v: "32K" },
+          ],
+          why: "Cancelled because of a crew shortage.",
+        },
+        { from: "ai", text: "I'm sorry: your 18:05 UA 837 to Tokyo was cancelled because of a crew shortage. You don't need to call anyone." },
+      ],
+    },
+    {
+      title: "It shows every way there",
+      text: "Not a paragraph of flights: a picker, with when each one lands, what it costs and how many seats are left. The AI read only a short summary of it.",
+      scene: [
+        { from: "ai", text: "Here's every way I can get you to Tokyo." },
+        {
+          ui: "options",
+          tool: "find_rebooking",
+          asks: true,
+          title: "Instead of UA 837",
+          sub: "14 ways to get there",
+          badge: { text: "Seats held · 5 min", tone: "wait" },
+          chips: [{ label: "All", on: true }, { label: "Nonstop" }, { label: "No extra cost" }, { label: "Tonight" }],
+          rows: [
+            ZG_25,
+            {
+              depart: "Tue 19:10",
+              arrive: "Thu 05:25",
+              flights: "UA 1720 + NH 105 · United + ANA",
+              detail: "via LAX · lands 7h45 later · leaves tonight",
+              fare: "No extra cost",
+              free: true,
+              left: "4 seats left",
+            },
+            {
+              depart: "Tue 20:05",
+              arrive: "Thu 06:20",
+              flights: "AC 744 + AC 3 · Air Canada",
+              detail: "via YVR · lands 8h40 later · leaves tonight",
+              fare: "No extra cost",
+              free: true,
+              left: "6 seats left",
+            },
+          ],
+          more: "11 more",
+        },
       ],
     },
     {
       title: "You ask in your own words",
-      text: "There's no filter to find. The AI looks your question up in the options on your screen, and shows the ones that match.",
+      text: "There's no filter to find. The AI looks your question up in the options on your screen, and shows you the ones that match.",
       scene: [
         { from: "you", text: "Which are nonstop?" },
-        { from: "ai", text: "5 of the 14 options are. Here they are." },
+        { from: "ai", text: "5 of the 14 options are nonstop. Here they are, the earliest to land first." },
+        {
+          ui: "options",
+          tool: "find_rebooking",
+          asks: true,
+          title: "Instead of UA 837",
+          sub: "5 nonstop, of 14",
+          badge: { text: "Seats held · 5 min", tone: "wait" },
+          rows: [
+            ZG_25,
+            {
+              depart: "Wed 10:30",
+              arrive: "Thu 13:55",
+              flights: "UA 875 · United",
+              detail: "Nonstop · lands 16h15 later",
+              fare: "No extra cost",
+              free: true,
+              left: "2 seats left",
+              low: true,
+            },
+            {
+              depart: "Wed 11:00",
+              arrive: "Thu 14:25",
+              flights: "NH 7 · ANA",
+              detail: "Nonstop · lands 16h45 later",
+              fare: "No extra cost",
+              free: true,
+              left: "5 seats left",
+            },
+          ],
+          more: "2 more",
+        },
       ],
     },
     {
       title: "You decide with a click",
-      text: "Nothing is booked until you choose. The AI waits for your click, then carries on with exactly the flight you picked.",
+      text: "Nothing is booked until you choose. Your click reaches the AI as the exact flight, and the seat map it shows next changes while other passengers pick.",
       scene: [
         { from: "click", text: "NH 7 · Wed 11:00 · nonstop" },
-        { from: "ai", text: "NH 7 it is. Pick a seat." },
+        { from: "ai", text: "NH 7 it is. Pick a seat: other passengers are choosing too, so the map changes as you look." },
+        {
+          ui: "seats",
+          tool: "show_seat_map",
+          asks: true,
+          title: "Pick a seat on NH 7",
+          sub: "ANA · economy · 34 free",
+          badge: { text: "Other passengers are choosing", tone: "wait" },
+          rows: [
+            { n: 10, seats: "LLLxLx" },
+            { n: 11, seats: "xx.x.*" },
+            { n: 12, seats: ".xxx.x" },
+            { n: 13, seats: "x.xx.x" },
+            { n: 14, seats: "xx..xx" },
+          ],
+          foot: "Green seats have extra legroom. Seats go grey as other passengers take them.",
+        },
+      ],
+    },
+    {
+      title: "It asks only what it needs",
+      text: "NH 7 leaves tomorrow, so there's a night to cover. The AI asks that one question, with the three answers the airline offers.",
+      scene: [
+        { from: "ai", text: "Seat 11F is yours. Your new flight leaves tomorrow, so where would you like to spend tonight?" },
+        {
+          ui: "choices",
+          tool: "offer_care",
+          asks: true,
+          title: "Where will you spend tonight?",
+          sub: "Tuesday night in San Francisco, before NH 7",
+          choices: [
+            { title: "Hotel voucher", detail: "Grand Hyatt at SFO tonight, with breakfast and the shuttle back", picked: true },
+            { title: "Lounge and dinner", detail: "United Club in Terminal 3 until 23:00, and a $40 meal voucher" },
+            { title: "I'll sort it myself", detail: "Keep your receipts: up to $200 back" },
+          ],
+        },
       ],
     },
     {
       title: "It keeps up with the world",
-      text: "When the gate moves after you've booked, your boarding pass changes in place, and the AI tells you.",
+      text: "Your boarding pass arrives. When the gate moves later, the pass changes in place, and the AI speaks up again.",
       scene: [
         { from: "world", text: "Airline: NH 7 gate changed" },
-        { from: "ai", text: "Heads up: your gate moved. Boarding time is the same." },
+        {
+          ui: "pass",
+          tool: "issue_boarding_pass",
+          title: "Boarding pass",
+          sub: "Alex Morgan · booking P4XW9T",
+          badge: { text: "Booked", tone: "ok" },
+          legs: [{ from: "SFO", to: "NRT", flight: "NH 7 · Wed 11:00" }],
+          facts: [
+            { k: "Gate", v: "G99", moved: true },
+            { k: "Boards", v: "10:20" },
+            { k: "Seat", v: "11F" },
+            { k: "Lands", v: "Thu 14:25" },
+          ],
+          why: "Gate changed from G95.",
+          foot: "Tonight: Hotel voucher: Grand Hyatt at SFO tonight, with breakfast and the shuttle back.",
+        },
+        { from: "ai", text: "Heads up: NH 7 moved from gate G95 to gate G99. Boarding is still 10:20." },
       ],
     },
   ],
