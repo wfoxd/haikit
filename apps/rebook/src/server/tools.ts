@@ -13,12 +13,15 @@ import {
   booking,
   chosen,
   daysHome,
+  bookingsNow,
   homeTicket,
+  issuedPass,
   landsInTimeForHome,
   leavesAfterLanding,
   optionsShown,
   outboundLands,
   passShown,
+  passShownAgain,
   priced,
   reviewShown,
   seatKey,
@@ -27,6 +30,7 @@ import {
   stock,
   ticketShown,
   tripShown,
+  tripShownAgain,
 } from "./airline.ts";
 import {
   CARE,
@@ -80,6 +84,34 @@ export const showTrip = defineTool({
     const shown = await ctx.render(tripCardServer, TRIP);
     if (shown.handle) tripShown(ctx.conversationId, shown.handle);
     return shown;
+  },
+});
+
+// show_trip is the init tool, so it runs once: HaiKIT refuses it after that.
+// This shows the cards again instead, and books nothing.
+export const showBookings = defineTool({
+  name: "show_bookings",
+  description:
+    "Show the traveller's bookings again, as they are now: the trip card, the boarding pass for the new flight to Tokyo " +
+    "once it's issued, and the e-ticket for the flight home once it's issued. Display-only: it books nothing. Use it when " +
+    "they ask to see their trip, their bookings, or a card again.",
+  input: z.object({}),
+  inputJsonSchema: none,
+
+  async run(_input, ctx) {
+    const now = bookingsNow(ctx.conversationId);
+    if (!now) return ctx.text("This conversation hasn't shown its trip yet.");
+    const trip = await ctx.render(tripCardServer, now.trip);
+    if (trip.handle) tripShownAgain(ctx.conversationId, trip.handle, now.trip);
+    const shown = [trip.model];
+    if (now.pass) {
+      const pass = await ctx.render(boardingPassServer, now.pass);
+      if (pass.handle) passShownAgain(ctx.conversationId, pass.handle, now.pass);
+      shown.push(pass.model);
+    }
+    if (now.ticket) shown.push((await ctx.render(bookingConfirmedServer, now.ticket)).model);
+    if (!now.pass && !now.ticket) shown.push("Nothing else is booked yet.");
+    return ctx.text(shown.join("\n"));
   },
 });
 
@@ -222,6 +254,11 @@ export const issueBoardingPass = defineTool({
     if (!option) return ctx.text("The traveller hasn't chosen an option yet: show find_rebooking.");
     if (!picked.seat) return ctx.text(`The traveller hasn't picked a seat on ${option.flights[0]} yet: show show_seat_map.`);
     if (!option.tonight && !picked.care) return ctx.text("The traveller hasn't said where they'll spend tonight yet: show offer_care.");
+    // Booked already, with nothing changed since: issuing it again would book it again, under a new reference.
+    const issued = issuedPass(ctx.conversationId);
+    if (issued && issued.flight === option.flights.join(" + ") && issued.seat === picked.seat) {
+      return ctx.text(`${issued.flight}, seat ${issued.seat}, is already booked, as ${issued.reference}: nothing was booked again. To show the boarding pass again, call show_bookings.`);
+    }
     // An option that costs extra is booked only once the traveller has confirmed that amount.
     if (option.extraFare > 0 && picked.confirmed !== option.extraFare) {
       return ctx.text(`${option.flights.join(" + ")} costs ${usd(option.extraFare)} extra, and the traveller hasn't confirmed it yet: show review_rebooking.`);
@@ -483,6 +520,7 @@ export const issueTicket = defineTool({
 });
 
 export const tools = [
+  showBookings,
   findRebooking,
   showSeatMap,
   offerCare,

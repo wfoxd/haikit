@@ -280,6 +280,33 @@ try {
     const headsUp = said(stream.events.slice(gateMark));
     check(/^Heads up: NH 7 moved from gate G95 to gate G99\. Boarding is still 10:20\. And the airline confirmed seat/.test(headsUp), `the guide speaks up: “${headsUp.slice(0, 64)}…”`, `the guide said: ${headsUp}`);
 
+    // 7a · "show all my bookings": show_trip ran once, at the start, so
+    //      show_bookings shows the trip card and the pass again, as they are
+    //      now, and books nothing; the next gate change revises the new pass
+    {
+      const again = await sse("/hai/chat", { conversationId: id, message: "show all my bookings" });
+      const trip = surface(again, "trip_card");
+      const passAgain = surface(again, "boarding_pass");
+      check(
+        trip.props?.status === "cancelled" && passAgain.ui?.mode === "display" && passAgain.props?.gate === "G99" &&
+          passAgain.props.reference === pass.props?.reference && passAgain.ui.handle !== pass.ui?.handle &&
+          /Here's everything you've booked/.test(said(again)) && !opened(again, "booking_confirmed").length,
+        "“show all my bookings” shows the trip card and the boarding pass again, as they are now (gate G99), and books nothing",
+        () => `${said(again)} · ${JSON.stringify({ trip: trip.props?.status, pass: passAgain.props })}`,
+      );
+      const mark = stream.events.length;
+      const later = await ops("gate", id);
+      const revised = await stream.until((e) => e.type === "ui_open" && e.component === "boarding_pass" && e.replaces === passAgain.ui?.handle, 8_000, mark);
+      check(later.status === 200 && /gate G103/.test(later.message) && revised, "…and the next gate change revises the pass shown again, not the first one", () => later.message);
+      await stream.until((e) => e.type === "released", 8_000, mark);
+      const where = await sse("/hai/chat", { conversationId: id, message: "where is my pass" });
+      check(
+        surface(where, "boarding_pass").props?.gate === "G103" && opened(where, "trip_card").length === 1,
+        "“where is my pass” shows the bookings again too, the pass at its latest gate",
+        () => `${said(where)} · ${JSON.stringify(opened(where, "boarding_pass"))}`,
+      );
+    }
+
     stream.close();
 
     // 7b · the gate moves while a question on the flight home waits: no turn
@@ -291,7 +318,7 @@ try {
       const go = await sse("/hai/interact", { conversationId: id, handle: search.ui?.handle, action: "search", value: { from: "TYO", date: "Thu" } });
       const thursday = surface(go, "flight_results");
       check(
-        moved.status === 200 && /^Heads up: NH 7 moved from gate G99 to gate G103\. Boarding is still 10:20\. Here are the flights home on Thursday/.test(said(go)) &&
+        moved.status === 200 && /^Heads up: NH 7 moved from gate G103 to gate G107\. Boarding is still 10:20\. Here are the flights home on Thursday/.test(said(go)) &&
           thursday.ui?.mode === "elicit",
         `a gate change that rode in with a booking click is told first: “${said(go).slice(0, 70)}…”`,
         () => `${moved.message} · ${said(go)}`,
@@ -467,6 +494,46 @@ try {
       );
     }
 
+    // 8f · a boarding pass already issued isn't booked again: with nothing
+    //      changed, issue_boarding_pass says so and points to show_bookings,
+    //      where a second call would have booked it under a new reference
+    {
+      const { tripShown, optionChosen, seatPicked, passShown } = await import("../src/server/airline.ts");
+      const { optionById } = await import("../src/server/data.ts");
+      const { issueBoardingPass } = await import("../src/server/tools.ts");
+      const stub = { conversationId: "issued", text: (model) => ({ model }), render: async () => ({ model: "a pass was shown" }) };
+      tripShown("issued", "ui_01");
+      optionChosen("issued", optionById("o01"));
+      seatPicked("issued", "o01", "12A");
+      passShown("issued", "ui_09", {
+        passenger: "Alex Morgan", reference: "QWERTY", flight: "UA 1720 + NH 105", airline: "United + ANA",
+        legs: [], arrive: "Thu 05:25", seat: "12A", gate: "G91", boards: "18:30", care: null,
+      });
+      const twice = await issueBoardingPass.run({}, stub);
+      seatPicked("issued", "o01", "14C");
+      const newSeat = await issueBoardingPass.run({}, stub);
+      check(
+        /UA 1720 \+ NH 105, seat 12A, is already booked, as QWERTY: nothing was booked again\. To show the boarding pass again, call show_bookings/.test(twice.model) &&
+          newSeat.model === "a pass was shown",
+        "issue_boarding_pass doesn't book a pass already issued again, and points to show_bookings; a different seat is a new booking",
+        () => `${twice.model} · ${newSeat.model}`,
+      );
+    }
+
+    // 8g · before anything is booked, "show me my trip" shows the trip card again, and only that
+    {
+      const begin = await sse("/hai/start", {});
+      const id7 = begin.find((e) => e.type === "hello")?.conversationId;
+      const asked = await sse("/hai/chat", { conversationId: id7, message: "show me my trip" });
+      const trip = surface(asked, "trip_card");
+      check(
+        trip.ui?.mode === "display" && trip.props?.status === "on-time" && opened(asked, "trip_card").length === 1 &&
+          !opened(asked, "boarding_pass").length && /Nothing else is booked yet/.test(said(asked)),
+        "before anything is booked, “show me my trip” shows the trip card again, and says nothing else is booked",
+        () => `${said(asked)} · ${JSON.stringify(trip.props)}`,
+      );
+    }
+
     // 11 · the flight home, from the trip card's button: the search is filled
     //      in from the trip, and the day is left to choose
     {
@@ -587,6 +654,15 @@ try {
         !opened(after, "flight_results").length && /already booked: UA 838, booking /.test(said(after)),
         "once ticketed, the flights home aren't shown again: the guide says it's booked",
         () => said(after),
+      );
+      const all = await sse("/hai/chat", { conversationId: id4, message: "show all my bookings" });
+      const tripAgain = surface(all, "trip_card");
+      const eticket = surface(all, "booking_confirmed");
+      check(
+        tripAgain.props?.home?.flight === "UA 838" && eticket.ui?.mode === "display" && eticket.props?.reference === ticket.props?.reference &&
+          /Here's everything you've booked/.test(said(all)),
+        "with the flight home ticketed, “show all my bookings” shows the trip card, with the flight home on it, and the e-ticket again",
+        () => `${said(all)} · ${JSON.stringify({ home: tripAgain.props?.home, ticket: eticket.props?.reference })}`,
       );
       watch4.close();
     }
@@ -956,6 +1032,180 @@ try {
           /hasn't confirmed a booking yet/.test(unconfirmed.model),
         "no step of the flight home runs ahead of the clicks: fares, a fare, seats, the review and the ticket each refuse",
         () => [before.model, noFlight.model, otherFlight.model, noFare.model, wrongFare, basicSeats.model, unconfirmed.model].join(" · "),
+      );
+    }
+
+    // 11g · show_bookings while the airline's revisions wait for the turn.
+    //       HaiKIT's hai.update waits for a turn in progress, so a revision the
+    //       airline decides during the turn that shows the cards lands after
+    //       it. In this process, with an airline whose every revision waits
+    //       for the test to end "the turn".
+    {
+      const airline = await import("../src/server/airline.ts");
+      const { showBookings } = await import("../src/server/tools.ts");
+      let endTurn = () => {};
+      let turn = Promise.resolve();
+      const holdTurn = () => void (turn = new Promise((r) => (endTurn = r)));
+      const revised = [];
+      airline.connectAirline(
+        async () => ({ seq: 1 }),
+        async (_id, _surface, handle, props) => {
+          await turn;
+          revised.push({ handle, gate: props.gate, status: props.status, home: props.home?.flight ?? null });
+          return { handle: `${handle}+`, model: "" };
+        },
+      );
+      const settle = (ms = 50) => new Promise((r) => setTimeout(r, ms));
+      const within = (promise, ms) => Promise.race([promise.then(() => true), settle(ms).then(() => false)]);
+      // each card shown again answers with a handle of its own; `during` runs while it's drawn
+      const drawn = [];
+      const stub = (conversationId, during) => ({
+        conversationId,
+        text: (model) => ({ model }),
+        render: async (_surface, props) => {
+          drawn.push(props);
+          await during?.(props);
+          return { model: "shown", handle: `${conversationId}:${props.gate ? "pass" : props.status ? "trip" : "ticket"}2` };
+        },
+      });
+      const pass = {
+        passenger: "Alex Morgan", reference: "PASS01", flight: "NH 7", airline: "ANA", legs: [], arrive: "Thu 14:25",
+        seat: "11F", gate: "G95", boards: "10:20", care: null,
+      };
+
+      // the cancellation, decided during the turn: the trip shown again is
+      // cancelled at once, with nothing waiting on the revision, which lands
+      // on the first copy once the turn ends; the next goes to the new copy
+      airline.tripShown("held", "held:trip1");
+      holdTurn();
+      const cancelling = airline.cancelFlight("held");
+      const quick = await within(showBookings.run({}, stub("held")), 1_000);
+      const trip = drawn.at(-1);
+      endTurn();
+      await cancelling;
+      await settle();
+      const firstRevision = [...revised];
+      airline.ticketShown("held", "held:ticket1", { passenger: "Alex Morgan", reference: "HOME01", legs: [{ flight: "UA 838", from: "NRT", to: "SFO" }], depart: "Sun 16:55", arrive: "Sun 10:50", fare: "Basic", seat: null, bags: "carry-on only", total: 1028 });
+      await settle(1_800); // the flight home's revision starts at 1.5 s
+      const homeRevision = revised.at(-1);
+      check(
+        quick && trip?.status === "cancelled" && firstRevision.length === 1 && firstRevision[0].handle === "held:trip1" &&
+          homeRevision?.handle === "held:trip2" && homeRevision.status === "cancelled" && homeRevision.home === "UA 838",
+        "show_bookings doesn't wait for a revision waiting on its turn: the trip shown again is cancelled; the revision lands on the first copy, and the next on the new one",
+        () => JSON.stringify({ quick, trip: trip?.status, revised }),
+      );
+
+      // a gate change pending while the pass is shown again: the new pass
+      // shows the new gate, the change lands on the first copy, and the next
+      // gate change moves the pass shown again, not the first one
+      revised.length = 0;
+      airline.tripShown("gate", "gate:trip1");
+      airline.passShown("gate", "gate:pass1", pass);
+      holdTurn();
+      const moving = airline.changeGate("gate");
+      await showBookings.run({}, stub("gate"));
+      const passAgain = drawn.find((p) => p.gate && p.reference === "PASS01" && drawn.indexOf(p) >= drawn.length - 2);
+      endTurn();
+      await moving;
+      await settle();
+      const next = await airline.changeGate("gate");
+      check(
+        passAgain?.gate === "G99" && revised.map((r) => `${r.handle}=${r.gate}`).join(" ") === "gate:pass1=G99 gate:pass2=G103" && /gate G103/.test(next),
+        "a gate change pending while the pass is shown again: the new pass shows G99, the change lands on the first copy, and the next moves the new one",
+        () => JSON.stringify({ shown: passAgain?.gate, revised }),
+      );
+
+      // a gate change decided while the pass is being drawn, from what it was
+      // before: the first copy gets it, and the pass shown again is brought up
+      // to date too, so both show the new gate
+      revised.length = 0;
+      airline.tripShown("drawing", "drawing:trip1");
+      airline.passShown("drawing", "drawing:pass1", pass);
+      holdTurn();
+      let midDraw = null;
+      await showBookings.run({}, stub("drawing", (props) => void (props.gate && (midDraw = airline.changeGate("drawing")))));
+      endTurn();
+      await midDraw;
+      await settle();
+      check(
+        revised.map((r) => `${r.handle}=${r.gate}`).join(" ") === "drawing:pass1=G99 drawing:pass2=G99" && airline.issuedPass("drawing")?.gate === "G99",
+        "a gate change decided while the pass is drawn: the first copy moves, and the pass shown again is brought up to date to G99 too",
+        () => JSON.stringify(revised),
+      );
+
+      // the cancellation fails to land, with the flight home decided behind it
+      // and the bookings shown in between: the flight home lands without the
+      // cancellation, the trip card shown with it is put right, and the
+      // airline can cancel again
+      revised.length = 0;
+      let failCancel = true;
+      airline.connectAirline(
+        async () => ({ seq: 1 }),
+        async (_id, _surface, handle, props) => {
+          await turn;
+          if (props.status === "cancelled" && failCancel) {
+            failCancel = false;
+            throw new Error("the update timed out");
+          }
+          revised.push({ handle, status: props.status, home: props.home?.flight ?? null });
+          return { handle: `${handle}+`, model: "" };
+        },
+      );
+      airline.tripShown("fails", "fails:trip1");
+      holdTurn();
+      const failing = airline.cancelFlight("fails").then(() => "cancelled", (err) => err.message);
+      airline.ticketShown("fails", "fails:ticket1", {
+        passenger: "Alex Morgan", reference: "HOME02", legs: [{ flight: "UA 838", from: "NRT", to: "SFO" }], depart: "Sun 16:55",
+        arrive: "Sun 10:50", fare: "Basic", seat: null, bags: "carry-on only", total: 1028,
+      });
+      await settle(1_700); // the flight home is decided at 1.5 s, behind the cancellation
+      await showBookings.run({}, stub("fails"));
+      const drawnTrip = [...drawn].reverse().find((p) => p.status);
+      endTurn();
+      const outcome = await failing;
+      await settle(100);
+      const landed = revised.map((r) => `${r.handle}=${r.status}+${r.home}`).join(" ");
+      const again = await airline.cancelFlight("fails");
+      check(
+        outcome === "the update timed out" && drawnTrip?.status === "cancelled" && drawnTrip.home?.flight === "UA 838" &&
+          landed === "fails:trip1=on-time+UA 838 fails:trip2=on-time+UA 838" && /^Cancelled UA 837/.test(again) &&
+          revised.at(-1)?.handle === "fails:trip2+" && revised.at(-1)?.status === "cancelled",
+        "a cancellation that fails to land isn't applied by the flight home behind it; the trip shown with it is put right, and the airline can cancel again",
+        () => JSON.stringify({ outcome, drawn: drawnTrip?.status, revised, again }),
+      );
+
+      // a gate change lands on the first copy while the pass is drawn, and the
+      // pass shown again can't be brought up to date: what landed is still what
+      // the cards are drawn from and the next change starts from, so it moves
+      // the pass shown again from G99 to G103, not from G95 to G99
+      revised.length = 0;
+      let failCorrection = true;
+      airline.connectAirline(
+        async () => ({ seq: 1 }),
+        async (_id, _surface, handle, props) => {
+          await turn;
+          if (handle === "behind:pass2" && failCorrection) {
+            failCorrection = false;
+            throw new Error("the update timed out");
+          }
+          revised.push({ handle, gate: props.gate });
+          return { handle: `${handle}+`, model: "" };
+        },
+      );
+      airline.tripShown("behind", "behind:trip1");
+      airline.passShown("behind", "behind:pass1", pass);
+      holdTurn();
+      let gateMid = null;
+      await showBookings.run({}, stub("behind", (props) => void (props.gate && (gateMid = airline.changeGate("behind")))));
+      endTurn();
+      await gateMid;
+      await settle();
+      const drawnNext = airline.bookingsNow("behind")?.pass?.gate;
+      const nextGate = await airline.changeGate("behind");
+      check(
+        drawnNext === "G99" && /gate G103/.test(nextGate) && revised.map((r) => `${r.handle}=${r.gate}`).join(" ") === "behind:pass1=G99 behind:pass2=G103",
+        "a pass shown again that can't be brought up to date doesn't lose the gate change that landed: the next draw shows G99, and the next change moves it to G103",
+        () => JSON.stringify({ drawnNext, nextGate, revised }),
       );
     }
 
