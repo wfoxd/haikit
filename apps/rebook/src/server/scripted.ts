@@ -239,7 +239,7 @@ export function scripted(): ModelAdapter {
             : null;
       // Seeing the cards again: show_trip ran once, at the start, so show_bookings
       // shows them, and a question the message closed opens again after them.
-      if (/\b(show|see|view|list|where)\b.*\b(bookings?|trip|boarding pass|e-?tickets?|tickets?|cards?|reservations?)\b/.test(text)) {
+      if (/\b(show|see|view|list|where)\b.*\b(bookings?|trip|pass(?:es)?|e-?tickets?|tickets?|cards?|reservations?)\b/.test(text)) {
         return answer(`Here are your bookings.${reopen ? " And here's where you were." : ""}`, onTextDelta, [
           toolUse("show_bookings", {}),
           ...(reopen ? [reopen] : []),

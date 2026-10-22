@@ -299,6 +299,12 @@ try {
       const revised = await stream.until((e) => e.type === "ui_open" && e.component === "boarding_pass" && e.replaces === passAgain.ui?.handle, 8_000, mark);
       check(later.status === 200 && /gate G103/.test(later.message) && revised, "…and the next gate change revises the pass shown again, not the first one", () => later.message);
       await stream.until((e) => e.type === "released", 8_000, mark);
+      const where = await sse("/hai/chat", { conversationId: id, message: "where is my pass" });
+      check(
+        surface(where, "boarding_pass").props?.gate === "G103" && opened(where, "trip_card").length === 1,
+        "“where is my pass” shows the bookings again too, the pass at its latest gate",
+        () => `${said(where)} · ${JSON.stringify(opened(where, "boarding_pass"))}`,
+      );
     }
 
     stream.close();
@@ -1125,6 +1131,47 @@ try {
         revised.map((r) => `${r.handle}=${r.gate}`).join(" ") === "drawing:pass1=G99 drawing:pass2=G99" && airline.issuedPass("drawing")?.gate === "G99",
         "a gate change decided while the pass is drawn: the first copy moves, and the pass shown again is brought up to date to G99 too",
         () => JSON.stringify(revised),
+      );
+
+      // the cancellation fails to land, with the flight home decided behind it
+      // and the bookings shown in between: the flight home lands without the
+      // cancellation, the trip card shown with it is put right, and the
+      // airline can cancel again
+      revised.length = 0;
+      let failCancel = true;
+      airline.connectAirline(
+        async () => ({ seq: 1 }),
+        async (_id, _surface, handle, props) => {
+          await turn;
+          if (props.status === "cancelled" && failCancel) {
+            failCancel = false;
+            throw new Error("the update timed out");
+          }
+          revised.push({ handle, status: props.status, home: props.home?.flight ?? null });
+          return { handle: `${handle}+`, model: "" };
+        },
+      );
+      airline.tripShown("fails", "fails:trip1");
+      holdTurn();
+      const failing = airline.cancelFlight("fails").then(() => "cancelled", (err) => err.message);
+      airline.ticketShown("fails", "fails:ticket1", {
+        passenger: "Alex Morgan", reference: "HOME02", legs: [{ flight: "UA 838", from: "NRT", to: "SFO" }], depart: "Sun 16:55",
+        arrive: "Sun 10:50", fare: "Basic", seat: null, bags: "carry-on only", total: 1028,
+      });
+      await settle(1_700); // the flight home is decided at 1.5 s, behind the cancellation
+      await showBookings.run({}, stub("fails"));
+      const drawnTrip = [...drawn].reverse().find((p) => p.status);
+      endTurn();
+      const outcome = await failing;
+      await settle(100);
+      const landed = revised.map((r) => `${r.handle}=${r.status}+${r.home}`).join(" ");
+      const again = await airline.cancelFlight("fails");
+      check(
+        outcome === "the update timed out" && drawnTrip?.status === "cancelled" && drawnTrip.home?.flight === "UA 838" &&
+          landed === "fails:trip1=on-time+UA 838 fails:trip2=on-time+UA 838" && /^Cancelled UA 837/.test(again) &&
+          revised.at(-1)?.handle === "fails:trip2+" && revised.at(-1)?.status === "cancelled",
+        "a cancellation that fails to land isn't applied by the flight home behind it; the trip shown with it is put right, and the airline can cancel again",
+        () => JSON.stringify({ outcome, drawn: drawnTrip?.status, revised, again }),
       );
     }
 
