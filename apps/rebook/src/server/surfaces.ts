@@ -105,7 +105,7 @@ export const rebookingOptionsServer = rebookingOptions.implement({
       }
       optionChosen(conversationId, o);
       return (
-        `Chose ${o.id}: ${fmt(o)}. ` +
+        `The traveller chose ${o.id}: ${fmt(o)}. ` +
         (o.tonight ? "It leaves this evening: no night to cover." : "It leaves tomorrow, so there's a night in San Francisco to cover.")
       );
     },
@@ -153,7 +153,7 @@ export const seatMapServer = seatMap.implement({
       const recorded = home ? homeSeatPicked(conversationId, props.optionId, seatId) : seatPicked(conversationId, props.optionId, seatId);
       if (!recorded) throw new Error(`${props.flight} isn't the flight you chose`);
       const kind = [seat.window ? "window" : "", seat.extraLegroom ? "extra legroom" : ""].filter(Boolean).join(", ");
-      return `Picked seat ${seatId} on ${props.flight}${kind ? ` (${kind})` : ""}${home ? ", for the flight home" : ""}.`;
+      return `The traveller picked seat ${seatId} on ${props.flight}${kind ? ` (${kind})` : ""}${home ? ", for the flight home" : ""}.`;
     },
   },
   queries: {},
@@ -172,7 +172,7 @@ export const careOptionsServer = careOptions.implement({
       const choice = props.choices.find((c) => c.id === id);
       if (!choice) throw new Error(`no choice ${id}`);
       careChosen(conversationId, `${choice.title}: ${choice.detail}`);
-      return `Chose ${choice.title}: ${choice.detail}.`;
+      return `The traveller chose ${choice.title}: ${choice.detail}.`;
     },
   },
   queries: {},
@@ -205,7 +205,7 @@ export const flightSearchServer = flightSearch.implement({
   actions: {
     search(value, { conversationId }) {
       searched(conversationId, value);
-      return `Searched flights home: ${AIRPORT_NAMES[value.from]} to SFO on ${DAY_NAMES[value.date]} (${value.date}).`;
+      return `The traveller searched flights home: ${AIRPORT_NAMES[value.from]} to SFO on ${DAY_NAMES[value.date]} (${value.date}).`;
     },
   },
   queries: {},
@@ -235,7 +235,7 @@ export const flightResultsServer = flightResults.implement({
       // the flight to Tokyo may have changed since these were shown
       if (!leavesAfterLanding(conversationId, f)) throw new Error(`${f.flights.join(" + ")} leaves before you'd be through the airport in Tokyo: pick a later one`);
       homeFlightChosen(conversationId, f);
-      return `Chose flight ${f.id}: ${fmtHome(f)}.`;
+      return `The traveller chose flight ${f.id}: ${fmtHome(f)}.`;
     },
   },
   queries: {
@@ -267,7 +267,7 @@ export const fareOptionsServer = fareOptions.implement({
       if (booking(conversationId)?.flight?.id !== props.flightId) throw new Error(`${props.flight} isn't the flight you chose`);
       fareChosen(conversationId, fare);
       return (
-        `Chose the ${fare.name} fare, ${usd(fare.price)}, on ${props.flight} [${props.flightId}]: ` +
+        `The traveller chose the ${fare.name} fare, ${usd(fare.price)}, on ${props.flight} [${props.flightId}]: ` +
         (fare.seatChoice ? "the traveller chooses a seat." : "the seat is assigned at check-in, so there's no seat to choose.")
       );
     },
@@ -292,11 +292,11 @@ export const bookingReviewServer = bookingReview.implement({
     confirm({ total }, { props, conversationId }) {
       if (total !== props.price.total) throw new Error(`the total is ${usd(props.price.total)} now, not ${usd(total)}: check it and confirm again`);
       bookingConfirmedAt(conversationId, total);
-      return `Confirmed the booking at ${usd(total)}.`;
+      return `The traveller confirmed the booking at ${usd(total)}.`;
     },
     change(what, { props }) {
       if (what === "seat" && !props.fare.seatChoice) throw new Error(`the ${props.fare.name} fare assigns the seat at check-in`);
-      return `Asked to change the ${what}.`;
+      return `The traveller asked to change the ${what}.`;
     },
   },
   queries: {},

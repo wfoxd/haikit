@@ -393,7 +393,7 @@ try {
       const elsewhere = pick("o07", "JL 1", "10B");
       const chosenOne = pick("o05", "NH 7", "10B");
       check(
-        /^refused: JL 1 isn't the flight you chose/.test(elsewhere) && /^Picked seat 10B on NH 7/.test(chosenOne),
+        /^refused: JL 1 isn't the flight you chose/.test(elsewhere) && /^The traveller picked seat 10B on NH 7/.test(chosenOne),
         "…and a seat on another option's map is refused, not taken and then not booked; on the chosen one's, it's picked",
         () => `${elsewhere} · ${chosenOne}`,
       );
@@ -592,7 +592,7 @@ try {
       const chose = await sse("/hai/interact", { conversationId: id6, handle: again.ui?.handle, action: "choose", value: "r01" });
       const fares2 = surface(chose, "fare_options");
       // the second time UA 838 is chosen, after the raise
-      const heard = [...JSON.stringify(chose.find((e) => e.type === "context")?.messages ?? "").matchAll(/Chose flight r01: [^"]*/g)].at(-1)?.[0] ?? "";
+      const heard = [...JSON.stringify(chose.find((e) => e.type === "context")?.messages ?? "").matchAll(/The traveller chose flight r01: [^"]*/g)].at(-1)?.[0] ?? "";
       check(
         /from \$1,020/.test(heard) &&
           fares2.props?.fares.map((f) => `${f.id} ${f.price}`).join(", ") === "basic 1020, standard 1100, flex 1380",

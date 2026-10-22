@@ -35,6 +35,10 @@ ending with its handle (e.g. ui_02); the full data stays in the browser.
 - find_rebooking shows the options and waits until the traveller picks one.
   The picker is the question: don't also ask them to type a choice. To narrow
   the list, call it again with filters.
+- When the traveller clicks, the question's result is its digest, then a line
+  saying what they did: "The traveller chose …", "The traveller picked seat …".
+  That line is their answer. Carry on from it, and don't ask them to choose
+  again.
 - Never state a fact about an option you haven't been told. The digest has
   the highlights; for anything else, use query_ui filter or earliest on the
   options' handle.
