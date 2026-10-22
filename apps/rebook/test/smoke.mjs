@@ -1173,6 +1173,40 @@ try {
         "a cancellation that fails to land isn't applied by the flight home behind it; the trip shown with it is put right, and the airline can cancel again",
         () => JSON.stringify({ outcome, drawn: drawnTrip?.status, revised, again }),
       );
+
+      // a gate change lands on the first copy while the pass is drawn, and the
+      // pass shown again can't be brought up to date: what landed is still what
+      // the cards are drawn from and the next change starts from, so it moves
+      // the pass shown again from G99 to G103, not from G95 to G99
+      revised.length = 0;
+      let failCorrection = true;
+      airline.connectAirline(
+        async () => ({ seq: 1 }),
+        async (_id, _surface, handle, props) => {
+          await turn;
+          if (handle === "behind:pass2" && failCorrection) {
+            failCorrection = false;
+            throw new Error("the update timed out");
+          }
+          revised.push({ handle, gate: props.gate });
+          return { handle: `${handle}+`, model: "" };
+        },
+      );
+      airline.tripShown("behind", "behind:trip1");
+      airline.passShown("behind", "behind:pass1", pass);
+      holdTurn();
+      let gateMid = null;
+      await showBookings.run({}, stub("behind", (props) => void (props.gate && (gateMid = airline.changeGate("behind")))));
+      endTurn();
+      await gateMid;
+      await settle();
+      const drawnNext = airline.bookingsNow("behind")?.pass?.gate;
+      const nextGate = await airline.changeGate("behind");
+      check(
+        drawnNext === "G99" && /gate G103/.test(nextGate) && revised.map((r) => `${r.handle}=${r.gate}`).join(" ") === "behind:pass1=G99 behind:pass2=G103",
+        "a pass shown again that can't be brought up to date doesn't lose the gate change that landed: the next draw shows G99, and the next change moves it to G103",
+        () => JSON.stringify({ drawnNext, nextGate, revised }),
+      );
     }
 
     // 9 · the boarding pass books only what the traveller clicked

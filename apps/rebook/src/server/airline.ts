@@ -120,7 +120,11 @@ class Card<P> {
   private queue: Promise<unknown> = Promise.resolve();
   private conversationId: string;
   private surface: SurfaceImpl<P, ActionMap, QueryMap>;
-  /** The latest copy's handle, and the props it shows. */
+  /**
+   * The latest copy's handle, and the props that have landed: what the next
+   * change starts from. A copy shown again that couldn't be brought up to date
+   * shows less, until the next change lands on it.
+   */
   handle: string;
   shown: P;
 
@@ -163,20 +167,20 @@ class Card<P> {
   /**
    * A copy drawn again, from `target`, is the one revised from now on. It takes
    * its place in the order: by then the changes decided before it have landed
-   * or failed. If it doesn't show what the card now shows, because a change was
-   * decided while it was drawn or one it was drawn with failed, it's revised to
-   * match. Nothing is confirmed again: the airline already did.
+   * or failed. If it doesn't show what has landed, because a change was decided
+   * while it was drawn or one it was drawn with failed, it's revised to match.
+   * What has landed stays what the next change starts from either way: if that
+   * revision fails, this copy is behind until the next change, but no change is
+   * worked out from what it shows. Nothing is confirmed again: the airline
+   * already did.
    */
   shownAgain(handle: string, drawn: P, model: string) {
     this.queue = this.queue
       .then(async () => {
-        const landed = this.shown;
         this.handle = handle;
-        this.shown = drawn;
-        if (same(drawn, landed)) return;
-        const revised = await update!(this.conversationId, this.surface, handle, landed, { model });
+        if (same(drawn, this.shown)) return;
+        const revised = await update!(this.conversationId, this.surface, handle, this.shown, { model });
         this.handle = revised.handle;
-        this.shown = landed;
       })
       .catch((err) => console.error(`a card shown again in ${this.conversationId} wasn't brought up to date: ${err.message}`));
   }
