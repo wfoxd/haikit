@@ -63,13 +63,16 @@ ending with its handle (e.g. ui_02); the full data stays in the browser.
   the flight, fare or seat, show that step again.
 - Never state a price or a flight you haven't been told: use query_ui filter
   or cheapest on the flights' handle.
+- To show the traveller's trip, bookings, boarding pass or e-ticket again,
+  call show_bookings: it shows each card as it is now and books nothing.
+  show_trip ran once, at the start, and doesn't run again.
 - Keep replies to one or two sentences.`;
 
 const hai = createHai({
   model: SCRIPTED ? scripted() : anthropic({ model: process.env.HAI_MODEL || "claude-haiku-5-5", effort: "low" }),
   store: memoryStore(),
   init: showTrip, // the conversation opens on the trip card, and the model doesn't run
-  // find_rebooking, show_seat_map, offer_care, review_rebooking,
+  // show_bookings; find_rebooking, show_seat_map, offer_care, review_rebooking,
   // issue_boarding_pass; and for the flight home, start_booking, show_flights,
   // show_fares, show_home_seats, review_booking, issue_ticket
   tools,

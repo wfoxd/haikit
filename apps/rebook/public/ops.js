@@ -110,6 +110,8 @@ export function mountOps(root, chat) {
   let countdown = null;
   /** The countdown stands down: a cancellation was sent or seen, or the visitor is booking the flight home. */
   let cancelling = false;
+  /** The conversation the countdown last started for: it starts once, with the trip that opens it. */
+  let counted = /** @type {string | null} */ (null);
   const clock = document.createElement("span");
   clock.className = "ops-countdown";
   // the status line says it once; a number read out every second would drown it
@@ -127,6 +129,7 @@ export function mountOps(root, chat) {
   const startCountdown = (conversationId) => {
     stopCountdown();
     cancelling = false;
+    counted = conversationId;
     const ends = Date.now() + AUTO_CANCEL_MS;
     const show = () => (clock.textContent = `${Math.max(0, Math.ceil((ends - Date.now()) / 1000))}s`);
     show();
@@ -154,9 +157,11 @@ export function mountOps(root, chat) {
   chat.subscribe((state, event) => {
     // A trip opens: the countdown starts. Its revision, or the cancellation
     // notice, means the flight is cancelled, whoever did it, or the flight
-    // home is booked: either way, nothing is left to start.
-    if (event.type === "ui_open" && event.component === "trip_card" && !event.replaces && state.conversationId) {
-      startCountdown(state.conversationId);
+    // home is booked: either way, nothing is left to start. The trip card
+    // shown again later, by show_bookings, starts nothing: the countdown
+    // belongs to the trip that opened the conversation.
+    if (event.type === "ui_open" && event.component === "trip_card" && !event.replaces) {
+      if (state.conversationId && counted !== state.conversationId) startCountdown(state.conversationId);
     } else if ((event.type === "ui_open" && event.component === "trip_card") || (event.type === "notice" && event.name === "flight_cancelled")) {
       cancelling = true;
       stopCountdown();

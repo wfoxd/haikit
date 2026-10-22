@@ -280,6 +280,27 @@ try {
     const headsUp = said(stream.events.slice(gateMark));
     check(/^Heads up: NH 7 moved from gate G95 to gate G99\. Boarding is still 10:20\. And the airline confirmed seat/.test(headsUp), `the guide speaks up: “${headsUp.slice(0, 64)}…”`, `the guide said: ${headsUp}`);
 
+    // 7a · "show all my bookings": show_trip ran once, at the start, so
+    //      show_bookings shows the trip card and the pass again, as they are
+    //      now, and books nothing; the next gate change revises the new pass
+    {
+      const again = await sse("/hai/chat", { conversationId: id, message: "show all my bookings" });
+      const trip = surface(again, "trip_card");
+      const passAgain = surface(again, "boarding_pass");
+      check(
+        trip.props?.status === "cancelled" && passAgain.ui?.mode === "display" && passAgain.props?.gate === "G99" &&
+          passAgain.props.reference === pass.props?.reference && passAgain.ui.handle !== pass.ui?.handle &&
+          /Here's everything you've booked/.test(said(again)) && !opened(again, "booking_confirmed").length,
+        "“show all my bookings” shows the trip card and the boarding pass again, as they are now (gate G99), and books nothing",
+        () => `${said(again)} · ${JSON.stringify({ trip: trip.props?.status, pass: passAgain.props })}`,
+      );
+      const mark = stream.events.length;
+      const later = await ops("gate", id);
+      const revised = await stream.until((e) => e.type === "ui_open" && e.component === "boarding_pass" && e.replaces === passAgain.ui?.handle, 8_000, mark);
+      check(later.status === 200 && /gate G103/.test(later.message) && revised, "…and the next gate change revises the pass shown again, not the first one", () => later.message);
+      await stream.until((e) => e.type === "released", 8_000, mark);
+    }
+
     stream.close();
 
     // 7b · the gate moves while a question on the flight home waits: no turn
@@ -291,7 +312,7 @@ try {
       const go = await sse("/hai/interact", { conversationId: id, handle: search.ui?.handle, action: "search", value: { from: "TYO", date: "Thu" } });
       const thursday = surface(go, "flight_results");
       check(
-        moved.status === 200 && /^Heads up: NH 7 moved from gate G99 to gate G103\. Boarding is still 10:20\. Here are the flights home on Thursday/.test(said(go)) &&
+        moved.status === 200 && /^Heads up: NH 7 moved from gate G103 to gate G107\. Boarding is still 10:20\. Here are the flights home on Thursday/.test(said(go)) &&
           thursday.ui?.mode === "elicit",
         `a gate change that rode in with a booking click is told first: “${said(go).slice(0, 70)}…”`,
         () => `${moved.message} · ${said(go)}`,
@@ -467,6 +488,46 @@ try {
       );
     }
 
+    // 8f · a boarding pass already issued isn't booked again: with nothing
+    //      changed, issue_boarding_pass says so and points to show_bookings,
+    //      where a second call would have booked it under a new reference
+    {
+      const { tripShown, optionChosen, seatPicked, passShownAgain } = await import("../src/server/airline.ts");
+      const { optionById } = await import("../src/server/data.ts");
+      const { issueBoardingPass } = await import("../src/server/tools.ts");
+      const stub = { conversationId: "issued", text: (model) => ({ model }), render: async () => ({ model: "a pass was shown" }) };
+      tripShown("issued", "ui_01");
+      optionChosen("issued", optionById("o01"));
+      seatPicked("issued", "o01", "12A");
+      passShownAgain("issued", "ui_09", {
+        passenger: "Alex Morgan", reference: "QWERTY", flight: "UA 1720 + NH 105", airline: "United + ANA",
+        legs: [], arrive: "Thu 05:25", seat: "12A", gate: "G91", boards: "18:30", care: null,
+      });
+      const twice = await issueBoardingPass.run({}, stub);
+      seatPicked("issued", "o01", "14C");
+      const newSeat = await issueBoardingPass.run({}, stub);
+      check(
+        /UA 1720 \+ NH 105, seat 12A, is already booked, as QWERTY: nothing was booked again\. To show the boarding pass again, call show_bookings/.test(twice.model) &&
+          newSeat.model === "a pass was shown",
+        "issue_boarding_pass doesn't book a pass already issued again, and points to show_bookings; a different seat is a new booking",
+        () => `${twice.model} · ${newSeat.model}`,
+      );
+    }
+
+    // 8g · before anything is booked, "show me my trip" shows the trip card again, and only that
+    {
+      const begin = await sse("/hai/start", {});
+      const id7 = begin.find((e) => e.type === "hello")?.conversationId;
+      const asked = await sse("/hai/chat", { conversationId: id7, message: "show me my trip" });
+      const trip = surface(asked, "trip_card");
+      check(
+        trip.ui?.mode === "display" && trip.props?.status === "on-time" && opened(asked, "trip_card").length === 1 &&
+          !opened(asked, "boarding_pass").length && /Nothing else is booked yet/.test(said(asked)),
+        "before anything is booked, “show me my trip” shows the trip card again, and says nothing else is booked",
+        () => `${said(asked)} · ${JSON.stringify(trip.props)}`,
+      );
+    }
+
     // 11 · the flight home, from the trip card's button: the search is filled
     //      in from the trip, and the day is left to choose
     {
@@ -587,6 +648,15 @@ try {
         !opened(after, "flight_results").length && /already booked: UA 838, booking /.test(said(after)),
         "once ticketed, the flights home aren't shown again: the guide says it's booked",
         () => said(after),
+      );
+      const all = await sse("/hai/chat", { conversationId: id4, message: "show all my bookings" });
+      const tripAgain = surface(all, "trip_card");
+      const eticket = surface(all, "booking_confirmed");
+      check(
+        tripAgain.props?.home?.flight === "UA 838" && eticket.ui?.mode === "display" && eticket.props?.reference === ticket.props?.reference &&
+          /Here's everything you've booked/.test(said(all)),
+        "with the flight home ticketed, “show all my bookings” shows the trip card, with the flight home on it, and the e-ticket again",
+        () => `${said(all)} · ${JSON.stringify({ home: tripAgain.props?.home, ticket: eticket.props?.reference })}`,
       );
       watch4.close();
     }

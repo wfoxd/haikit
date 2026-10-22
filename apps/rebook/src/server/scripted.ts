@@ -108,6 +108,13 @@ export function scripted(): ModelAdapter {
 
       // ── a click answered a question, or a tool came back ──
       if (results) {
+        // show_bookings came back: the cards are on screen again, as they are now
+        const called = [...blocksOf(messages.at(-2))].filter((b) => b?.type === "tool_use").map((b) => b?.name);
+        // (with a question opened again beside them, its answer is what's new, below)
+        if (called.length === 1 && called[0] === "show_bookings") {
+          const cards = (results.match(/ on screen as ui_\d+/g) ?? []).length;
+          return answer(cards > 1 ? "Here's everything you've booked, as it is now." : "Here's your trip. Nothing else is booked yet.", onTextDelta);
+        }
         // the flight home first: its labels say so, and the rebooking ones don't
         const home = homeStep(results, texts, latest);
         if (home) {
@@ -230,6 +237,14 @@ export function scripted(): ModelAdapter {
           : /^Choices for/.test(closed) && choice
             ? toolUse("offer_care", { optionId: choice })
             : null;
+      // Seeing the cards again: show_trip ran once, at the start, so show_bookings
+      // shows them, and a question the message closed opens again after them.
+      if (/\b(show|see|view|list|where)\b.*\b(bookings?|trip|boarding pass|e-?tickets?|tickets?|cards?|reservations?)\b/.test(text)) {
+        return answer(`Here are your bookings.${reopen ? " And here's where you were." : ""}`, onTextDelta, [
+          toolUse("show_bookings", {}),
+          ...(reopen ? [reopen] : []),
+        ]);
+      }
       // Questions about the picker shown last: the flights home, or the rebooking
       // options. Asked while the flights home are the last, a question goes to
       // them, unless it names the rebooking.

@@ -111,6 +111,7 @@ the card on file pays, and that this is a demo.
 | Wake notices | The cancellation starts the guide's turn when the traveller hasn't said anything |
 | Revisions, `hai.update` | The trip card, the picker, the seat map and the boarding pass are each revised in place by the airline |
 | Passive notices | The seat confirmation arrives a moment after booking, and the model hears it with the next turn |
+| `init` runs once | `show_trip` opens the conversation and never runs again. Ask to see your bookings and `show_bookings` shows the trip card, the boarding pass and the e-ticket again, as they are now; the airline revises the copies shown last |
 | Freshness | The options' `staleAfterMs` is 20 minutes. Past that, the whole conversation is out of date, and HaiKIT refuses every request on it rather than act on old prices |
 | `inform` | The trip card's Book my flight home tells the guide without anything waiting on the card. It's refused while a question waits, and once the flight home is booked |
 | Filled in, not asked | The search arrives filled in from the trip. Only the day is left to the traveller, unless they named it |
@@ -121,10 +122,11 @@ The boarding pass books exactly what the traveller clicked.
 `issue_boarding_pass` takes no input: the server reads the option, seat and
 night the traveller chose from their clicks, so the model can ask for a booking
 but can't decide what it is. For an option that costs extra, it also refuses
-until the traveller has confirmed that amount on `review_rebooking`. The flight
-home works the same way: each step's tool refuses to run ahead of the clicks,
-and `issue_ticket` books the flight, fare, seat and total the traveller
-confirmed.
+until the traveller has confirmed that amount on `review_rebooking`. Asked
+again with nothing changed, it books nothing and points the model to
+`show_bookings`, which shows the cards again. The flight home works the same
+way: each step's tool refuses to run ahead of the clicks, and `issue_ticket`
+books the flight, fare, seat and total the traveller confirmed.
 
 ## Run it
 
@@ -197,9 +199,9 @@ src/server/surfaces.ts     digests, click handlers, the filter and earliest quer
 src/server/notices.ts      what the model hears of each notice
 src/server/airline.ts      the airline's side: cancel, holds, other passengers, confirmation,
                            the gate, the fare and the ticket, and what the traveller clicked
-src/server/tools.ts        show_trip (init), find_rebooking, show_seat_map, offer_care,
-                           review_rebooking, issue_boarding_pass; start_booking, show_flights,
-                           show_fares, show_home_seats, review_booking, issue_ticket
+src/server/tools.ts        show_trip (init), show_bookings, find_rebooking, show_seat_map,
+                           offer_care, review_rebooking, issue_boarding_pass; start_booking,
+                           show_flights, show_fares, show_home_seats, review_booking, issue_ticket
 src/server/scripted.ts     the scripted guide, a ModelAdapter
 src/server/main.ts         createHai, the /ops routes, static files
 public/                    the page, the components, the Airline ops bar, the styles

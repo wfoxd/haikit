@@ -253,6 +253,39 @@ export function passShown(conversationId: string, handle: string, props: Boardin
   }, CONFIRM_MS).unref();
 }
 
+/**
+ * What's booked, as it is now, for showing it again: the trip card's props
+ * once any revision of it under way has landed, the boarding pass with its
+ * gate as it is, and the flight home's e-ticket. Null for a conversation the
+ * airline doesn't know.
+ */
+export async function bookingsNow(conversationId: string) {
+  const d = desks.get(conversationId);
+  if (!d) return null;
+  await d.tripQueue;
+  return { trip: d.tripProps, pass: d.pass?.props ?? null, ticket: d.booking.ticket };
+}
+
+/**
+ * A card shown again is the one the airline revises from now on: the trip
+ * card when the flight home is booked, the pass when its gate moves. Nothing
+ * is confirmed again: the airline already did. A trip card revision under way
+ * lands first, on the copy it started on.
+ */
+export function tripShownAgain(conversationId: string, handle: string) {
+  const d = desks.get(conversationId);
+  if (!d) return;
+  d.tripQueue = d.tripQueue.then(() => void (d.trip = handle));
+}
+
+/** The boarding pass issued in this conversation, as it is now, or null. */
+export const issuedPass = (conversationId: string) => desks.get(conversationId)?.pass?.props ?? null;
+
+export function passShownAgain(conversationId: string, handle: string, props: BoardingPassProps) {
+  const d = desks.get(conversationId);
+  if (d) d.pass = { handle, props };
+}
+
 // ─────────────────────────────────────────── booking the flight home
 
 /** The flight home as far as it's booked, or null for a conversation the airline doesn't know. */
