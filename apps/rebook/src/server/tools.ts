@@ -99,10 +99,10 @@ export const showBookings = defineTool({
   inputJsonSchema: none,
 
   async run(_input, ctx) {
-    const now = await bookingsNow(ctx.conversationId);
+    const now = bookingsNow(ctx.conversationId);
     if (!now) return ctx.text("This conversation hasn't shown its trip yet.");
     const trip = await ctx.render(tripCardServer, now.trip);
-    if (trip.handle) tripShownAgain(ctx.conversationId, trip.handle);
+    if (trip.handle) tripShownAgain(ctx.conversationId, trip.handle, now.trip);
     const shown = [trip.model];
     if (now.pass) {
       const pass = await ctx.render(boardingPassServer, now.pass);

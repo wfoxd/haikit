@@ -64,10 +64,17 @@ interface Booking {
 }
 
 interface Desk {
-  /** The trip card's latest handle, and its props: a revision starts from these. */
+  /** The trip card's latest handle, and the props it shows. */
   trip: string;
   tripProps: TripCardProps;
-  /** The trip card's revisions, one at a time: each reads the props the last one saved. */
+  /**
+   * What the trip card should show: the props with every revision decided so
+   * far, landed or not. A revision starts from these, and a card shown again
+   * shows them, without waiting for a revision that may be waiting for the
+   * very turn that shows it.
+   */
+  tripTarget: TripCardProps;
+  /** The trip card's revisions, and the handle of a card shown again, one at a time, in order. */
   tripQueue: Promise<void>;
   /** A fare rise in progress: a second at once waits for none. */
   raising: boolean;
@@ -80,7 +87,12 @@ interface Desk {
   seatMaps: Map<string, SeatMapProps["rows"]>;
   options: { handle: string; props: RebookingOptionsProps; hold: ReturnType<typeof setTimeout> } | null;
   seats: { handle: string; props: SeatMapProps; key: string; others: ReturnType<typeof setInterval> } | null;
+  /** The boarding pass's latest handle, and the props it shows. */
   pass: { handle: string; props: BoardingPassProps } | null;
+  /** What the pass should show, with every gate change decided so far: as `tripTarget` is to the trip card. */
+  passTarget: BoardingPassProps | null;
+  /** The pass's revisions, and the handle of a pass shown again, one at a time, in order. */
+  passQueue: Promise<void>;
   /**
    * What the traveller clicked. `confirmed` is the extra fare they confirmed
    * on the review, for an option that costs extra; any change since clears it.
@@ -110,17 +122,23 @@ const desk = (conversationId: string) => {
 /**
  * Revise the trip card, after any revision of it already under way: the
  * cancellation and the flight home each change one thing, and neither may
- * start from props the other is about to replace.
+ * start from props the other is about to replace. What the card should show
+ * is decided now; the revision lands when HaiKIT lets it, which is after any
+ * turn in progress, on whichever copy is the latest by then.
  */
 function reviseTrip(conversationId: string, d: Desk, change: (props: TripCardProps) => TripCardProps, model: string): Promise<void> {
+  const props = change(d.tripTarget);
+  d.tripTarget = props;
   const run = async () => {
-    const props = change(d.tripProps);
     const revised = await update!(conversationId, tripCardServer, d.trip, props, { model });
     d.trip = revised.handle;
     d.tripProps = props;
   };
   const done = d.tripQueue.then(run);
-  d.tripQueue = done.catch(() => {});
+  d.tripQueue = done.catch(() => {
+    // not revised: unless a later revision has been decided since, the card should show what it does
+    if (d.tripTarget === props) d.tripTarget = d.tripProps;
+  });
   return done;
 }
 
@@ -134,6 +152,7 @@ export function tripShown(conversationId: string, handle: string) {
   desks.set(conversationId, {
     trip: handle,
     tripProps: TRIP,
+    tripTarget: TRIP,
     tripQueue: Promise.resolve(),
     raising: false,
     cancelled: false,
@@ -143,6 +162,8 @@ export function tripShown(conversationId: string, handle: string) {
     options: null,
     seats: null,
     pass: null,
+    passTarget: null,
+    passQueue: Promise.resolve(),
     chosen: { option: null, seat: null, care: null, confirmed: null },
     booking: noBooking(),
   });
@@ -246,6 +267,7 @@ export function passShown(conversationId: string, handle: string, props: Boardin
   const d = desks.get(conversationId);
   if (!d) return;
   d.pass = { handle, props };
+  d.passTarget = props;
   // Confirmed a moment later, beside the pass, as a webhook would.
   setTimeout(() => {
     notify?.(conversationId, seatConfirmedServer, { flight: props.flight, seat: props.seat, reference: props.reference }, { handle })
@@ -254,36 +276,58 @@ export function passShown(conversationId: string, handle: string, props: Boardin
 }
 
 /**
- * What's booked, as it is now, for showing it again: the trip card's props
- * once any revision of it under way has landed, the boarding pass with its
- * gate as it is, and the flight home's e-ticket. Null for a conversation the
- * airline doesn't know.
+ * What's booked, for showing it again: the trip card and the boarding pass as
+ * they should be, with every revision the airline has decided, and the flight
+ * home's e-ticket. It doesn't wait for a revision to land: one may be waiting
+ * for the very turn that asks. Null for a conversation the airline doesn't know.
  */
-export async function bookingsNow(conversationId: string) {
+export function bookingsNow(conversationId: string) {
   const d = desks.get(conversationId);
   if (!d) return null;
-  await d.tripQueue;
-  return { trip: d.tripProps, pass: d.pass?.props ?? null, ticket: d.booking.ticket };
+  return { trip: d.tripTarget, pass: d.passTarget, ticket: d.booking.ticket };
 }
 
 /**
  * A card shown again is the one the airline revises from now on: the trip
  * card when the flight home is booked, the pass when its gate moves. Nothing
- * is confirmed again: the airline already did. A trip card revision under way
- * lands first, on the copy it started on.
+ * is confirmed again: the airline already did. It takes its place in the
+ * card's queue: a revision decided before it lands first, on the copy it
+ * started on, and this copy, drawn as the card should be, already shows it. A
+ * revision decided while it was being drawn lands on the copy before it too,
+ * so this one is then revised to match.
  */
-export function tripShownAgain(conversationId: string, handle: string) {
+export function tripShownAgain(conversationId: string, handle: string, shown: TripCardProps) {
   const d = desks.get(conversationId);
   if (!d) return;
-  d.tripQueue = d.tripQueue.then(() => void (d.trip = handle));
+  d.tripQueue = d.tripQueue
+    .then(async () => {
+      d.trip = handle;
+      d.tripProps = shown;
+      if (d.tripTarget === shown) return;
+      const props = d.tripTarget;
+      const revised = await update!(conversationId, tripCardServer, handle, props, { model: "The trip card shown again now has the airline's latest change too." });
+      d.trip = revised.handle;
+      d.tripProps = props;
+    })
+    .catch((err) => console.error(`trip card shown again for ${conversationId} not brought up to date: ${err.message}`));
 }
 
-/** The boarding pass issued in this conversation, as it is now, or null. */
-export const issuedPass = (conversationId: string) => desks.get(conversationId)?.pass?.props ?? null;
+/** The boarding pass issued in this conversation, as it should be now, or null. */
+export const issuedPass = (conversationId: string) => desks.get(conversationId)?.passTarget ?? null;
 
-export function passShownAgain(conversationId: string, handle: string, props: BoardingPassProps) {
+/** As `tripShownAgain`, for the boarding pass: the gate change it might have missed is applied to it. */
+export function passShownAgain(conversationId: string, handle: string, shown: BoardingPassProps) {
   const d = desks.get(conversationId);
-  if (d) d.pass = { handle, props };
+  if (!d) return;
+  d.passQueue = d.passQueue
+    .then(async () => {
+      d.pass = { handle, props: shown };
+      if (!d.passTarget || d.passTarget === shown) return;
+      const props = d.passTarget;
+      const revised = await update!(conversationId, boardingPassServer, handle, props, { model: `The boarding pass shown again now shows gate ${props.gate} too.` });
+      d.pass = { handle: revised.handle, props };
+    })
+    .catch((err) => console.error(`boarding pass shown again for ${conversationId} not brought up to date: ${err.message}`));
 }
 
 // ─────────────────────────────────────────── booking the flight home
@@ -451,15 +495,25 @@ export async function releaseHolds(conversationId: string): Promise<string> {
 /** Move the new flight's gate: the boarding pass is revised, and the guide speaks up about it. */
 export async function changeGate(conversationId: string): Promise<string> {
   const d = desk(conversationId);
-  const pass = d.pass;
-  if (!pass) throw new OpsError("There's no boarding pass yet: rebook the cancelled flight first.");
-  const gate = `G${Number(pass.props.gate.slice(1)) + 4}`;
-  const props: BoardingPassProps = { ...pass.props, gate };
-  const revised = await update!(conversationId, boardingPassServer, pass.handle, props, {
-    model: `${props.flight} moved from gate ${pass.props.gate} to gate ${gate}. Boarding is still ${props.boards}.`,
-    wake: true,
+  const was = d.passTarget;
+  if (!was || !d.pass) throw new OpsError("There's no boarding pass yet: rebook the cancelled flight first.");
+  // Decided now, so a pass shown again before it lands shows the new gate.
+  const gate = `G${Number(was.gate.slice(1)) + 4}`;
+  const props: BoardingPassProps = { ...was, gate };
+  d.passTarget = props;
+  const run = async () => {
+    // the latest copy when it lands: a pass shown again since is the one that moves
+    const revised = await update!(conversationId, boardingPassServer, d.pass!.handle, props, {
+      model: `${props.flight} moved from gate ${was.gate} to gate ${gate}. Boarding is still ${props.boards}.`,
+      wake: true,
+    });
+    d.pass = { handle: revised.handle, props };
+  };
+  const done = d.passQueue.then(run);
+  d.passQueue = done.catch(() => {
+    if (d.passTarget === props) d.passTarget = d.pass?.props ?? null;
   });
-  d.pass = { handle: revised.handle, props };
+  await done;
   return `Moved ${props.flight} to gate ${gate}. The guide tells the traveller now, or with their next click if a question is waiting.`;
 }
 
