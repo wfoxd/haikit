@@ -97,7 +97,7 @@ try {
     about.haikit === installed ? ok(`reports the installed haikit (${installed})`) : bad(`version.json says ${about.haikit}, installed is ${installed}`);
 
     // the page and the client runtime it loads, served from node_modules
-    for (const asset of ["/", "/components.js", "/logo.js", "/svg.js", "/architecture.js", "/illustrations.js", "/menu.js", "/styles.css", "/hai-client/app.js", "/hai-client/hai.css"]) {
+    for (const asset of ["/", "/components.js", "/logo.js", "/svg.js", "/architecture.js", "/illustrations.js", "/minis.js", "/menu.js", "/styles.css", "/hai-client/app.js", "/hai-client/hai.css"]) {
       const res = await get(`${BASE}${asset}`);
       res.ok ? ok(`serves ${asset}`) : bad(`${asset} → ${res.status}`);
     }
@@ -132,9 +132,14 @@ try {
     versus.rows?.length >= 4 && versus.rows.every((r) => r.topic && r.chatbot && r.haikit)
       ? ok("welcome sets a chatbot beside an app against an app built with HaiKIT: one request in each, then row by row")
       : bad(`welcome's comparison with a chatbot: ${JSON.stringify(versus)}`);
-    example?.steps?.length === 4 && example.steps.every((st) => st.title && st.text && st.scene?.length) && example.demo?.url === "https://rebook.haikit.app/"
-      ? ok("welcome walks through the Rebook demo in four steps, each with its scene, and links to it")
+    example?.steps?.length === 6 && example.steps.every((st) => st.title && st.text && st.scene?.length) && example.demo?.url === "https://rebook.haikit.app/"
+      ? ok("welcome walks through the Rebook demo in six steps, each with its scene, and links to it")
       : bad(`welcome's example: ${JSON.stringify(example)}`);
+    // the scenes draw Rebook's components, each under the tool that renders it
+    const minis = (example?.steps ?? []).flatMap((st) => st.scene).filter((l) => "ui" in l);
+    ["trip", "options", "seats", "choices", "pass"].every((ui) => minis.some((m) => m.ui === ui)) && minis.every((m) => m.tool && m.title)
+      ? ok(`…and its scenes draw ${minis.length} of Rebook's components: a trip, options, a seat map, a question and a boarding pass`)
+      : bad(`the walkthrough's components: ${JSON.stringify(minis.map((m) => m.ui))}`);
     const arch = example?.underneath?.architecture;
     arch?.nodes?.length === 3 && arch.links?.length === arch.nodes.length - 1 && arch.links.flat().every((a) => a.label)
       ? ok("welcome carries the architecture diagram, every arrow labelled")

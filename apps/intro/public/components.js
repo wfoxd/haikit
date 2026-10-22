@@ -12,6 +12,7 @@ import { architecture } from "./architecture.js";
 import { illustration } from "./illustrations.js";
 import { el } from "./svg.js";
 import { logo } from "./logo.js";
+import { mini } from "./minis.js";
 
 /** @typedef {import("../src/shared/surfaces.ts").WelcomeProps} WelcomeProps */
 /** @typedef {import("../src/shared/surfaces.ts").CourseMapProps} CourseMapProps */
@@ -649,10 +650,11 @@ function todaySection(today, n) {
 const SPEAKERS = { world: "News:", you: "You type:", ai: "The AI says:", option: "Option:", click: "You click:" };
 
 /**
- * A step's scene, as the person would see it: a line from the world, what
- * they typed, what the AI said, or what they clicked. A picture of the demo,
- * not a control: nothing in it can be clicked. Its lines say more than the
- * step's words, so a screen reader reads them too, each after its speaker.
+ * A scene, as the person would see it: a line from the world, what they
+ * typed, what the AI said, what they clicked, or one of the demo's components
+ * on screen. A picture of the demo, not a control: nothing in it can be
+ * clicked. Its lines say more than the step's words, so a screen reader reads
+ * them too, each after its speaker.
  * @param {WelcomeProps["example"]["steps"][number]["scene"]} scene
  */
 function sceneOf(scene) {
@@ -660,6 +662,10 @@ function sceneOf(scene) {
   box.setAttribute("role", "group");
   box.setAttribute("aria-label", "What you'd see");
   for (const line of scene) {
+    if ("ui" in line) {
+      box.append(mini(line));
+      continue;
+    }
     const p = h("p", `scene-line scene-${line.from}`);
     p.append(h("span", "welcome-sr", `${SPEAKERS[line.from]} `), line.text);
     box.append(p);
@@ -747,7 +753,9 @@ function tokensSection(tokens, n) {
 
 /**
  * How the AI does a job with you, step by step in one of HaiKIT's demos, a
- * link to try it, and how it works underneath.
+ * link to try it, and how it works underneath. The steps are a timeline: each
+ * one's number on a rail, its words, and its scene, beside the words where
+ * there's room and under them where there isn't.
  * @param {WelcomeProps["example"]} example
  * @param {number} n its place in the story
  */
@@ -757,7 +765,13 @@ function exampleSection(example, n) {
   const steps = h("ol", "welcome-steps");
   example.steps.forEach((step, i) => {
     const li = h("li", "welcome-step");
-    li.append(sceneOf(step.scene), h("p", "welcome-step-n", `Step ${i + 1}`), h("h4", "welcome-step-title", step.title), inline(h("p", "welcome-step-text"), step.text));
+    const num = h("p", "welcome-step-n");
+    num.append(h("span", "welcome-sr", "Step "), String(i + 1));
+    const words = h("div", "welcome-step-words");
+    words.append(h("h4", "welcome-step-title", step.title), inline(h("p", "welcome-step-text"), step.text));
+    const scene = sceneOf(step.scene);
+    scene.classList.add("welcome-screen");
+    li.append(num, words, scene);
     steps.append(li);
   });
   sec.append(steps);

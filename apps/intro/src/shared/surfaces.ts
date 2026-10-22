@@ -191,6 +191,78 @@ export const WelcomeSide = z.object({
  */
 export const SceneLine = z.object({ from: z.enum(["world", "you", "ai", "option", "click"]), text: z.string() });
 
+/*
+ * One of the demo's components, drawn small in a scene: a picture of what the
+ * demo shows, from the demo's own data, not the component itself. Each sits
+ * under the tool that rendered it, as the default UI frames a surface, and
+ * `asks` marks a tool that waits for the person's click.
+ */
+const Badge = z.object({ text: z.string(), tone: z.enum(["ok", "alert", "wait"]) });
+const Fact = z.object({ k: z.string(), v: z.string(), moved: z.boolean().optional() });
+const Mini = {
+  tool: z.string(),
+  asks: z.boolean().optional(),
+  title: z.string(),
+  sub: z.string(),
+  badge: Badge.optional(),
+};
+const Stop = z.object({ code: z.string(), city: z.string(), time: z.string() });
+
+/** A trip: where from and to, a few facts, and why it changed. */
+export const SceneTrip = z.object({ ui: z.literal("trip"), ...Mini, from: Stop, to: Stop, facts: z.array(Fact), why: z.string().optional() });
+
+/** A list to pick from, its filter chips, the first rows, and how many more there are. */
+export const SceneOptions = z.object({
+  ui: z.literal("options"),
+  ...Mini,
+  chips: z.array(z.object({ label: z.string(), on: z.boolean().optional() })).optional(),
+  rows: z.array(
+    z.object({
+      depart: z.string(),
+      arrive: z.string(),
+      flights: z.string(),
+      detail: z.string(),
+      fare: z.string(),
+      free: z.boolean(),
+      left: z.string(),
+      low: z.boolean().optional(),
+      picked: z.boolean().optional(),
+    }),
+  ),
+  more: z.string().optional(),
+});
+
+/**
+ * Rows of a seat map, six seats each with the aisle between C and D:
+ * `.` a free seat, `L` a free one with extra legroom, `x` taken, `*` the one picked.
+ */
+export const SceneSeats = z.object({
+  ui: z.literal("seats"),
+  ...Mini,
+  rows: z.array(z.object({ n: z.number(), seats: z.string().regex(/^[.Lx*]{6}$/) })),
+  foot: z.string(),
+});
+
+/** A question answered by choosing one of a few cards. */
+export const SceneChoices = z.object({
+  ui: z.literal("choices"),
+  ...Mini,
+  choices: z.array(z.object({ title: z.string(), detail: z.string(), picked: z.boolean().optional() })),
+});
+
+/** A boarding pass: its legs, its facts (one may have just changed), and a line about it. */
+export const ScenePass = z.object({
+  ui: z.literal("pass"),
+  ...Mini,
+  legs: z.array(z.object({ from: z.string(), to: z.string(), flight: z.string() })),
+  facts: z.array(Fact),
+  why: z.string().optional(),
+  foot: z.string().optional(),
+});
+
+/** A line of a step's scene: what was said or clicked, or a component on screen. */
+export const StepLine = z.union([SceneLine, SceneTrip, SceneOptions, SceneSeats, SceneChoices, ScenePass]);
+
 /**
  * A measured example of the two channels: the tokens a result took on screen,
  * beside the tokens the AI read of it.
@@ -211,8 +283,9 @@ export const welcomeScreen = defineSurface({
   // 9 the second tutorial beside it, 10 the reference manual under them,
   // 11 the story in place of the sections: today, how, and what you get,
   // 12 a chatbot beside the app against an app the AI runs, after today,
-  // 13 how HaiKIT saves tokens, after how it works
-  version: 13,
+  // 13 how HaiKIT saves tokens, after how it works, 14 the demo's components
+  // in its steps' scenes
+  version: 14,
   props: z.object({
     /** A short introduction, one paragraph per entry. The first is the lede; the rest close the screen. */
     intro: z.array(z.string()),
@@ -239,7 +312,7 @@ export const welcomeScreen = defineSurface({
       label: z.string(),
       title: z.string(),
       lead: z.string(),
-      steps: z.array(z.object({ title: z.string(), text: z.string(), scene: z.array(SceneLine) })),
+      steps: z.array(z.object({ title: z.string(), text: z.string(), scene: z.array(StepLine) })),
       demo: z.object({ label: z.string(), url: z.string() }),
       underneath: z.object({ title: z.string(), text: z.string(), architecture: Architecture }),
     }),
