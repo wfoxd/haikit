@@ -125,21 +125,34 @@ export function scripted(): ModelAdapter {
             toolUse("show_seat_map", { optionId: option[1] }),
           ]);
         }
+        // The option chosen last: its id, whether it leaves tonight, and what it costs extra.
+        const picked = latest(/traveller chose (o\d+): ([^\n]*)/g);
+        const extra = picked?.[2]?.match(/(\$\d+) extra/)?.[1];
+        // Booked from the clicks alone, unless the option costs extra: then the traveller confirms that first.
+        const book = (lead: string) =>
+          extra
+            ? answer(`${lead} It costs ${extra} more than your ticket, so check the change before I book it.`, onTextDelta, [toolUse("review_rebooking", {})])
+            : answer(`${lead} Here's your boarding pass.`, onTextDelta, [toolUse("issue_boarding_pass", {})]);
         const seat = results.match(/traveller picked seat (\w+) on (.+?)[ .(]/);
         if (seat) {
-          const choice = latest(/traveller chose (o\d+): .*? (It leaves this evening|It leaves tomorrow)/g);
-          if (choice?.[2] === "It leaves tomorrow") {
+          if (picked?.[2]?.includes("It leaves tomorrow")) {
             return answer(`Seat ${seat[1]} is yours. Your new flight leaves tomorrow, so where would you like to spend tonight?`, onTextDelta, [
-              toolUse("offer_care", { optionId: choice[1] }),
+              toolUse("offer_care", { optionId: picked[1] }),
             ]);
           }
-          return answer(`Seat ${seat[1]} is yours. Here's your new boarding pass.`, onTextDelta, [toolUse("issue_boarding_pass", {})]);
+          return book(`Seat ${seat[1]} is yours.`);
         }
         const care = results.match(/traveller chose (Hotel voucher|Lounge and dinner|I'll sort it myself)/);
-        if (care) {
-          return answer(care[1] === "I'll sort it myself" ? "Understood. Here's your boarding pass." : `${care[1]} it is. Here's your boarding pass.`, onTextDelta, [
-            toolUse("issue_boarding_pass", {}),
-          ]);
+        if (care) return book(care[1] === "I'll sort it myself" ? "Understood." : `${care[1]} it is.`);
+        const confirmed = results.match(/traveller confirmed the change to (.+?), at (\$\d+) extra\./);
+        if (confirmed) {
+          return answer(`Confirmed: ${confirmed[1]}, at ${confirmed[2]} extra. Here's your boarding pass.`, onTextDelta, [toolUse("issue_boarding_pass", {})]);
+        }
+        if (/traveller wants a different flight instead of/.test(results)) {
+          return answer("Here's every way I can get you to Tokyo again.", onTextDelta, [toolUse("find_rebooking", {})]);
+        }
+        if (/traveller wants a different seat on/.test(results) && picked) {
+          return answer("Here's the seat map again.", onTextDelta, [toolUse("show_seat_map", { optionId: picked[1] })]);
         }
         const pass = results.match(/Boarding pass on screen as \S+ .*?Seat (\w+), gate (\w+), boarding ([\d:]+)/);
         if (pass) {
@@ -208,7 +221,9 @@ export function scripted(): ModelAdapter {
               ? toolUse("show_home_seats", { flightId: homeFlight })
               : /^Review of the booking/.test(closed)
                 ? toolUse("review_booking", {})
-                : /^Rebooking options/.test(closed)
+                : /^Review of the change/.test(closed)
+                  ? toolUse("review_rebooking", {})
+                  : /^Rebooking options/.test(closed)
         ? toolUse("find_rebooking", shownWith)
         : /^Seat map for/.test(closed) && choice
           ? toolUse("show_seat_map", { optionId: choice })
@@ -351,7 +366,7 @@ function homeStep(results: string, texts: string[], latest: (re: RegExp) => RegE
   // question waited, such as the rebooking options shown in the same reply:
   // then the answer is what's new, and the ticket was already spoken of.
   const ticket = results.match(/E-ticket on screen as \S+: .+?, booking (\w+), (.+?), leaving (\w+ [\d:]+)/);
-  if (ticket && /traveller chose o\d+: |traveller picked seat |traveller chose (Hotel voucher|Lounge and dinner|I'll sort it myself)/.test(results)) return null;
+  if (ticket && /traveller chose o\d+: |traveller picked seat |traveller chose (Hotel voucher|Lounge and dinner|I'll sort it myself)|traveller confirmed the change to |traveller wants a different (flight instead|seat on)/.test(results)) return null;
   if (ticket) return { say: `You're booked home: ${ticket[2]}, leaving ${ticket[3]}, booking ${ticket[1]}. The airline will issue the ticket in a moment.` };
 
   return null;

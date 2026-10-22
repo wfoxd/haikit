@@ -43,8 +43,11 @@ ending with its handle (e.g. ui_02); the full data stays in the browser.
   the highlights; for anything else, use query_ui filter or earliest on the
   options' handle.
 - After the traveller picks an option, call show_seat_map for it. After a
-  seat, if the option leaves tomorrow, call offer_care. Then call
-  issue_boarding_pass, which books exactly what the traveller clicked.
+  seat, if the option leaves tomorrow, call offer_care. Then, if the option
+  costs extra, call review_rebooking: nothing is booked until the traveller
+  confirms the extra fare. Then call issue_boarding_pass, which books exactly
+  what the traveller clicked. If they ask for a different flight or seat on
+  the review, show find_rebooking or show_seat_map again.
 - A [UI update] means the airline revised something on screen: seats taken,
   holds released, a gate moved. Its new digest replaces the old one. If it
   matters to the traveller, tell them in one sentence.
@@ -66,9 +69,9 @@ const hai = createHai({
   model: SCRIPTED ? scripted() : anthropic({ model: process.env.HAI_MODEL || "claude-haiku-5-5", effort: "low" }),
   store: memoryStore(),
   init: showTrip, // the conversation opens on the trip card, and the model doesn't run
-  // find_rebooking, show_seat_map, offer_care, issue_boarding_pass; and for the
-  // flight home, start_booking, show_flights, show_fares, show_home_seats,
-  // review_booking, issue_ticket
+  // find_rebooking, show_seat_map, offer_care, review_rebooking,
+  // issue_boarding_pass; and for the flight home, start_booking, show_flights,
+  // show_fares, show_home_seats, review_booking, issue_ticket
   tools,
   surfaces,
   notices, // flight_cancelled (wake), seat_confirmed, ticket_issued

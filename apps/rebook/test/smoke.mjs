@@ -399,6 +399,74 @@ try {
       );
     }
 
+    // 8d · an option that costs extra: after the seat, the guide shows the change
+    //      to confirm, and nothing is booked until the traveller confirms the
+    //      amount they saw. KE 26 + KE 2101 leaves tonight, for $60 more.
+    {
+      const begin = await sse("/hai/start", {});
+      const id3 = begin.find((e) => e.type === "hello")?.conversationId;
+      const watch3 = watch(id3);
+      await ops("cancel", id3);
+      const options = await watch3.until((e) => e.type === "ui_open" && e.component === "rebooking_options");
+      await watch3.until((e) => e.type === "status" && e.status === "awaiting");
+      const map = surface(await sse("/hai/interact", { conversationId: id3, handle: options?.handle, action: "choose", value: "o04" }), "seat_map");
+      const freeSeats = (props) => props?.rows.flatMap((r) => r.seats).filter((s) => !s.taken) ?? [];
+      const first = freeSeats(map.props)[0];
+      const picked = await sse("/hai/interact", { conversationId: id3, handle: map.ui?.handle, action: "pick", value: first?.id });
+      const review = surface(picked, "rebooking_review");
+      check(
+        review.ui?.mode === "elicit" && review.props?.extraFare === 60 && review.props.seat === first?.id && review.props.care === null &&
+          opened(picked, "boarding_pass").length === 0 && /\$60 more/.test(said(picked)),
+        "KE 26 costs $60 extra: after the seat, the guide shows the change to confirm, not the boarding pass",
+        () => `${said(picked)} · ${JSON.stringify(review.props)}`,
+      );
+      const short = await sse("/hai/interact", { conversationId: id3, handle: review.ui?.handle, action: "confirm", value: { extraFare: 50 } });
+      check(/the extra fare is \$60, not \$50/.test(refusal(short)), "…a Confirm for a different amount is refused, and the review stays live", () => refusal(short));
+      const seatAgain = surface(await sse("/hai/interact", { conversationId: id3, handle: review.ui?.handle, action: "change", value: "seat" }), "seat_map");
+      const second = freeSeats(seatAgain.props).find((s) => s.id !== first?.id);
+      const review2 = surface(await sse("/hai/interact", { conversationId: id3, handle: seatAgain.ui?.handle, action: "pick", value: second?.id }), "rebooking_review");
+      check(
+        seatAgain.props?.flight === "KE 26" && review2.props?.seat === second?.id,
+        `…Different seat shows KE 26's map again, and the new seat (${second?.id}) comes back to be confirmed`,
+        () => JSON.stringify({ seatAgain: seatAgain.props?.flight, review2: review2.props }),
+      );
+      const confirmed = await sse("/hai/interact", { conversationId: id3, handle: review2.ui?.handle, action: "confirm", value: { extraFare: 60 } });
+      const pass = surface(confirmed, "boarding_pass");
+      check(
+        pass.props?.flight === "KE 26 + KE 2101" && pass.props.seat === second?.id && pass.props.care === null,
+        "…and once confirmed at $60, the boarding pass is issued for exactly that flight and seat",
+        () => `${said(confirmed)} · ${JSON.stringify(pass.props)}`,
+      );
+      watch3.close();
+    }
+
+    // 8e · the boarding pass isn't issued for an option that costs extra until
+    //      its amount is confirmed, whatever the model asks; a free one needs
+    //      no review. Run here, in this process, on conversations of their own.
+    {
+      const { tripShown, optionChosen, seatPicked, extraConfirmed } = await import("../src/server/airline.ts");
+      const { optionById } = await import("../src/server/data.ts");
+      const { issueBoardingPass, reviewRebooking } = await import("../src/server/tools.ts");
+      const stub = (conversationId) => ({ conversationId, text: (model) => ({ model }), render: async () => ({ model: "shown" }) });
+      tripShown("extra", "ui_01");
+      optionChosen("extra", optionById("o04"));
+      seatPicked("extra", "o04", "12A");
+      const early = await issueBoardingPass.run({}, stub("extra"));
+      const shown = await reviewRebooking.run({}, stub("extra"));
+      extraConfirmed("extra", "o04", 60);
+      const booked = await issueBoardingPass.run({}, stub("extra"));
+      tripShown("free", "ui_01");
+      optionChosen("free", optionById("o01"));
+      seatPicked("free", "o01", "12A");
+      const free = await reviewRebooking.run({}, stub("free"));
+      check(
+        /costs \$60 extra, and the traveller hasn't confirmed it yet: show review_rebooking/.test(early.model) && shown.model === "shown" &&
+          booked.model === "shown" && /costs nothing extra, so there's nothing to confirm/.test(free.model),
+        "issue_boarding_pass refuses an option that costs extra until its amount is confirmed; a free option has nothing to review",
+        () => [early.model, shown.model, booked.model, free.model].join(" · "),
+      );
+    }
+
     // 11 · the flight home, from the trip card's button: the search is filled
     //      in from the trip, and the day is left to choose
     {

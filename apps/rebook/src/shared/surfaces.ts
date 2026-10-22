@@ -150,6 +150,40 @@ export const careOptions = defineSurface({
   },
 });
 
+/**
+ * The change to check before it's booked, when the option chosen costs extra:
+ * the new flight, the seat, tonight, and the extra fare. Nothing is booked
+ * until Confirm, whose click carries the amount on screen, so the traveller
+ * pays exactly what they saw. An option at no extra cost needs no review: its
+ * clicks book it.
+ */
+export const rebookingReview = defineSurface({
+  name: "rebooking_review",
+  version: 1,
+  props: z.object({
+    passenger: z.string(),
+    /** The cancelled flight this replaces. */
+    cancelled: z.string(),
+    optionId: z.string(),
+    flight: z.string(),
+    airline: z.string(),
+    legs: z.array(z.object({ flight: z.string(), from: z.string(), to: z.string() })),
+    depart: z.string(),
+    arrive: z.string(),
+    seat: z.string(),
+    /** Where the traveller spends tonight, when there is a night to spend. */
+    care: z.string().nullable(),
+    /** What the new flight costs on top of the ticket the traveller has, in dollars. */
+    extraFare: z.number(),
+    /** How it's paid for, in words. A demo: no card details are ever asked for. */
+    payment: z.string(),
+  }),
+  actions: {
+    confirm: resolve(z.object({ extraFare: z.number() })),
+    change: resolve(z.enum(["flight", "seat"])),
+  },
+});
+
 export const boardingPass = defineSurface({
   name: "boarding_pass",
   version: 1,
@@ -341,6 +375,7 @@ export type TripCardProps = Infer<typeof tripCard.props>;
 export type RebookingOptionsProps = Infer<typeof rebookingOptions.props>;
 export type SeatMapProps = Infer<typeof seatMap.props>;
 export type CareOptionsProps = Infer<typeof careOptions.props>;
+export type RebookingReviewProps = Infer<typeof rebookingReview.props>;
 export type BoardingPassProps = Infer<typeof boardingPass.props>;
 export type FlightSearchProps = Infer<typeof flightSearch.props>;
 export type FlightResultsProps = Infer<typeof flightResults.props>;

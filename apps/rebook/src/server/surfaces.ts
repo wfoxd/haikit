@@ -13,6 +13,7 @@ import {
   flightResults,
   flightSearch,
   rebookingOptions,
+  rebookingReview,
   seatMap,
   tripCard,
 } from "../shared/surfaces.ts";
@@ -20,6 +21,7 @@ import {
   booking,
   bookingConfirmedAt,
   careChosen,
+  extraConfirmed,
   fareChosen,
   homeFlightChosen,
   homeSeatPicked,
@@ -178,6 +180,32 @@ export const careOptionsServer = careOptions.implement({
   queries: {},
 });
 
+export const rebookingReviewServer = rebookingReview.implement({
+  digest(p, { handle }) {
+    const legs = p.legs.map((l) => `${l.flight} ${l.from}→${l.to}`).join(", then ");
+    return (
+      `Review of the change from ${p.cancelled} on screen as ${handle}: ${legs}, leaving ${p.depart}, landing ${p.arrive}. ` +
+      `Seat ${p.seat}${p.care ? `. Tonight: ${p.care}` : ""}. ${usd(p.extraFare)} extra on top of the ticket the traveller has, ` +
+      `paid with the card on file; nothing is charged in this demo. ` +
+      "Nothing is booked until the traveller confirms, or asks for a different flight or seat."
+    );
+  },
+  actions: {
+    // The click carries the extra fare the traveller saw: they pay exactly that.
+    confirm({ extraFare }, { props, conversationId }) {
+      if (extraFare !== props.extraFare) throw new Error(`the extra fare is ${usd(props.extraFare)}, not ${usd(extraFare)}: check it and confirm again`);
+      if (!extraConfirmed(conversationId, props.optionId, extraFare)) throw new Error(`${props.flight} isn't the flight you chose`);
+      return `The traveller confirmed the change to ${props.flight}, at ${usd(extraFare)} extra.`;
+    },
+    change(what, { props }) {
+      return what === "flight"
+        ? `The traveller wants a different flight instead of ${props.cancelled}.`
+        : `The traveller wants a different seat on ${props.legs[0]?.flight ?? props.flight}.`;
+    },
+  },
+  queries: {},
+});
+
 export const boardingPassServer = boardingPass.implement({
   digest(p, { handle }) {
     const legs = p.legs.map((l) => `${l.flight} ${l.from}→${l.to}`).join(", then ");
@@ -319,6 +347,7 @@ export const surfaces = [
   rebookingOptionsServer,
   seatMapServer,
   careOptionsServer,
+  rebookingReviewServer,
   boardingPassServer,
   flightSearchServer,
   flightResultsServer,

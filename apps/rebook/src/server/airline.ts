@@ -81,8 +81,11 @@ interface Desk {
   options: { handle: string; props: RebookingOptionsProps; hold: ReturnType<typeof setTimeout> } | null;
   seats: { handle: string; props: SeatMapProps; key: string; others: ReturnType<typeof setInterval> } | null;
   pass: { handle: string; props: BoardingPassProps } | null;
-  /** What the traveller clicked. */
-  chosen: { option: RebookOption | null; seat: string | null; care: string | null };
+  /**
+   * What the traveller clicked. `confirmed` is the extra fare they confirmed
+   * on the review, for an option that costs extra; any change since clears it.
+   */
+  chosen: { option: RebookOption | null; seat: string | null; care: string | null; confirmed: number | null };
   booking: Booking;
 }
 
@@ -140,7 +143,7 @@ export function tripShown(conversationId: string, handle: string) {
     options: null,
     seats: null,
     pass: null,
-    chosen: { option: null, seat: null, care: null },
+    chosen: { option: null, seat: null, care: null, confirmed: null },
     booking: noBooking(),
   });
 }
@@ -209,7 +212,7 @@ export function seatsShown(conversationId: string, handle: string, props: SeatMa
 
 export function optionChosen(conversationId: string, option: RebookOption) {
   const d = desks.get(conversationId);
-  if (d) d.chosen = { option, seat: null, care: null };
+  if (d) d.chosen = { option, seat: null, care: null, confirmed: null };
 }
 
 /** Record a seat on the option the traveller chose. False when the seat is on any other option's map. */
@@ -217,12 +220,23 @@ export function seatPicked(conversationId: string, optionId: string, seat: strin
   const d = desks.get(conversationId);
   if (d?.chosen.option?.id !== optionId) return false;
   d.chosen.seat = seat;
+  d.chosen.confirmed = null; // a different seat is a different booking to confirm
   return true;
 }
 
 export function careChosen(conversationId: string, care: string) {
   const d = desks.get(conversationId);
-  if (d) d.chosen.care = care;
+  if (!d) return;
+  d.chosen.care = care;
+  d.chosen.confirmed = null;
+}
+
+/** Record the extra fare the traveller confirmed on the review, for the option they chose. */
+export function extraConfirmed(conversationId: string, optionId: string, extraFare: number): boolean {
+  const d = desks.get(conversationId);
+  if (d?.chosen.option?.id !== optionId) return false;
+  d.chosen.confirmed = extraFare;
+  return true;
 }
 
 /** What the traveller clicked: the boarding pass is issued for exactly this. */

@@ -6,7 +6,9 @@ can do: **AI drives the software. You steer.**
 Your flight to Tokyo is cancelled. Rebook tells you before you ask, shows you
 every way to get there, waits while you choose, picks a seat with you while
 other passengers take theirs, asks where you'll spend tonight because the new
-flight leaves tomorrow, and issues the boarding pass. When the gate moves
+flight leaves tomorrow, and issues the boarding pass. A new flight that costs
+extra is booked only once you've checked the change and confirmed the amount.
+When the gate moves
 later, it speaks up again. Each step is a component the AI chose for this
 case, and each answer is a click.
 
@@ -63,6 +65,13 @@ starting to book the flight home: the visitor is doing something already.
    says so.
 9. Open **Context**, top right, to see everything the model received.
 
+NH 7 costs nothing extra. Choose one that does, such as KE 26 + KE 2101 (+$60,
+leaving tonight), and after the seat the guide shows the change to check
+instead of the boarding pass: the new flight, the seat, tonight if there is a
+night, and the extra fare. Nothing is booked until **Confirm**, which sends the
+amount on screen; **Different flight** and **Different seat** go back a step,
+and a change there needs confirming again.
+
 ## Book the flight home
 
 1. Click **Book my flight home** on the trip card, or type "book my flight
@@ -95,7 +104,7 @@ the card on file pays, and that this is a demo.
 | Feature | In Rebook |
 | --- | --- |
 | Two channels | Every component's full props go to the browser; the model gets a digest. For the 14 options: about 135 tokens of digest for about 665 of props |
-| Elicit, the parked turn | The options, the seat map and tonight's choices each wait for a click, with nothing held open |
+| Elicit, the parked turn | The options, the seat map, tonight's choices and the review of a change that costs extra each wait for a click, with nothing held open |
 | `query_ui` and `cap` | "which are nonstop?" is answered from the stored options, capped: `5 of 14 match. 5 shown:` |
 | Undeclared means local | The picker's filter chips work in the browser, with no round trip, because the contract declares no action for them |
 | A refused click | A sold-out option or a taken seat throws in its handler, so nothing is recorded and the component stays live |
@@ -105,15 +114,17 @@ the card on file pays, and that this is a demo.
 | Freshness | The options' `staleAfterMs` is 20 minutes. Past that, the whole conversation is out of date, and HaiKIT refuses every request on it rather than act on old prices |
 | `inform` | The trip card's Book my flight home tells the guide without anything waiting on the card. It's refused while a question waits, and once the flight home is booked |
 | Filled in, not asked | The search arrives filled in from the trip. Only the day is left to the traveller, unless they named it |
-| A value the click carries | Confirm sends the total on screen. A total the airline has just raised is refused rather than charged |
-| Two answers to one question | The review waits on Confirm or Change: either `resolve` action answers it |
+| A value the click carries | Confirm sends the amount on screen: the flight home's total, or a rebooking's extra fare. A total the airline has just raised is refused rather than charged |
+| Two answers to one question | Each review waits on Confirm or a change: either `resolve` action answers it |
 
-The boarding pass books exactly what the traveller clicked. `issue_boarding_pass`
-takes no input: the server reads the option, seat and night the traveller
-chose from their clicks, so the model can ask for a booking but can't decide
-what it is. The flight home works the same way: each step's tool refuses to
-run ahead of the clicks, and `issue_ticket` books the flight, fare, seat and
-total the traveller confirmed.
+The boarding pass books exactly what the traveller clicked.
+`issue_boarding_pass` takes no input: the server reads the option, seat and
+night the traveller chose from their clicks, so the model can ask for a booking
+but can't decide what it is. For an option that costs extra, it also refuses
+until the traveller has confirmed that amount on `review_rebooking`. The flight
+home works the same way: each step's tool refuses to run ahead of the clicks,
+and `issue_ticket` books the flight, fare, seat and total the traveller
+confirmed.
 
 ## Run it
 
@@ -187,8 +198,8 @@ src/server/notices.ts      what the model hears of each notice
 src/server/airline.ts      the airline's side: cancel, holds, other passengers, confirmation,
                            the gate, the fare and the ticket, and what the traveller clicked
 src/server/tools.ts        show_trip (init), find_rebooking, show_seat_map, offer_care,
-                           issue_boarding_pass; start_booking, show_flights, show_fares,
-                           show_home_seats, review_booking, issue_ticket
+                           review_rebooking, issue_boarding_pass; start_booking, show_flights,
+                           show_fares, show_home_seats, review_booking, issue_ticket
 src/server/scripted.ts     the scripted guide, a ModelAdapter
 src/server/main.ts         createHai, the /ops routes, static files
 public/                    the page, the components, the Airline ops bar, the styles
