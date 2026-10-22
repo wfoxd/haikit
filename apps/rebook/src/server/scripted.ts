@@ -119,15 +119,15 @@ export function scripted(): ModelAdapter {
           return answer(home.say, onTextDelta, home.call ? [home.call] : []);
         }
 
-        const option = results.match(/Chose (o\d+): (.+?) \(/);
+        const option = results.match(/traveller chose (o\d+): (.+?) \(/);
         if (option) {
           return answer(`${option[2]} it is. Pick a seat: other passengers are choosing too, so the map changes as you look.`, onTextDelta, [
             toolUse("show_seat_map", { optionId: option[1] }),
           ]);
         }
-        const seat = results.match(/Picked seat (\w+) on (.+?)[ .(]/);
+        const seat = results.match(/traveller picked seat (\w+) on (.+?)[ .(]/);
         if (seat) {
-          const choice = latest(/Chose (o\d+): .*? (It leaves this evening|It leaves tomorrow)/g);
+          const choice = latest(/traveller chose (o\d+): .*? (It leaves this evening|It leaves tomorrow)/g);
           if (choice?.[2] === "It leaves tomorrow") {
             return answer(`Seat ${seat[1]} is yours. Your new flight leaves tomorrow, so where would you like to spend tonight?`, onTextDelta, [
               toolUse("offer_care", { optionId: choice[1] }),
@@ -135,7 +135,7 @@ export function scripted(): ModelAdapter {
           }
           return answer(`Seat ${seat[1]} is yours. Here's your new boarding pass.`, onTextDelta, [toolUse("issue_boarding_pass", {})]);
         }
-        const care = results.match(/Chose (Hotel voucher|Lounge and dinner|I'll sort it myself)/);
+        const care = results.match(/traveller chose (Hotel voucher|Lounge and dinner|I'll sort it myself)/);
         if (care) {
           return answer(care[1] === "I'll sort it myself" ? "Understood. Here's your boarding pass." : `${care[1]} it is. Here's your boarding pass.`, onTextDelta, [
             toolUse("issue_boarding_pass", {}),
@@ -190,8 +190,8 @@ export function scripted(): ModelAdapter {
       // Typing closes the question that was waiting. When what they typed isn't
       // a request, open that question again, so there's still something to click.
       const closed = resultsOf(messages.at(-2)).find((r) => r.includes("User did not select; they said:")) ?? "";
-      const choice = latest(/Chose (o\d+): /g)?.[1];
-      const homeFlight = latest(/Chose flight (r\d+): /g)?.[1];
+      const choice = latest(/traveller chose (o\d+): /g)?.[1];
+      const homeFlight = latest(/traveller chose flight (r\d+): /g)?.[1];
       // the search shown again as it was: its day, and its airport
       const searchAgain = () => {
         const date = closed.match(/ \((Thu|Fri|Sat|Sun|Mon)\)\./)?.[1];
@@ -313,23 +313,23 @@ function homeStep(results: string, texts: string[], latest: (re: RegExp) => RegE
     };
   }
 
-  const searched = results.match(/Searched flights home: .+? to SFO on (\w+) \(/);
+  const searched = results.match(/traveller searched flights home: .+? to SFO on (\w+) \(/);
   if (searched) return { say: `Here are the flights home on ${searched[1]}. The prices are the Basic fare; pick one to see the others.`, call: toolUse("show_flights", {}) };
 
-  const flight = results.match(/Chose flight (r\d+): (.+?) \(/);
+  const flight = results.match(/traveller chose flight (r\d+): (.+?) \(/);
   if (flight) return { say: `${flight[2]} it is. Pick a fare.`, call: toolUse("show_fares", { flightId: flight[1] }) };
 
-  const fare = results.match(/Chose the (\w+) fare, \$[\d,]+, on (.+?) \[(r\d+)\]: (the traveller chooses a seat)?/);
+  const fare = results.match(/traveller chose the (\w+) fare, \$[\d,]+, on (.+?) \[(r\d+)\]: (the traveller chooses a seat)?/);
   if (fare) {
     return fare[4]
       ? { say: `${fare[1]} it is. Pick a seat on ${fare[2]}.`, call: toolUse("show_home_seats", { flightId: fare[3] }) }
       : { say: `${fare[1]} assigns your seat at check-in, so here's your booking to check. Nothing is booked until you confirm.`, call: toolUse("review_booking", {}) };
   }
 
-  const seat = results.match(/Picked seat (\w+) on .+?, for the flight home\./);
+  const seat = results.match(/traveller picked seat (\w+) on .+?, for the flight home\./);
   if (seat) return { say: `Seat ${seat[1]}. Here's your booking to check. Nothing is booked until you confirm.`, call: toolUse("review_booking", {}) };
 
-  const confirmed = results.match(/Confirmed the booking at (\$[\d,]+)\./);
+  const confirmed = results.match(/traveller confirmed the booking at (\$[\d,]+)\./);
   if (confirmed) {
     // a rise the airline made while the review was waiting rides with the click
     const rose = texts.some((t) => /^\[UI update\] The airline raised/.test(t));
@@ -339,9 +339,9 @@ function homeStep(results: string, texts: string[], latest: (re: RegExp) => RegE
     };
   }
 
-  const change = results.match(/Asked to change the (flight|fare|seat)\./);
+  const change = results.match(/traveller asked to change the (flight|fare|seat)\./);
   if (change) {
-    const id = latest(/Chose flight (r\d+): /g)?.[1];
+    const id = latest(/traveller chose flight (r\d+): /g)?.[1];
     if (change[1] === "flight" || !id) return { say: "Here are the flights again.", call: toolUse("show_flights", {}) };
     if (change[1] === "fare") return { say: "Here are the fares again.", call: toolUse("show_fares", { flightId: id }) };
     return { say: "Pick another seat.", call: toolUse("show_home_seats", { flightId: id }) };
@@ -351,7 +351,7 @@ function homeStep(results: string, texts: string[], latest: (re: RegExp) => RegE
   // question waited, such as the rebooking options shown in the same reply:
   // then the answer is what's new, and the ticket was already spoken of.
   const ticket = results.match(/E-ticket on screen as \S+: .+?, booking (\w+), (.+?), leaving (\w+ [\d:]+)/);
-  if (ticket && /Chose o\d+: |Picked seat |Chose (Hotel voucher|Lounge and dinner|I'll sort it myself)/.test(results)) return null;
+  if (ticket && /traveller chose o\d+: |traveller picked seat |traveller chose (Hotel voucher|Lounge and dinner|I'll sort it myself)/.test(results)) return null;
   if (ticket) return { say: `You're booked home: ${ticket[2]}, leaving ${ticket[3]}, booking ${ticket[1]}. The airline will issue the ticket in a moment.` };
 
   return null;
