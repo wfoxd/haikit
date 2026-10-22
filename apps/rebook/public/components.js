@@ -15,6 +15,7 @@
 /** @typedef {import("../src/shared/surfaces.ts").RebookOption} RebookOption */
 /** @typedef {import("../src/shared/surfaces.ts").SeatMapProps} SeatMapProps */
 /** @typedef {import("../src/shared/surfaces.ts").CareOptionsProps} CareOptionsProps */
+/** @typedef {import("../src/shared/surfaces.ts").RebookingReviewProps} RebookingReviewProps */
 /** @typedef {import("../src/shared/surfaces.ts").BoardingPassProps} BoardingPassProps */
 /** @typedef {import("../src/shared/surfaces.ts").FlightSearchProps} FlightSearchProps */
 /** @typedef {import("../src/shared/surfaces.ts").FlightResultsProps} FlightResultsProps */
@@ -391,6 +392,86 @@ export const registry = {
         }
         card.append(list);
         if (at.state === "frozen" && !props.choices.some((c) => c.id === at.picked)) card.append(h("p", "rb-foot", "Closed when you typed instead."));
+        el.append(card);
+      };
+      const ask = asker(el, ctx, at, draw);
+      draw();
+      if (ctx.state === "live") requestAnimationFrame(() => showTop(el));
+      return { freeze(/** @type {unknown} */ selection) { at.state = "frozen"; at.picked = selection; redraw(el, draw); } };
+    },
+  },
+
+  rebooking_review: {
+    /**
+     * Shown only when the new flight costs extra. Nothing is booked until
+     * Confirm, whose click carries the extra fare on screen: the traveller
+     * pays exactly what they saw.
+     * @param {HTMLElement} el
+     * @param {RebookingReviewProps} props
+     * @param {MountCtx} ctx
+     */
+    mount(el, props, ctx) {
+      const at = { state: /** @type {string} */ (ctx.state), picked: ctx.selection, sending: false };
+      const draw = () => {
+        const live = at.state === "live" && ctx.mode === "elicit";
+        el.replaceChildren();
+        const card = h("div", "rb-card rb-review");
+        card.append(head("Check your new flight", `Instead of ${props.cancelled}. Nothing is booked until you confirm`, badge(`${dollars(props.extraFare)} extra`, "wait")));
+
+        const legs = h("div", "rb-legs");
+        for (const leg of props.legs) {
+          const row = h("div", "rb-leg");
+          row.append(h("span", "rb-code", leg.from), h("span", "rb-arrow", "→"), h("span", "rb-code", leg.to), h("span", "rb-leg-flight", leg.flight));
+          legs.append(row);
+        }
+        card.append(legs);
+
+        const facts = h("dl", "rb-facts");
+        const rows = [["Traveller", props.passenger], ["Leaves", props.depart], ["Lands", props.arrive], ["Seat", props.seat]];
+        if (props.care) rows.push(["Tonight", props.care.split(":")[0] ?? props.care]);
+        for (const [k, v] of rows) {
+          const pair = h("div");
+          pair.append(h("dt", null, k), h("dd", null, v));
+          facts.append(pair);
+        }
+        card.append(facts);
+
+        const price = h("dl", "rb-price");
+        const pair = h("div", "is-total");
+        pair.append(h("dt", null, `Extra fare, on top of your ${props.cancelled} ticket`), h("dd", null, dollars(props.extraFare)));
+        price.append(pair);
+        card.append(price, h("p", "rb-foot", props.payment));
+
+        if (at.state === "frozen") {
+          const sel = at.picked;
+          card.append(
+            h(
+              "p",
+              "rb-foot",
+              sel && typeof sel === "object" && "extraFare" in sel
+                ? `You confirmed, at ${dollars(Number(/** @type {{ extraFare: number }} */ (sel).extraFare))} extra.`
+                : sel === "flight" ? "You asked for a different flight." : sel === "seat" ? "You asked for a different seat." : "Closed when you typed instead.",
+            ),
+          );
+        } else {
+          const actions = h("div", "rb-actions");
+          const confirm = h("button", "rb-button is-primary", `Confirm and book · ${dollars(props.extraFare)} extra`);
+          confirm.type = "button";
+          confirm.dataset.key = "change:confirm";
+          confirm.disabled = !live || at.sending;
+          // DECLARED: `confirm` carries the extra fare on screen
+          confirm.onclick = () => void ask("confirm", { extraFare: props.extraFare });
+          actions.append(confirm);
+          for (const [what, label] of /** @type {const} */ ([["flight", "Different flight"], ["seat", "Different seat"]])) {
+            const b = h("button", "rb-button", label);
+            b.type = "button";
+            b.dataset.key = `change:${what}`;
+            b.disabled = !live || at.sending;
+            b.onclick = () => void ask("change", what); // DECLARED
+            actions.append(b);
+          }
+          card.append(actions);
+        }
         el.append(card);
       };
       const ask = asker(el, ctx, at, draw);

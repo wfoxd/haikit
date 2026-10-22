@@ -44,6 +44,7 @@ import {
   homeFlight,
   optionById,
   seatRows,
+  usd,
 } from "./data.ts";
 import {
   boardingPassServer,
@@ -54,6 +55,7 @@ import {
   flightResultsServer,
   flightSearchServer,
   rebookingOptionsServer,
+  rebookingReviewServer,
   seatMapServer,
   tripCardServer,
 } from "./surfaces.ts";
@@ -167,11 +169,49 @@ export const offerCare = defineTool({
   },
 });
 
+export const reviewRebooking = defineTool({
+  name: "review_rebooking",
+  description:
+    "When the option the traveller chose costs extra, show the change for them to check before it's booked: the new " +
+    "flight, the seat, tonight, and the extra fare. Nothing is booked until they confirm. BLOCKS until they confirm or ask " +
+    "for a different flight or seat. An option at no extra cost needs no review: call issue_boarding_pass.",
+  input: z.object({}),
+  inputJsonSchema: none,
+
+  async run(_input, ctx) {
+    const picked = chosen(ctx.conversationId);
+    const option = picked?.option;
+    if (!option) return ctx.text("The traveller hasn't chosen an option yet: show find_rebooking.");
+    if (!picked.seat) return ctx.text(`The traveller hasn't picked a seat on ${option.flights[0]} yet: show show_seat_map.`);
+    if (!option.tonight && !picked.care) return ctx.text("The traveller hasn't said where they'll spend tonight yet: show offer_care.");
+    if (option.extraFare === 0) return ctx.text(`${option.flights.join(" + ")} costs nothing extra, so there's nothing to confirm: call issue_boarding_pass.`);
+    const props = {
+      passenger: TRIP.passenger,
+      cancelled: TRIP.flight,
+      optionId: option.id,
+      flight: option.flights.join(" + "),
+      airline: option.airline,
+      legs: option.flights.map((flight, i) => ({
+        flight,
+        from: i === 0 ? TRIP.from.code : option.via!,
+        to: i === option.flights.length - 1 ? option.to : option.via!,
+      })),
+      depart: option.depart,
+      arrive: option.arrive,
+      seat: picked.seat,
+      care: option.tonight ? null : picked.care,
+      extraFare: option.extraFare,
+      payment: PAYMENT,
+    };
+    return ctx.render(rebookingReviewServer, props, { mode: "elicit" });
+  },
+});
+
 export const issueBoardingPass = defineTool({
   name: "issue_boarding_pass",
   description:
     "Book the traveller onto what they chose and show the boarding pass. It books exactly what they clicked: the option, " +
-    "the seat, and where they spend tonight. Display-only.",
+    "the seat, where they spend tonight, and for an option that costs extra, the amount they confirmed. Display-only.",
   input: z.object({}),
   inputJsonSchema: none,
 
@@ -182,6 +222,10 @@ export const issueBoardingPass = defineTool({
     if (!option) return ctx.text("The traveller hasn't chosen an option yet: show find_rebooking.");
     if (!picked.seat) return ctx.text(`The traveller hasn't picked a seat on ${option.flights[0]} yet: show show_seat_map.`);
     if (!option.tonight && !picked.care) return ctx.text("The traveller hasn't said where they'll spend tonight yet: show offer_care.");
+    // An option that costs extra is booked only once the traveller has confirmed that amount.
+    if (option.extraFare > 0 && picked.confirmed !== option.extraFare) {
+      return ctx.text(`${option.flights.join(" + ")} costs ${usd(option.extraFare)} extra, and the traveller hasn't confirmed it yet: show review_rebooking.`);
+    }
     // Checked again here: a flight home may have been ticketed since the option was chosen.
     const home = homeTicket(ctx.conversationId);
     if (home && !landsInTimeForHome(ctx.conversationId, option.arrive)) {
@@ -442,6 +486,7 @@ export const tools = [
   findRebooking,
   showSeatMap,
   offerCare,
+  reviewRebooking,
   issueBoardingPass,
   startBooking,
   showFlights,
