@@ -426,11 +426,17 @@ A tool row's status sets its colours. The status mark is a 12px dot drawn by
 | Status | Row | Dot | Badge | Shadow |
 | --- | --- | --- | --- | --- |
 | `running` | `--hai-panel` | `--hai-accent`, blinking | `--hai-panel` | `--hai-shadow` |
-| `awaiting` | `--hai-warn`, its text `--hai-on-accent` | `--hai-accent` | `--hai-panel` | `--hai-shadow` |
+| `awaiting` | `--hai-warn`, all its text `--hai-on-accent` | `--hai-accent` | `--hai-panel` | `--hai-shadow` |
 | `resolved` | `--hai-panel-2` | `--hai-good` | `--hai-selected` | none |
 | `expired` | 10% `--hai-dim` in `--hai-panel-2` | 60% `--hai-dim` in `--hai-bg` | none | none |
 | `ok` | `--hai-panel-2` | `--hai-good` | `--hai-panel` | none |
 | `error` | `--hai-bad-soft` | `--hai-bad` | `--hai-panel` | `4px 4px 0`, in `--hai-bad` |
+
+A row's name is bold 13px `--hai-mono`. Its arguments are regular 12px
+`--hai-mono` in `--hai-dim`, or `--hai-fg` while a failed row is hovered. On
+an `awaiting` row they're `--hai-on-accent` in full, like the name, and set
+apart from it by weight, so they read as well on `--hai-warn` as
+`--hai-on-accent` does: 13.1:1 at the defaults.
 
 A row with a surface under it casts `--hai-shadow` whatever its status, so
 the two read as one card, unless the surface is `data-expired`. An expanded
