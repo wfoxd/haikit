@@ -171,6 +171,20 @@ try {
       disconnect() {}
     };
     const resize = () => observers.forEach((callback) => callback([]));
+    // and a breakpoint the test can cross
+    const media = {
+      matches: true,
+      listeners: [],
+      addEventListener(type, listener) {
+        this.listeners.push(listener);
+      },
+      removeEventListener() {},
+      cross(matches) {
+        this.matches = matches;
+        this.listeners.forEach((listener) => listener());
+      },
+    };
+    globalThis.matchMedia = () => media;
     const root = document.getElementById("app");
     const chat = mountChat({ root, registry: { rules: { mount: (el, props) => (el.textContent = `rules ${props.n}`) } } });
     await wait(30);
@@ -207,8 +221,20 @@ try {
     resize();
     const h1Item = [...root.querySelectorAll(".hai-dock-row .hai-dock-item")].find((b) => b.getAttribute("aria-label") === "rules, changed");
     check("a surface that leaves the pile as the shelf widens takes the reader's focus to its item", q(".hai-dock-pile").hidden && document.activeElement === h1Item);
+
+    // the row's room shrinks as the breakpoint is crossed, and no resize says so
+    room = 150;
+    media.cross(false);
+    check("crossing the breakpoint measures the shelf again", !q(".hai-dock-pile").hidden && pileBtn.textContent === "1 more");
+
+    pileBtn.focus();
+    room = 300;
+    resize();
+    const last = [...root.querySelectorAll(".hai-dock-row .hai-dock-item")].filter((b) => !b.hidden).at(-1);
+    check("a pile that goes while it has focus hands it to the item at the row's end", q(".hai-dock-pile").hidden && document.activeElement === last);
     chat.close();
     delete globalThis.ResizeObserver;
+    delete globalThis.matchMedia;
   }
 
   // dock: false keeps surfaces as renderTranscript draws them without onDock

@@ -281,8 +281,11 @@ on that surface. Picking
 one opens its window, and makes it the newest docked, so it comes into the
 row. Escape, or a click outside, closes the list, and Escape returns focus to
 the pile. The row is measured to decide this, so where nothing is laid out,
-nothing goes into the pile. An item that goes into the pile while it has
-focus passes focus to the pile.
+nothing goes into the pile. It's measured again when the docked surfaces,
+their names, their dots or the open one change, when the composer or the
+status line is resized, and when the screen crosses 900 px. An item that goes
+into the pile while it has focus passes focus to the pile, and a pile that
+goes while it has focus passes it to the item at the row's end.
 
 **The window** shows one docked surface at a time. Clicking an item opens its
 surface there, in place of any other, and clicking the open item docks it

@@ -686,8 +686,10 @@ function createDock({ chat, id, shell, chatPane, transcript, composer, statusEl,
         pileText.textContent = `${piled} more`;
       }
       for (const entry of entries) entry.stacked = stackable.indexOf(entry) > -1 && stackable.indexOf(entry) < piled;
-      // an item stacked under the reader's focus hands it to the pile
+      // an item stacked under the reader's focus hands it to the pile, and a
+      // pile that goes hands it to the item now at the row's end, where it was
       if (entries.some((e) => e.stacked && e.item === focused)) pileBtn.focus();
+      else if (focused === pileBtn && pile.hidden) entries.filter((e) => !e.item.hidden).at(-1)?.item.focus();
     }
     const stacked = entries.filter((e) => e.stacked);
     const changed = stacked.filter((e) => e.changed).length;
@@ -785,7 +787,12 @@ function createDock({ chat, id, shell, chatPane, transcript, composer, statusEl,
     if (e.target === chatPane && transcript.inert) close(true);
   });
 
-  const onResize = () => sync();
+  // Across the breakpoint the shelf's count comes or goes, so the row's room
+  // changes though the composer's width may not, and no resize says so.
+  const onResize = () => {
+    measured = null;
+    sync();
+  };
   wideQuery?.addEventListener("change", onResize);
   // the room changed: the window's place, and what fits on the shelf
   const resized = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => (measure(), stack(true)));
