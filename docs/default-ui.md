@@ -333,7 +333,7 @@ value first, for browsers that don't support `light-dark()`:
 ```css
 :root { --hai-accent: #b07cff; }
 @supports (color: light-dark(#000, #fff)) {
-  :root { --hai-accent: light-dark(#6d28d9, #b07cff); }
+  :root { --hai-accent: light-dark(#9f7aea, #b07cff); }
 }
 ```
 
@@ -341,6 +341,11 @@ Without that fallback, those browsers would get no colour at all for the
 variable. In them, `hai.css` uses its dark colours and a pinned scheme has no
 effect. Plain overrides like the one above still apply, so a page can still
 give those browsers light colours itself.
+
+Keep an accent light enough for ink text. `--hai-on-accent` is ink in both
+schemes, and it writes on the amber `--hai-warn` as well as on the accent, so
+turning it white to suit a dark accent would make a waiting tool row
+unreadable. The purples above read at 5.8:1 and 6.5:1 under ink.
 
 ### The variables
 

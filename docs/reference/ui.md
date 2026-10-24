@@ -396,12 +396,17 @@ those browsers:
 ```css
 :root { --hai-accent: #b07cff; }
 @supports (color: light-dark(#000, #fff)) {
-  :root { --hai-accent: light-dark(#6d28d9, #b07cff); }
+  :root { --hai-accent: light-dark(#9f7aea, #b07cff); }
 }
 ```
 
 An override that browser can't read would otherwise leave the token with no
 colour at all.
+
+`--hai-on-accent` writes on both `--hai-accent` and `--hai-warn`, so an accent
+needs ink text, at the default `#0f1115`, to read: the purples above give
+5.8:1 and 6.5:1. A white `--hai-on-accent` for a dark accent would put white
+text on the amber of a waiting tool row.
 
 ### How it looks
 

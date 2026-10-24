@@ -22,8 +22,11 @@
  *
  *   :root { --hai-accent: #b07cff; }
  *   @supports (color: light-dark(#000, #fff)) {
- *     :root { --hai-accent: light-dark(#6d28d9, #b07cff); }
+ *     :root { --hai-accent: light-dark(#9f7aea, #b07cff); }
  *   }
+ *
+ * Keep an accent light enough for ink: --hai-on-accent writes on it and on
+ * --hai-warn alike, so it can't turn white for a dark accent alone.
  *
  * <html data-hai-theme="dark"> pins the page to one scheme, as does
  * `mountChat({ theme: "dark" })`. The pin is on the root because the tokens
