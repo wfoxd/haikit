@@ -383,9 +383,11 @@
 .hai-status-running .hai-ticon { background: var(--hai-accent); animation: hai-blink 1.2s infinite both; }
 /* the component is the question: the turn is parked on it */
 .hai-tool.hai-status-awaiting { background: var(--hai-warn); box-shadow: var(--hai-shadow); }
-/* amber is as light in either scheme, so what's written on it is ink */
+/* amber is as light in either scheme, so what's written on it is ink. The
+   arguments are too, in full, and set apart from the bold name by weight:
+   dimmed, they'd lose contrast on a darker amber with white text */
 .hai-status-awaiting summary {
-  --hai-dim: color-mix(in srgb, var(--hai-on-accent) 70%, transparent);
+  --hai-dim: var(--hai-on-accent);
   color: var(--hai-on-accent);
 }
 .hai-status-awaiting .hai-ticon { background: var(--hai-accent); }
