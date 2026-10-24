@@ -1,6 +1,6 @@
 {
   "name": "@haikit/openai",
-  "version": "0.23.0",
+  "version": "0.24.0",
   "description": "OpenAI model adapter for haikit. Imports only @haikit/core, never the server runtime.",
   "keywords": [
     "haikit",
@@ -34,7 +34,7 @@
     "prepack": "npm --prefix ../.. run build"
   },
   "dependencies": {
-    "@haikit/core": "0.23.0",
+    "@haikit/core": "0.24.0",
     "openai": "^7.28.0"
   },
   "publishConfig": {
