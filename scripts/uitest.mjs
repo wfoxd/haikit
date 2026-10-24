@@ -237,6 +237,38 @@ try {
     delete globalThis.matchMedia;
   }
 
+  // Escape and the drawer: with the pile's list open, a keyboard user opens
+  // the drawer, and Escape there closes the drawer, not the list behind it
+  {
+    globalThis.fetch = async () =>
+      sse([
+        { type: "hello", conversationId: "c4", model: "m", events: false },
+        { type: "ui_open", handle: "h1", component: "rules", mode: "display" },
+        { type: "ui_props", handle: "h1", props: { n: 1 } },
+        { type: "ui_open", handle: "h2", component: "rules", mode: "display" },
+        { type: "ui_props", handle: "h2", props: { n: 1 } },
+      ]);
+    const root = document.getElementById("app");
+    const chat = mountChat({ root, registry: { rules: { mount: (el) => (el.textContent = "rules") } } });
+    await wait(30);
+    const q = (s) => root.querySelector(s);
+    const row = q(".hai-dock-row");
+    Object.defineProperty(row, "scrollWidth", { get: () => [...row.children].filter((c) => !c.hidden).length * 100 });
+    Object.defineProperty(row, "clientWidth", { get: () => 150 });
+    for (const dock of [...root.querySelectorAll('[aria-label="Dock rules"]')]) dock.click();
+    const pileBtn = q(".hai-dock-pile > button");
+    const list = q(".hai-pile-list");
+    const escape = () => document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    pileBtn.click();
+    q(".hai-ctx-toggle").click();
+    escape();
+    check("Escape in the drawer closes the drawer, even with the pile's list open behind it", !q(".hai-main").classList.contains("inspector-open") && !list.hidden && document.activeElement === q(".hai-ctx-toggle"));
+    q(".hai-pile-row").focus();
+    escape();
+    check("…and in the list, it closes the list and returns to the pile", list.hidden && document.activeElement === pileBtn);
+    chat.close();
+  }
+
   // dock: false keeps surfaces as renderTranscript draws them without onDock
   {
     globalThis.fetch = async () =>

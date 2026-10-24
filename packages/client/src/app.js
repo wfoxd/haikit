@@ -760,19 +760,21 @@ function createDock({ chat, id, shell, chatPane, transcript, composer, statusEl,
     buttons[next].focus();
   });
 
-  // Escape closes the pile's list, then the window: from inside either, or
-  // from anywhere while the drawer is closed. Unless something there used the
-  // key first, such as a surface closing a menu of its own.
+  // Escape closes the pile's list, then the window: from inside the dock, or
+  // from anywhere while the drawer is closed. With the drawer open, Escape
+  // from outside the dock is the drawer's, even with the list open behind it.
+  // Unless something there used the key first, such as a surface closing a
+  // menu of its own.
   const onKey = (e) => {
     if (e.key !== "Escape" || e.defaultPrevented) return;
+    const inside = win.contains(document.activeElement) || shelf.contains(document.activeElement);
+    if (!inside && drawerOpen()) return;
     if (!list.hidden) {
       e.preventDefault();
-      closePile(true);
+      closePile(inside);
       return;
     }
     if (!open) return;
-    const inside = win.contains(document.activeElement) || shelf.contains(document.activeElement);
-    if (!inside && drawerOpen()) return;
     e.preventDefault();
     close(inside);
   };
