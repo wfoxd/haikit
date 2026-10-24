@@ -11,7 +11,8 @@ guide; this page is the exact reference.
 
 Exported by `@haikit/client/app.js`: `mountChat`, `MountChatOptions`,
 `renderInspector`. By `@haikit/client/transcript.js`: `renderTranscript`,
-`closeTranscript`, `h`. And the stylesheet `@haikit/client/hai.css`.
+`TranscriptOptions`, `DockRequest`, `closeTranscript`, `h`. And the
+stylesheet `@haikit/client/hai.css`.
 
 Checked against `@haikit/*` 0.20.0. Source: `packages/client/src/app.js`,
 `packages/client/src/transcript.js`, `packages/client/src/hai.css` and their
@@ -20,7 +21,9 @@ Checked against `@haikit/*` 0.20.0. Source: `packages/client/src/app.js`,
 - [`mountChat`](#mountchat), [`MountChatOptions`](#mountchatoptions)
 - [The model context debug drawer](#the-model-context-debug-drawer):
   `renderInspector`
-- [`renderTranscript`](#rendertranscript), [`closeTranscript`](#closetranscript)
+- [The dock](#the-dock)
+- [`renderTranscript`](#rendertranscript), [`TranscriptOptions`](#transcriptoptions),
+  [`closeTranscript`](#closetranscript)
 - [`h`](#h)
 - [`hai.css`](#haicss): the `--hai-*` tokens
 
@@ -68,9 +71,11 @@ mountChat({ root: document.querySelector("#app"), registry, suggestions: ["Say h
 | New chat | `button.hai-btn` | Calls `chat.reset()`. Disabled unless the transcript has a `user` or `interaction` block, the conversation has expired, or the server has given a conversation id. Checked on every event, so it's disabled again after a reset |
 | Context | `button.hai-btn.hai-ctx-toggle` | Opens and closes the debug drawer, showing `~<n> tok`, the model's context estimate, with thousands separators. Empty while the estimate is 0. `title`, `aria-controls` and `aria-expanded` are set. Only with `inspector` |
 | Main | `div.hai-main` | Holds the chat and the drawer. Has `.has-inspector` with `inspector`, and `.inspector-open` while the drawer is open |
-| Chat | `section.hai-chat` | Holds the transcript, the status line and the composer (`div.hai-composer` > `div.hai-composer-box`) |
-| Transcript | `div.hai-transcript` | Drawn by `renderTranscript` on every event |
-| Status line | `div.hai-status`, `role="status"` | `Thinking` while streaming, `Waiting on your selection above` while awaiting, empty otherwise. It changes only when the status does, so a screen reader hears it once per turn. Its `data-status` is the status, or `idle` once the conversation has expired. It's absent until the first event |
+| Chat | `section.hai-chat` | Holds the transcript, the status line and the composer (`div.hai-composer` > `div.hai-composer-box`), and with `dock`, the dock's window. Has `.window-open` while the window is open |
+| Transcript | `div.hai-transcript` | Drawn by `renderTranscript` on every event, with `onDock` when `dock` is on |
+| Status line | `div.hai-status`, `role="status"` | `Thinking` while streaming, `Waiting on your selection above` while awaiting, or `Waiting on your selection in the dock` while the question is docked, empty otherwise. It changes only when the status does, or where the question is, so a screen reader hears it once per turn. Its `data-status` is the status, or `idle` once the conversation has expired. It's absent until the first event |
+| Dock shelf | `div.hai-dock`, `role="toolbar"`, `aria-label="Docked surfaces"` | The composer's first child, above `div.hai-composer-box`. Hidden while nothing is docked. Only with `dock` (see [The dock](#the-dock)) |
+| Window | `section.hai-window`, `role="dialog"` | A docked surface, opened. Hidden while none is open. Only with `dock` |
 | Message box | `textarea.hai-input`, `aria-label="Message"` | Grows with what's typed, up to 200 px |
 | Send | `button.hai-send`, `aria-label="Send"` | Sends the message. An icon only |
 | Drawer | `aside.hai-inspector` | The model context debug drawer. Only with `inspector` |
@@ -84,8 +89,9 @@ mountChat({ root: document.querySelector("#app"), registry, suggestions: ["Say h
   next conversation. If the message is later turned away (`send` resolves
   `false`), the text is put back, unless something new has been typed.
 - **It stays live while a question waits,** with the placeholder `pick an
-  option above — or type to override`. A typed message closes the question
-  out.
+  option above — or type to override`, or `pick an option in the dock — or
+  type to override` while the question is docked. A typed message closes the
+  question out.
 - **When the conversation has expired,** the box is disabled, with the
   placeholder `start a new conversation to continue`. Otherwise the
   placeholder is `placeholder`.
@@ -125,7 +131,7 @@ the first. A pin the page set itself meanwhile is left alone.
 `chat.close()` closes the chat (see [The browser client](client.md#close)),
 and `mountChat` then removes its shell from the page, stops following its
 transcript, releases the theme pin and the favicon, and stops listening for
-screen-width changes.
+screen-width changes and, with `dock`, for the composer's size.
 
 ## `MountChatOptions`
 
@@ -143,6 +149,7 @@ interface MountChatOptions {
   placeholder?: string;
   emptyText?: string;
   theme?: "light" | "dark";
+  dock?: boolean;
   eventsFallbackMs?: number;
   pollHoldMs?: number;
 }
@@ -162,6 +169,7 @@ interface MountChatOptions {
 | `placeholder` | `"message…"` | The message box's placeholder |
 | `emptyText` | `""` | A line of text on the empty conversation |
 | `theme` | follows the system | `"light"` or `"dark"` pins the page's colour scheme. Any other value is ignored |
+| `dock` | `true` | Let the reader dock surfaces (see [The dock](#the-dock)). `false` draws surfaces as `renderTranscript` does without `onDock`, and builds no shelf or window |
 | `eventsFallbackMs` | `8000` | Passed to `createChat`: how long the events stream may send nothing as it opens before the chat polls (see [The browser client](client.md#polling)) |
 | `pollHoldMs` | `15000` | Passed to `createChat`: how long each poll asks the server to hold |
 
@@ -180,9 +188,10 @@ estimate.
   narrow one,** it opens over the chat, and the chat behind it is made
   `inert` until it closes or the screen widens. A tap on the uncovered part
   closes it then.
-- **Escape closes it** from anywhere in the shell, unless something there
-  used the key first (`defaultPrevented`), such as a surface closing a menu of
-  its own. So do its close button and the Context button.
+- **Escape closes it** from anywhere in the shell but the dock's shelf and
+  window, which take the key first (see [The dock](#the-dock)), unless
+  something there used it first (`defaultPrevented`), such as a surface
+  closing a menu of its own. So do its close button and the Context button.
 - **Focus:** opening it moves focus to its close button. Closing it from the
   button, with Escape from inside the drawer, or with a tap on the uncovered
   chat returns focus to Context. Escape from outside the drawer leaves focus
@@ -223,10 +232,100 @@ a layout of your own.
 - **It keeps following the newest message** if `el` was scrolled to within
   40 px of the bottom.
 
+## The dock
+
+With `dock`, the default, the reader can move any surface out of the
+transcript onto a shelf above the message box, and open it from there as a
+window. `mountChat` passes `onDock` to `renderTranscript`, so every surface is
+drawn in a card with a bar: its component's name and, once it has mounted, a
+Dock button. Every button the dock adds to a bar is an icon, with no text:
+labelled for screen readers, with its name as a `title` tooltip. Dock is
+labelled `Dock <component>`, with the title `Dock`.
+
+**Docking moves the surface's element,** and never mounts it again: its
+component keeps its state, and answering a question in the window works as it
+does in the transcript. An iframe or video inside starts over, as it would
+anywhere a page moves one. The card stays in the transcript, in the
+surface's place, with `data-docked` and a stub: `<component> is in the dock`,
+or `<component> is open in a window` while it's open, and a Put back
+button, labelled `Put <component> back`, with the title `Put back`. Focus
+moves to Put back. The tool row above it keeps its status, so a
+docked question still reads `awaiting you` there.
+
+**The shelf** is the composer's first child, `div.hai-dock`, hidden while
+nothing is docked. It shows `docked · <n>` (hidden under 900 px wide, and from
+screen readers), then one `button.hai-dock-item` per docked surface, oldest
+first. Each item:
+
+- shows the component's name, and has `aria-controls` naming the window and
+  `aria-expanded="true"` while its surface is open;
+- has `data-status`: `awaiting` for a question that hasn't been answered or
+  typed over, `expired` once the conversation has, `live` otherwise. An
+  awaiting item has a dot;
+- is marked changed while new props have arrived since it was docked or last
+  open, until it's opened: a corner mark, `span.hai-dock-changed`;
+- is labelled with its name, then `, awaiting you`, `, out of date` and
+  `, changed` as they apply.
+
+Left and Right arrows, Home and End move along the shelf.
+
+**When the row is full,** the oldest docked surfaces go into a pile at its
+end, one at a time until the rest fit. A surface that is awaiting, or open,
+never goes in. The pile is a button, `<n> more`, labelled `<n> more docked
+surfaces`, with `, <k> changed` and the corner mark when any of them has
+changed. It opens a list above the shelf, `stacked · <n> · oldest first`, with
+a button per surface; Up and Down arrows, Home and End move along it. The list
+is no taller than the room above the shelf in the chat, measured as it opens
+(60% of the viewport where nothing is laid out), and scrolls under its
+heading. A row that changes while the list is open keeps the reader's focus
+on that surface. Picking
+one opens its window, and makes it the newest docked, so it comes into the
+row. Escape (see below), or a click outside, closes the list, and Escape from
+inside the dock returns focus to the pile. The row is measured to decide this, so where nothing is laid out,
+nothing goes into the pile. It's measured again when the docked surfaces,
+their names, their dots or the open one change, when the composer or the
+status line is resized, and when the screen crosses 900 px. An item that goes
+into the pile while it has focus passes focus to the pile, and a pile that
+goes while it has focus passes it to the item at the row's end.
+
+**The window** shows one docked surface at a time. Clicking an item opens its
+surface there, in place of any other, and clicking the open item docks it
+again. `section.hai-window` is a `dialog` named by the surface's component,
+and has `data-status` as the item does. Its title bar, `div.hai-window-bar`,
+shows the name, `· <tool>` for the tool that showed it, a badge (`awaiting
+you` or `out of date`), a Remove from dock button, labelled `Remove
+<component> from the dock` with the title `Remove from dock`, and a Dock
+button, labelled `Dock <component>` with the title `Dock`, that closes the
+window.
+Opening the window moves focus into it; closing it from its Dock button or
+with Escape returns focus to the surface's item, or to the pile if it went in.
+
+**Put back and Remove from dock** return the surface to its card, under its
+bar, close its window if it's open, and take its item off the shelf. Focus
+moves to the card's Dock button, and the card is scrolled into view. The shelf
+goes with the last docked surface.
+
+**Escape,** from inside the window or the shelf, or from anywhere in the
+shell while the drawer is closed, closes the pile's list if it's open, and
+otherwise the window, unless something used the key first
+(`defaultPrevented`). With the drawer open and focus outside the dock,
+including in the drawer, Escape is the drawer's: it closes the drawer, and
+leaves the list and the window as they are.
+
+- **On a narrow screen** (under 900 px wide), the window is a sheet across the
+  chat, from 12% of its height down to the composer. The transcript behind is
+  `inert` and dimmed, with the status line, and a tap on it docks the window.
+- **A new conversation empties the dock:** its surfaces are gone with the
+  old conversation.
+- **On an expired conversation,** docked surfaces are `inert` with
+  `data-expired`, as they are in the transcript, and still move.
+- A visually hidden `role="status"` region says `<component> docked` and
+  `<component> is back in the chat`.
+
 ## `renderTranscript`
 
 ```ts
-function renderTranscript(root: HTMLElement, chat: Chat): void;
+function renderTranscript(root: HTMLElement, chat: Chat, options?: TranscriptOptions): void;
 ```
 
 Draws `chat.state.blocks` into `root`. Call it on every event, from a
@@ -261,7 +360,7 @@ back down. A new conversation starts at the bottom.
 | `assistant` | `div.hai-block.hai-assistant` | The text, as it streams |
 | `tool` | `details.hai-block.hai-tool.hai-status-<status>` | A summary row: a status mark, the tool's name, its input as JSON, and its status text. Expanded: the input, pretty-printed, and `→ tool_result — all the model receives` with the result, or `…` until it arrives. An expanded row stays expanded as its status changes |
 | `interaction` | `div.hai-block.hai-interaction` | An arrow and the click's label |
-| `ui` | `div.hai-surface`, with `data-handle` and `data-component` | The surface, mounted with `chat.mount` once its props arrive. Falsy props (`false`, `0`, `""`) count as not arrived, so such a surface shows the skeleton for good. Before then, `aria-busy="true"` and a skeleton labelled `<surface name> · loading…`. A revision updates `data-handle` and keeps the element |
+| `ui` | `div.hai-surface`, with `data-handle` and `data-component`; with `onDock`, inside a card (see [`TranscriptOptions`](#transcriptoptions)) | The surface, mounted with `chat.mount` once its props arrive. Falsy props (`false`, `0`, `""`) count as not arrived, so such a surface shows the skeleton for good. Before then, `aria-busy="true"` and a skeleton labelled `<surface name> · loading…`. A revision updates `data-handle`, on the card too, and keeps the element |
 | `notice` | `div.hai-notice`, `role="status"`, with `data-notice` | A label, `notice · <name>`, and the notice, mounted with `chat.mountNotice` |
 | `error` | `div.hai-block.hai-error`, `role="alert"` | The message |
 | `expired` | `div.hai-block.hai-expired` | The message, and a `Start a new conversation` button that calls `chat.reset()` |
@@ -291,6 +390,36 @@ total. With a `total` above 0, a `progressbar` along the row's bottom
 edge fills. Its accessible name is `<tool> progress`, and its value text
 `<message> · <done> of <total>`. Progress updates the row in place, so a
 keyboard user on the row keeps their focus.
+
+## `TranscriptOptions`
+
+```ts
+interface TranscriptOptions {
+  onDock?: (request: DockRequest) => void;
+}
+
+interface DockRequest {
+  handle: string;
+  card: HTMLElement;
+  element: HTMLElement;
+}
+```
+
+(Both are exported as types only.)
+
+**`onDock`** makes surfaces dockable. Each `ui` block is drawn as a card,
+`div.hai-dockable` with `data-handle`, holding a bar, `div.hai-surface-bar`,
+and the surface's `div.hai-surface`. The bar shows the component's name,
+`span.hai-surface-name` (`surface` before the surface is known), and once
+the props have arrived a Dock button, an icon labelled `Dock <component>`
+with the title `Dock`, which
+calls `onDock` with the surface's handle as it is now, its card and its
+element. The card stays in the transcript, kept like any block's element;
+what goes in it after that is yours. Moving `element` elsewhere keeps its
+component mounted, and a revision still reaches it and updates its
+`data-handle`. The card has `data-expired` while its surface does, wherever
+the surface is. Without `onDock`, a surface is drawn as before, with no card.
+`mountChat` passes its dock (see [The dock](#the-dock)).
 
 ## `closeTranscript`
 
@@ -327,7 +456,7 @@ That path is where the examples serve the package's `src/` (see
 import `@haikit/client/hai.css`.
 
 Styles only what the framework renders: the shell, the transcript's blocks,
-the tool rows, the surface container and the drawer. It doesn't style the
+the tool rows, the surface container, the drawer and the dock. It doesn't style the
 inside of your surfaces: your components use their own class names, and your
 stylesheet owns them. They can use the tokens.
 
@@ -439,7 +568,7 @@ apart from it by weight, so they read as well on `--hai-warn` as
 `--hai-on-accent` does: 13.1:1 at the defaults.
 
 A row with a surface under it casts `--hai-shadow` whatever its status, so
-the two read as one card, unless the surface is `data-expired`. An expanded
+the two read as one card, unless the surface is `data-expired`, or docked. An expanded
 row's detail is `--hai-panel-2`, under a 3px rule. The progress bar is 7px:
 the accent, edged in `--hai-line` along its top and its filled end.
 
@@ -455,4 +584,47 @@ The status line is bold `--hai-mono`. Thinking shows one blinking
 `--hai-accent` dot; waiting shows a pulsing `--hai-warn` one. With
 `prefers-reduced-motion: reduce`, nothing blinks, pulses or moves: the
 running dot, the pulse, the thinking dot and the skeleton's hatching stand
-still, and the drawer, the chevron and the message box don't transition.
+still, and the drawer, the chevron, the message box and the dock's shelf
+don't transition.
+
+**The dock** adds no tokens. A dockable surface's card has the surface's
+border and `--hai-shadow`, and its bar is `--hai-panel-2` under a 2px rule,
+with the name in bold 11.5px `--hai-mono` and `--hai-dim`. A docked card is a
+flat `--hai-panel-2` stub, and a row above a docked card casts no shadow
+unless its status does. The bar's buttons, the stub's and the window's are
+cells of their bar, 40px wide, behind a 2px rule, holding a 16px icon: Dock
+an arrow down onto a line, Put back and Remove from dock an arrow up from
+one. They're tinted `--hai-hover` under the pointer.
+
+The shelf is `--hai-panel-2`, joined to the message box as one card: one
+3px border, a 3px rule between them, and `--hai-shadow`, which turns
+`--hai-accent` while the message box has focus. Its items are 36px tall,
+bordered 2px in `--hai-line`, on `--hai-panel` with a `3px 3px 0` shadow:
+
+| Item | Fill | Text | Shadow |
+| --- | --- | --- | --- |
+| docked | `--hai-panel` | `--hai-fg` | `3px 3px 0` `--hai-line` |
+| `awaiting` | `--hai-warn`, with an `--hai-accent` dot | `--hai-on-accent` | `3px 3px 0` `--hai-line` |
+| open | `--hai-fg`, pressed 3px down and right; an awaiting one's dot turns `--hai-warn` | `--hai-panel` | none |
+| `expired` | none, a dashed `--hai-dim` border | `--hai-dim` | none |
+
+A changed item has a 12px `--hai-accent` square on its top right corner,
+bordered in `--hai-line`. The pile is an item with two more edges behind it,
+up and to the right, and its list is a `--hai-panel` card with
+`--hai-shadow`, under a `--hai-panel-2` heading.
+
+The window is `--hai-panel`, 560px wide at most, from the column's left edge,
+8px above the status line, raised on an `8px 8px 0` `--hai-line` shadow. In
+its title bar a long name is cut short with an ellipsis, after the tool's, so
+the badge and buttons stay in reach. The bar is `--hai-fg` with `--hai-panel` text, `--hai-warn` with
+`--hai-on-accent` while awaiting, and once out of date the window's border
+and the bar's rule turn dashed `--hai-dim` with no shadow, the bar 10%
+`--hai-dim` in `--hai-panel-2`. A sheet, on a narrow screen, has no side
+borders and no shadow, and the transcript and the status line behind it are
+at 40% opacity.
+
+A focused item has the buttons' 3px `--hai-fg` outline 2px outside it. A
+focused button in a bar, or a row of the pile's list, has a 2px outline in
+its text colour 6px inside it, so a card can't clip it. Where the pointer is
+coarse, items, bars and the stub are at least 44px tall, and the bars'
+buttons 44px wide.
