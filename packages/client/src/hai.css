@@ -849,7 +849,16 @@
   color: var(--hai-panel);
 }
 .hai-window-bar > .hai-icon { align-self: center; width: 14px; height: 14px; stroke-width: 2.5; }
-.hai-window-name { align-self: center; font: 700 12.5px var(--hai-mono); white-space: nowrap; }
+/* a long name gives way, after the tool's, so the bar's buttons stay in reach */
+.hai-window-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  align-self: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 700 12.5px var(--hai-mono);
+}
 .hai-window-tool {
   flex: 1;
   min-width: 0;

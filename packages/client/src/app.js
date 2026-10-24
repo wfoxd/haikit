@@ -571,6 +571,7 @@ function createDock({ chat, id, shell, chatPane, transcript, composer, statusEl,
     open = entry;
     entry.changed = false;
     entry.element.hidden = false;
+    measure();
     win.hidden = false;
     closePile(false);
     sync();
@@ -603,42 +604,55 @@ function createDock({ chat, id, shell, chatPane, transcript, composer, statusEl,
       const name = nameOf(entry);
       const status = statusOf(entry);
       const isOpen = open === entry;
-      entry.itemName.textContent = name;
-      entry.item.dataset.status = status;
-      entry.item.setAttribute("aria-expanded", String(isOpen));
-      entry.item.setAttribute(
+      setText(entry.itemName, name);
+      setAttr(entry.item, "data-status", status);
+      setAttr(entry.item, "aria-expanded", String(isOpen));
+      setAttr(
+        entry.item,
         "aria-label",
         [name, status === "awaiting" && "awaiting you", status === "expired" && "out of date", entry.changed && "changed"]
           .filter(Boolean)
           .join(", "),
       );
-      entry.dot.hidden = status !== "awaiting";
-      entry.mark.hidden = !entry.changed;
+      setHidden(entry.dot, status !== "awaiting");
+      setHidden(entry.mark, !entry.changed);
       const text = `${name} ${isOpen ? "is open in a window" : "is in the dock"}`;
       if (entry.stubText.textContent !== text) entry.stubText.replaceChildren(icon("dock"), text);
-      entry.back.setAttribute("aria-label", `Put ${name} back`);
+      setAttr(entry.back, "aria-label", `Put ${name} back`);
     }
-    shelf.hidden = entries.length === 0;
-    count.textContent = `docked · ${entries.length}`;
+    setHidden(shelf, entries.length === 0);
+    setText(count, `docked · ${entries.length}`);
 
     if (open) {
       const name = nameOf(open);
       const tool = toolOf(open);
       const status = statusOf(open);
-      win.dataset.status = status;
-      winName.textContent = name;
-      winTool.textContent = tool ? `· ${tool}` : "";
-      winBadge.hidden = status === "live";
-      winBadge.textContent = status === "awaiting" ? "awaiting you" : "out of date";
-      remove.setAttribute("aria-label", `Remove ${name} from the dock`);
-      minimise.setAttribute("aria-label", `Dock ${name}`);
+      setAttr(win, "data-status", status);
+      setText(winName, name);
+      setText(winTool, tool ? `· ${tool}` : "");
+      setHidden(winBadge, status === "live");
+      setText(winBadge, status === "awaiting" ? "awaiting you" : "out of date");
+      setAttr(remove, "aria-label", `Remove ${name} from the dock`);
+      setAttr(minimise, "aria-label", `Dock ${name}`);
     }
     chatPane.classList.toggle("window-open", open !== null);
     // over the chat, on a narrow screen, the window is all there is to reach
-    transcript.inert = open !== null && !wide();
-    measure();
+    const inert = open !== null && !wide();
+    if (transcript.inert !== inert) transcript.inert = inert;
     stack();
     onChange();
+  }
+
+  // Every streamed word reaches sync, so it writes only what has changed: a
+  // dock that stays the same costs no style or layout work.
+  function setText(el, text) {
+    if (el.textContent !== text) el.textContent = text;
+  }
+  function setAttr(el, name, value) {
+    if (el.getAttribute(name) !== value) el.setAttribute(name, value);
+  }
+  function setHidden(el, hidden) {
+    if (el.hidden !== hidden) el.hidden = hidden;
   }
 
   // The window sits above the status line and the composer, or on a narrow
@@ -653,25 +667,32 @@ function createDock({ chat, id, shell, chatPane, transcript, composer, statusEl,
   let listed = "";
   /** Each piled surface's row in the list, as last built. */
   const rows = new Map();
-  function stack() {
+  // Measured again only when what decides it changes: which surfaces are
+  // docked, in what order, their names, their dots, which is open; or the
+  // room, when the observer below says so.
+  let measured = null;
+  function stack(force = false) {
     const focused = document.activeElement;
-    for (const entry of entries) entry.item.hidden = false;
-    pile.hidden = true;
-    const stackable = entries.filter((e) => e !== open && statusOf(e) !== "awaiting");
-    const stacked = [];
-    while (row.scrollWidth > row.clientWidth && stacked.length < stackable.length) {
-      const entry = stackable[stacked.length];
-      entry.item.hidden = true;
-      stacked.push(entry);
-      pile.hidden = false;
-      pileText.textContent = `${stacked.length} more`;
+    const inputs = entries.map((e) => `${e.block.id}:${nameOf(e)}:${statusOf(e) === "awaiting"}:${e === open}`).join(" ");
+    if (force || inputs !== measured) {
+      measured = inputs;
+      for (const entry of entries) entry.item.hidden = false;
+      pile.hidden = true;
+      const stackable = entries.filter((e) => e !== open && statusOf(e) !== "awaiting");
+      let piled = 0;
+      while (row.scrollWidth > row.clientWidth && piled < stackable.length) {
+        stackable[piled++].item.hidden = true;
+        pile.hidden = false;
+        pileText.textContent = `${piled} more`;
+      }
+      for (const entry of entries) entry.stacked = stackable.indexOf(entry) > -1 && stackable.indexOf(entry) < piled;
+      // an item stacked under the reader's focus hands it to the pile
+      if (entries.some((e) => e.stacked && e.item === focused)) pileBtn.focus();
     }
-    for (const entry of entries) entry.stacked = stacked.includes(entry);
-    // an item stacked under the reader's focus hands it to the pile
-    if (stacked.some((e) => e.item === focused)) pileBtn.focus();
+    const stacked = entries.filter((e) => e.stacked);
     const changed = stacked.filter((e) => e.changed).length;
-    pileMark.hidden = changed === 0;
-    pileBtn.setAttribute("aria-label", `${stacked.length} more docked surfaces${changed ? `, ${changed} changed` : ""}`);
+    setHidden(pileMark, changed === 0);
+    setAttr(pileBtn, "aria-label", `${stacked.length} more docked surfaces${changed ? `, ${changed} changed` : ""}`);
     if (!stacked.length) closePile(false);
 
     // The list, rebuilt only when what it shows changes: which surfaces, not
@@ -697,7 +718,9 @@ function createDock({ chat, id, shell, chatPane, transcript, composer, statusEl,
       rows.set(entry, b);
       list.append(b);
     }
-    rows.get(focusedEntry)?.focus();
+    // the reader stays on the same surface: its new row, or its item on the
+    // shelf if it has left the pile
+    if (focusedEntry) (rows.get(focusedEntry) ?? (focusedEntry.stacked ? null : focusedEntry.item))?.focus();
   }
 
   function openPile() {
@@ -764,7 +787,8 @@ function createDock({ chat, id, shell, chatPane, transcript, composer, statusEl,
 
   const onResize = () => sync();
   wideQuery?.addEventListener("change", onResize);
-  const resized = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => (measure(), stack()));
+  // the room changed: the window's place, and what fits on the shelf
+  const resized = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => (measure(), stack(true)));
   resized?.observe(composer);
   resized?.observe(statusEl);
 

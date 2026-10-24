@@ -609,8 +609,9 @@ up and to the right, and its list is a `--hai-panel` card with
 `--hai-shadow`, under a `--hai-panel-2` heading.
 
 The window is `--hai-panel`, 560px wide at most, from the column's left edge,
-8px above the status line, raised on an `8px 8px 0` `--hai-line` shadow. Its
-title bar is `--hai-fg` with `--hai-panel` text, `--hai-warn` with
+8px above the status line, raised on an `8px 8px 0` `--hai-line` shadow. In
+its title bar a long name is cut short with an ellipsis, after the tool's, so
+the badge and buttons stay in reach. The bar is `--hai-fg` with `--hai-panel` text, `--hai-warn` with
 `--hai-on-accent` while awaiting, and once out of date the window's border
 and the bar's rule turn dashed `--hai-dim` with no shadow, the bar 10%
 `--hai-dim` in `--hai-panel-2`. A sheet, on a narrow screen, has no side
