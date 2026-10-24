@@ -15,7 +15,7 @@ export const h = (tag, className, text) => {
   return node;
 };
 
-export function renderTranscript(root, chat) {
+export function renderTranscript(root, chat, { onDock } = {}) {
   const { state } = chat;
   const follow = follower(root);
 
@@ -43,18 +43,24 @@ export function renderTranscript(root, chat) {
     const before = follow.shown.get(block.id);
     let el = before?.el;
     if (before?.look !== look) {
-      el = renderBlock(block, chat);
+      el = renderBlock(block, chat, onDock);
       // an expanded tool row stays expanded when its status changes
       if (before?.el.open) el.open = true;
     } else if (block.kind === "ui" && el.dataset.handle !== block.handle) {
-      // a revision moved this surface to a new handle; its element stays
+      // a revision moved this surface to a new handle; its element stays,
+      // and so does its card's surface, wherever the dock has put it
       el.dataset.handle = block.handle;
+      const surface = cards.get(el);
+      if (surface) surface.dataset.handle = block.handle;
     } else if (block.progress !== before.progress) {
       // Progress changes the row in place. Rebuilt for every frame, a row a
       // keyboard user is on would take their focus up to ten times a second.
       const parts = rowParts.get(el);
       if (parts) showStatus(parts, block, toolStatus(block, chat));
     }
+    // a card is out of date when its surface is, docked or not
+    const surface = cards.get(el);
+    if (surface) el.toggleAttribute("data-expired", surface.hasAttribute("data-expired"));
     shown.set(block.id, { el, look, progress: block.progress });
     return el;
   });
@@ -286,7 +292,36 @@ function follower(root) {
   return follow;
 }
 
-function renderBlock(block, chat) {
+/** A dockable card's element → the element its surface mounts into, wherever that is now. */
+const cards = new WeakMap();
+
+/**
+ * A surface in a card of its own: a bar with its component's name and, once it
+ * has mounted, a Dock button that hands it to `onDock`. The card stays in the
+ * transcript, in the surface's place; what happens to the surface is the
+ * dock's to decide.
+ */
+function dockable(block, el, surface, onDock) {
+  const card = h("div", "hai-dockable");
+  card.dataset.handle = block.handle;
+  const name = surface?.component ?? "surface";
+  const bar = h("div", "hai-surface-bar");
+  bar.append(h("span", "hai-surface-name", name));
+  if (surface?.props) {
+    const dock = h("button", "hai-bar-btn hai-bar-icon");
+    dock.type = "button";
+    dock.title = "Dock";
+    dock.setAttribute("aria-label", `Dock ${name}`);
+    dock.append(icon("dock"));
+    dock.onclick = () => onDock({ handle: card.dataset.handle, card, element: el });
+    bar.append(dock);
+  }
+  card.append(bar, el);
+  cards.set(card, el);
+  return card;
+}
+
+function renderBlock(block, chat, onDock) {
   switch (block.kind) {
     case "user": {
       const el = h("div", "hai-block hai-user");
@@ -377,7 +412,7 @@ function renderBlock(block, chat) {
         for (let i = 0; i < 3; i++) skeleton.append(h("div", "hai-shimmer"));
         el.append(skeleton);
       }
-      return el;
+      return onDock ? dockable(block, el, surface, onDock) : el;
     }
 
     // Something the server told this conversation outside of any request. The

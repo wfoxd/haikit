@@ -95,6 +95,7 @@ function dropFavicon() {
  *   placeholder?: string,
  *   emptyText?: string,
  *   theme?: "light" | "dark",
+ *   dock?: boolean,
  *   eventsFallbackMs?: number,
  *   pollHoldMs?: number,
  * }} options
@@ -112,6 +113,7 @@ export function mountChat({
   placeholder = "message…",
   emptyText = "",
   theme,
+  dock = true,
   eventsFallbackMs,
   pollHoldMs,
 }) {
@@ -165,6 +167,17 @@ export function mountChat({
   const main = h("div", `hai-main${inspector ? " has-inspector" : ""}`);
   main.append(chatPane);
 
+  const wideQuery = typeof matchMedia === "function" ? matchMedia(WIDE) : null;
+  const wide = () => !wideQuery || wideQuery.matches;
+
+  // Before the drawer, so the dock hears Escape first: it closes what the
+  // reader is in, and the drawer what's left.
+  const docked = dock
+    ? createDock({ chat, id, shell, chatPane, transcript, composer, statusEl, wide, wideQuery,
+        drawerOpen: () => main.classList.contains("inspector-open"),
+        onChange: () => showWaiting() })
+    : null;
+
   let inspectorBody = null;
   let ctxCount = null;
   let releaseDrawer = () => {};
@@ -195,8 +208,6 @@ export function mountChat({
     toggle.setAttribute("aria-controls", aside.id);
     actions.append(toggle);
 
-    const wideQuery = typeof matchMedia === "function" ? matchMedia(WIDE) : null;
-    const wide = () => !wideQuery || wideQuery.matches;
     const isOpen = () => main.classList.contains("inspector-open");
     // Over the chat, on a narrow screen, the drawer is all there is to reach:
     // the chat behind it is inert until it closes or the screen widens.
@@ -322,17 +333,20 @@ export function mountChat({
   // init tool's row, a welcome surface) doesn't replace them.
   const engaged = () => chat.state.blocks.some((b) => b.kind === "user" || b.kind === "interaction");
   const render = () => {
-    renderTranscript(transcript, chat);
+    renderTranscript(transcript, chat, docked ? { onDock: docked.onDock } : {});
     if (!engaged()) transcript.append(emptyState());
+    docked?.sync();
   };
 
   // ── status ─────────────────────────────────────────────────────────
-  // A live region: it changes only when the status does, so a screen reader
-  // hears "Thinking" once a turn, not once per streamed word.
+  // A live region: it changes only when the status does, or where the
+  // question it waits on is, so a screen reader hears "Thinking" once a turn,
+  // not once per streamed word.
   let shownStatus = null;
   function showStatus(status) {
-    if (status === shownStatus) return;
-    shownStatus = status;
+    const where = status === "awaiting" && docked?.waiting() ? "in the dock" : "above";
+    if (`${status} ${where}` === shownStatus) return;
+    shownStatus = `${status} ${where}`;
     statusEl.dataset.status = status;
     statusEl.replaceChildren();
     if (status === "streaming") {
@@ -341,8 +355,19 @@ export function mountChat({
       dots.append(h("i"), h("i"), h("i"));
       statusEl.append(dots, "Thinking");
     } else if (status === "awaiting") {
-      statusEl.append(h("span", "hai-pulse"), "Waiting on your selection above");
+      statusEl.append(h("span", "hai-pulse"), `Waiting on your selection ${where}`);
     }
+  }
+
+  // The status line and the message box say where the question waiting on the
+  // reader is: above, or in the dock.
+  function showWaiting() {
+    const { state } = chat;
+    showStatus(state.expired ? "idle" : state.status);
+    input.placeholder =
+      state.expired ? "start a new conversation to continue"
+      : state.status === "awaiting" ? `pick an option ${docked?.waiting() ? "in the dock" : "above"} — or type to override`
+      : placeholder;
   }
 
   // ── wiring ─────────────────────────────────────────────────────────
@@ -350,6 +375,7 @@ export function mountChat({
     // chat.close(): the surfaces are unmounted and the chat lets go of this
     // listener; the shell goes too, and nothing of it stays observed.
     if (event.type === "closed") {
+      docked?.release();
       closeTranscript(transcript);
       shell.remove();
       releaseDrawer();
@@ -359,8 +385,12 @@ export function mountChat({
     }
 
     // A new conversation starts at once, so the server's init tool — if it
-    // has one — runs before anything is typed.
-    if (event.type === "reset") start();
+    // has one — runs before anything is typed. The last one's surfaces are
+    // gone, docked ones too.
+    if (event.type === "reset") {
+      docked?.clear();
+      start();
+    }
 
     render();
 
@@ -371,11 +401,7 @@ export function mountChat({
     newBtn.disabled = !engaged() && !state.expired && !state.conversationId;
     input.disabled = state.expired !== null;
     sendBtn.disabled = state.status === "streaming" || state.expired !== null;
-    showStatus(state.expired ? "idle" : state.status);
-    input.placeholder =
-      state.expired ? "start a new conversation to continue"
-      : state.status === "awaiting" ? "pick an option above — or type to override"
-      : placeholder;
+    showWaiting();
 
     if (inspectorBody) {
       renderInspector(inspectorBody, state.context);
@@ -398,6 +424,412 @@ export function mountChat({
   if (inspectorBody) renderInspector(inspectorBody, chat.state.context);
   start();
   return chat;
+}
+
+/**
+ * The dock: a shelf on top of the composer that a surface goes to when its
+ * Dock button is pressed, and a window above it where one docked surface at a
+ * time opens. Docking moves the surface's element, never mounts it again, so
+ * its component keeps its state; an iframe or video inside starts over, as
+ * it would anywhere a page moves one. The surface's card stays in the
+ * transcript, where Put back returns it.
+ *
+ * When the shelf's row is full, the oldest go into a pile at its end, which
+ * lists them. A surface waiting on the reader, or open, stays in the row.
+ */
+function createDock({ chat, id, shell, chatPane, transcript, composer, statusEl, wide, wideQuery, drawerOpen, onChange }) {
+  /** Docked surfaces, oldest first. */
+  const entries = [];
+  /** The one open in the window. */
+  let open = null;
+
+  // ── the shelf ────────────────────────────────────────────────────────
+  const shelf = h("div", "hai-dock");
+  shelf.hidden = true;
+  shelf.setAttribute("role", "toolbar");
+  shelf.setAttribute("aria-label", "Docked surfaces");
+  const count = h("span", "hai-dock-count");
+  count.setAttribute("aria-hidden", "true");
+  const row = h("div", "hai-dock-row");
+  const pile = h("span", "hai-dock-pile");
+  pile.hidden = true;
+  const pileBtn = h("button", "hai-dock-item");
+  pileBtn.type = "button";
+  pileBtn.setAttribute("aria-expanded", "false");
+  pileBtn.setAttribute("aria-controls", `${id}-pile`);
+  const pileText = h("span");
+  const pileMark = changedMark();
+  pileBtn.append(icon("stack"), pileText, pileMark);
+  const list = h("div", "hai-pile-list");
+  list.id = `${id}-pile`;
+  list.hidden = true;
+  pile.append(pileBtn, list);
+  shelf.append(count, row, pile);
+  composer.prepend(shelf);
+
+  // ── the window ───────────────────────────────────────────────────────
+  const win = h("section", "hai-window");
+  win.id = `${id}-window`;
+  win.hidden = true;
+  win.tabIndex = -1;
+  win.setAttribute("role", "dialog");
+  win.setAttribute("aria-labelledby", `${id}-window-name`);
+  const winName = h("span", "hai-window-name");
+  winName.id = `${id}-window-name`;
+  const winTool = h("span", "hai-window-tool");
+  const winBadge = h("span", "hai-tstatus hai-window-badge");
+  const remove = h("button", "hai-bar-btn hai-bar-icon");
+  remove.type = "button";
+  remove.title = "Remove from dock";
+  remove.append(icon("undock"));
+  const minimise = h("button", "hai-bar-btn hai-bar-icon");
+  minimise.type = "button";
+  minimise.title = "Dock";
+  minimise.append(icon("dock"));
+  const winBar = h("div", "hai-window-bar");
+  winBar.append(icon("window"), winName, winTool, winBadge, remove, minimise);
+  const winBody = h("div", "hai-window-body");
+  win.append(winBar, winBody);
+
+  // what docking did, for a screen reader: the button pressed has gone
+  const live = h("div", "hai-dock-live");
+  live.setAttribute("role", "status");
+  chatPane.append(win, live);
+
+  // ── each surface, as it is now ───────────────────────────────────────
+  const surfaceOf = (entry) => chat.state.surfaces.get(entry.block.handle);
+  const nameOf = (entry) => surfaceOf(entry)?.component ?? "surface";
+  const toolOf = (entry) => chat.state.blocks.find((b) => b.kind === "tool" && b.id === entry.block.toolId)?.name;
+  // a question still open waits on the reader, as its tool row says
+  const statusOf = (entry) => {
+    if (chat.state.expired) return "expired";
+    const surface = surfaceOf(entry);
+    return surface?.mode === "elicit" && surface.state !== "frozen" ? "awaiting" : "live";
+  };
+
+  function onDock({ handle, card, element }) {
+    if (entries.some((e) => e.card === card)) return;
+    const block = chat.state.blocks.find((b) => b.kind === "ui" && b.handle === handle);
+    if (!block) return;
+    const entry = { block, card, element, bar: card.firstElementChild, props: surfaceOf({ block })?.props, changed: false, stacked: false };
+
+    // what stays in the transcript, in the surface's place
+    entry.stubText = h("span", "hai-docked-text");
+    entry.back = h("button", "hai-bar-btn hai-bar-icon");
+    entry.back.type = "button";
+    entry.back.title = "Put back";
+    entry.back.append(icon("undock"));
+    entry.back.onclick = () => undock(entry, true);
+    const stub = h("div", "hai-docked");
+    stub.append(entry.stubText, entry.back);
+
+    // and its button on the shelf
+    entry.item = h("button", "hai-dock-item");
+    entry.item.type = "button";
+    entry.item.setAttribute("aria-controls", win.id);
+    entry.itemName = h("span");
+    entry.dot = h("span", "hai-dock-dot");
+    entry.dot.setAttribute("aria-hidden", "true");
+    entry.mark = changedMark();
+    entry.item.append(icon("window"), entry.itemName, entry.dot, entry.mark);
+    entry.item.onclick = () => (open === entry ? close(true) : show(entry));
+    row.append(entry.item);
+
+    element.hidden = true;
+    winBody.append(element);
+    card.replaceChildren(stub);
+    card.dataset.docked = "";
+    entries.push(entry);
+    sync();
+    // the reader stays where they were, on the button that undoes it
+    entry.back.focus();
+    live.textContent = `${nameOf(entry)} docked`;
+  }
+
+  function undock(entry, focus) {
+    if (open === entry) close(false);
+    entries.splice(entries.indexOf(entry), 1);
+    entry.item.remove();
+    entry.element.hidden = false;
+    entry.card.replaceChildren(entry.bar, entry.element);
+    delete entry.card.dataset.docked;
+    sync();
+    if (focus) {
+      entry.bar.querySelector("button")?.focus();
+      entry.card.scrollIntoView?.({ block: "nearest" });
+    }
+    live.textContent = `${nameOf(entry)} is back in the chat`;
+  }
+
+  function show(entry) {
+    if (open && open !== entry) open.element.hidden = true;
+    // one opened from the pile comes into the row, as the newest
+    if (entry.stacked) {
+      entries.push(...entries.splice(entries.indexOf(entry), 1));
+      row.append(entry.item);
+    }
+    open = entry;
+    entry.changed = false;
+    entry.element.hidden = false;
+    measure();
+    win.hidden = false;
+    closePile(false);
+    sync();
+    win.focus();
+  }
+
+  function close(focus) {
+    if (!open) return;
+    const entry = open;
+    open = null;
+    entry.element.hidden = true;
+    win.hidden = true;
+    sync();
+    if (focus) (entry.stacked ? pileBtn : entry.item).focus();
+  }
+
+  remove.onclick = () => open && undock(open, true);
+  minimise.onclick = () => close(true);
+
+  // ── keeping up ───────────────────────────────────────────────────────
+  // After every event the chat renders, and after every change here.
+  function sync() {
+    for (const entry of entries) {
+      // new props while docked and closed: the reader hasn't seen them
+      const props = surfaceOf(entry)?.props;
+      if (props !== entry.props) {
+        entry.changed ||= entry !== open;
+        entry.props = props;
+      }
+      const name = nameOf(entry);
+      const status = statusOf(entry);
+      const isOpen = open === entry;
+      setText(entry.itemName, name);
+      setAttr(entry.item, "data-status", status);
+      setAttr(entry.item, "aria-expanded", String(isOpen));
+      setAttr(
+        entry.item,
+        "aria-label",
+        [name, status === "awaiting" && "awaiting you", status === "expired" && "out of date", entry.changed && "changed"]
+          .filter(Boolean)
+          .join(", "),
+      );
+      setHidden(entry.dot, status !== "awaiting");
+      setHidden(entry.mark, !entry.changed);
+      const text = `${name} ${isOpen ? "is open in a window" : "is in the dock"}`;
+      if (entry.stubText.textContent !== text) entry.stubText.replaceChildren(icon("dock"), text);
+      setAttr(entry.back, "aria-label", `Put ${name} back`);
+    }
+    setHidden(shelf, entries.length === 0);
+    setText(count, `docked · ${entries.length}`);
+
+    if (open) {
+      const name = nameOf(open);
+      const tool = toolOf(open);
+      const status = statusOf(open);
+      setAttr(win, "data-status", status);
+      setText(winName, name);
+      setText(winTool, tool ? `· ${tool}` : "");
+      setHidden(winBadge, status === "live");
+      setText(winBadge, status === "awaiting" ? "awaiting you" : "out of date");
+      setAttr(remove, "aria-label", `Remove ${name} from the dock`);
+      setAttr(minimise, "aria-label", `Dock ${name}`);
+    }
+    chatPane.classList.toggle("window-open", open !== null);
+    // over the chat, on a narrow screen, the window is all there is to reach
+    const inert = open !== null && !wide();
+    if (transcript.inert !== inert) transcript.inert = inert;
+    stack();
+    onChange();
+  }
+
+  // Every streamed word reaches sync, so it writes only what has changed: a
+  // dock that stays the same costs no style or layout work.
+  function setText(el, text) {
+    if (el.textContent !== text) el.textContent = text;
+  }
+  function setAttr(el, name, value) {
+    if (el.getAttribute(name) !== value) el.setAttribute(name, value);
+  }
+  function setHidden(el, hidden) {
+    if (el.hidden !== hidden) el.hidden = hidden;
+  }
+
+  // The window sits above the status line and the composer, or on a narrow
+  // screen over everything down to the composer: their heights, as they are.
+  function measure() {
+    chatPane.style.setProperty("--hai-composer-height", `${composer.offsetHeight}px`);
+    chatPane.style.setProperty("--hai-foot", `${composer.offsetHeight + statusEl.offsetHeight}px`);
+  }
+
+  // Into the pile, oldest first, until the row fits. Measured, so it does
+  // nothing where nothing is laid out.
+  let listed = "";
+  /** Each piled surface's row in the list, as last built. */
+  const rows = new Map();
+  // Measured again only when what decides it changes: which surfaces are
+  // docked, in what order, their names, their dots, which is open; or the
+  // room, when the observer below says so.
+  let measured = null;
+  function stack(force = false) {
+    const focused = document.activeElement;
+    const inputs = entries.map((e) => `${e.block.id}:${nameOf(e)}:${statusOf(e) === "awaiting"}:${e === open}`).join(" ");
+    if (force || inputs !== measured) {
+      measured = inputs;
+      for (const entry of entries) entry.item.hidden = false;
+      pile.hidden = true;
+      const stackable = entries.filter((e) => e !== open && statusOf(e) !== "awaiting");
+      let piled = 0;
+      while (row.scrollWidth > row.clientWidth && piled < stackable.length) {
+        stackable[piled++].item.hidden = true;
+        pile.hidden = false;
+        pileText.textContent = `${piled} more`;
+      }
+      for (const entry of entries) entry.stacked = stackable.indexOf(entry) > -1 && stackable.indexOf(entry) < piled;
+      // an item stacked under the reader's focus hands it to the pile, and a
+      // pile that goes hands it to the item now at the row's end, where it was
+      if (entries.some((e) => e.stacked && e.item === focused)) pileBtn.focus();
+      else if (focused === pileBtn && pile.hidden) entries.filter((e) => !e.item.hidden).at(-1)?.item.focus();
+    }
+    const stacked = entries.filter((e) => e.stacked);
+    const changed = stacked.filter((e) => e.changed).length;
+    setHidden(pileMark, changed === 0);
+    setAttr(pileBtn, "aria-label", `${stacked.length} more docked surfaces${changed ? `, ${changed} changed` : ""}`);
+    if (!stacked.length) closePile(false);
+
+    // The list, rebuilt only when what it shows changes: which surfaces, not
+    // just their names, since two can share a component. A reader may be in
+    // it, and keeps their place on the same surface's row.
+    const key = stacked.map((e) => `${e.block.id}:${nameOf(e)}:${e.changed}`).join(" ");
+    if (key === listed) return;
+    listed = key;
+    const focusedEntry = [...rows].find(([, row]) => row === focused)?.[0];
+    rows.clear();
+    list.replaceChildren(h("div", "hai-pile-head", `stacked · ${stacked.length} · oldest first`));
+    for (const entry of stacked) {
+      const b = h("button", "hai-pile-row");
+      b.type = "button";
+      b.append(icon("window"), h("span", "hai-pile-name", nameOf(entry)));
+      if (entry.changed) {
+        const mark = changedMark();
+        mark.hidden = false;
+        b.append(mark);
+      }
+      b.setAttribute("aria-label", `${nameOf(entry)}${entry.changed ? ", changed" : ""}`);
+      b.onclick = () => show(entry);
+      rows.set(entry, b);
+      list.append(b);
+    }
+    // the reader stays on the same surface: its new row, or its item on the
+    // shelf if it has left the pile
+    if (focusedEntry) (rows.get(focusedEntry) ?? (focusedEntry.stacked ? null : focusedEntry.item))?.focus();
+  }
+
+  function openPile() {
+    // no taller than the room above the shelf, in the chat: it scrolls
+    const room = pile.getBoundingClientRect().top - chatPane.getBoundingClientRect().top - 30;
+    list.style.maxHeight = room > 0 ? `${room}px` : "";
+    list.hidden = false;
+    pileBtn.setAttribute("aria-expanded", "true");
+    list.querySelector("button")?.focus();
+  }
+
+  function closePile(focus) {
+    if (list.hidden) return;
+    list.hidden = true;
+    pileBtn.setAttribute("aria-expanded", "false");
+    if (focus) pileBtn.focus();
+  }
+
+  pileBtn.onclick = () => (list.hidden ? openPile() : closePile(true));
+
+  // ── keys and clicks ──────────────────────────────────────────────────
+  // Arrows move along the shelf, and up and down the pile's list.
+  shelf.addEventListener("keydown", (e) => {
+    const inList = list.contains(e.target);
+    const keys = inList ? ["ArrowUp", "ArrowDown", "Home", "End"] : ["ArrowLeft", "ArrowRight", "Home", "End"];
+    if (!keys.includes(e.key)) return;
+    const buttons = inList
+      ? [...list.querySelectorAll("button")]
+      : [...shelf.querySelectorAll(".hai-dock-item")].filter((b) => !b.hidden && !b.closest("[hidden]"));
+    const at = buttons.indexOf(e.target);
+    if (at < 0) return;
+    e.preventDefault();
+    const step = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : -1;
+    const next = e.key === "Home" ? 0 : e.key === "End" ? buttons.length - 1 : (at + step + buttons.length) % buttons.length;
+    buttons[next].focus();
+  });
+
+  // Escape closes the pile's list, then the window: from inside either, or
+  // from anywhere while the drawer is closed. Unless something there used the
+  // key first, such as a surface closing a menu of its own.
+  const onKey = (e) => {
+    if (e.key !== "Escape" || e.defaultPrevented) return;
+    if (!list.hidden) {
+      e.preventDefault();
+      closePile(true);
+      return;
+    }
+    if (!open) return;
+    const inside = win.contains(document.activeElement) || shelf.contains(document.activeElement);
+    if (!inside && drawerOpen()) return;
+    e.preventDefault();
+    close(inside);
+  };
+  shell.addEventListener("keydown", onKey);
+
+  // a click away from the pile's list closes it, and on a narrow screen a tap
+  // on the chat the window covers docks it again, as a tap outside a sheet does
+  shell.addEventListener("pointerdown", (e) => {
+    if (!list.hidden && !pile.contains(e.target)) closePile(false);
+  });
+  chatPane.addEventListener("click", (e) => {
+    if (e.target === chatPane && transcript.inert) close(true);
+  });
+
+  // Across the breakpoint the shelf's count comes or goes, so the row's room
+  // changes though the composer's width may not, and no resize says so.
+  const onResize = () => {
+    measured = null;
+    sync();
+  };
+  wideQuery?.addEventListener("change", onResize);
+  // the room changed: the window's place, and what fits on the shelf
+  const resized = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => (measure(), stack(true)));
+  resized?.observe(composer);
+  resized?.observe(statusEl);
+
+  return {
+    onDock,
+    sync,
+    /** Whether a surface waiting on the reader is in the dock. */
+    waiting: () => entries.some((e) => statusOf(e) === "awaiting"),
+    /** A new conversation: the last one's surfaces are gone, docked ones too. */
+    clear() {
+      closePile(false);
+      open = null;
+      win.hidden = true;
+      for (const entry of entries) {
+        entry.item.remove();
+        entry.element.remove();
+      }
+      entries.length = 0;
+      sync();
+    },
+    release() {
+      shell.removeEventListener("keydown", onKey);
+      wideQuery?.removeEventListener("change", onResize);
+      resized?.disconnect();
+    },
+  };
+}
+
+/** The accent square a docked surface wears while it has changed unseen. */
+function changedMark() {
+  const mark = h("span", "hai-dock-changed");
+  mark.setAttribute("aria-hidden", "true");
+  mark.hidden = true;
+  return mark;
 }
 
 /** A header button: an icon, and a label that narrow screens keep for screen

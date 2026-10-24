@@ -142,6 +142,7 @@ called. To write components in React, see
 | `placeholder` | `"message…"` | The message box's placeholder. |
 | `inspector` | `true` | Include the model context debug drawer. |
 | `theme` | follows the system | `"light"` or `"dark"` pins the colour scheme. See [Theming](#theming). |
+| `dock` | `true` | Let the reader dock surfaces. See [Docking a surface](#docking-a-surface). |
 
 `mountChat` returns the chat, so you can call `chat.send(text)`,
 `chat.reset()` or `chat.close()` yourself.
@@ -195,7 +196,8 @@ place until you scroll back down.
   doesn't look live until a click is refused.
 
 While a surface's props are still arriving, its card shows a loading
-placeholder.
+placeholder. Each surface's card has a bar on top with the component's name
+and a **Dock** button: see [Docking a surface](#docking-a-surface).
 
 ### Tool rows
 
@@ -219,7 +221,8 @@ surface can hold hundreds of rows while the model holds only that one result.
 
 Above the message box, a status line says **Thinking** while the model is
 replying. It says **Waiting on your selection above** while a question is
-waiting.
+waiting, or **Waiting on your selection in the dock** if the question is
+docked.
 
 - **Enter** sends, and **Shift+Enter** starts a new line. Enter doesn't send
   while you're still composing text in an input method editor.
@@ -237,6 +240,38 @@ shows `emptyText` and the `suggestions`. On an empty page they're centred
 under the logo. If your server's init tool has already shown something, such
 as a welcome surface, they sit underneath it instead. They disappear once the
 user sends a message or answers a question.
+
+### Docking a surface
+
+Any surface can leave the conversation and wait above the message box, so a
+seat map or a fare table stays at hand while the conversation scrolls on.
+The design, every state, is in
+[design/dock-bar.pdf](design/dock-bar.pdf).
+
+- **Dock,** the arrow down onto a line on a surface's bar, moves it to a shelf
+  on top of the message box. Its place in the conversation keeps a stub that
+  says where it went, with **Put back**, the arrow up. The dock's buttons are
+  icons; each is named for screen readers and in a tooltip.
+- **Click it on the shelf** to open it as a window above the message box. One
+  opens at a time: clicking another swaps it, and clicking the open one, the
+  window's own Dock button, or **Escape** docks it again. On a narrow screen
+  the window is a sheet over the conversation, and tapping the conversation
+  docks it.
+- **Remove from dock,** the arrow up in the window's title bar, puts it back
+  in the conversation where it was.
+- **The surface is moved, not drawn again,** so your component keeps its
+  state: a sort, a filter, a half-picked seat. Its `send` works from the
+  window as it does in the conversation. An iframe or video inside it starts
+  over, as it does whenever a page moves one.
+- **The shelf keeps you posted.** A question waiting on you is amber there, as
+  its tool row is, and never hides in the pile. A surface that changed while
+  docked, such as one whose props a revision replaced, gets an orange corner
+  until you open it. An out-of-date one has a dashed outline.
+- **When the shelf is full,** the oldest docked surfaces go into a pile at its
+  end, `3 more`, which lists them.
+- **New chat empties the dock,** with the rest of the old conversation.
+
+To leave it out, pass `dock: false`: surfaces then have no bar.
 
 ## The model context debug drawer
 
@@ -413,6 +448,9 @@ These hooks are stable if you need to style around a surface:
 | `.hai-surface[data-component="colour_picker"]` | one component's cards |
 | `.hai-surface[data-handle="…"]` | one surface |
 | `.hai-surface[data-expired]` | a surface in an out-of-date conversation |
+| `.hai-dockable` | with the dock on, a surface's card in the conversation: its bar, `.hai-surface-bar`, and the `.hai-surface`. `[data-docked]` while it's docked |
+| `.hai-dock`, `.hai-dock-item` | the dock's shelf, and a docked surface on it. `[data-status="awaiting"]` waits on the reader, `[aria-expanded="true"]` is open |
+| `.hai-window` | a docked surface, open. `[data-status]` as its item's |
 | `.hai-tool` | a tool row |
 | `.hai-tool.hai-status-awaiting` | a tool row by status: also `running`, `resolved`, `expired`, `ok` and `error` |
 | `.hai-tbar` | a running tool's progress bar. Its fill is `--hai-progress`, a percentage |
@@ -470,7 +508,12 @@ yourself:
 - a message box, and disabling it once `state.expired` is set;
 - putting a message back in the box when `chat.send()` resolves `false`;
 - a status line from `state.status`;
-- `closeTranscript(element)` when you take a transcript off the page.
+- `closeTranscript(element)` when you take a transcript off the page;
+- a dock, if you want one: pass `renderTranscript` an `onDock` callback and
+  each surface gets a card with a Dock button that calls it with the
+  surface's element, which you can move anywhere without it mounting again
+  (see the reference's
+  [`TranscriptOptions`](reference/ui.md#transcriptoptions)).
 
 The transcript itself still shows the out-of-date notice, and its button still
 calls `chat.reset()`.

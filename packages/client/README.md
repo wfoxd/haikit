@@ -13,7 +13,7 @@ API — it is built from `createChat` + `renderTranscript`, and dropping to thos
 when the default shell stops fitting is the expected path.
 
 `hai.css` styles **only what the framework renders** — transcript blocks, tool
-rows, the surface container, shell, composer, debug drawer. It deliberately does
+rows, the surface container, shell, composer, debug drawer, dock. It deliberately does
 not style the inside of your surfaces; your components emit their own class
 names and your stylesheet owns them. Every colour is a `--hai-*` custom
 property, so override what you like.
@@ -43,6 +43,13 @@ Each tool row says where its call stands: running, `awaiting you` while the turn
 is parked on its surface, `resolved` once that surface has been answered or
 typed over, or how long it took. Expand it to see the input and the
 `tool_result`, which is everything the model received.
+
+Every surface has a **Dock** button on its bar. Docked, it waits on a shelf
+above the message box and opens from there as a window, one at a time; **Put
+back** or **Remove from dock** returns it to its place. It's moved, not
+mounted again, so your component keeps its state. A docked question stays
+amber on the shelf, and when the shelf is full the oldest go into a pile.
+`dock: false` leaves it out.
 
 It is light or dark with the system. To pin it, put `data-hai-theme="dark"` (or
 `"light"`) on the `<html>` element, or pass `theme: "dark"` to `mountChat`.

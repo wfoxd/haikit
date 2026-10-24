@@ -205,6 +205,7 @@
 /* the conversation is a centred column; the scrollbar stays at the edge */
 .hai-chat {
   --hai-gutter: max(16px, calc((100% - var(--hai-column)) / 2));
+  position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -312,9 +313,11 @@
   background: var(--hai-panel-2);
   overflow: hidden;
 }
-.hai-tool:has(+ .hai-surface) { margin-bottom: 0; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.hai-tool:has(+ .hai-surface),
+.hai-tool:has(+ .hai-dockable) { margin-bottom: 0; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
 /* a row and its live surface are one card, under one shadow */
-.hai-tool:has(+ .hai-surface:not([data-expired])) { box-shadow: var(--hai-shadow); }
+.hai-tool:has(+ .hai-surface:not([data-expired])),
+.hai-tool:has(+ .hai-dockable:not([data-expired]):not([data-docked])) { box-shadow: var(--hai-shadow); }
 .hai-tool summary {
   display: flex;
   align-items: center;
@@ -486,6 +489,81 @@
 
 /* out of date — the runtime has made the surface inert; this only shows it */
 .hai-surface[data-expired] { opacity: .45; filter: grayscale(.7); box-shadow: none; }
+
+/* ── the dock: a surface's card, its bar, and what stays when it docks ─ */
+/* With the dock on, a surface mounts inside a card of its own: a bar with its
+   name and Dock, then the surface. The card is what the transcript keeps; the
+   surface itself moves to the dock and back. */
+.hai-dockable {
+  margin-bottom: 18px;
+  overflow: hidden;
+  border: 3px solid var(--hai-line);
+  border-radius: var(--hai-radius);
+  background: var(--hai-panel);
+  box-shadow: var(--hai-shadow);
+}
+.hai-tool + .hai-dockable { border-top: none; border-top-left-radius: 0; border-top-right-radius: 0; }
+.hai-dockable > .hai-surface,
+.hai-dockable > .hai-surface-error,
+.hai-window-body > .hai-surface,
+.hai-window-body > .hai-surface-error { margin: 0; border: none; border-radius: 0; box-shadow: none; }
+.hai-dockable[data-expired] { box-shadow: none; }
+/* docked: a flat stub in the surface's place */
+.hai-dockable[data-docked] { background: var(--hai-panel-2); box-shadow: none; }
+
+.hai-surface-bar {
+  display: flex;
+  align-items: stretch;
+  min-height: 34px;
+  border-bottom: 2px solid var(--hai-line);
+  background: var(--hai-panel-2);
+  color: var(--hai-fg);
+}
+.hai-surface-name {
+  flex: 1;
+  min-width: 0;
+  align-self: center;
+  padding: 0 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 700 11.5px var(--hai-mono);
+  color: var(--hai-dim);
+}
+/* a button that is a bar's cell, an icon named for screen readers and in a
+   tooltip: Dock, Put back, and the window's Remove from dock and Dock */
+.hai-bar-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: none;
+  border-left: 2px solid;
+  border-radius: 0;
+  background: none;
+  color: inherit;
+  font: 700 12px var(--hai-mono);
+  cursor: pointer;
+}
+.hai-bar-btn .hai-icon { width: 14px; height: 14px; stroke-width: 2.5; }
+.hai-bar-btn:hover { background: var(--hai-hover); }
+.hai-bar-icon { width: 40px; padding: 0; }
+.hai-bar-icon .hai-icon { width: 16px; height: 16px; }
+
+.hai-docked { display: flex; align-items: stretch; min-height: 40px; color: var(--hai-fg); }
+.hai-docked-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  font: 12px var(--hai-mono);
+  color: var(--hai-dim);
+}
+.hai-docked-text .hai-icon { width: 14px; height: 14px; stroke-width: 2.5; }
 .hai-expired {
   flex-wrap: wrap;
   align-items: center;
@@ -577,6 +655,248 @@
 .hai-send .hai-icon { width: 18px; height: 18px; stroke-width: 2.5; }
 .hai-send:disabled { opacity: .35; cursor: default; }
 
+/* ── the dock's shelf, on top of the composer ───────────────────────── */
+/* The composer card's top row while anything is docked: one card, one
+   shadow. Not positioned, so the box below covers the shelf's own shadow. */
+.hai-dock {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px 0 12px;
+  border: 3px solid var(--hai-line);
+  border-radius: var(--hai-radius) var(--hai-radius) 0 0;
+  background: var(--hai-panel-2);
+  box-shadow: var(--hai-shadow);
+  transition: box-shadow .15s;
+}
+.hai-dock[hidden] { display: none; }
+.hai-dock:not([hidden]) + .hai-composer-box { border-top: none; border-top-left-radius: 0; border-top-right-radius: 0; }
+.hai-composer:has(.hai-composer-box:focus-within) > .hai-dock { box-shadow: 4px 4px 0 var(--hai-accent); }
+.hai-dock-count { flex: none; font: 700 11px var(--hai-mono); color: var(--hai-dim); }
+/* room above and to the right for an item's corner mark, below for its shadow */
+.hai-dock-row {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px 8px 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+/* a docked surface: open is pressed and inked; amber waits on you */
+.hai-dock-item {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 12px;
+  box-sizing: border-box;
+  border: 2px solid var(--hai-line);
+  border-radius: var(--hai-radius);
+  background: var(--hai-panel);
+  box-shadow: 3px 3px 0 var(--hai-line);
+  color: var(--hai-fg);
+  font: 700 12px var(--hai-mono);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.hai-dock-item[hidden] { display: none; }
+.hai-dock-item .hai-icon { width: 14px; height: 14px; stroke-width: 2.5; }
+.hai-dock-item:hover { background-image: linear-gradient(var(--hai-hover) 0 0); }
+.hai-dock-item[data-status="awaiting"] { background-color: var(--hai-warn); color: var(--hai-on-accent); }
+.hai-dock-item[aria-expanded="true"] {
+  background: var(--hai-fg);
+  color: var(--hai-panel);
+  box-shadow: none;
+  transform: translate(3px, 3px);
+}
+.hai-dock-item[data-status="expired"] {
+  border-style: dashed;
+  border-color: var(--hai-dim);
+  background: transparent;
+  box-shadow: none;
+  color: var(--hai-dim);
+}
+.hai-dock-dot {
+  width: 10px;
+  height: 10px;
+  box-sizing: border-box;
+  border: 2px solid;
+  border-radius: 50%;
+  background: var(--hai-accent);
+}
+.hai-dock-dot[hidden] { display: none; }
+.hai-dock-item[aria-expanded="true"] .hai-dock-dot { background: var(--hai-warn); }
+.hai-dock-changed {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  width: 12px;
+  height: 12px;
+  box-sizing: border-box;
+  border: 2px solid var(--hai-line);
+  background: var(--hai-accent);
+}
+.hai-dock-changed[hidden] { display: none; }
+
+/* the pile the oldest go into when the row is full: two edges behind it */
+.hai-dock-pile {
+  position: relative;
+  /* above an open window, which its list may overlap */
+  z-index: 6;
+  isolation: isolate;
+  flex: none;
+  display: inline-flex;
+  margin: 8px 8px 8px 0;
+}
+.hai-dock-pile[hidden] { display: none; }
+.hai-dock-pile::before,
+.hai-dock-pile::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  box-sizing: border-box;
+  border: 2px solid var(--hai-line);
+  background: var(--hai-panel);
+  transform: translate(8px, -8px);
+}
+.hai-dock-pile::after { transform: translate(4px, -4px); }
+/* what's in it, oldest first, above the shelf */
+.hai-pile-list {
+  position: absolute;
+  right: -8px;
+  bottom: calc(100% + 18px);
+  z-index: 6;
+  width: 280px;
+  max-width: calc(100vw - 32px);
+  /* the room above the shelf, measured as it opens; this until then */
+  max-height: 60vh;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--hai-line) transparent;
+  border: 3px solid var(--hai-line);
+  border-radius: var(--hai-radius);
+  background: var(--hai-panel);
+  box-shadow: var(--hai-shadow);
+}
+.hai-pile-list[hidden] { display: none; }
+.hai-pile-head {
+  position: sticky;
+  top: 0;
+  padding: 6px 12px;
+  border-bottom: 2px solid var(--hai-line);
+  background: var(--hai-panel-2);
+  font: 700 11px var(--hai-mono);
+  color: var(--hai-dim);
+}
+.hai-pile-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  border: none;
+  border-bottom: 2px solid var(--hai-line-soft);
+  background: none;
+  color: var(--hai-fg);
+  font: 700 12px var(--hai-mono);
+  text-align: left;
+  cursor: pointer;
+}
+.hai-pile-row:last-child { border-bottom: none; }
+.hai-pile-row:hover { background: var(--hai-hover); }
+.hai-pile-row .hai-icon { width: 14px; height: 14px; stroke-width: 2.5; }
+.hai-pile-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.hai-pile-row .hai-dock-changed { position: static; flex: none; }
+
+/* ── a docked surface, open as a window ─────────────────────────────── */
+/* Above the status line and the composer, in the column; raised higher than a
+   card. Its title bar is inked like its pressed item, amber while it waits. */
+.hai-window {
+  position: absolute;
+  z-index: 5;
+  left: var(--hai-gutter);
+  bottom: calc(var(--hai-foot, 140px) + 8px);
+  display: flex;
+  flex-direction: column;
+  width: min(560px, 100% - 2 * var(--hai-gutter));
+  max-height: calc(100% - var(--hai-foot, 140px) - 32px);
+  box-sizing: border-box;
+  border: 3px solid var(--hai-line);
+  border-radius: var(--hai-radius);
+  background: var(--hai-panel);
+  box-shadow: 8px 8px 0 var(--hai-line);
+  color: var(--hai-fg);
+}
+.hai-window[hidden] { display: none; }
+.hai-window:focus { outline: none; }
+.hai-window:focus-visible { outline: 3px solid var(--hai-fg); outline-offset: 2px; }
+.hai-window-bar {
+  flex: none;
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  min-height: 40px;
+  padding-left: 12px;
+  border-bottom: 3px solid var(--hai-line);
+  background: var(--hai-fg);
+  color: var(--hai-panel);
+}
+.hai-window-bar > .hai-icon { align-self: center; width: 14px; height: 14px; stroke-width: 2.5; }
+/* a long name gives way, after the tool's, so the bar's buttons stay in reach */
+.hai-window-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  align-self: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 700 12.5px var(--hai-mono);
+}
+.hai-window-tool {
+  flex: 1;
+  min-width: 0;
+  align-self: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 12px var(--hai-mono);
+}
+.hai-window-badge { flex: none; align-self: center; }
+.hai-window-badge[hidden] { display: none; }
+.hai-window-bar > .hai-bar-btn + .hai-bar-btn { margin-left: -10px; }
+.hai-window[data-status="awaiting"] .hai-window-bar { background: var(--hai-warn); color: var(--hai-on-accent); }
+.hai-window[data-status="expired"] { border-style: dashed; border-color: var(--hai-dim); box-shadow: none; }
+.hai-window[data-status="expired"] .hai-window-bar {
+  border-bottom-style: dashed;
+  border-color: var(--hai-dim);
+  background: color-mix(in srgb, var(--hai-dim) 10%, var(--hai-panel-2));
+  color: var(--hai-fg);
+}
+.hai-window[data-status="expired"] .hai-window-badge { background: none; }
+.hai-window-body {
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--hai-line) transparent;
+}
+
+/* for a screen reader only: what docking just did */
+.hai-dock-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 /* ── model context debug drawer ─────────────────────────────────────── */
 /* Closed, it waits off the right edge, out of the tab order and the
    accessibility tree; open, it slides in, over the chat on a narrow screen. */
@@ -652,6 +972,31 @@
     clip-path: inset(50%);
     white-space: nowrap;
   }
+  /* the window is a sheet over the chat, down to the composer; the chat
+     behind it dims, out of reach until it docks again */
+  .hai-window {
+    left: 0;
+    right: 0;
+    top: 12%;
+    bottom: var(--hai-composer-height, 120px);
+    width: auto;
+    max-height: none;
+    border-left: none;
+    border-right: none;
+    border-radius: 0;
+    box-shadow: none;
+  }
+  .hai-chat.window-open > .hai-transcript,
+  .hai-chat.window-open > .hai-status { opacity: .4; }
+  .hai-dock-count { display: none; }
+}
+/* a finger's worth, wherever the pointer is coarse */
+@media (pointer: coarse) {
+  .hai-dock-item { height: 44px; }
+  .hai-surface-bar { min-height: 44px; }
+  .hai-docked { min-height: 44px; }
+  .hai-window-bar { min-height: 44px; }
+  .hai-bar-icon { width: 44px; }
 }
 @media (max-width: 599.98px) {
   .hai-model { display: none; }
@@ -667,6 +1012,11 @@
 .hai-new:focus-visible { outline: 3px solid var(--hai-fg); outline-offset: 2px; }
 /* inside the row's border, clear of it, in the row's text colour: ink on amber too */
 .hai-tool summary:focus-visible { outline: 2px solid currentColor; outline-offset: -5px; }
+/* the dock's items and its pile take the buttons' ring; a bar's cells and the
+   pile's rows, where a card would clip it, a ring inside */
+.hai-dock-item:focus-visible { outline: 3px solid var(--hai-fg); outline-offset: 2px; }
+.hai-bar-btn:focus-visible,
+.hai-pile-row:focus-visible { outline: 2px solid currentColor; outline-offset: -6px; }
 
 @keyframes hai-pulse {
   0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--hai-warn) 55%, transparent); }
@@ -682,6 +1032,7 @@
   .hai-shimmer { animation: none; }
   .hai-chevron,
   .hai-composer-box,
+  .hai-dock,
   .hai-chat,
   .hai-inspector,
   .hai-main.inspector-open > .hai-inspector { transition: none; }
