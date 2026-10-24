@@ -312,8 +312,9 @@ goes with the last docked surface.
 
 **Remove all** does the same for every docked surface at once, oldest first,
 the open one and those in the pile included, and closes the window and the
-pile's list. The shelf goes with them, so focus moves to the message box, and
-nothing is scrolled. The status region says `1 surface is back in the chat`
+pile's list. The shelf goes with them, so focus moves to the message box, or,
+once the conversation has expired and the box is disabled, to the expired
+notice's `Start a new conversation` button. Nothing is scrolled. The status region says `1 surface is back in the chat`
 or `<n> surfaces are back in the chat`.
 
 ### Escape and the rest
@@ -624,7 +625,8 @@ bordered 2px in `--hai-line`, on `--hai-panel` with a `3px 3px 0` shadow:
 A changed item has a 12px `--hai-accent` square on its top right corner,
 bordered in `--hai-line`. The pile is an item with two more edges behind it,
 up and to the right, and its list is a `--hai-panel` card with
-`--hai-shadow`, under a `--hai-panel-2` heading. Remove all, at the shelf's
+`--hai-shadow`, under a `--hai-panel-2` heading, 280px wide at most and no
+wider than the screen less 32px, its right edge lined up with the shelf's. Remove all, at the shelf's
 end, is a 36px button with a 16px icon, an arrow up from two lines, in
 `--hai-dim` and no border; under the pointer it takes a 2px `--hai-line`
 border on `--hai-hover`, in `--hai-fg`.

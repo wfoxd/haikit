@@ -599,11 +599,15 @@ function createDock({ chat, id, shell, chatPane, transcript, composer, statusEl,
   minimise.onclick = () => close(true);
 
   // Every docked surface back in its card, oldest first. The shelf goes with
-  // them, so the reader goes to the message box under it.
+  // them, so the reader goes to the message box under it, or, once the
+  // conversation has expired and the box is disabled, to the button that
+  // starts a new one.
   clear.onclick = () => {
     const n = entries.length;
     for (const entry of [...entries]) undock(entry, false);
-    composer.querySelector(".hai-input")?.focus();
+    const input = composer.querySelector(".hai-input");
+    if (input && !input.disabled) input.focus();
+    else transcript.querySelector(".hai-expired .hai-new")?.focus();
     live.textContent = n === 1 ? "1 surface is back in the chat" : `${n} surfaces are back in the chat`;
   };
 

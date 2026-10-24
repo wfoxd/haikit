@@ -659,6 +659,8 @@
 /* The composer card's top row while anything is docked: one card, one
    shadow. Not positioned, so the box below covers the shelf's own shadow. */
 .hai-dock {
+  /* Remove all's size: the pile's list lines up past it, with the shelf's end */
+  --hai-dock-clear: 36px;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -771,8 +773,8 @@
   flex: none;
   display: grid;
   place-items: center;
-  width: 36px;
-  height: 36px;
+  width: var(--hai-dock-clear);
+  height: var(--hai-dock-clear);
   padding: 0;
   border: 2px solid transparent;
   border-radius: var(--hai-radius);
@@ -783,9 +785,12 @@
 .hai-dock-clear .hai-icon { width: 16px; height: 16px; stroke-width: 2.5; }
 .hai-dock-clear:hover { border-color: var(--hai-line); background: var(--hai-hover); color: var(--hai-fg); }
 /* what's in it, oldest first, above the shelf */
+/* Its right edge lines up with the shelf's: past the pile's margin, the gap,
+   Remove all, the shelf's padding and its border. So it opens leftward from
+   the shelf's end, and fits whatever the screen fits. */
 .hai-pile-list {
   position: absolute;
-  right: -8px;
+  right: calc(-1 * (8px + 10px + var(--hai-dock-clear, 36px) + 14px + 3px));
   bottom: calc(100% + 18px);
   z-index: 6;
   width: 280px;
@@ -1009,7 +1014,7 @@
 /* a finger's worth, wherever the pointer is coarse */
 @media (pointer: coarse) {
   .hai-dock-item { height: 44px; }
-  .hai-dock-clear { width: 44px; height: 44px; }
+  .hai-dock { --hai-dock-clear: 44px; }
   .hai-surface-bar { min-height: 44px; }
   .hai-docked { min-height: 44px; }
   .hai-window-bar { min-height: 44px; }

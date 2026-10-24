@@ -266,6 +266,25 @@ try {
     chat.close();
   }
 
+  // Remove all once the conversation has expired: the message box is disabled
+  {
+    globalThis.fetch = async () =>
+      sse([
+        { type: "hello", conversationId: "c6", model: "m", events: false },
+        { type: "ui_open", handle: "h1", component: "rules", mode: "display" },
+        { type: "ui_props", handle: "h1", props: { n: 1 } },
+        { type: "expired", message: "This conversation is out of date." },
+      ]);
+    const root = document.getElementById("app");
+    const chat = mountChat({ root, registry: { rules: { mount: (el) => (el.textContent = "rules") } } });
+    await wait(30);
+    const q = (s) => root.querySelector(s);
+    q('[aria-label="Dock rules"]').click();
+    q(".hai-dock-clear").click();
+    check("Remove all on an expired conversation takes the reader to Start a new conversation", q(".hai-input").disabled && document.activeElement === q(".hai-expired .hai-new"));
+    chat.close();
+  }
+
   // Escape and the drawer: with the pile's list open, a keyboard user opens
   // the drawer, and Escape there closes the drawer, not the list behind it
   {
