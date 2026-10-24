@@ -15,10 +15,10 @@
     "haikit:update": "npm install @haikit/core@latest @haikit/server@latest @haikit/client@latest @haikit/anthropic@latest && npm test"
   },
   "dependencies": {
-    "@haikit/anthropic": "^0.20.5",
-    "@haikit/client": "^0.20.5",
-    "@haikit/core": "^0.20.5",
-    "@haikit/server": "^0.20.5",
+    "@haikit/anthropic": "^0.22.0",
+    "@haikit/client": "^0.22.0",
+    "@haikit/core": "^0.22.0",
+    "@haikit/server": "^0.22.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {

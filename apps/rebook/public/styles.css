@@ -22,6 +22,9 @@
   --hai-bad: #ff8f5e;
   --hai-user-bg: #18233a;
   --hai-code-bg: #0f1520;
+  /* hai.css hovers in amber; here amber means a turn waiting on someone, so
+     a hovered row takes a neutral tint of the text colour instead. */
+  --hai-hover: color-mix(in srgb, var(--hai-fg) 6%, transparent);
 
   --sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
@@ -49,6 +52,11 @@
 }
 
 :where(button, [tabindex]):focus-visible { outline: 2px solid var(--hai-accent); outline-offset: 2px; }
+
+/* hai.css writes a waiting tool row's arguments in 70% of --hai-on-accent.
+   On this darker amber, under white, that reads below 4.5:1, so they take
+   the full colour. */
+.hai-status-awaiting summary { --hai-dim: var(--hai-on-accent); }
 
 /* ── the Airline ops bar, under the header ─────────────────────────────── */
 .ops {
