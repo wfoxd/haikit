@@ -1,5 +1,11 @@
 # @haikit/openai
 
+## 0.23.0
+
+### Patch Changes
+
+- @haikit/core@0.23.0
+
 ## 0.22.1
 
 ### Patch Changes
