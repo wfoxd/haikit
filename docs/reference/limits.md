@@ -119,7 +119,7 @@ Checked against `@haikit/*` 0.20.0. Durations are in milliseconds.
 ### `hai.css`
 
 Every `--hai-*` custom property, colours and the layout tokens `--hai-radius`
-(`12px`), `--hai-column` (`780px`) and `--hai-inspector-width` (`400px`), is
+(`0`), `--hai-column` (`780px`) and `--hai-inspector-width` (`400px`), is
 an override point. See [The default UI: tokens](ui.md#tokens).
 
 ## Fixed limits and timings

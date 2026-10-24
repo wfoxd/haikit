@@ -1,14 +1,6 @@
 /* This app's own styles. The framework ships /hai-client/hai.css for the
    transcript, shell and debug drawer; everything here is inside our surfaces. */
 
-/* theme overrides — every --hai-* token is fair game; light-dark() gives one
-   value for a light page and one for a dark. A browser without it keeps the
-   plain dark value, as hai.css's own tokens do. */
-:root { --hai-accent: #7ab8f5; }
-@supports (color: light-dark(#000, #fff)) {
-  :root { --hai-accent: light-dark(#1f6fc5, #7ab8f5); }
-}
-
 .c-head {
   display: flex; align-items: baseline; gap: 10px;
   padding: 9px 12px; border-bottom: 1px solid var(--hai-line);
@@ -20,7 +12,7 @@
   letter-spacing: .06em; color: var(--hai-dim);
   border: 1px solid var(--hai-line); border-radius: 4px; padding: 2px 6px;
 }
-.badge-live { color: var(--hai-warn); border-color: color-mix(in srgb, var(--hai-warn) 40%, transparent); background: var(--hai-warn-soft); }
+.badge-live { color: var(--hai-on-accent); border-color: var(--hai-line); background: var(--hai-warn); }
 
 .chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 9px 12px 4px; }
 .chip {
