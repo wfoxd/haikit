@@ -188,9 +188,10 @@ estimate.
   narrow one,** it opens over the chat, and the chat behind it is made
   `inert` until it closes or the screen widens. A tap on the uncovered part
   closes it then.
-- **Escape closes it** from anywhere in the shell, unless something there
-  used the key first (`defaultPrevented`), such as a surface closing a menu of
-  its own. So do its close button and the Context button.
+- **Escape closes it** from anywhere in the shell but the dock's shelf and
+  window, which take the key first (see [The dock](#the-dock)), unless
+  something there used it first (`defaultPrevented`), such as a surface
+  closing a menu of its own. So do its close button and the Context button.
 - **Focus:** opening it moves focus to its close button. Closing it from the
   button, with Escape from inside the drawer, or with a tap on the uncovered
   chat returns focus to Context. Escape from outside the drawer leaves focus
@@ -279,8 +280,8 @@ is no taller than the room above the shelf in the chat, measured as it opens
 heading. A row that changes while the list is open keeps the reader's focus
 on that surface. Picking
 one opens its window, and makes it the newest docked, so it comes into the
-row. Escape, or a click outside, closes the list, and Escape returns focus to
-the pile. The row is measured to decide this, so where nothing is laid out,
+row. Escape (see below), or a click outside, closes the list, and Escape from
+inside the dock returns focus to the pile. The row is measured to decide this, so where nothing is laid out,
 nothing goes into the pile. It's measured again when the docked surfaces,
 their names, their dots or the open one change, when the composer or the
 status line is resized, and when the screen crosses 900 px. An item that goes
@@ -304,11 +305,12 @@ bar, close its window if it's open, and take its item off the shelf. Focus
 moves to the card's Dock button, and the card is scrolled into view. The shelf
 goes with the last docked surface.
 
-**Escape** closes the pile's list if it's open. Otherwise it closes the
-window from inside the window or the shelf, or from anywhere in the shell
-while the drawer is closed, unless something used the key first
-(`defaultPrevented`). With the drawer open and focus elsewhere, Escape closes
-the drawer.
+**Escape,** from inside the window or the shelf, or from anywhere in the
+shell while the drawer is closed, closes the pile's list if it's open, and
+otherwise the window, unless something used the key first
+(`defaultPrevented`). With the drawer open and focus outside the dock,
+including in the drawer, Escape is the drawer's: it closes the drawer, and
+leaves the list and the window as they are.
 
 - **On a narrow screen** (under 900 px wide), the window is a sheet across the
   chat, from 12% of its height down to the composer. The transcript behind is

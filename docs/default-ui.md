@@ -296,7 +296,8 @@ How it behaves:
   behind it is dimmed and can't be reached with the keyboard. Tapping it
   closes the drawer.
 - **Escape** closes it from anywhere in the shell, unless something else, such
-  as one of your surfaces, used the key first. So does its close button.
+  as one of your surfaces or the dock you're in, used the key first. So does
+  its close button.
   Focus goes back to **Context** if it was inside the drawer.
 - **It remembers being open.** After a reload it opens again, on a wide screen
   only. The setting is kept in `localStorage` under `hai:debug-drawer`.
