@@ -103,11 +103,14 @@ try {
     const q = (s) => root.querySelector(s);
     const card = () => q('.hai-dockable[data-handle="h1"]');
     const surface = card().querySelector(":scope > .hai-surface");
-    check("each surface is in a card, with its name and a Dock button", card().querySelector(".hai-surface-name").textContent === "picker" && q('[aria-label="Dock rules"]') !== null);
+    const dockRules = q('[aria-label="Dock rules"]');
+    check("each surface is in a card, with its name and a Dock button", card().querySelector(".hai-surface-name").textContent === "picker" && dockRules !== null);
+    check("…an icon, named for screen readers and in a tooltip", dockRules.textContent === "" && dockRules.title === "Dock");
     check("nothing is docked yet: no shelf", q(".hai-dock").hidden && q(".hai-window").hidden);
 
     q('[aria-label="Dock picker"]').click();
-    check("docked, the card leaves a stub and Put back in the surface's place", card().hasAttribute("data-docked") && card().textContent.includes("picker is in the dock") && card().querySelector(".hai-surface") === null);
+    const back = card().querySelector('[aria-label="Put picker back"]');
+    check("docked, the card leaves a stub and Put back in the surface's place", card().hasAttribute("data-docked") && card().textContent === "picker is in the dock" && card().querySelector(".hai-surface") === null && back?.title === "Put back");
     const item = q(".hai-dock-item");
     check("…and the shelf shows it, waiting on the reader", !q(".hai-dock").hidden && item.getAttribute("aria-label") === "picker, awaiting you" && item.dataset.status === "awaiting");
     check("the status line and the message box say the question is in the dock", q(".hai-status").textContent === "Waiting on your selection in the dock" && q(".hai-input").placeholder === "pick an option in the dock — or type to override");
@@ -122,7 +125,9 @@ try {
     check("Escape docks it again and returns to its item", win.hidden && document.activeElement === item && item.getAttribute("aria-expanded") === "false");
 
     item.click();
-    q('[aria-label="Remove picker from the dock"]').click();
+    const remove = q('[aria-label="Remove picker from the dock"]');
+    check("the window's Remove from dock and Dock are icons too", remove.textContent === "" && remove.title === "Remove from dock" && q('[aria-label="Dock picker"].hai-bar-icon')?.closest(".hai-window") === win);
+    remove.click();
     check("Remove from dock puts it back in its card, still mounted once", card().querySelector(":scope > .hai-surface") === surface && !card().hasAttribute("data-docked") && mounts.picker === 1);
     check("…and the shelf and the window go with the last docked", q(".hai-dock").hidden && win.hidden && q(".hai-status").textContent === "Waiting on your selection above");
 

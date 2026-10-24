@@ -530,7 +530,8 @@
   font: 700 11.5px var(--hai-mono);
   color: var(--hai-dim);
 }
-/* a button that is a bar's cell: Dock, Put back, and the window's own */
+/* a button that is a bar's cell, an icon named for screen readers and in a
+   tooltip: Dock, Put back, and the window's Remove from dock and Dock */
 .hai-bar-btn {
   flex: none;
   display: inline-flex;
@@ -971,8 +972,7 @@
   }
   .hai-chat.window-open > .hai-transcript,
   .hai-chat.window-open > .hai-status { opacity: .4; }
-  .hai-dock-count,
-  .hai-long { display: none; }
+  .hai-dock-count { display: none; }
 }
 /* a finger's worth, wherever the pointer is coarse */
 @media (pointer: coarse) {

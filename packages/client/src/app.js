@@ -478,9 +478,10 @@ function createDock({ chat, id, shell, chatPane, transcript, composer, statusEl,
   winName.id = `${id}-window-name`;
   const winTool = h("span", "hai-window-tool");
   const winBadge = h("span", "hai-tstatus hai-window-badge");
-  const remove = h("button", "hai-bar-btn");
+  const remove = h("button", "hai-bar-btn hai-bar-icon");
   remove.type = "button";
-  remove.append(icon("undock"), "Remove", h("span", "hai-long", " from dock"));
+  remove.title = "Remove from dock";
+  remove.append(icon("undock"));
   const minimise = h("button", "hai-bar-btn hai-bar-icon");
   minimise.type = "button";
   minimise.title = "Dock";
@@ -514,9 +515,10 @@ function createDock({ chat, id, shell, chatPane, transcript, composer, statusEl,
 
     // what stays in the transcript, in the surface's place
     entry.stubText = h("span", "hai-docked-text");
-    entry.back = h("button", "hai-bar-btn");
+    entry.back = h("button", "hai-bar-btn hai-bar-icon");
     entry.back.type = "button";
-    entry.back.append(icon("undock"), "Put back");
+    entry.back.title = "Put back";
+    entry.back.append(icon("undock"));
     entry.back.onclick = () => undock(entry, true);
     const stub = h("div", "hai-docked");
     stub.append(entry.stubText, entry.back);
@@ -614,6 +616,7 @@ function createDock({ chat, id, shell, chatPane, transcript, composer, statusEl,
       entry.mark.hidden = !entry.changed;
       const text = `${name} ${isOpen ? "is open in a window" : "is in the dock"}`;
       if (entry.stubText.textContent !== text) entry.stubText.replaceChildren(icon("dock"), text);
+      entry.back.setAttribute("aria-label", `Put ${name} back`);
     }
     shelf.hidden = entries.length === 0;
     count.textContent = `docked · ${entries.length}`;

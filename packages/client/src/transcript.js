@@ -308,10 +308,11 @@ function dockable(block, el, surface, onDock) {
   const bar = h("div", "hai-surface-bar");
   bar.append(h("span", "hai-surface-name", name));
   if (surface?.props) {
-    const dock = h("button", "hai-bar-btn");
+    const dock = h("button", "hai-bar-btn hai-bar-icon");
     dock.type = "button";
+    dock.title = "Dock";
     dock.setAttribute("aria-label", `Dock ${name}`);
-    dock.append(icon("dock"), "Dock");
+    dock.append(icon("dock"));
     dock.onclick = () => onDock({ handle: card.dataset.handle, card, element: el });
     bar.append(dock);
   }

@@ -248,16 +248,17 @@ seat map or a fare table stays at hand while the conversation scrolls on.
 The design, every state, is in
 [design/dock-bar.pdf](design/dock-bar.pdf).
 
-- **Dock,** on a surface's bar, moves it to a shelf on top of the message box.
-  Its place in the conversation keeps a stub that says where it went, with
-  **Put back**.
+- **Dock,** the arrow down onto a line on a surface's bar, moves it to a shelf
+  on top of the message box. Its place in the conversation keeps a stub that
+  says where it went, with **Put back**, the arrow up. The dock's buttons are
+  icons; each is named for screen readers and in a tooltip.
 - **Click it on the shelf** to open it as a window above the message box. One
   opens at a time: clicking another swaps it, and clicking the open one, the
   window's own Dock button, or **Escape** docks it again. On a narrow screen
   the window is a sheet over the conversation, and tapping the conversation
   docks it.
-- **Remove from dock,** in the window, puts it back in the conversation where
-  it was.
+- **Remove from dock,** the arrow up in the window's title bar, puts it back
+  in the conversation where it was.
 - **The surface is moved, not drawn again,** so your component keeps its
   state: a sort, a filter, a half-picked seat. Its `send` works from the
   window as it does in the conversation. An iframe or video inside it starts

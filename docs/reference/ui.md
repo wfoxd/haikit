@@ -237,15 +237,18 @@ With `dock`, the default, the reader can move any surface out of the
 transcript onto a shelf above the message box, and open it from there as a
 window. `mountChat` passes `onDock` to `renderTranscript`, so every surface is
 drawn in a card with a bar: its component's name and, once it has mounted, a
-`Dock` button labelled `Dock <component>`.
+Dock button. Every button the dock adds to a bar is an icon, with no text:
+labelled for screen readers, with its name as a `title` tooltip. Dock is
+labelled `Dock <component>`, with the title `Dock`.
 
 **Docking moves the surface's element,** and never mounts it again: its
 component keeps its state, and answering a question in the window works as it
 does in the transcript. An iframe or video inside starts over, as it would
 anywhere a page moves one. The card stays in the transcript, in the
 surface's place, with `data-docked` and a stub: `<component> is in the dock`,
-or `<component> is open in a window` while it's open, and a `Put back`
-button. Focus moves to Put back. The tool row above it keeps its status, so a
+or `<component> is open in a window` while it's open, and a Put back
+button, labelled `Put <component> back`, with the title `Put back`. Focus
+moves to Put back. The tool row above it keeps its status, so a
 docked question still reads `awaiting you` there.
 
 **The shelf** is the composer's first child, `div.hai-dock`, hidden while
@@ -282,9 +285,10 @@ surface there, in place of any other, and clicking the open item docks it
 again. `section.hai-window` is a `dialog` named by the surface's component,
 and has `data-status` as the item does. Its title bar, `div.hai-window-bar`,
 shows the name, `· <tool>` for the tool that showed it, a badge (`awaiting
-you` or `out of date`), a `Remove from dock` button (`Remove` under 900 px
-wide), labelled `Remove <component> from the dock`, and a Dock button,
-labelled `Dock <component>` with the title `Dock`, that closes the window.
+you` or `out of date`), a Remove from dock button, labelled `Remove
+<component> from the dock` with the title `Remove from dock`, and a Dock
+button, labelled `Dock <component>` with the title `Dock`, that closes the
+window.
 Opening the window moves focus into it; closing it from its Dock button or
 with Escape returns focus to the surface's item, or to the pile if it went in.
 
@@ -398,7 +402,8 @@ interface DockRequest {
 `div.hai-dockable` with `data-handle`, holding a bar, `div.hai-surface-bar`,
 and the surface's `div.hai-surface`. The bar shows the component's name,
 `span.hai-surface-name` (`surface` before the surface is known), and once
-the props have arrived a `Dock` button labelled `Dock <component>`, which
+the props have arrived a Dock button, an icon labelled `Dock <component>`
+with the title `Dock`, which
 calls `onDock` with the surface's handle as it is now, its card and its
 element. The card stays in the transcript, kept like any block's element;
 what goes in it after that is yours. Moving `element` elsewhere keeps its
@@ -578,8 +583,9 @@ border and `--hai-shadow`, and its bar is `--hai-panel-2` under a 2px rule,
 with the name in bold 11.5px `--hai-mono` and `--hai-dim`. A docked card is a
 flat `--hai-panel-2` stub, and a row above a docked card casts no shadow
 unless its status does. The bar's buttons, the stub's and the window's are
-cells of their bar, behind a 2px rule, tinted `--hai-hover` under the
-pointer.
+cells of their bar, 40px wide, behind a 2px rule, holding a 16px icon: Dock
+an arrow down onto a line, Put back and Remove from dock an arrow up from
+one. They're tinted `--hai-hover` under the pointer.
 
 The shelf is `--hai-panel-2`, joined to the message box as one card: one
 3px border, a 3px rule between them, and `--hai-shadow`, which turns
@@ -610,5 +616,5 @@ at 40% opacity.
 A focused item has the buttons' 3px `--hai-fg` outline 2px outside it. A
 focused button in a bar, or a row of the pile's list, has a 2px outline in
 its text colour 6px inside it, so a card can't clip it. Where the pointer is
-coarse, items, bars and the stub are at least 44px tall, and the window's
-Dock button 44px wide.
+coarse, items, bars and the stub are at least 44px tall, and the bars'
+buttons 44px wide.
