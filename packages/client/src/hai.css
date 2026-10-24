@@ -55,7 +55,7 @@
   /* tints, derived — override the colour and these follow. The soft ones
      are solid, so a card reads the same on the page as on a panel. */
   --hai-line-soft: color-mix(in srgb, var(--hai-line) 60%, transparent);
-  --hai-hover: color-mix(in srgb, var(--hai-warn) 35%, transparent);
+  --hai-hover: light-dark(color-mix(in srgb, var(--hai-warn) 35%, transparent), color-mix(in srgb, var(--hai-warn) 20%, transparent));
   --hai-accent-soft: color-mix(in oklab, var(--hai-accent) 25%, var(--hai-panel));
   --hai-good-soft: color-mix(in oklab, var(--hai-good) 25%, var(--hai-panel));
   --hai-warn-soft: color-mix(in oklab, var(--hai-warn) 25%, var(--hai-panel));
@@ -86,6 +86,7 @@
     --hai-user-bg: #23506f;
     --hai-code-bg: #0b0c0f;
     --hai-selected: #1d3b2a;
+    --hai-hover: color-mix(in srgb, var(--hai-warn) 20%, transparent);
     --hai-logo-ink: #f3f2ee;
     --hai-logo-paper: #0f1115;
   }
@@ -656,8 +657,9 @@
 .hai-icon-btn:focus-visible,
 .hai-send:focus-visible,
 .hai-suggestion:focus-visible,
-.hai-new:focus-visible { outline: 3px solid var(--hai-accent); outline-offset: 2px; }
-.hai-tool summary:focus-visible { outline: 3px solid var(--hai-accent); outline-offset: -3px; }
+.hai-new:focus-visible { outline: 3px solid var(--hai-fg); outline-offset: 2px; }
+/* inside the row's border, clear of it, in the row's text colour: ink on amber too */
+.hai-tool summary:focus-visible { outline: 2px solid currentColor; outline-offset: -5px; }
 
 @keyframes hai-pulse {
   0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--hai-warn) 55%, transparent); }

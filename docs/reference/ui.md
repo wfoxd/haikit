@@ -366,7 +366,7 @@ on a card:
 | Token | Value |
 | --- | --- |
 | `--hai-line-soft` | `--hai-line` at 60%: row dividers |
-| `--hai-hover` | `--hai-warn` at 35%: row hover, for your surfaces too |
+| `--hai-hover` | `--hai-warn` at 35%, or 20% in the dark scheme: row hover, for your surfaces too |
 | `--hai-accent-soft` | 25% `--hai-accent` in `--hai-panel` |
 | `--hai-good-soft` | 25% `--hai-good` in `--hai-panel`: a tool's result |
 | `--hai-warn-soft` | 25% `--hai-warn` in `--hai-panel` |
@@ -410,7 +410,9 @@ smaller parts: badges, code blocks, the buttons in the header and the message
 box, the dots, and the drawer's meter and tool entries. Border widths aren't
 tokens. These cast `--hai-shadow`: surfaces, notices, user messages,
 suggestions, the new conversation button, and the message box, whose shadow
-turns `--hai-accent` while it has focus.
+turns `--hai-accent` while it has focus. A focused button has a 3px
+`--hai-fg` outline 2px outside it; a focused tool row has a 2px outline in
+its text colour, 3px inside its border.
 
 A tool row's status sets its colours. The status mark is a 12px dot drawn by
 `.hai-ticon` itself, with a 2px border in the row's text colour; the glyph
