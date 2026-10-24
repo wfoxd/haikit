@@ -1,5 +1,11 @@
 # @haikit/anthropic
 
+## 0.22.0
+
+### Patch Changes
+
+- @haikit/core@0.22.0
+
 ## 0.21.0
 
 ### Patch Changes
