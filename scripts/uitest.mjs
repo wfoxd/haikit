@@ -2,7 +2,9 @@
  * The default UI (`mountChat`) in a DOM (jsdom), driven by a fetch that
  * answers with scripted event streams: it passes its polling options through
  * to the chat, and a message whose request fails comes back to the message
- * box, reported rather than left as an unhandled rejection.
+ * box, reported rather than left as an unhandled rejection. Its dock moves a
+ * surface to the shelf and a window and back without mounting it again, and
+ * `dock: false` leaves surfaces as they were.
  */
 
 import { JSDOM } from "jsdom";
@@ -69,6 +71,89 @@ try {
       poll !== undefined && poll.url.includes("poll=now") && poll.at - started < 2000,
     );
     check("pollHoldMs reaches the chat: each poll asks for that hold", poll !== undefined && poll.url.includes("wait=1234"));
+    chat.close();
+  }
+
+  // the dock: a surface moves to the shelf and the window and back, mounted once
+  {
+    // init asks a question and shows a card; a message brings the card new props
+    const opening = [
+      { type: "hello", conversationId: "c1", model: "m", events: false },
+      { type: "block_start", block: { kind: "tool", id: "t1", name: "pick_seat", input: {}, status: "awaiting" } },
+      { type: "ui_open", handle: "h1", component: "picker", mode: "elicit", toolId: "t1" },
+      { type: "ui_props", handle: "h1", props: { n: 1 } },
+      { type: "block_start", block: { kind: "tool", id: "t2", name: "show_rules", input: {}, status: "ok", ms: 3 } },
+      { type: "ui_open", handle: "h2", component: "rules", mode: "display", toolId: "t2" },
+      { type: "ui_props", handle: "h2", props: { n: 1 } },
+      { type: "status", status: "awaiting" },
+    ];
+    globalThis.fetch = async (url) =>
+      String(url).endsWith("/start") ? sse(opening) : sse([{ type: "ui_props", handle: "h2", props: { n: 2 } }, { type: "status", status: "awaiting" }]);
+    const mounts = { picker: 0, rules: 0 };
+    const component = (name) => ({
+      mount(el, props) {
+        mounts[name]++;
+        el.textContent = `${name} ${props.n}`;
+      },
+    });
+    const registry = { picker: component("picker"), rules: component("rules") };
+    const root = document.getElementById("app");
+    const chat = mountChat({ root, registry });
+    await wait(30);
+    const q = (s) => root.querySelector(s);
+    const card = () => q('.hai-dockable[data-handle="h1"]');
+    const surface = card().querySelector(":scope > .hai-surface");
+    check("each surface is in a card, with its name and a Dock button", card().querySelector(".hai-surface-name").textContent === "picker" && q('[aria-label="Dock rules"]') !== null);
+    check("nothing is docked yet: no shelf", q(".hai-dock").hidden && q(".hai-window").hidden);
+
+    q('[aria-label="Dock picker"]').click();
+    check("docked, the card leaves a stub and Put back in the surface's place", card().hasAttribute("data-docked") && card().textContent.includes("picker is in the dock") && card().querySelector(".hai-surface") === null);
+    const item = q(".hai-dock-item");
+    check("…and the shelf shows it, waiting on the reader", !q(".hai-dock").hidden && item.getAttribute("aria-label") === "picker, awaiting you" && item.dataset.status === "awaiting");
+    check("the status line and the message box say the question is in the dock", q(".hai-status").textContent === "Waiting on your selection in the dock" && q(".hai-input").placeholder === "pick an option in the dock — or type to override");
+
+    item.click();
+    const win = q(".hai-window");
+    check("a docked surface opens as a window: the same element, not mounted again", !win.hidden && win.contains(surface) && !surface.hidden && mounts.picker === 1);
+    check("…named, with its tool and its status, and its item pressed", q(".hai-window-name").textContent === "picker" && q(".hai-window-tool").textContent === "· pick_seat" && q(".hai-window-badge").textContent === "awaiting you" && win.dataset.status === "awaiting" && item.getAttribute("aria-expanded") === "true");
+    check("…and the reader is taken into it", document.activeElement === win);
+
+    win.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    check("Escape docks it again and returns to its item", win.hidden && document.activeElement === item && item.getAttribute("aria-expanded") === "false");
+
+    item.click();
+    q('[aria-label="Remove picker from the dock"]').click();
+    check("Remove from dock puts it back in its card, still mounted once", card().querySelector(":scope > .hai-surface") === surface && !card().hasAttribute("data-docked") && mounts.picker === 1);
+    check("…and the shelf and the window go with the last docked", q(".hai-dock").hidden && win.hidden && q(".hai-status").textContent === "Waiting on your selection above");
+
+    q('[aria-label="Dock rules"]').click();
+    const input = q(".hai-input");
+    input.value = "anything new?";
+    q(".hai-send").click();
+    await wait(30);
+    const rules = q(".hai-dock-item");
+    check("new props while docked and closed mark it changed", rules.getAttribute("aria-label") === "rules, changed" && !rules.querySelector(".hai-dock-changed").hidden);
+    rules.click();
+    check("…until it's opened", rules.getAttribute("aria-label") === "rules" && rules.querySelector(".hai-dock-changed").hidden);
+
+    q(".hai-btn").click(); // New chat
+    await wait(30);
+    check("a new conversation empties the dock", root.querySelectorAll(".hai-dock-row .hai-dock-item").length === 0 && q(".hai-window").hidden && q(".hai-window-body").childElementCount === 0);
+    chat.close();
+  }
+
+  // dock: false keeps surfaces as renderTranscript draws them without onDock
+  {
+    globalThis.fetch = async () =>
+      sse([
+        { type: "hello", conversationId: "c2", model: "m", events: false },
+        { type: "ui_open", handle: "h1", component: "rules", mode: "display" },
+        { type: "ui_props", handle: "h1", props: { n: 1 } },
+      ]);
+    const root = document.getElementById("app");
+    const chat = mountChat({ root, registry: { rules: { mount: (el) => (el.textContent = "rules") } }, dock: false });
+    await wait(30);
+    check("dock: false: no cards, no Dock buttons, no shelf", root.querySelector(".hai-surface") !== null && root.querySelector(".hai-dockable, .hai-dock, .hai-window") === null);
     chat.close();
   }
 } finally {

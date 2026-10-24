@@ -114,6 +114,7 @@ Checked against `@haikit/*` 0.20.0. Durations are in milliseconds.
 | `placeholder` | `"message…"`, replaced by fixed text while a question waits and once the conversation has expired | [The default UI](ui.md#mountchatoptions) |
 | `emptyText` | `""` | [The default UI](ui.md#mountchatoptions) |
 | `theme` | follows the system, or a `data-hai-theme` already on `<html>`. Only `"light"` or `"dark"` pins | [The default UI](ui.md#mountchatoptions) |
+| `dock` | `true` | [The default UI](ui.md#the-dock) |
 | `eventsFallbackMs`, `pollHoldMs` | as `createChat` | [The default UI](ui.md#mountchatoptions) |
 
 ### `hai.css`
@@ -201,6 +202,9 @@ None of these can be changed without changing HaiKIT's code.
 | Screen width at which the drawer opens beside the chat | `min-width: 900px` | [The default UI](ui.md#the-model-context-debug-drawer) |
 | Tallest the message box grows, and a tool row's input and result | 200 px | [The default UI](ui.md#mountchat) |
 | Width below which the subtitle and button labels are hidden | 900 px | [The default UI](ui.md#mountchat) |
+| Width below which a docked surface opens as a sheet over the chat, and the shelf's count is hidden | 900 px | [The default UI](ui.md#the-dock) |
+| Docked surfaces open at once | 1 | [The default UI](ui.md#the-dock) |
+| Widest the dock's window grows | 560 px | [The default UI](ui.md#how-it-looks) |
 | Width below which the model's name is hidden | 600 px | [The default UI](ui.md#mountchat) |
 
 ### Limits that don't exist

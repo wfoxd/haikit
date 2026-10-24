@@ -246,6 +246,8 @@ From `@haikit/client/app.js`, `@haikit/client/transcript.js` and
 | `MountChatOptions` | interface (`app.js`) | [The default UI](ui.md) |
 | `renderInspector` | function (`app.js`) | [The default UI](ui.md) |
 | `renderTranscript` | function (`transcript.js`) | [The default UI](ui.md) |
+| `TranscriptOptions` | interface (`transcript.js`) | [The default UI](ui.md) |
+| `DockRequest` | interface (`transcript.js`) | [The default UI](ui.md) |
 | `closeTranscript` | function (`transcript.js`) | [The default UI](ui.md) |
 | `h` | function (`transcript.js`) | [The default UI](ui.md) |
 | `--hai-*` custom properties | CSS (`hai.css`) | [The default UI](ui.md) |

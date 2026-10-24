@@ -27,6 +27,14 @@ export interface MountChatOptions {
    * dark setting, or a `data-hai-theme` already in the page's markup.
    */
   theme?: "light" | "dark";
+  /**
+   * Let the reader dock surfaces. Default true. Each surface gets a bar with
+   * its name and a Dock button, which moves it out of the transcript onto a
+   * shelf above the message box; from there it opens as a window, one at a
+   * time, and Put back or Remove from dock returns it to its place. `false`
+   * shows surfaces as `renderTranscript` does without `onDock`.
+   */
+  dock?: boolean;
   /** Passed to `createChat`: how long the events stream may be silent before the chat polls. Default 8000 ms. */
   eventsFallbackMs?: number;
   /** Passed to `createChat`: how long each poll asks the server to hold. Default 15000 ms. */

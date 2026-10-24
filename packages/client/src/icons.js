@@ -16,6 +16,12 @@ const PATHS = {
   alert: "M4 4h16v16H4zM12 8v5M12 16.5v.01",
   clock: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 7v5l3.5 2",
   reply: "M5 4v7a4 4 0 0 0 4 4h10M15 11l4 4-4 4",
+  // the dock: a surface as a window, down onto the shelf, up back into the
+  // chat, and the pile the oldest go into when the shelf is full
+  window: "M4 5h16v14H4zM4 9h16",
+  dock: "M12 4v10M7.5 9.5 12 14l4.5-4.5M4 20h16",
+  undock: "M12 16V4M7.5 8.5 12 4l4.5 4.5M4 20h16",
+  stack: "M3 8h13v13H3zM8 8V3h13v13h-5",
 };
 
 const SVG = "http://www.w3.org/2000/svg";
