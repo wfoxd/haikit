@@ -12,7 +12,8 @@
  * Neo-brutalist: hard 3px ink borders, offset shadows, square corners. Amber
  * means "waiting on you"; the logo's orange is the accent. The faces are Space
  * Grotesk and Space Mono, which this sheet names but doesn't load: link them
- * on your page, or the system's own faces stand in.
+ * on your page, or the system's own faces stand in. The design, every token
+ * and state: docs/design/default-ui-tokens-and-states.pdf in HaiKIT's repo.
  *
  * Light and dark, following the system. Every colour is a custom property set
  * here at zero specificity, so a plain `:root` rule in your own sheet wins.

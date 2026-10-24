@@ -273,7 +273,9 @@ To leave it out, pass `inspector: false`.
 The default UI is neo-brutalist: hard 3px borders in the line colour, offset
 shadows, square corners. Amber means "waiting on you", and the orange of the
 haikit logo is the accent. Rows that want something (running, awaiting you,
-failed) stand out on a shadow; settled ones lie flat.
+failed) stand out on a shadow; settled ones lie flat. The design it follows,
+with every token and state, is
+[Default UI · tokens & states](design/default-ui-tokens-and-states.pdf).
 
 The UI follows the system's light or dark setting.
 
