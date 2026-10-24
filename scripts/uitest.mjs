@@ -237,6 +237,35 @@ try {
     delete globalThis.matchMedia;
   }
 
+  // Remove all: every docked surface back in its card at once, open or not
+  {
+    globalThis.fetch = async () =>
+      sse([
+        { type: "hello", conversationId: "c5", model: "m", events: false },
+        { type: "ui_open", handle: "h1", component: "rules", mode: "display" },
+        { type: "ui_props", handle: "h1", props: { n: 1 } },
+        { type: "ui_open", handle: "h2", component: "fares", mode: "display" },
+        { type: "ui_props", handle: "h2", props: { n: 1 } },
+      ]);
+    let mounts = 0;
+    const component = { mount: (el) => (mounts++, (el.textContent = "card")) };
+    const root = document.getElementById("app");
+    const chat = mountChat({ root, registry: { rules: component, fares: component } });
+    await wait(30);
+    const q = (s) => root.querySelector(s);
+    const surfaces = [...root.querySelectorAll(".hai-dockable > .hai-surface")];
+    q('[aria-label="Dock rules"]').click();
+    q('[aria-label="Dock fares"]').click();
+    q(".hai-dock-row .hai-dock-item").click(); // rules, open in the window
+    const clear = q(".hai-dock-clear");
+    check("the shelf ends with Remove all, an icon named for screen readers and in a tooltip", clear.textContent === "" && clear.getAttribute("aria-label") === "Remove all from the dock" && clear.title === "Remove all from dock");
+    clear.click();
+    const cards = [...root.querySelectorAll(".hai-dockable")];
+    check("Remove all puts every docked surface back in its card, the open one too, still mounted once", cards.every((c, i) => !c.hasAttribute("data-docked") && c.querySelector(":scope > .hai-surface") === surfaces[i]) && mounts === 2);
+    check("…the shelf and the window go, and the reader is taken to the message box", q(".hai-dock").hidden && q(".hai-window").hidden && document.activeElement === q(".hai-input") && q(".hai-dock-live").textContent === "2 surfaces are back in the chat");
+    chat.close();
+  }
+
   // Escape and the drawer: with the pile's list open, a keyboard user opens
   // the drawer, and Escape there closes the drawer, not the list behind it
   {

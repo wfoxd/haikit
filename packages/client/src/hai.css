@@ -766,6 +766,22 @@
   transform: translate(8px, -8px);
 }
 .hai-dock-pile::after { transform: translate(4px, -4px); }
+/* Remove all, at the shelf's end: a quiet icon until the pointer's on it */
+.hai-dock-clear {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: var(--hai-radius);
+  background: none;
+  color: var(--hai-dim);
+  cursor: pointer;
+}
+.hai-dock-clear .hai-icon { width: 16px; height: 16px; stroke-width: 2.5; }
+.hai-dock-clear:hover { border-color: var(--hai-line); background: var(--hai-hover); color: var(--hai-fg); }
 /* what's in it, oldest first, above the shelf */
 .hai-pile-list {
   position: absolute;
@@ -993,6 +1009,7 @@
 /* a finger's worth, wherever the pointer is coarse */
 @media (pointer: coarse) {
   .hai-dock-item { height: 44px; }
+  .hai-dock-clear { width: 44px; height: 44px; }
   .hai-surface-bar { min-height: 44px; }
   .hai-docked { min-height: 44px; }
   .hai-window-bar { min-height: 44px; }
@@ -1014,7 +1031,8 @@
 .hai-tool summary:focus-visible { outline: 2px solid currentColor; outline-offset: -5px; }
 /* the dock's items and its pile take the buttons' ring; a bar's cells and the
    pile's rows, where a card would clip it, a ring inside */
-.hai-dock-item:focus-visible { outline: 3px solid var(--hai-fg); outline-offset: 2px; }
+.hai-dock-item:focus-visible,
+.hai-dock-clear:focus-visible { outline: 3px solid var(--hai-fg); outline-offset: 2px; }
 .hai-bar-btn:focus-visible,
 .hai-pile-row:focus-visible { outline: 2px solid currentColor; outline-offset: -6px; }
 

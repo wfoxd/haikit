@@ -436,6 +436,7 @@ export function mountChat({
  *
  * When the shelf's row is full, the oldest go into a pile at its end, which
  * lists them. A surface waiting on the reader, or open, stays in the row.
+ * Remove all, at the shelf's end, puts every docked surface back at once.
  */
 function createDock({ chat, id, shell, chatPane, transcript, composer, statusEl, wide, wideQuery, drawerOpen, onChange }) {
   /** Docked surfaces, oldest first. */
@@ -464,7 +465,13 @@ function createDock({ chat, id, shell, chatPane, transcript, composer, statusEl,
   list.id = `${id}-pile`;
   list.hidden = true;
   pile.append(pileBtn, list);
-  shelf.append(count, row, pile);
+  // Remove all, at the shelf's end: every docked surface back in the chat
+  const clear = h("button", "hai-dock-clear");
+  clear.type = "button";
+  clear.title = "Remove all from dock";
+  clear.setAttribute("aria-label", "Remove all from the dock");
+  clear.append(icon("undockAll"));
+  shelf.append(count, row, pile, clear);
   composer.prepend(shelf);
 
   // ── the window ───────────────────────────────────────────────────────
@@ -590,6 +597,15 @@ function createDock({ chat, id, shell, chatPane, transcript, composer, statusEl,
 
   remove.onclick = () => open && undock(open, true);
   minimise.onclick = () => close(true);
+
+  // Every docked surface back in its card, oldest first. The shelf goes with
+  // them, so the reader goes to the message box under it.
+  clear.onclick = () => {
+    const n = entries.length;
+    for (const entry of [...entries]) undock(entry, false);
+    composer.querySelector(".hai-input")?.focus();
+    live.textContent = n === 1 ? "1 surface is back in the chat" : `${n} surfaces are back in the chat`;
+  };
 
   // ── keeping up ───────────────────────────────────────────────────────
   // After every event the chat renders, and after every change here.
@@ -751,7 +767,7 @@ function createDock({ chat, id, shell, chatPane, transcript, composer, statusEl,
     if (!keys.includes(e.key)) return;
     const buttons = inList
       ? [...list.querySelectorAll("button")]
-      : [...shelf.querySelectorAll(".hai-dock-item")].filter((b) => !b.hidden && !b.closest("[hidden]"));
+      : [...shelf.querySelectorAll(".hai-dock-item, .hai-dock-clear")].filter((b) => !b.hidden && !b.closest("[hidden]"));
     const at = buttons.indexOf(e.target);
     if (at < 0) return;
     e.preventDefault();

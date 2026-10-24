@@ -48,7 +48,8 @@ Every surface has a **Dock** button on its bar. Docked, it waits on a shelf
 above the message box and opens from there as a window, one at a time; **Put
 back** or **Remove from dock** returns it to its place. It's moved, not
 mounted again, so your component keeps its state. A docked question stays
-amber on the shelf, and when the shelf is full the oldest go into a pile.
+amber on the shelf, when the shelf is full the oldest go into a pile, and
+**Remove all** at the shelf's end puts every docked surface back at once.
 `dock: false` leaves it out.
 
 It is light or dark with the system. To pin it, put `data-hai-theme="dark"` (or
