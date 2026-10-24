@@ -273,7 +273,11 @@ end, one at a time until the rest fit. A surface that is awaiting, or open,
 never goes in. The pile is a button, `<n> more`, labelled `<n> more docked
 surfaces`, with `, <k> changed` and the corner mark when any of them has
 changed. It opens a list above the shelf, `stacked · <n> · oldest first`, with
-a button per surface; Up and Down arrows, Home and End move along it. Picking
+a button per surface; Up and Down arrows, Home and End move along it. The list
+is no taller than the room above the shelf in the chat, measured as it opens
+(60% of the viewport where nothing is laid out), and scrolls under its
+heading. A row that changes while the list is open keeps the reader's focus
+on that surface. Picking
 one opens its window, and makes it the newest docked, so it comes into the
 row. Escape, or a click outside, closes the list, and Escape returns focus to
 the pile. The row is measured to decide this, so where nothing is laid out,

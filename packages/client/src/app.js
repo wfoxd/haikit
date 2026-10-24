@@ -651,6 +651,8 @@ function createDock({ chat, id, shell, chatPane, transcript, composer, statusEl,
   // Into the pile, oldest first, until the row fits. Measured, so it does
   // nothing where nothing is laid out.
   let listed = "";
+  /** Each piled surface's row in the list, as last built. */
+  const rows = new Map();
   function stack() {
     const focused = document.activeElement;
     for (const entry of entries) entry.item.hidden = false;
@@ -672,10 +674,14 @@ function createDock({ chat, id, shell, chatPane, transcript, composer, statusEl,
     pileBtn.setAttribute("aria-label", `${stacked.length} more docked surfaces${changed ? `, ${changed} changed` : ""}`);
     if (!stacked.length) closePile(false);
 
-    // the list, rebuilt only when what it shows changes: a reader may be in it
-    const key = stacked.map((e) => `${nameOf(e)}:${e.changed}`).join(" ");
+    // The list, rebuilt only when what it shows changes: which surfaces, not
+    // just their names, since two can share a component. A reader may be in
+    // it, and keeps their place on the same surface's row.
+    const key = stacked.map((e) => `${e.block.id}:${nameOf(e)}:${e.changed}`).join(" ");
     if (key === listed) return;
     listed = key;
+    const focusedEntry = [...rows].find(([, row]) => row === focused)?.[0];
+    rows.clear();
     list.replaceChildren(h("div", "hai-pile-head", `stacked · ${stacked.length} · oldest first`));
     for (const entry of stacked) {
       const b = h("button", "hai-pile-row");
@@ -688,11 +694,16 @@ function createDock({ chat, id, shell, chatPane, transcript, composer, statusEl,
       }
       b.setAttribute("aria-label", `${nameOf(entry)}${entry.changed ? ", changed" : ""}`);
       b.onclick = () => show(entry);
+      rows.set(entry, b);
       list.append(b);
     }
+    rows.get(focusedEntry)?.focus();
   }
 
   function openPile() {
+    // no taller than the room above the shelf, in the chat: it scrolls
+    const room = pile.getBoundingClientRect().top - chatPane.getBoundingClientRect().top - 30;
+    list.style.maxHeight = room > 0 ? `${room}px` : "";
     list.hidden = false;
     pileBtn.setAttribute("aria-expanded", "true");
     list.querySelector("button")?.focus();

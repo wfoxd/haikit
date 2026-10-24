@@ -774,6 +774,11 @@
   z-index: 6;
   width: 280px;
   max-width: calc(100vw - 32px);
+  /* the room above the shelf, measured as it opens; this until then */
+  max-height: 60vh;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--hai-line) transparent;
   border: 3px solid var(--hai-line);
   border-radius: var(--hai-radius);
   background: var(--hai-panel);
@@ -781,6 +786,8 @@
 }
 .hai-pile-list[hidden] { display: none; }
 .hai-pile-head {
+  position: sticky;
+  top: 0;
   padding: 6px 12px;
   border-bottom: 2px solid var(--hai-line);
   background: var(--hai-panel-2);
