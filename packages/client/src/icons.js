@@ -21,6 +21,7 @@ const PATHS = {
   window: "M4 5h16v14H4zM4 9h16",
   dock: "M12 4v10M7.5 9.5 12 14l4.5-4.5M4 20h16",
   undock: "M12 16V4M7.5 8.5 12 4l4.5 4.5M4 20h16",
+  undockAll: "M12 13V3M7.5 7.5 12 3l4.5 4.5M4 17h16M4 21h16",
   stack: "M3 8h13v13H3zM8 8V3h13v13h-5",
 };
 

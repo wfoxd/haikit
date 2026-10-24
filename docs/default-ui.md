@@ -269,6 +269,9 @@ The design, every state, is in
   until you open it. An out-of-date one has a dashed outline.
 - **When the shelf is full,** the oldest docked surfaces go into a pile at its
   end, `3 more`, which lists them.
+- **Remove all,** the arrow up from two lines at the shelf's end, puts every
+  docked surface back in the conversation at once, and takes you to the
+  message box.
 - **New chat empties the dock,** with the rest of the old conversation.
 
 To leave it out, pass `dock: false`: surfaces then have no bar.

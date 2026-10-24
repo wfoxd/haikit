@@ -659,6 +659,8 @@
 /* The composer card's top row while anything is docked: one card, one
    shadow. Not positioned, so the box below covers the shelf's own shadow. */
 .hai-dock {
+  /* Remove all's size: the pile's list lines up past it, with the shelf's end */
+  --hai-dock-clear: 36px;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -766,10 +768,29 @@
   transform: translate(8px, -8px);
 }
 .hai-dock-pile::after { transform: translate(4px, -4px); }
+/* Remove all, at the shelf's end: a quiet icon until the pointer's on it */
+.hai-dock-clear {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: var(--hai-dock-clear);
+  height: var(--hai-dock-clear);
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: var(--hai-radius);
+  background: none;
+  color: var(--hai-dim);
+  cursor: pointer;
+}
+.hai-dock-clear .hai-icon { width: 16px; height: 16px; stroke-width: 2.5; }
+.hai-dock-clear:hover { border-color: var(--hai-line); background: var(--hai-hover); color: var(--hai-fg); }
 /* what's in it, oldest first, above the shelf */
+/* Its right edge lines up with the shelf's: past the pile's margin, the gap,
+   Remove all, the shelf's padding and its border. So it opens leftward from
+   the shelf's end, and fits whatever the screen fits. */
 .hai-pile-list {
   position: absolute;
-  right: -8px;
+  right: calc(-1 * (8px + 10px + var(--hai-dock-clear, 36px) + 14px + 3px));
   bottom: calc(100% + 18px);
   z-index: 6;
   width: 280px;
@@ -993,6 +1014,7 @@
 /* a finger's worth, wherever the pointer is coarse */
 @media (pointer: coarse) {
   .hai-dock-item { height: 44px; }
+  .hai-dock { --hai-dock-clear: 44px; }
   .hai-surface-bar { min-height: 44px; }
   .hai-docked { min-height: 44px; }
   .hai-window-bar { min-height: 44px; }
@@ -1014,7 +1036,8 @@
 .hai-tool summary:focus-visible { outline: 2px solid currentColor; outline-offset: -5px; }
 /* the dock's items and its pile take the buttons' ring; a bar's cells and the
    pile's rows, where a card would clip it, a ring inside */
-.hai-dock-item:focus-visible { outline: 3px solid var(--hai-fg); outline-offset: 2px; }
+.hai-dock-item:focus-visible,
+.hai-dock-clear:focus-visible { outline: 3px solid var(--hai-fg); outline-offset: 2px; }
 .hai-bar-btn:focus-visible,
 .hai-pile-row:focus-visible { outline: 2px solid currentColor; outline-offset: -6px; }
 
