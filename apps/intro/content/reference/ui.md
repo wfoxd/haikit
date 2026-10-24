@@ -267,7 +267,10 @@ first. Each item:
 - is labelled with its name, then `, awaiting you`, `, out of date` and
   `, changed` as they apply.
 
-Left and Right arrows, Home and End move along the shelf.
+The shelf ends with Remove all, `button.hai-dock-clear`, an icon labelled
+`Remove all from the dock` with the title `Remove all from dock` (see
+[Put back and Remove from dock](#put-back-and-remove-from-dock)). Left and
+Right arrows, Home and End move along the shelf, Remove all included.
 
 **When the row is full,** the oldest docked surfaces go into a pile at its
 end, one at a time until the rest fit. A surface that is awaiting, or open,
@@ -300,10 +303,21 @@ window.
 Opening the window moves focus into it; closing it from its Dock button or
 with Escape returns focus to the surface's item, or to the pile if it went in.
 
+### Put back and Remove from dock
+
 **Put back and Remove from dock** return the surface to its card, under its
 bar, close its window if it's open, and take its item off the shelf. Focus
 moves to the card's Dock button, and the card is scrolled into view. The shelf
 goes with the last docked surface.
+
+**Remove all** does the same for every docked surface at once, oldest first,
+the open one and those in the pile included, and closes the window and the
+pile's list. The shelf goes with them, so focus moves to the message box, or,
+once the conversation has expired and the box is disabled, to the expired
+notice's `Start a new conversation` button. Nothing is scrolled. The status region says `1 surface is back in the chat`
+or `<n> surfaces are back in the chat`.
+
+### Escape and the rest
 
 **Escape,** from inside the window or the shelf, or from anywhere in the
 shell while the drawer is closed, closes the pile's list if it's open, and
@@ -611,7 +625,11 @@ bordered 2px in `--hai-line`, on `--hai-panel` with a `3px 3px 0` shadow:
 A changed item has a 12px `--hai-accent` square on its top right corner,
 bordered in `--hai-line`. The pile is an item with two more edges behind it,
 up and to the right, and its list is a `--hai-panel` card with
-`--hai-shadow`, under a `--hai-panel-2` heading.
+`--hai-shadow`, under a `--hai-panel-2` heading, 280px wide at most and no
+wider than the screen less 32px, its right edge lined up with the shelf's. Remove all, at the shelf's
+end, is a 36px button with a 16px icon, an arrow up from two lines, in
+`--hai-dim` and no border; under the pointer it takes a 2px `--hai-line`
+border on `--hai-hover`, in `--hai-fg`.
 
 The window is `--hai-panel`, 560px wide at most, from the column's left edge,
 8px above the status line, raised on an `8px 8px 0` `--hai-line` shadow. In
@@ -623,8 +641,8 @@ and the bar's rule turn dashed `--hai-dim` with no shadow, the bar 10%
 borders and no shadow, and the transcript and the status line behind it are
 at 40% opacity.
 
-A focused item has the buttons' 3px `--hai-fg` outline 2px outside it. A
-focused button in a bar, or a row of the pile's list, has a 2px outline in
-its text colour 6px inside it, so a card can't clip it. Where the pointer is
-coarse, items, bars and the stub are at least 44px tall, and the bars'
-buttons 44px wide.
+A focused item, or Remove all, has the buttons' 3px `--hai-fg` outline 2px
+outside it. A focused button in a bar, or a row of the pile's list, has a 2px
+outline in its text colour 6px inside it, so a card can't clip it. Where the
+pointer is coarse, items, bars and the stub are at least 44px tall, the bars'
+buttons 44px wide, and Remove all 44px square.
