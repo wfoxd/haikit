@@ -61,11 +61,6 @@
 
 :where(button, summary, [tabindex]):focus-visible { outline: 2px solid var(--hai-accent); outline-offset: 2px; }
 
-/* hai.css writes a waiting tool row's arguments in 70% of --hai-on-accent.
-   On this darker amber, under white, that reads below 4.5:1, so they take
-   the full colour. */
-.hai-status-awaiting summary { --hai-dim: var(--hai-on-accent); }
-
 /* ── the menu bar under the header: Home, Tutorial, Lesson, Reference, Demo */
 /* Its own row in the shell, above the chat and the drawer beside it. */
 .menu {
