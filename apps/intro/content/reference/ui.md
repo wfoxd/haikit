@@ -287,7 +287,7 @@ element's class becomes `hai-surface-error`, with `unknown component:
 While a call runs and has reported progress, its status text is the progress
 instead: the message, the count, or both with ` · ` between. The count is
 `<done>/<total>` (`0/<total>` before any `done`), or `<done>` alone without a
-total. With a `total` above 0, a thin `progressbar` along the row's bottom
+total. With a `total` above 0, a `progressbar` along the row's bottom
 edge fills. Its accessible name is `<tool> progress`, and its value text
 `<message> · <done> of <total>`. Progress updates the row in place, so a
 keyboard user on the row keeps their focus.
@@ -335,50 +335,55 @@ stylesheet owns them. They can use the tokens.
 
 Every token is set on `:where(:root)`, at zero specificity, so a plain
 `:root` rule in your own stylesheet wins. Colours take one value per scheme
-with `light-dark()`:
+with `light-dark()`, except those that are the same in both:
 
 | Token | Light | Dark | Used for |
 | --- | --- | --- | --- |
-| `--hai-bg` | `#f6f7f9` | `#0c0f13` | The page |
-| `--hai-panel` | `#ffffff` | `#141920` | Cards and the header |
-| `--hai-panel-2` | `#f9fafb` | `#10141a` | Secondary panels |
-| `--hai-line` | `#e1e5ea` | `#252c35` | Borders |
-| `--hai-fg` | `#161b22` | `#e3e8ee` | Text |
-| `--hai-dim` | `#5b6675` | `#8a95a3` | Secondary text |
-| `--hai-accent` | `#2160e0` | `#7aa7ff` | The accent |
-| `--hai-on-accent` | `#ffffff` | `#0b1220` | Text drawn on the accent |
-| `--hai-good` | `#127a4c` | `#5ec597` | Success |
-| `--hai-warn` | `#9a5b00` | `#e7b65c` | Warnings |
-| `--hai-bad` | `#c23338` | `#f07b7b` | Errors |
-| `--hai-user-bg` | `#e7eefb` | `#1e2835` | The user's messages |
-| `--hai-code-bg` | `#f3f5f8` | `#0a0d11` | Code and digests |
-| `--hai-shadow` | `0 1px 2px rgb(15 23 42 / .06)` | `0 1px 2px rgb(0 0 0 / .35)` | Card shadows |
+| `--hai-bg` | `#fff3c4` | `#0f1115` | The page |
+| `--hai-panel` | `#ffffff` | `#1a1d23` | Cards and the header |
+| `--hai-panel-2` | `#fffaf0` | `#15171c` | Secondary panels: settled tool rows, the drawer |
+| `--hai-line` | `#0f1115` | `#f3f2ee` | Borders, and the shadow |
+| `--hai-fg` | `#0f1115` | `#f3f2ee` | Text |
+| `--hai-dim` | `#4d4a42` | `#bdbab1` | Secondary text |
+| `--hai-accent` | `#ff5a1f` | `#ff5a1f` | The accent: a running tool, the send and new conversation buttons |
+| `--hai-on-accent` | `#0f1115` | `#0f1115` | Text drawn on the accent, and on `--hai-warn` |
+| `--hai-good` | `#1fa35a` | `#6ee39a` | Success |
+| `--hai-warn` | `#ffd23f` | `#ffd23f` | Waiting on you. A fill: too light for text in the light scheme |
+| `--hai-bad` | `#c4262b` | `#ff7a72` | Errors |
+| `--hai-user-bg` | `#7cc6ff` | `#23506f` | The user's messages, and a notice's label |
+| `--hai-code-bg` | `#f6efdc` | `#0b0c0f` | A tool call's input |
+| `--hai-selected` | `#c9f5cf` | `#1d3b2a` | A picked row, for your surfaces too, and a `resolved` badge |
+| `--hai-shadow` | `4px 4px 0 var(--hai-line)` | the same | Card shadows |
 | `--hai-logo-ink` | `#0f1115` | `#f3f2ee` | HaiKIT's mark |
 | `--hai-logo-paper` | `#f3f2ee` | `#0f1115` | HaiKIT's mark |
 | `--hai-logo-hot` | `#ff5a1f` | `#ff5a1f` | HaiKIT's mark |
 
 These are mixed from the colours above, where they're declared, so they
-follow an override set on `:root` (not one set on an inner element):
+follow an override set on `:root` (not one set on an inner element). The
+`-soft` tints are solid, mixed in Oklab, so they look the same on the page as
+on a card:
 
 | Token | Value |
 | --- | --- |
 | `--hai-line-soft` | `--hai-line` at 60%: row dividers |
-| `--hai-hover` | `--hai-fg` at 6%: row hover, for your surfaces too |
-| `--hai-selected` | `--hai-good` at 15%: a picked row, for your surfaces too |
-| `--hai-accent-soft` | `--hai-accent` at 14% |
-| `--hai-good-soft` | `--hai-good` at 13% |
-| `--hai-warn-soft` | `--hai-warn` at 12% |
-| `--hai-bad-soft` | `--hai-bad` at 12% |
+| `--hai-hover` | `--hai-warn` at 35%, or 20% in the dark scheme: row hover, for your surfaces too |
+| `--hai-accent-soft` | 25% `--hai-accent` in `--hai-panel` |
+| `--hai-good-soft` | 25% `--hai-good` in `--hai-panel`: a tool's result |
+| `--hai-warn-soft` | 25% `--hai-warn` in `--hai-panel` |
+| `--hai-bad-soft` | 25% `--hai-bad` in `--hai-panel`: a failed row, an error |
 
 And these aren't colours:
 
 | Token | Default | Meaning |
 | --- | --- | --- |
-| `--hai-radius` | `12px` | Corner radius |
-| `--hai-sans` | `ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif` | Text |
-| `--hai-mono` | `ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace` | Code |
+| `--hai-radius` | `0` | Corner radius |
+| `--hai-sans` | `"Space Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif` | Text |
+| `--hai-mono` | `"Space Mono", ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace` | Code, tool rows, the status line |
 | `--hai-column` | `780px` | The conversation's width |
 | `--hai-inspector-width` | `400px` | The drawer's width |
+
+hai.css doesn't load Space Grotesk or Space Mono. A page that loads them gets
+them; otherwise the next face in each list stands in.
 
 **Schemes.** hai.css sets `color-scheme: light dark` on the page root, which
 also changes the page's default background, form controls and scrollbars in
@@ -391,9 +396,57 @@ those browsers:
 ```css
 :root { --hai-accent: #b07cff; }
 @supports (color: light-dark(#000, #fff)) {
-  :root { --hai-accent: light-dark(#6d28d9, #b07cff); }
+  :root { --hai-accent: light-dark(#9f7aea, #b07cff); }
 }
 ```
 
 An override that browser can't read would otherwise leave the token with no
 colour at all.
+
+`--hai-on-accent` writes on both `--hai-accent` and `--hai-warn`, so an accent
+needs ink text, at the default `#0f1115`, to read: the purples above give
+5.8:1 and 6.5:1. A white `--hai-on-accent` for a dark accent would put white
+text on the amber of a waiting tool row.
+
+### How it looks
+
+Corners are `--hai-radius`. Borders are `--hai-line`, 3px wide, or 2px on
+smaller parts: badges, code blocks, the buttons in the header and the message
+box, the dots, and the drawer's meter and tool entries. Border widths aren't
+tokens. These cast `--hai-shadow`: surfaces, notices, user messages,
+suggestions, the new conversation button, and the message box, whose shadow
+turns `--hai-accent` while it has focus. A focused button has a 3px
+`--hai-fg` outline 2px outside it; a focused tool row has a 2px outline in
+its text colour, 3px inside its border.
+
+A tool row's status sets its colours. The status mark is a 12px dot drawn by
+`.hai-ticon` itself, with a 2px border in the row's text colour; the glyph
+`renderTranscript` puts inside it is hidden.
+
+| Status | Row | Dot | Badge | Shadow |
+| --- | --- | --- | --- | --- |
+| `running` | `--hai-panel` | `--hai-accent`, blinking | `--hai-panel` | `--hai-shadow` |
+| `awaiting` | `--hai-warn`, its text `--hai-on-accent` | `--hai-accent` | `--hai-panel` | `--hai-shadow` |
+| `resolved` | `--hai-panel-2` | `--hai-good` | `--hai-selected` | none |
+| `expired` | 10% `--hai-dim` in `--hai-panel-2` | 60% `--hai-dim` in `--hai-bg` | none | none |
+| `ok` | `--hai-panel-2` | `--hai-good` | `--hai-panel` | none |
+| `error` | `--hai-bad-soft` | `--hai-bad` | `--hai-panel` | `4px 4px 0`, in `--hai-bad` |
+
+A row with a surface under it casts `--hai-shadow` whatever its status, so
+the two read as one card, unless the surface is `data-expired`. An expanded
+row's detail is `--hai-panel-2`, under a 3px rule. The progress bar is 7px:
+the accent, edged in `--hai-line` along its top and its filled end.
+
+An `error` block and the client's error card are `--hai-bad-soft`, with a
+`4px 4px 0` shadow in `--hai-bad`; inside a notice, the error card has
+neither border nor shadow. The `expired` block has a dashed border,
+no shadow, and no icon. A notice's label is `--hai-user-bg`. While a
+surface's props arrive, its skeleton shows hatched bars, the first short and
+in `--hai-line`, with the label under them. A `data-expired` surface is at
+45% opacity and 70% greyscale, without its shadow.
+
+The status line is bold `--hai-mono`. Thinking shows one blinking
+`--hai-accent` dot; waiting shows a pulsing `--hai-warn` one. With
+`prefers-reduced-motion: reduce`, nothing blinks, pulses or moves: the
+running dot, the pulse, the thinking dot and the skeleton's hatching stand
+still, and the drawer, the chevron and the message box don't transition.
