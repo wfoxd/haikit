@@ -391,6 +391,8 @@
 .hai-status-expired .hai-ticon { background: color-mix(in srgb, var(--hai-dim) 60%, var(--hai-bg)); }
 .hai-status-expired .hai-tstatus { background: none; }
 .hai-tool.hai-status-error { background: var(--hai-bad-soft); box-shadow: 4px 4px 0 var(--hai-bad); }
+/* hover over the pink, in the dark scheme, leaves dim text too faint */
+.hai-status-error summary:hover .hai-targs { color: var(--hai-fg); }
 .hai-status-error .hai-ticon { background: var(--hai-bad); }
 
 .hai-tool-detail { padding: 0 14px 14px; border-top: 3px solid var(--hai-line); background: var(--hai-panel-2); }

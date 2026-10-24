@@ -35,7 +35,7 @@ button.row {
 }
 .row.selectable { cursor: pointer; }
 .row.selectable:hover, .row.selectable:focus-visible { background: var(--hai-hover); }
-.row.selectable:focus-visible { outline: 1px solid var(--hai-accent); outline-offset: -1px; }
+.row.selectable:focus-visible { outline: 2px solid var(--hai-fg); outline-offset: -2px; }
 .row.picked { background: var(--hai-selected); }
 .greeting { font-size: 15px; }
 .lang { color: var(--hai-dim); font: 12px var(--hai-mono); }
