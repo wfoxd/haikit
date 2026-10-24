@@ -188,7 +188,7 @@ place until you scroll back down.
   `notices`. One that names a surface sits right under it. Screen readers
   announce it as it arrives. A wake notice's reply streams in after it, as
   any reply does, and the message box waits for it to finish.
-- **Errors** show as a red notice.
+- **Errors** show as a pink card with a red shadow.
 - **An out-of-date conversation** shows a notice with a **Start a new
   conversation** button. Its surfaces are greyed out and stop responding. This
   happens once a surface passes its freshness window, so a tab left open
@@ -204,8 +204,8 @@ Each tool call gets a row saying where it stands:
 | The row says | When |
 | --- | --- |
 | `running…` | The tool is executing. |
-| `Checking fare sources · 2/4` | The tool is executing and has reported progress with `ctx.progress`. A thin bar along the bottom of the row fills once it gives a `total`. |
-| `awaiting you` | The turn is parked on the question this tool asked. The row and its surface are outlined in amber. |
+| `Checking fare sources · 2/4` | The tool is executing and has reported progress with `ctx.progress`. A bar along the bottom of the row fills once it gives a `total`. |
+| `awaiting you` | The turn is parked on the question this tool asked. The row turns amber. |
 | `resolved` | The question was answered, or the user typed something else instead. |
 | `out of date` | The conversation expired before the question was answered. |
 | `12 ms` | The tool finished. |
@@ -270,6 +270,11 @@ To leave it out, pass `inspector: false`.
 
 ## Theming
 
+The default UI is neo-brutalist: hard 3px borders in the line colour, offset
+shadows, square corners. Amber means "waiting on you", and the orange of the
+haikit logo is the accent. Rows that want something (running, awaiting you,
+failed) stand out on a shadow; settled ones lie flat.
+
 The UI follows the system's light or dark setting.
 
 ### Pinning a scheme
@@ -293,6 +298,23 @@ With `theme`, `mountChat` sets the attribute and gives the page back its
 previous value when the chat closes. If several chats on a page each set a
 theme, the newest one still open wins. A value your page sets itself in the
 meantime is left alone.
+
+### Fonts
+
+`hai.css` names Space Grotesk for text and Space Mono for code, tool rows and
+the status line, but doesn't load them, so it makes no requests of its own.
+Load them on your page, from Google Fonts for instance:
+
+```html
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link
+  rel="stylesheet"
+  href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap"
+/>
+```
+
+Without them, the system's own sans and mono faces stand in. To use other
+faces, set `--hai-sans` and `--hai-mono`.
 
 ### Changing colours
 
@@ -328,20 +350,21 @@ give those browsers light colours itself.
 | `--hai-fg` `--hai-dim` | text, and secondary text |
 | `--hai-line` `--hai-line-soft` | borders, and dividers between rows |
 | `--hai-accent` `--hai-on-accent` | the accent, and text drawn on it |
-| `--hai-good` `--hai-warn` `--hai-bad` | success, waiting and error colours |
+| `--hai-good` `--hai-warn` `--hai-bad` | success, waiting and error colours. `--hai-warn` is a fill, too light for text: write on it in `--hai-on-accent` |
 | `--hai-accent-soft` `--hai-good-soft` `--hai-warn-soft` `--hai-bad-soft` | pale tints of those, for backgrounds |
 | `--hai-hover` `--hai-selected` | a hovered row, and a picked row, for your surfaces |
-| `--hai-user-bg` | your message bubbles |
-| `--hai-code-bg` | the input and result blocks in an expanded tool row |
-| `--hai-shadow` | the shadow under cards |
+| `--hai-user-bg` | your messages, and a notice's label |
+| `--hai-code-bg` | the input block in an expanded tool row |
+| `--hai-shadow` | the offset shadow under cards |
 | `--hai-logo-ink` `--hai-logo-paper` `--hai-logo-hot` | the haikit logo: its body, its inner bars, and its orange |
 | `--hai-radius` | corner radius |
 | `--hai-sans` `--hai-mono` | fonts |
 | `--hai-column` | the conversation's width |
 | `--hai-inspector-width` | the drawer's width |
 
-The tints, `--hai-hover`, `--hai-selected` and `--hai-line-soft`, are mixed
+The tints, `--hai-hover`, `--hai-line-soft` and the `-soft` ones, are mixed
 from the other colours. Override a colour and its tints follow.
+`--hai-selected` is a colour of its own.
 
 ## Styling your surfaces
 

@@ -495,14 +495,6 @@ Your component emits its own class names, so it needs its own stylesheet. `hai.c
 /* This app's own styles. The framework ships /hai-client/hai.css for the
    transcript, shell and debug drawer; everything here is inside our surface. */
 
-/* theme overrides — every --hai-* token is fair game; light-dark() gives one
-   value for a light page and one for a dark. A browser without it keeps the
-   plain dark value, as hai.css's own tokens do. */
-:root { --hai-accent: #7ab8f5; }
-@supports (color: light-dark(#000, #fff)) {
-  :root { --hai-accent: light-dark(#1f6fc5, #7ab8f5); }
-}
-
 .chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 9px 12px 4px; }
 .chip {
   background: none; color: var(--hai-dim); border: 1px solid var(--hai-line);

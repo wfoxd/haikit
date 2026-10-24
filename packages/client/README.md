@@ -18,6 +18,10 @@ not style the inside of your surfaces; your components emit their own class
 names and your stylesheet owns them. Every colour is a `--hai-*` custom
 property, so override what you like.
 
+The look is neo-brutalist: hard 3px borders, offset shadows, square corners,
+in Space Grotesk and Space Mono. `hai.css` names those faces but doesn't load
+them; link them on your page, or the system's faces stand in.
+
 ## The default UI
 
 The [default UI guide](https://github.com/wfoxd/haikit/blob/main/docs/default-ui.md)
@@ -65,9 +69,9 @@ colour at all.
 | `--hai-fg` `--hai-dim` | text, secondary text |
 | `--hai-line` `--hai-line-soft` | borders, row dividers |
 | `--hai-accent` `--hai-on-accent` | the accent, and text drawn on it |
-| `--hai-good` `--hai-warn` `--hai-bad` | status colours; each, and the accent, has a `-soft` tint for backgrounds |
+| `--hai-good` `--hai-warn` `--hai-bad` | status colours; each, and the accent, has a `-soft` tint for backgrounds. `--hai-warn` is a fill: write on it in `--hai-on-accent` |
 | `--hai-hover` `--hai-selected` | row hover and picked-row backgrounds, for your surfaces |
-| `--hai-user-bg` `--hai-code-bg` `--hai-shadow` | user bubble, digest blocks, card shadow |
+| `--hai-user-bg` `--hai-code-bg` `--hai-shadow` | user messages and notice labels, code blocks, the offset card shadow |
 | `--hai-radius` `--hai-sans` `--hai-mono` | shape and type |
 | `--hai-column` `--hai-inspector-width` | conversation width, debug drawer width |
 

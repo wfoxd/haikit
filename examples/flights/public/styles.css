@@ -10,7 +10,7 @@
   letter-spacing: .06em; color: var(--hai-dim); border: 1px solid var(--hai-line);
   border-radius: 4px; padding: 2px 6px;
 }
-.badge-live { color: var(--hai-warn); border-color: color-mix(in srgb, var(--hai-warn) 40%, transparent); background: var(--hai-warn-soft); }
+.badge-live { color: var(--hai-on-accent); border-color: var(--hai-line); background: var(--hai-warn); }
 .c-foot { display: flex; align-items: center; gap: 12px; padding: 7px 12px; border-top: 1px solid var(--hai-line); }
 .hint { color: var(--hai-dim); font-size: 11px; margin-left: auto; }
 .link { background: none; border: none; color: var(--hai-accent); cursor: pointer; font-size: 12px; padding: 0; }
