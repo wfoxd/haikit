@@ -326,6 +326,8 @@ function renderBlock(block, chat, onDock) {
   switch (block.kind) {
     case "user": {
       const el = h("div", cls.user);
+      // shown as it went out, before the server's copy arrived
+      if (block.pending) el.dataset.pending = "";
       el.append(h("div", cls.userBody, block.text));
       return el;
     }
