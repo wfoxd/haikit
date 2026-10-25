@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "dev": "npm --prefix ../.. run build && node src/server/main.ts",
+    "mock": "npm --prefix ../.. run build && HAI_SCRIPTED=1 node src/server/main.ts",
+    "build": "vite build",
     "start": "node src/server/main.ts"
   },
   "dependencies": {
@@ -12,5 +15,10 @@
     "@haikit/anthropic": "0.24.0",
     "@haikit/client": "0.24.0",
     "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "tailwindcss": "^4.3.3",
+    "vite": "^8.3.1"
   }
 }

@@ -5,6 +5,9 @@
  *
  * Catches the class of break that typechecking cannot: wire protocol drift,
  * a state machine that stops parking, a binding table that stops rejecting.
+ *
+ * Each example is built with Vite first and served from dist/: the production
+ * path, not the dev server.
  */
 
 import { execFileSync, spawn } from "node:child_process";
@@ -16,6 +19,8 @@ const CASES = [
   {
     name: "hello",
     entry: "examples/hello/src/server/main.ts",
+    build: "examples/hello",
+    env: { NODE_ENV: "production" },
     port: 5275,
     message: "greet me",
     tool: "list_greetings",
@@ -33,8 +38,7 @@ const CASES = [
     },
   },
   {
-    // hello's surfaces as React components, built with Vite and served from
-    // dist/ — the production path, not the dev server
+    // hello's surfaces as React components
     name: "hello-react",
     entry: "examples/hello-react/src/server/main.ts",
     build: "examples/hello-react",
@@ -59,6 +63,8 @@ const CASES = [
     // tutorial 2's app: hello, telling the user things after the request is over
     name: "hello-notices",
     entry: "examples/hello-notices/src/server/main.ts",
+    build: "examples/hello-notices",
+    env: { NODE_ENV: "production" },
     port: 5274,
     message: "greet me",
     tool: "list_greetings",
@@ -78,6 +84,8 @@ const CASES = [
   {
     name: "flights",
     entry: "examples/flights/src/server/main.ts",
+    build: "examples/flights",
+    env: { NODE_ENV: "production" },
     port: 5273,
     message: "find me flights to Tokyo next Friday",
     tool: "search_flights",
@@ -190,13 +198,18 @@ async function waitFor(url, tries = 40) {
   return false;
 }
 
-// The page's own module graph: components.js as served, or for a built
-// example, the bundle its index.html loads.
-async function clientCode(base, built) {
-  if (!built) return fetch(`${base}/components.js`).then((r) => r.text());
+// The page's own module graph: the bundle its index.html loads.
+async function clientCode(base) {
   const page = await fetch(`${base}/`).then((r) => r.text());
   const src = page.match(/<script[^>]+src="([^"]+\.js)"/)?.[1];
   return src ? fetch(new URL(src, base)).then((r) => r.text()) : "";
+}
+
+// The page's stylesheet, as Vite built it.
+async function pageCss(base) {
+  const page = await fetch(`${base}/`).then((r) => r.text());
+  const href = page.match(/<link[^>]+href="([^"]+\.css)"/)?.[1];
+  return href ? fetch(new URL(href, base)).then((r) => r.text()) : "";
 }
 
 for (const c of CASES) {
@@ -223,6 +236,13 @@ for (const c of CASES) {
       continue;
     }
     ok("boots and serves the page");
+
+    // one stylesheet: the default UI's, through @haikit/client/tailwind.css,
+    // and the Tailwind classes the app's components use
+    const css = await pageCss(base);
+    css.includes(".hai-shell{") && css.includes("bg-hai-hover")
+      ? ok("its stylesheet has the default UI's rules and the app's Tailwind classes")
+      : bad("the built stylesheet is missing hai.css or the app's classes");
 
     // 1 · elicit parks the turn
     const turn = await sse(`${base}/hai/chat`, { message: c.message });
@@ -397,10 +417,10 @@ for (const c of CASES) {
 
       // each component must exist in the browser registry, or the client
       // mounts an error card instead — invisible to every server-side assertion
-      const registry = await clientCode(base, Boolean(c.build));
+      const registry = await clientCode(base);
       for (const component of [c.component, c.display.component]) {
         new RegExp(`\\b${component}\\s*:`).test(registry)
-          ? ok(`${component} is registered in ${c.build ? "the built bundle" : "components.js"}`)
+          ? ok(`${component} is registered in the built bundle`)
           : bad(`${component} missing from the client registry → "unknown component"`);
       }
 

@@ -468,10 +468,11 @@ everything with it. It's exported for components that want the same.
 <link rel="stylesheet" href="/hai-client/hai.css" />
 ```
 
-That path is where the examples serve the package's `src/` (see
+That path is one an app with no bundler serves the package's `src/` at (see
 [The browser client: serving it](client.md#serving-it)). With a bundler,
-import `@haikit/client/hai.css`. With Tailwind CSS v4, import
-[`tailwind.css`](#tailwindcss) instead, which brings this file with it.
+import `@haikit/client/hai.css`. With Tailwind CSS v4, as the tutorials and
+the examples are built, import [`tailwind.css`](#tailwindcss) instead, which
+brings this file with it.
 
 It's plain CSS, loaded as it is. In HaiKIT's repository it's built by
 `npm run build:css`: the hand-written rules in `packages/client/styles/hai.css`,

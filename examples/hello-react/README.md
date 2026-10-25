@@ -22,7 +22,7 @@ The server side is hello's, file for file. What differs is the browser half:
 
 - `src/client/components.tsx`: the picker and the card as React components,
   typed from `src/shared/surfaces.ts` with `@haikit/react`. Compare
-  `examples/hello/public/components.js`.
+  `examples/hello/src/client/components.js`: the same Tailwind classes, as JSX.
 - `src/server/main.ts`: while developing, Vite runs inside this server as
   middleware, so the page, hot reload and `/hai` share one port with no proxy.
   With `NODE_ENV=production` it serves `dist/` instead.

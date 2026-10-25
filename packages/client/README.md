@@ -210,6 +210,7 @@ transcript renders the notice with a button that calls it.
 
 ## Serving it
 
-This package ships source, not a bundle. With a bundler, import normally. With
-no bundler, serve `node_modules/@haikit/client/src/` under a URL prefix — the
-examples mount it at `/hai-client/`.
+This package ships source, not a bundle. With a bundler, import normally, as
+the examples do with Vite. With no bundler, serve
+`node_modules/@haikit/client/src/` under a URL prefix — `apps/rebook` in
+HaiKIT's repository mounts it at `/hai-client/`.

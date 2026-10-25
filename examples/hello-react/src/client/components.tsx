@@ -1,6 +1,6 @@
 /**
- * hello's two surfaces as React components. Compare examples/hello/public/
- * components.js: same contract, same class names, same styles.
+ * hello's two surfaces as React components. Compare examples/hello/src/client/
+ * components.js: same contract, same Tailwind classes.
  *
  * `SurfaceProps<typeof greetingPicker>` types `props` from the surface's schema
  * and `send` against the actions it declares, so changing either in
@@ -11,6 +11,12 @@
 import { useState } from "react";
 import { reactSurface, type SurfaceProps } from "@haikit/react";
 import type { greetingCard, greetingPicker } from "../shared/surfaces.ts";
+
+// HaiKIT's tokens as Tailwind colours, from @haikit/client/tailwind.css
+const CHIP = "cursor-pointer rounded-full border px-2.5 py-0.75 font-hai-mono text-[11px]";
+const CHIP_ON = `${CHIP} border-hai-accent bg-hai-accent text-hai-on-accent`;
+const CHIP_OFF = `${CHIP} border-hai-line text-hai-dim hover:border-hai-accent hover:text-hai-fg`;
+const ROW = "grid w-full grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] items-baseline gap-3 border-b border-hai-line-soft px-3 py-1.75 text-left";
 
 function GreetingPicker({ props, send, mode, state, selection }: SurfaceProps<typeof greetingPicker>) {
   // Local state. It is not in the contract, so it has no way to reach the
@@ -24,12 +30,12 @@ function GreetingPicker({ props, send, mode, state, selection }: SurfaceProps<ty
 
   return (
     <>
-      <div className="chips">
+      <div className="flex flex-wrap gap-1.5 px-3 pt-2.25 pb-1">
         {[null, ...scripts].map((sc) => (
           <button
             key={sc ?? "all"}
             type="button"
-            className={script === sc ? "chip on" : "chip"}
+            className={script === sc ? CHIP_ON : CHIP_OFF}
             aria-pressed={script === sc}
             onClick={() => setScript(sc)}
           >
@@ -37,24 +43,29 @@ function GreetingPicker({ props, send, mode, state, selection }: SurfaceProps<ty
           </button>
         ))}
       </div>
-      <div className="rows">
+      <div className="pt-1 pb-2">
         {rows.map((g) => {
           const row = (
             <>
               {/* text, never HTML: tool payloads are untrusted input, and React escapes it */}
-              <span className="greeting" dir={g.rtl ? "rtl" : undefined}>
+              <span className="text-[15px]" dir={g.rtl ? "rtl" : undefined}>
                 {g.text}
               </span>
-              <span className="lang">{g.language}</span>
+              <span className="font-hai-mono text-xs text-hai-dim">{g.language}</span>
             </>
           );
           // a row that can be chosen is a button, so a keyboard can choose it too
           return live ? (
-            <button key={g.code} type="button" className="row selectable" onClick={() => void send("choose", g.code)}>
+            <button
+              key={g.code}
+              type="button"
+              className={`${ROW} cursor-pointer hover:bg-hai-hover focus-visible:bg-hai-hover focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-hai-fg`}
+              onClick={() => void send("choose", g.code)}
+            >
               {row}
             </button>
           ) : (
-            <div key={g.code} className={g.code === selection ? "row picked" : "row"}>
+            <div key={g.code} className={g.code === selection ? `${ROW} bg-hai-selected` : ROW}>
               {row}
             </div>
           );
@@ -76,14 +87,14 @@ function GreetingCard({ props: { greeting: g }, send }: SurfaceProps<typeof gree
   };
 
   return (
-    <div className="card">
-      <div className="card-text" dir={g.rtl ? "rtl" : undefined}>
+    <div className="flex flex-col items-start gap-2 px-3.5 py-4">
+      <div className="text-[28px] leading-tight" dir={g.rtl ? "rtl" : undefined}>
         {g.text}
       </div>
-      <div className="card-meta">
+      <div className="font-hai-mono text-xs text-hai-dim">
         {g.language} · {g.script} · {g.speakersM}M speakers
       </div>
-      <button className="chip" onClick={copy}>
+      <button type="button" className={CHIP_OFF} onClick={copy}>
         {copied ? "copied" : "copy"}
       </button>
     </div>

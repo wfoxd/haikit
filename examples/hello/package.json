@@ -3,10 +3,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "npm --prefix ../.. run build",
-    "start": "node --env-file-if-exists=.env src/server/main.ts",
-    "dev": "npm run build && npm start",
-    "mock": "npm run build && HAI_SCRIPTED=1 node src/server/main.ts"
+    "dev": "npm --prefix ../.. run build && node --env-file-if-exists=.env src/server/main.ts",
+    "mock": "npm --prefix ../.. run build && HAI_SCRIPTED=1 node src/server/main.ts",
+    "build": "vite build",
+    "start": "node --env-file-if-exists=.env src/server/main.ts"
   },
   "dependencies": {
     "@haikit/core": "*",
@@ -14,5 +14,10 @@
     "@haikit/client": "*",
     "@haikit/anthropic": "*",
     "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "tailwindcss": "^4.3.3",
+    "vite": "^8.3.1"
   }
 }

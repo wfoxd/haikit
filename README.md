@@ -112,8 +112,11 @@ const handle = nodeHandler(hai, "/hai"); // /hai/start, /hai/chat, /hai/interact
 
 In the browser, `mountChat` from `@haikit/client/app.js` draws the chat, and a
 registry entry draws the surface; its click handler calls
-`ctx.send("choose", code)`. [The tutorial](docs/tutorial.md) builds this app
-end to end in ten steps, and [`examples/hello`](examples/hello) is the
+`ctx.send("choose", code)`. The page is built with Vite and styled with
+Tailwind CSS: one stylesheet, `@import "tailwindcss"; @import
+"@haikit/client/tailwind.css";`, gives your components HaiKIT's colours as
+classes such as `bg-hai-panel`. [The tutorial](docs/tutorial.md) builds this
+app end to end in ten steps, and [`examples/hello`](examples/hello) is the
 finished result, about 150 lines.
 
 ## Packages

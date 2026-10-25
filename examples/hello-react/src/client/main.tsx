@@ -1,4 +1,3 @@
-import "@haikit/client/hai.css";
 import "./styles.css";
 import { mountChat } from "@haikit/client/app.js";
 import { registry } from "./components.tsx";
