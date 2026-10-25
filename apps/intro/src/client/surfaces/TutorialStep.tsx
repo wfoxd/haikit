@@ -6,8 +6,14 @@ import { scrollTranscript } from "@/lib/scroll";
 import { blocks } from "../blocks/Blocks.tsx";
 import { BODY, Choice, Choices, Closed, PAGE, PageTitle, useShowTop, Where } from "./parts.tsx";
 
+/** A step's number, without the second tutorial's prefix; the pages around the steps have none. */
+const numberOf = (id: string) => id.match(/^(?:\d+-)?(\d+)$/)?.[1];
+
 /** A step is named with its number; the pages around the steps by their title alone. */
-const named = (ref: { id: string; title: string }) => (/^\d+$/.test(ref.id) ? `${ref.id} ${ref.title}` : ref.title);
+const named = (ref: { id: string; title: string }) => {
+  const n = numberOf(ref.id);
+  return n ? `${n} ${ref.title}` : ref.title;
+};
 
 /** A page of a tutorial: its buttons are the question, where to go next. */
 export function TutorialStep({ props, send, mode, state, selection }: SurfaceProps<typeof tutorialStep>) {
@@ -34,7 +40,7 @@ export function TutorialStep({ props, send, mode, state, selection }: SurfacePro
     <article ref={page} className={PAGE}>
       <header>
         <Where aside={`page ${props.position.index} of ${props.position.total}`}>Tutorial: {props.tutorial}</Where>
-        <PageTitle n={/^\d+$/.test(props.id) ? props.id : undefined}>{props.title}</PageTitle>
+        <PageTitle n={numberOf(props.id)}>{props.title}</PageTitle>
       </header>
       <div className={BODY}>{body}</div>
       <footer className="mt-[30px] border-t border-hai-line-soft pt-5">

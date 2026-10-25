@@ -93,7 +93,7 @@ export function CodeBlock({ block }: { block: Code }) {
       const n = marks.get(i);
       return (
         <span key={i}>
-          <span id={n == null ? undefined : `${uid}-line-${n}`}>
+          <span id={n == null ? undefined : `${uid}-line-${n}`} tabIndex={n == null ? undefined : -1} className="outline-none">
             {runs(line)}
             {/* a number on a line of code is a link, not code: selecting the code leaves it out */}
             {n != null && <Mark n={n} to={`${uid}-${n}`} label={`Note ${n}`} className="ml-3 select-none" />}

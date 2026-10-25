@@ -27,12 +27,18 @@ export function ReferencePage({ props, send, mode, state, selection }: SurfacePr
     if (at) bringIntoView(at, "nearest", false);
   });
 
-  /** Its section, marked for a moment; or the page's top. */
+  /** Its section, marked for a moment; or the page's top. The focus goes there too. */
   const toAnchor = (anchor: string | undefined) => {
     const article = page.current;
-    if (!article) return;
-    if (anchor) bringIntoView(section(article, anchor), "start");
-    else article.scrollIntoView({ block: "start" });
+    const at = article && anchor ? section(article, anchor) : null;
+    if (!article || (anchor && !at)) return;
+    if (at instanceof HTMLElement) {
+      at.focus({ preventScroll: true });
+      bringIntoView(at, "start");
+    } else {
+      article.focus({ preventScroll: true });
+      article.scrollIntoView({ block: "start" });
+    }
   };
 
   /** The target and the button the page was answered with. */
@@ -98,7 +104,7 @@ export function ReferencePage({ props, send, mode, state, selection }: SurfacePr
   const to = named(picked);
 
   return (
-    <article ref={page} className={PAGE}>
+    <article ref={page} tabIndex={-1} className={cn(PAGE, "outline-none")}>
       <header>
         <Where aside={`page ${props.position.index} of ${props.position.total}`}>Reference manual</Where>
         <PageTitle>{props.title}</PageTitle>

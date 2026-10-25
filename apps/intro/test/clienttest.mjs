@@ -237,6 +237,10 @@ try {
     check("a fold holds what's between details and details-end", body.querySelector("details summary")?.textContent === "More" && body.querySelector("details p")?.textContent === "Folded away.");
     const marked = body.querySelector('a[aria-label="Note 1"]');
     check("a numbered line links to its note, and the note back to it", !!marked && !!body.querySelector(`#${marked.getAttribute("href").slice(1)} a[aria-label="Show the line for note 1"]`));
+    await click(marked);
+    check("following the number moves the focus to its note", document.activeElement?.id === marked.getAttribute("href").slice(1));
+    await click(document.activeElement.querySelector("a"));
+    check("and the note's number, back to its line", document.activeElement?.id === marked.closest("[id]")?.id);
     check("a comment that spans lines is coloured on each", [...body.querySelectorAll("pre .italic")].some((s) => s.textContent === " lines */"));
     check("each code block has a copy button, and the live source its bar", body.querySelectorAll('button[title="Copy the code"]').length === 3 && text(body).includes("Live source") && text(body).includes("new file"));
     await click(body.querySelector('button[title="Copy the code"]'));
@@ -304,10 +308,11 @@ try {
       next: refs[at + 1] ?? null,
     });
     check("step 2-05 renders its code, marks and notes", t.el.querySelectorAll('a[aria-label^="Note "]').length === 4);
+    check("its title has its number, without the second tutorial's prefix", t.el.querySelector("h2")?.textContent === `05${page.title}`);
     await click(buttons(t.el).find((b) => b.textContent.startsWith("Next: ")));
     check("Next sends go: the next page's id", JSON.stringify(t.sent) === `[["go","${refs[at + 1].id}"]]`);
     await t.freeze(refs[at + 1].id);
-    check("frozen, it names where you went", text(t.el).includes(`You went on to ${refs[at + 1].title}.`) || text(t.el).includes(`You went on to ${refs[at + 1].id} ${refs[at + 1].title}.`));
+    check("frozen, it names where you went, by its number", text(t.el).includes(`You went on to ${refs[at + 1].id.replace(/^\d+-/, "")} ${refs[at + 1].title}.`));
 
     const manual = referenceRefs();
     const surfaces = referencePageOf("surfaces");
@@ -324,7 +329,7 @@ try {
     const r = await mount("reference_page", props);
     const inPage = r.el.querySelector('a[href="#freshness"]');
     await click(inPage);
-    check("a link to a section of the page sends nothing", !!inPage && r.sent.length === 0);
+    check("a link to a section of the page sends nothing, and moves the focus there", !!inPage && r.sent.length === 0 && document.activeElement?.dataset.anchor === "freshness");
     const away = r.el.querySelector("a[data-go]");
     await click(away);
     check("a link to another page sends go: its target", JSON.stringify(r.sent) === `[["go","${away.dataset.go}"]]`);

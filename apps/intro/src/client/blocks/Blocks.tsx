@@ -57,8 +57,10 @@ function draw(block: Drawn, key: number, link?: Linker): ReactNode {
         <Tag
           key={key}
           data-anchor={block.id}
+          // a link to it moves the focus there
+          tabIndex={block.id ? -1 : undefined}
           className={cn(
-            "mt-7 mb-2 scroll-mt-3.5 font-heading text-xl leading-[1.3] font-semibold tracking-[-0.01em]",
+            "mt-7 mb-2 scroll-mt-3.5 outline-none font-heading text-xl leading-[1.3] font-semibold tracking-[-0.01em]",
             block.level === 2 && "mt-9 text-[23px]",
             block.level === 3 && "text-[19px]",
             block.level === 4 && "mt-[22px] text-[16.5px]",

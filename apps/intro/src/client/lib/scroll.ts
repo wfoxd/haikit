@@ -14,8 +14,15 @@ export function bringIntoView(target: Element | null, block: ScrollLogicalPositi
   target.classList.add(FLASH);
 }
 
-/** Bring a note, or the line it explains, into view and mark it for a moment. */
-export const reveal = (id: string) => bringIntoView(document.getElementById(id));
+/**
+ * Bring a note, or the line it explains, into view and mark it for a moment.
+ * The focus goes with it, so the keyboard carries on from there.
+ */
+export function reveal(id: string) {
+  const target = document.getElementById(id);
+  target?.focus({ preventScroll: true });
+  bringIntoView(target);
+}
 
 /**
  * Scroll the transcript that holds a surface, as its reader would.

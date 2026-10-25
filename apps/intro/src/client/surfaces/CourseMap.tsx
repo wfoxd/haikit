@@ -1,9 +1,9 @@
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import type { SurfaceProps } from "@haikit/react";
 import type { CourseMapProps, courseMap } from "../../shared/surfaces.ts";
 import { cn } from "@/lib/utils";
 import { inline } from "../blocks/inline.tsx";
-import { Closed } from "./parts.tsx";
+import { Closed, useShowTop } from "./parts.tsx";
 
 /** A map stored at version 2 had one tutorial, under `tutorial`, with no blurb. */
 type Stored = Omit<CourseMapProps, "tutorials"> & {
@@ -30,7 +30,10 @@ function Part({ n, title, blurb, children }: { n: string; title: string; blurb: 
  * button that opens it, through the declared `open` action.
  */
 export function CourseMap({ props, send, mode, state, selection }: SurfaceProps<typeof courseMap>) {
+  const root = useRef<HTMLDivElement>(null);
   const live = state === "live" && mode === "elicit";
+  // longer than the window, it would open on its glossary: show its top
+  useShowTop(root, state);
   const lessons = props.parts.flatMap((p) => p.lessons);
   const minutes = lessons.reduce((n, l) => n + l.minutes, 0);
 
@@ -61,7 +64,7 @@ export function CourseMap({ props, send, mode, state, selection }: SurfaceProps<
   const n = "font-mono text-[13px]/[1.6] font-semibold text-primary tabular-nums";
 
   return (
-    <div className="max-w-[1200px] px-5 pt-[18px] pb-4 font-sans max-sm:px-3.5 max-sm:pt-3.5 max-sm:pb-3">
+    <div ref={root} className="max-w-[1200px] px-5 pt-[18px] pb-4 font-sans max-sm:px-3.5 max-sm:pt-3.5 max-sm:pb-3">
       <header className="mb-1.5 flex flex-wrap items-baseline gap-x-3.5 gap-y-1">
         <h2 className="font-heading text-2xl/[1.2] font-bold tracking-[-0.015em]">Course map</h2>
         <p className="text-[13px] text-muted-foreground">
