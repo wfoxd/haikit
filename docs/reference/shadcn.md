@@ -116,7 +116,7 @@ so it never overrides yours.
 
 | Rule | On a HaiKIT page |
 | --- | --- |
-| `*`: `border-border outline-ring/50` | Gives shadcn's components their border and focus-ring colours. On the default UI's own elements it changes nothing: `hai.css` is outside any layer, so the colours it sets win (see [Tailwind CSS: the default UI's rules](tailwind.md#the-default-uis-rules-in-your-build)). |
+| `*`: `border-border outline-ring/50` | Gives shadcn's components their border and focus-ring colours. On the default UI's own elements it changes nothing: every border and focus ring the default UI draws sets its own colour, unlayered, so its colours win (see [Tailwind CSS: the default UI's rules](tailwind.md#the-default-uis-rules-in-your-build)). |
 | `body`: `bg-background text-foreground` | `mountChat`'s shell covers the page with its own background, so only text inherited outside it changes: a pop-up's, for one. |
 | `html`: `font-mono`, with the Lyra preset | The chat's shell sets its own face, so this sets only the face of what's rendered outside it, such as pop-ups and toasts in `document.body`. |
 

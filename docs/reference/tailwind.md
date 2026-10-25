@@ -106,12 +106,20 @@ compiled from the class names in `packages/client/src/classes.js`. Your
 Tailwind build reads it as plain CSS. It compiles none of the default UI's
 classes and doesn't need to scan `@haikit/client` for them.
 
-- **Every rule is outside any cascade layer.** Tailwind puts preflight in
-  `@layer base` and every utility, yours and a library's, in
-  `@layer utilities`. An unlayered rule beats a layered one whatever their
-  specificity, so nothing in a layer changes a property the default UI sets
-  on its own elements. It doesn't style the inside of your surfaces, so it
-  never wins against your classes there.
+- **Its rules are outside any cascade layer, but one block.** That block is
+  Tailwind's `@layer properties` fallback, which gives the `--tw-*` variables
+  its utilities read their starting values in browsers without `@property`.
+  Tailwind puts preflight in `@layer base` and every utility, yours and a
+  library's, in `@layer utilities`. An unlayered declaration beats a normal
+  layered declaration of the same property whatever their specificity, so no
+  normal rule in a layer changes a property the default UI sets on its own
+  elements. Two things in a layer still can: an `!important` declaration,
+  which beats every normal one, and a `--tw-*` variable the default UI's
+  utilities read without setting, as `hai:border-2` reads
+  `--tw-border-style`. Tailwind's utilities set those variables only on the
+  element that carries the class, and they don't inherit. The default UI
+  doesn't style the inside of your surfaces, so it never wins against your
+  classes there.
 - **Its utilities are prefixed `hai:`.** The rules are `.hai\:*` selectors,
   such as `.hai\:flex`: class names no page uses for itself. They're sized in
   pixels on a 1px spacing scale of their own, with Tailwind's theme inlined,
@@ -124,7 +132,9 @@ classes and doesn't need to scan `@haikit/client` for them.
   builds sets what it needs itself, `box-sizing` included, so it looks the
   same with Tailwind's preflight as on a page with no reset.
 - **One rule styles the page:** `:where(body:has(.hai-shell))` sets
-  `margin: 0`, at zero specificity, so a `body` rule of yours wins.
+  `margin: 0`, at zero specificity and unlayered. An unlayered `body` rule of
+  yours wins; one inside a layer, as in `@layer base { body { margin: 1rem } }`,
+  doesn't.
 - **Three keyframes are global names:** `hai-pulse`, `hai-blink` and
   `hai-shimmer`. Don't define your own under those names.
 
