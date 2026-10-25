@@ -9,6 +9,8 @@
  * that line is your surface contract, and on this side it crosses as types.
  */
 
+import { surfaceError } from "./classes.js";
+
 /**
  * @param {{endpoint?: string, registry: Record<string, {mount: Function}>, notices?: Record<string, {mount: Function}>}} options
  */
@@ -619,7 +621,7 @@ export function createChat({
     const definition = notices[notice.name];
     if (!definition) {
       element.textContent = `unknown notice: ${notice.name}`;
-      element.className = "hai-surface-error";
+      element.className = surfaceError;
       return null;
     }
     element.replaceChildren();
@@ -723,7 +725,7 @@ export function createChat({
     const definition = registry[surface.component];
     if (!definition) {
       element.textContent = `unknown component: ${surface.component}`;
-      element.className = "hai-surface-error";
+      element.className = surfaceError;
       return null;
     }
 

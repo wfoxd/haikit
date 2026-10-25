@@ -6,6 +6,8 @@
  * DOM.
  */
 
+import * as cls from "./classes.js";
+
 const PATHS = {
   send: "M12 19V5M5.5 11.5 12 5l6.5 6.5",
   plus: "M12 5v14M5 12h14",
@@ -35,7 +37,7 @@ export const FAVICON = "data:image/svg+xml," + encodeURIComponent(
 
 /** An inline SVG icon, hidden from assistive technology: the text beside it, or
  *  the button's label, says what it means. */
-export function icon(name, className = "hai-icon") {
+export function icon(name, className = cls.icon) {
   const svg = document.createElementNS(SVG, "svg");
   svg.setAttribute("class", className);
   svg.setAttribute("viewBox", "0 0 24 24");
@@ -90,7 +92,7 @@ export function mark(size = "full", className = "hai-logo") {
     for (const [k, v] of Object.entries({ x, y, width, height, rx })) {
       if (v) rect.setAttribute(k, String(v));
     }
-    rect.setAttribute("class", `hai-logo-${part}`);
+    rect.setAttribute("class", cls.logoParts[part]);
     svg.append(rect);
   }
   return svg;

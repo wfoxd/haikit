@@ -502,6 +502,12 @@ These hooks are stable if you need to style around a surface:
 | `.hai-notice[data-notice="hold_confirmed"]` | one notice's cards |
 | `.hai-status[data-status="awaiting"]` | the status line by conversation status: also `streaming` and `idle` |
 
+The hooks carry no styles of their own. The default UI is styled by the
+`hai:` utilities beside them in each element's `class`, which aren't API and
+change between versions, so select by the hooks, never by those. A rule of
+yours on a hook, loaded after `hai.css`, overrides the default UI's as long as
+it's at least as specific as the default UI's rule for the same state.
+
 ## Lifecycle
 
 - **Each surface mounts once.** It keeps its own state, such as a filter, an
