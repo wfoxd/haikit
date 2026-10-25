@@ -234,26 +234,28 @@ connectPostOffice(hai.notify);
 
 Notices have their own registry, an allowlist by notice name, next to the surfaces' one. A notice component looks like a surface component with less in it: it gets its payload and mounts, and it has no `send`, because nothing in a notice reaches back.
 
-**`public/components.js`** — *append, after `registry`*
+**`src/client/components.js`** — *append, after `registry`*
 
 ```js
-/** @typedef {import("@haikit/core").Infer<typeof import("../src/shared/notices.ts").postcardDelivered.payload>} Delivered */  // 1
+/** @typedef {import("@haikit/core").Infer<typeof import("../shared/notices.ts").postcardDelivered.payload>} Delivered */  // 1
+
+const NOTICE = "flex flex-wrap items-baseline gap-x-2.5 gap-y-1.5 px-3 py-2.25";
 
 export const notices = {                                  // 2
+  /** @type {import("@haikit/client").NoticeDef<Delivered>} */
   postcard_delivered: {                                   // 3
-    /** @param {HTMLElement} el @param {Delivered} payload */
     mount(el, payload) {                                  // 4
-      const text = h("span", "greeting", payload.text);   // 5
+      const text = h("span", "text-sm", payload.text);    // 5
       text.dir = "auto";                                  // 6
-      const line = h("div", "notice-line");
-      line.append(h("span", null, `Delivered to ${payload.to}: `), text, h("span", "lang", payload.reference));
+      const line = h("div", NOTICE);
+      line.append(h("span", null, `Delivered to ${payload.to}: `), text, h("span", "font-hai-mono text-xs text-hai-dim", payload.reference));
       el.append(line);
     },
   },
 };
 ```
 
-**1** The payload's type, read from the contract, as the first tutorial does for `Greeting`. Rename a field in step 02 and this file stops compiling, once `tsc` checks it: a `tsconfig.browser.json` with `allowJs`, `checkJs` and the `dom` library, as `examples/hello-notices` in the haikit repo has.
+**1** The payload's type, read from the contract, as the first tutorial does for `Greeting`, and handed to `mount` by the `@type` below it. Rename a field in step 02 and `npm run typecheck` fails, since the first tutorial's `tsconfig.client.json` checks this file too.
 
 **2** A separate export, so the two allowlists never mix. A notice can't be mounted as a surface, or a surface as a notice.
 
@@ -265,32 +267,24 @@ export const notices = {                                  // 2
 
 **6** The greeting may read right to left, and the payload doesn't say. `dir="auto"` lets the browser decide from the text, so Arabic and Hebrew lay out correctly.
 
-The transcript draws the frame: a label saying which notice it is, and a body your component fills. Give the line a little room:
-
-**`public/styles.css`** — *append*
-
-```css
-.notice-line { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline; padding: 9px 12px; }
-.notice-line .greeting { font-size: 14px; }
-```
+The transcript draws the frame: a label saying which notice it is, and a body your component fills. `NOTICE` gives the line a little room inside it, and Tailwind picks the classes up from the file as before.
 
 And hand the registry to `mountChat`:
 
-**`public/index.html`** — *edit*
+**`src/client/main.js`** — *edit*
 
-```html
-<script type="module">
-  import { mountChat } from "/hai-client/app.js";
-  import { notices, registry } from "./components.js";
+```js
+import "./styles.css";
+import { mountChat } from "@haikit/client/app.js";
+import { notices, registry } from "./components.js";
 
-  mountChat({
-    root: document.querySelector("#app"),
-    registry,
-    notices,
-    title: "hello",
-    suggestions: ["greet me", "did my postcard arrive?"],
-  });
-</script>
+mountChat({
+  root: /** @type {HTMLElement} */ (document.querySelector("#app")),
+  registry,
+  notices,
+  title: "hello",
+  suggestions: ["greet me", "did my postcard arrive?"],
+});
 ```
 
 > [!TIP]
@@ -464,15 +458,15 @@ setTimeout(() => {
 
 And a component for it, beside the first:
 
-**`public/components.js`** — *append inside `notices`*
+**`src/client/components.js`** — *append inside `notices`*
 
 ```js
+  // with `/** @typedef {import("@haikit/core").Infer<typeof import("../shared/notices.ts").replyReceived.payload>} Reply */` beside `Delivered`
+  /** @type {import("@haikit/client").NoticeDef<Reply>} */
   reply_received: {
-    // with `/** @typedef {import("@haikit/core").Infer<typeof import("../src/shared/notices.ts").replyReceived.payload>} Reply */` beside `Delivered`
-    /** @param {HTMLElement} el @param {Reply} payload */
     mount(el, payload) {
-      const line = h("div", "notice-line");
-      const text = h("span", "greeting", payload.text);
+      const line = h("div", NOTICE);
+      const text = h("span", "text-sm", payload.text);
       text.dir = "auto";                                  // 1
       line.append(h("span", null, `${payload.from} replied: `), text);
       el.append(line);
@@ -608,7 +602,7 @@ connectTranslators(hai.update);
 
 Last, the component. By default a revision mounts the component again with the new props, losing whatever the user did to it. Give the picker an `update` method and it keeps its state instead:
 
-**`public/components.js`** — *edit the picker*
+**`src/client/components.js`** — *edit the picker*
 
 ```js
   greeting_picker: {

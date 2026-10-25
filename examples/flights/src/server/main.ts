@@ -19,6 +19,7 @@ import { fareDroppedServer, holdConfirmedServer } from "./notices.ts";
 import { connectAirline } from "./airline.ts";
 
 const SCRIPTED = process.env.HAI_SCRIPTED === "1";
+const PRODUCTION = process.env.NODE_ENV === "production";
 const PORT = Number(process.env.PORT) || 5173;
 
 const hai = createHai({
@@ -50,40 +51,46 @@ connectAirline(hai.notify, hai.update);
 
 const handleHai = nodeHandler(hai, "/hai");
 
-// Static: the app's own public/, plus the client runtime served from its
-// package. A bundler would do this; here it stays a plain ESM import graph.
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const PUBLIC = path.resolve(HERE, "../../public");
-const CLIENT = path.resolve(HERE, "../../../../packages/client/src");
-const SHARED = path.resolve(HERE, "../shared");
-const MIME: Record<string, string> = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css" };
+// The browser half. While developing, Vite runs inside this server as
+// middleware: one process and one port, hot reload for the components and the
+// Tailwind build, and /hai answered by the same server, so there is no proxy to
+// set up. In production, `npm run build` has written dist/, served here as
+// plain files.
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const DIST = path.join(ROOT, "dist");
+const MIME: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".svg": "image/svg+xml",
+};
 
 const server = http.createServer(async (req, res) => {
   if (await handleHai(req, res)) return;
+  if (vite) return vite.middlewares(req, res);
 
   const url = new URL(req.url ?? "/", "http://localhost");
-  let file: string;
-  if (url.pathname.startsWith("/hai-client/")) {
-    file = path.join(CLIENT, url.pathname.slice("/hai-client/".length));
-    if (!file.startsWith(CLIENT)) return void res.writeHead(403).end("forbidden");
-  } else {
-    file = path.join(PUBLIC, url.pathname === "/" ? "index.html" : url.pathname.slice(1));
-    if (!file.startsWith(PUBLIC)) return void res.writeHead(403).end("forbidden");
-  }
-
+  const file = path.join(DIST, url.pathname === "/" ? "index.html" : url.pathname.slice(1));
+  if (!file.startsWith(DIST)) return void res.writeHead(403).end("forbidden");
   try {
     const body = await fs.readFile(file);
     res.writeHead(200, { "content-type": MIME[path.extname(file)] ?? "application/octet-stream" });
     res.end(body);
   } catch {
-    res.writeHead(404).end("not found");
+    res.writeHead(404).end(PRODUCTION && url.pathname === "/" ? "not built — run `npm run build` first" : "not found");
   }
 });
 
+// Made after the server so hot reload can share its port: on a port of its
+// own, two of these running at once would fight over it.
+const vite = PRODUCTION
+  ? null
+  : await (await import("vite")).createServer({ root: ROOT, appType: "spa", server: { middlewareMode: true, ws: { server } } });
+
 server.listen(PORT, () => {
-  console.log(`flights   http://localhost:${PORT}   model=${SCRIPTED ? "scripted" : "claude-haiku-5-5"}`);
+  const how = PRODUCTION ? "built" : "vite dev";
+  console.log(`flights   http://localhost:${PORT}   ${how}   model=${SCRIPTED ? "scripted" : "claude-haiku-5-5"}`);
   if (!SCRIPTED && !process.env.ANTHROPIC_API_KEY) {
     console.log("no ANTHROPIC_API_KEY — run `npm run mock` for the scripted model");
   }
-  void SHARED;
 });

@@ -35,14 +35,22 @@ You need three things on the page: `hai.css`, `mountChat`, and a registry of
 your surface components. The server side is the same whichever way you build
 the page; [the tutorial](tutorial.md) walks through it.
 
-### With a bundler
+### With Vite and Tailwind CSS
 
-Import the stylesheet and the shell as modules. This is what
-[`examples/hello-react`](../examples/hello-react) does with Vite:
+The default, and what [the tutorial](tutorial.md) and every example in the
+repository use. Your stylesheet is Tailwind CSS v4 and `tailwind.css`, which
+brings `hai.css` with it and gives your surfaces the [tokens](#the-variables)
+as theme values:
+
+```css
+/* src/client/styles.css */
+@import "tailwindcss";
+@import "@haikit/client/tailwind.css";
+```
 
 ```js
-import "@haikit/client/hai.css";
-import "./styles.css"; // your surfaces' styles, and any token overrides
+// src/client/main.js
+import "./styles.css";
 import { mountChat } from "@haikit/client/app.js";
 import { registry } from "./components.js";
 
@@ -54,16 +62,8 @@ mountChat({
 });
 ```
 
-### With Tailwind CSS
-
-In an app built with Tailwind CSS v4, import `tailwind.css` in your
-stylesheet instead of importing `hai.css`. It brings `hai.css` with it, and
-gives your surfaces the [tokens](#the-variables) as theme values:
-
-```css
-@import "tailwindcss";
-@import "@haikit/client/tailwind.css";
-```
+Vite needs `@tailwindcss/vite` in its plugins. Your components then style
+themselves with classes, `hai-` colours among them:
 
 ```js
 row.className = "flex w-full gap-3 border-b border-hai-line-soft px-3 py-2 hover:bg-hai-hover";
@@ -72,6 +72,21 @@ row.className = "flex w-full gap-3 border-b border-hai-line-soft px-3 py-2 hover
 Each value is the token itself, so overriding a token on `:root` restyles
 your surfaces along with the chat. The
 [reference](reference/ui.md#tailwindcss) lists them.
+[`examples/hello`](../examples/hello) runs Vite inside its own Node server
+while you work, so the page, hot reload and `/hai` share one port, and serves
+what `vite build` wrote to `dist/` in production.
+
+### With a bundler, without Tailwind
+
+Import the stylesheet and the shell as modules, and style your surfaces with a
+stylesheet of your own:
+
+```js
+import "@haikit/client/hai.css";
+import "./styles.css"; // your surfaces' styles, and any token overrides
+import { mountChat } from "@haikit/client/app.js";
+import { registry } from "./components.js";
+```
 
 ### Without a bundler
 
@@ -108,8 +123,7 @@ Then the whole page is:
 </html>
 ```
 
-[`examples/hello`](../examples/hello) and [`examples/flights`](../examples/flights)
-are built this way.
+[`apps/rebook`](../apps/rebook) is built this way.
 
 ### The registry
 
@@ -435,11 +449,18 @@ from the other colours. Override a colour and its tints follow.
 
 `hai.css` styles only what the framework renders: the shell, the transcript,
 tool rows, the card each surface sits in, and the drawer. It never styles
-the inside of a surface. Your components choose their own class names, and
-your stylesheet owns them.
+the inside of a surface. Your components choose their own classes.
 
-Build those styles from the variables and your surfaces follow the scheme,
-and any overrides, with no extra work:
+Build them from the tokens and your surfaces follow the scheme, and any
+overrides, with no extra work. With Tailwind, that's the `hai-` colours:
+
+```js
+const ROW = "block w-full cursor-pointer border-b border-hai-line-soft px-3 py-2 text-start hover:bg-hai-hover disabled:cursor-default";
+const PICKED = `${ROW} bg-hai-selected`;
+const CHIP_ON = "bg-hai-accent text-hai-on-accent";
+```
+
+Without it, the same from the variables:
 
 ```css
 .picker-row {

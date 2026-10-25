@@ -39,10 +39,6 @@ const handleHai = nodeHandler(hai, "/hai");
 // production, `npm run build` has written dist/, served here as plain files.
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const DIST = path.join(ROOT, "dist");
-const vite = PRODUCTION
-  ? null
-  : await (await import("vite")).createServer({ root: ROOT, server: { middlewareMode: true }, appType: "spa" });
-
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -50,26 +46,32 @@ const MIME: Record<string, string> = {
   ".svg": "image/svg+xml",
 };
 
-http
-  .createServer(async (req, res) => {
-    if (await handleHai(req, res)) return;
-    if (vite) return vite.middlewares(req, res);
+const server = http.createServer(async (req, res) => {
+  if (await handleHai(req, res)) return;
+  if (vite) return vite.middlewares(req, res);
 
-    const url = new URL(req.url ?? "/", "http://localhost");
-    const file = path.join(DIST, url.pathname === "/" ? "index.html" : url.pathname.slice(1));
-    if (!file.startsWith(DIST)) return void res.writeHead(403).end("forbidden");
-    try {
-      const body = await fs.readFile(file);
-      res.writeHead(200, { "content-type": MIME[path.extname(file)] ?? "application/octet-stream" });
-      res.end(body);
-    } catch {
-      res.writeHead(404).end(PRODUCTION && url.pathname === "/" ? "not built — run `npm run build` first" : "not found");
-    }
-  })
-  .listen(PORT, () => {
-    const how = PRODUCTION ? "built" : "vite dev";
-    console.log(`hello-react  http://localhost:${PORT}   ${how}   model=${SCRIPTED ? "scripted" : "claude-haiku-5-5"}`);
-    if (!SCRIPTED && !process.env.ANTHROPIC_API_KEY) {
-      console.log("no ANTHROPIC_API_KEY — run `npm run mock` for the scripted model");
-    }
-  });
+  const url = new URL(req.url ?? "/", "http://localhost");
+  const file = path.join(DIST, url.pathname === "/" ? "index.html" : url.pathname.slice(1));
+  if (!file.startsWith(DIST)) return void res.writeHead(403).end("forbidden");
+  try {
+    const body = await fs.readFile(file);
+    res.writeHead(200, { "content-type": MIME[path.extname(file)] ?? "application/octet-stream" });
+    res.end(body);
+  } catch {
+    res.writeHead(404).end(PRODUCTION && url.pathname === "/" ? "not built — run `npm run build` first" : "not found");
+  }
+});
+
+// Made after the server so hot reload can share its port: on a port of its
+// own, two of these running at once would fight over it.
+const vite = PRODUCTION
+  ? null
+  : await (await import("vite")).createServer({ root: ROOT, appType: "spa", server: { middlewareMode: true, ws: { server } } });
+
+server.listen(PORT, () => {
+  const how = PRODUCTION ? "built" : "vite dev";
+  console.log(`hello-react  http://localhost:${PORT}   ${how}   model=${SCRIPTED ? "scripted" : "claude-haiku-5-5"}`);
+  if (!SCRIPTED && !process.env.ANTHROPIC_API_KEY) {
+    console.log("no ANTHROPIC_API_KEY — run `npm run mock` for the scripted model");
+  }
+});

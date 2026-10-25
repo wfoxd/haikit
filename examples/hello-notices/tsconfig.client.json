@@ -5,17 +5,14 @@
     "composite": false,
     "declaration": false,
     "declarationMap": false,
+    "module": "esnext",
+    "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
     "allowJs": true,
     "checkJs": true,
-    "lib": [
-      "es2023",
-      "dom",
-      "dom.iterable"
-    ],
-    "types": []
+    "lib": ["es2023", "dom", "dom.iterable"],
+    "types": [],
+    "noImplicitAny": false
   },
-  "include": [
-    "public/components.js"
-  ]
+  "include": ["src/client", "vite.config.ts"]
 }
