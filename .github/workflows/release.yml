@@ -51,11 +51,20 @@ jobs:
       #
       # GITHUB_TOKEN is unrelated to npm — changesets needs it to open the
       # "Version Packages" PR.
+      #
+      # `changeset version` bumps each package.json but not package-lock.json,
+      # so version-packages runs `npm install` after it and the lockfile moves
+      # in the same PR. A full install, not --package-lock-only: node_modules is
+      # already here from `npm ci`, so it fetches nothing, while a lockfile-only
+      # run has to open the tarball of every optional platform package with
+      # bundled dependencies, which npm 12 refuses as a remote fetch. The
+      # action runs this input as one command and its arguments, without a
+      # shell, so the `&&` lives in the script.
       - uses: changesets/action@v1
         id: changesets
         with:
           publish: npm run release
-          version: npx changeset version
+          version: npm run version-packages
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
