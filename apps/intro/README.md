@@ -22,7 +22,7 @@ software. You steer.":
    steps on a timeline. Each step's scene draws what you'd see: the AI's
    words, your clicks, and Rebook's own components, drawn small under the
    tool that rendered them (the trip card, the options, the seat map, the
-   night's question, the boarding pass; `src/client/minis.js`). Then a link to
+   night's question, the boarding pass; `src/client/drawings/Minis.tsx`). Then a link to
    try it, and, for developers, the diagram of how a HaiKIT app works.
 4. **Fewer tokens.** How HaiKIT keeps the AI's bill small: a meter for two
    measured examples (a flight search's 47 results, about 1,958 tokens on
@@ -35,9 +35,9 @@ software. You steer.":
 It ends with the place to start, beside a Tutorial panel whose steps open
 HaiKIT's tutorials right here, and under them a Reference panel whose buttons
 open each page of HaiKIT's reference manual. The text lives in
-`src/server/course/index.ts`, and the drawings are SVG in
-`src/client/illustrations.js` and `src/client/architecture.js`, and Rebook's
-components, drawn small, in `src/client/minis.js`. A welcome saved before this
+`src/server/course/index.ts`, and the drawings are SVG, drawn by React
+components in `src/client/drawings/`: the illustrations, the architecture
+diagram, and Rebook's components, drawn small. A welcome saved before this
 layout (version 10 or earlier), before the chatbot comparison (version 11), or
 before the tokens section (version 12) still renders as it was; one saved
 before the walkthrough drew Rebook's components (version 13) shows its four
@@ -67,7 +67,9 @@ it's a site of its own, such as [Rebook](https://rebook.haikit.app/), so its
 item is a link that opens it in a new tab, and nothing reaches the
 conversation. The menu's contents come from `/menu.json`, built from the
 course, the tutorials, the manual and the list of demos in
-`src/server/course/index.ts` when the server starts.
+`src/server/course/index.ts` when the server starts. Each menu is a shadcn/ui
+dropdown (`src/client/menu.tsx`): the arrow keys move through it, and Escape
+closes it.
 
 ## Who's reading
 
@@ -78,7 +80,7 @@ events stream open, on every server sharing the store. It sends the count at
 most every few seconds, as the `online` signal (`src/shared/signals.ts`), to
 every open tab. A signal is never stored and never reaches the guide's
 context or the transcript: the page reads it with `chat.subscribe` and shows
-the latest count. A tab that closes still counts for a few seconds, so a
+the latest count (`src/client/online.tsx`). A tab that closes still counts for a few seconds, so a
 reconnect doesn't make the number flicker. A server that has just started
 waits ten seconds before sending its first count, until it has heard the
 other servers', so it never shows every tab a number that leaves theirs out.
@@ -140,6 +142,31 @@ follows without resolving a path, and checks every link. A link to a page or
 a section that doesn't exist, or Markdown the parser doesn't know, stops the
 server with the page, the line and the link.
 
+## The page
+
+The browser half is React with [shadcn/ui](https://ui.shadcn.com), as the
+tutorials build theirs. Each surface is a React component, registered in
+`src/client/components.tsx` with `reactSurface` from `@haikit/react`; lesson
+2.5 quotes the checkpoint's from there. The pages of a lesson, a tutorial
+and the manual are drawn from the same blocks (`src/client/blocks/`), and
+the welcome screen and the rest from `src/client/surfaces/`. Every one of
+them writes the guide's payloads as text, never as HTML.
+
+The buttons, cards, badges, menus, tables, callouts and the compare picker are
+shadcn/ui components in `src/client/components/ui/`, from
+`npx shadcn@latest init -b radix -p lyra` and `npx shadcn@latest add`, and
+`components.json` is there so `add` works in this folder. They're the app's
+code now, to read and change.
+
+`src/client/globals.css` is the whole stylesheet: Tailwind with its preflight,
+the default UI's stylesheet through `@haikit/client/tailwind.css`, and
+shadcn's. It sets the course's palette as HaiKIT's `--hai-*` tokens, a value
+for light and one for dark, and points shadcn's colours at them, so the
+surfaces follow the chat into light and dark, and `dark:` follows the chat's
+`data-hai-theme` pin. The palette follows the dual channel: the accent (cobalt)
+is what the model receives, good (teal) is what stays in the browser, warn
+(amber) is a turn parked on a person.
+
 ## Run it
 
 Needs Node 22.18 or later. The server runs its TypeScript directly, with no
@@ -173,12 +200,18 @@ cheap, and suited to a guide's short replies and quick tool calls. Set
 npm test
 ```
 
-That runs two checks:
+That runs three checks:
 
 - **`npm run typecheck`** compiles the server and the browser components
   against the shared contract. It also compiles `test/guarantees.ts`, which
   breaks haikit's rules on purpose; if a haikit release ever stopped
   rejecting one of those lines, the typecheck fails.
+- **`npm run clienttest`** mounts every surface in the registry with React in
+  a DOM (jsdom), from the props the server builds and from the shapes older
+  versions saved (welcomes back to version 2, course maps back to 1). It
+  checks each click sends its declared action and value, that a frozen
+  surface offers nothing, that every kind of block draws, and that markup in
+  a payload stays text.
 - **`npm run smoke`** builds the page, boots the server on it as the container
   does, and drives the course the way a learner does: the welcome screen on start and both of its choices, the course map,
   opening a lesson, answering a checkpoint, typing instead of answering, a
@@ -330,14 +363,24 @@ src/server/reference.ts    reads content/reference/ into the manual's pages, and
 src/server/main.ts         createHai, routes, the page: through Vite while developing, from dist/
                            in production
 index.html                 the page
-src/client/main.js         mounts the chat, the header menu and the reading-now chip
-src/client/                the components, the header menu, the HaiKIT logo, the welcome screen's
-                           diagram, illustrations and Rebook's components drawn small
-src/client/styles.css      Tailwind's theme and utilities, without its preflight; the default UI,
-                           through @haikit/client/tailwind.css; the course's palette and surfaces
+src/client/main.tsx        mounts the chat, the header menu and the reading-now chip
+src/client/components.tsx  the registry: a React component for each surface, the checkpoint's here
+src/client/surfaces/       the welcome screen, the course map, a lesson, a tutorial page, a
+                           reference page and Up next
+src/client/blocks/         the blocks those pages are made of: text, code, notes, tables, the
+                           compare picker and the sequence diagram
+src/client/drawings/       the HaiKIT logo, the welcome screen's diagram and illustrations, and
+                           Rebook's components drawn small
+src/client/menu.tsx        the header menu
+src/client/online.tsx      the reading-now chip
+src/client/components/ui/  shadcn/ui's components
+components.json            where `npx shadcn@latest add` puts a component, and the style it's in
+src/client/globals.css     Tailwind with its preflight; the default UI, through
+                           @haikit/client/tailwind.css; shadcn's; the course's palette
 public/icon.svg            the icon, copied into dist/ as it is
 vite.config.ts             the page's build
 test/guarantees.ts         what haikit refuses to compile, quoted by lesson 2.7
+test/clienttest.mjs        every surface in a DOM, from today's props and older saved ones
 test/smoke.mjs             the end-to-end check
 content/tutorial.md        HaiKIT's tutorials, copied from the haikit repository
 content/tutorial-2.md

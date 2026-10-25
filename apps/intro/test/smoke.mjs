@@ -114,17 +114,14 @@ try {
       const res = asset ? await get(`${BASE}${asset}`) : null;
       res?.ok ? ok(`serves ${asset}`) : bad(`${asset ?? "a script and a stylesheet in the page"} → ${res?.status ?? "missing"}`);
     }
-    // one stylesheet: Tailwind's utilities, the default UI's through
-    // @haikit/client/tailwind.css, then the course's palette and surfaces, and
-    // no preflight, since the surfaces rely on the browser's defaults
+    // one stylesheet: Tailwind with its preflight, the default UI's through
+    // @haikit/client/tailwind.css, shadcn/ui's, and the course's palette,
+    // with dark: following the chat's data-hai-theme pin
     const css = sheet ? await get(`${BASE}${sheet}`).then((r) => r.text()) : "";
-    css.includes(".hai\\:") && css.includes("--hai-panel") && css.includes(".welcome-reference-page") && css.includes("#0f141a")
-      ? ok("the stylesheet holds the default UI's utilities, its tokens, and the course's palette and surfaces")
-      : bad("the stylesheet is missing the default UI's utilities, its tokens, or the course's own rules");
-    !/\*,\s*:+after,\s*:+before/.test(css) ? ok("the stylesheet has no preflight reset") : bad("the stylesheet has Tailwind's preflight reset in it");
-    !/\.contents\s*\{\s*display:\s*contents/.test(css)
-      ? ok("the reference's .contents button isn't made a Tailwind utility")
-      : bad("the stylesheet makes .contents display: contents, so the reference's contents button loses its box");
+    css.includes(".hai\\:") && css.includes("--hai-panel") && css.includes("#0f141a") && css.includes(".bg-primary") && /data-hai-theme="?dark/.test(css)
+      ? ok("the stylesheet holds the default UI's utilities and tokens, shadcn/ui's, and the course's palette")
+      : bad("the stylesheet is missing the default UI's utilities, its tokens, shadcn/ui's, or the course's palette");
+    /\*,\s*:+after,\s*:+before/.test(css) ? ok("the stylesheet has Tailwind's preflight") : bad("the stylesheet has no preflight reset");
 
     // 1 · init parks the conversation on the welcome screen before anything is typed
     const start = await sse("/hai/start", {});
@@ -739,7 +736,7 @@ try {
     const registry = script ? await get(`${BASE}${script}`).then((r) => r.text()) : "";
     for (const component of ["welcome", "course_map", "lesson", "checkpoint", "next_lesson", "tutorial_step", "reference_page"]) {
       new RegExp(`\\b${component}\\s*:`).test(registry)
-        ? ok(`${component} is registered in components.js`)
+        ? ok(`${component} is registered in components.tsx`)
         : bad(`${component} missing from the client registry → "unknown component"`);
     }
   }

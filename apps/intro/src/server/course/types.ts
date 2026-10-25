@@ -7,7 +7,7 @@ import type { Selector, Source } from "../excerpts.ts";
  */
 export type BlockDef =
   | Block
-  | { kind: "excerpt"; file: Source; pick: Selector; lang: "ts" | "js" | "html"; caption?: string };
+  | { kind: "excerpt"; file: Source; pick: Selector; lang: "ts" | "tsx" | "js" | "html"; caption?: string };
 
 export interface Check {
   question: string;
