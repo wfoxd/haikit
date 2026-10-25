@@ -356,6 +356,15 @@ try {
         }
       }
       broken.length ? bad(`tutorial pages that did not render: ${broken.join(", ")}`) : ok("all 12 tutorial pages render");
+
+      // the browser links only https targets: a relative one would show as plain text
+      const { TUTORIALS } = await import("../src/server/tutorial.ts");
+      const prose = JSON.stringify(TUTORIALS.flatMap((t) => t.pages.flatMap((p) => p.blocks.filter((b) => b.kind !== "code"))));
+      const targets = [...prose.matchAll(/\]\(([^)\s]+)\)/g)].map((m) => m[1]);
+      const unlinked = targets.filter((href) => !/^https:\/\//.test(href));
+      !unlinked.length && targets.some((href) => href.startsWith("https://github.com/wfoxd/haikit/blob/main/docs/"))
+        ? ok(`the tutorials' ${targets.length} links lead somewhere, a relative one to its document on GitHub`)
+        : bad(`tutorial links the browser can't follow: ${unlinked.join(", ") || "(no docs link rewritten)"}`);
     }
 
     // 7b2 · the second tutorial: from the welcome, between its pages, from the map and by typing
