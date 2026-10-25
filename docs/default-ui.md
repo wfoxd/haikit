@@ -73,7 +73,7 @@ row.className = "flex w-full gap-3 border-b border-hai-line-soft px-3 py-2 hover
 
 Each value is the token itself, so overriding a token on `:root` restyles
 your surfaces along with the chat. The
-[reference](reference/ui.md#tailwindcss) lists them.
+[reference](reference/tailwind.md#theme-values) lists them.
 [`examples/hello`](../examples/hello) runs Vite inside its own Node server
 while you work, so the page, hot reload and `/hai` share one port, and serves
 what `vite build` wrote to `dist/` in production.

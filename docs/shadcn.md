@@ -5,6 +5,8 @@ as they are. [The tutorial](tutorial.md) builds its picker from them step by
 step, and [`examples/hello`](../examples/hello) is what it ends with. This
 page is the short version, for an app of your own: the setup, and the four
 places a HaiKIT page differs from the apps shadcn's own instructions assume.
+The reference manual's [shadcn/ui](reference/shadcn.md) and
+[Tailwind CSS](reference/tailwind.md) pages are exact about each.
 
 ## Set it up
 
