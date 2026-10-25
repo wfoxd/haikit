@@ -135,6 +135,12 @@ console.log("classes.js");
     .filter(([, s]) => /(^|\s)hai:(p[xytrbl]?-(?!0(\s|$))|border(-[xytrbl])?-[1-9])/.test(s) && !/(^|\s)hai:box-(border|content)(\s|$)/.test(s))
     .map(([name]) => name);
   check("every element with padding or a border sets its box-sizing", !unsized.length, unsized.join(", "));
+  // outline-none clears --tw-outline-style, which a width utility reads, and
+  // keyboard focus matches :focus too: a ring drawn over it names its style
+  const ringless = strings
+    .filter(([, s]) => /(^|\s)hai:focus:outline-none(\s|$)/.test(s) && /(^|\s)hai:focus-visible:outline-\d/.test(s) && !/(^|\s)hai:focus-visible:outline-(solid|dashed|dotted|double)(\s|$)/.test(s))
+    .map(([name]) => name);
+  check("a focus ring drawn over a hidden outline names its style", !ringless.length, ringless.join(", "));
 }
 
 console.log("tailwind.css, in a Tailwind app");
