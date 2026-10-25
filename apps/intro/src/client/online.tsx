@@ -10,15 +10,16 @@ const countOf = (state: ChatState) => (state.signals.online as { count?: number 
  * guide's context; this chip shows the latest count, and hides on a phone.
  */
 export function Online({ chat }: { chat: Chat }) {
-  // a count may have come before this mounted: subscribers hear only what comes next
   const [count, setCount] = useState(() => countOf(chat.state));
-  useEffect(
-    () =>
-      chat.subscribe((state, event) => {
-        if (event.type === "signal" && event.name === "online") setCount(countOf(state));
-      }),
-    [chat],
-  );
+  useEffect(() => {
+    const off = chat.subscribe((state, event) => {
+      if (event.type === "signal" && event.name === "online") setCount(countOf(state));
+    });
+    // A count may have come since the first render: subscribers hear only
+    // what comes next, and the server sends the count only when it changes.
+    setCount(countOf(chat.state));
+    return off;
+  }, [chat]);
   if (count < 1) return null;
   return (
     <Badge
