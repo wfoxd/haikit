@@ -356,6 +356,15 @@ try {
         }
       }
       broken.length ? bad(`tutorial pages that did not render: ${broken.join(", ")}`) : ok("all 12 tutorial pages render");
+
+      // the browser links only https targets: a relative one would show as plain text
+      const { TUTORIALS } = await import("../src/server/tutorial.ts");
+      const prose = JSON.stringify(TUTORIALS.flatMap((t) => t.pages.flatMap((p) => p.blocks.filter((b) => b.kind !== "code"))));
+      const targets = [...prose.matchAll(/\]\(([^)\s]+)\)/g)].map((m) => m[1]);
+      const unlinked = targets.filter((href) => !/^https:\/\//.test(href));
+      !unlinked.length && targets.some((href) => href.startsWith("https://github.com/wfoxd/haikit/blob/main/docs/"))
+        ? ok(`the tutorials' ${targets.length} links lead somewhere, a relative one to its document on GitHub`)
+        : bad(`tutorial links the browser can't follow: ${unlinked.join(", ") || "(no docs link rewritten)"}`);
     }
 
     // 7b2 · the second tutorial: from the welcome, between its pages, from the map and by typing
@@ -379,8 +388,8 @@ try {
       const notices = await sse("/hai/chat", { conversationId: id, message: "Open tutorial step 2-05" });
       const five = pageOf(notices).props;
       const annotated = five?.blocks?.find((b) => b.kind === "code" && b.marks);
-      five?.id === "2-05" && annotated?.file === "src/client/components.js" && annotated.marks.length === 6 && annotated.notes?.length === 6
-        ? ok("the menu's choice opens step 2-05, its code with its file and its 6 numbered notes")
+      five?.id === "2-05" && annotated?.file === "src/client/components.tsx" && annotated.marks.length === 4 && annotated.notes?.length === 4
+        ? ok("the menu's choice opens step 2-05, its code with its file and its 4 numbered notes")
         : bad(`step 2-05: ${five?.id}, ${annotated?.file}, ${annotated?.marks?.length} marks`);
 
       const typed = await sse("/hai/chat", { conversationId: id, message: "show me the second tutorial" });

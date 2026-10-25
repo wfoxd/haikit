@@ -53,6 +53,15 @@ const SOURCES = [
   { n: 2, file: "tutorial-2.md", prefix: "2-" },
 ];
 
+/**
+ * Where the tutorials' relative links lead: beside them in the haikit
+ * repository's docs/, on GitHub, as the reference manual's do. The browser
+ * makes a link only of an https target, so `[The default UI](default-ui.md#x)`
+ * would otherwise show as plain text.
+ */
+const DOCS = "https://github.com/wfoxd/haikit/blob/main/docs/";
+const RELATIVE = /\]\(((?:\.\.\/)?[\w-]+(?:\/[\w-]+)*\.md(?:#[\w-]+)?)\)/g;
+
 const FENCE = /^(\s*)```(\w*)\s*$/;
 const FILE = /^\*\*`([^`]+)`\*\* — \*(.+)\*\s*$/;
 const NOTE = /^\*\*(\d+)\*\*\s+(.*)$/;
@@ -273,14 +282,14 @@ export function parseTutorial(markdown: string, { n = 1, prefix = "" } = {}): Tu
   const lead: string[] = [];
   while (i < lines.length && lines[i]!.startsWith("> ")) lead.push(lines[i++]!.slice(2).trim());
 
-  // split at ## headings, outside code fences
+  // split at ## headings, outside code fences, and point relative links at GitHub
   const sections: { heading: string; line: number; lines: string[] }[] = [];
   let fenced = false;
   for (; i < lines.length; i++) {
     const line = lines[i]!;
     if (FENCE.test(line) || /^\s*```\s*$/.test(line)) fenced = !fenced;
     if (!fenced && line.startsWith("## ")) sections.push({ heading: line.slice(3).trim(), line: i + 2, lines: [] });
-    else sections.at(-1)?.lines.push(line);
+    else sections.at(-1)?.lines.push(fenced ? line : line.replace(RELATIVE, (_, href: string) => `](${new URL(href, DOCS).href})`));
   }
 
   const pages = sections.map((section, at): TutorialPage => {

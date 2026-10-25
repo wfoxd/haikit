@@ -259,5 +259,6 @@ From `@haikit/client/app.js`, `@haikit/client/transcript.js`,
 | --- | --- | --- |
 | `NoticeProps` | interface | [React](react.md) |
 | `reactNotice` | function | [React](react.md) |
+| `ReactOptions` | interface | [React](react.md) |
 | `reactSurface` | function | [React](react.md) |
 | `SurfaceProps` | interface | [React](react.md) |
