@@ -1,10 +1,12 @@
 # The browser client
 
 `@haikit/client` is the browser runtime: plain ES modules with no build step
-and no dependencies. `createChat` owns the transport, the transcript's
-blocks, and mounting surfaces and notices. It draws nothing itself, apart
-from an error card for a component the registry doesn't list. The
-default UI, `mountChat`, is built on it (see [The default UI](ui.md)).
+and no dependencies. Its one optional peer dependency, `tailwindcss`, is for
+an app that imports [`tailwind.css`](ui.md#tailwindcss). `createChat` owns
+the transport, the transcript's blocks, and mounting surfaces and notices. It
+draws nothing itself, apart from an error card for a component the registry
+doesn't list. The default UI, `mountChat`, is built on it (see
+[The default UI](ui.md)).
 
 Exported by `@haikit/client`: `createChat`, and the types `Chat`,
 `ChatState`, `SurfaceRecord`, `Block`, `WireEvent`, `Registry`,

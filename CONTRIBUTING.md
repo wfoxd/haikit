@@ -2,7 +2,7 @@
 
 ```bash
 npm install
-npm test          # typecheck, typetest, storetest, reacttest, uitest, pgtest, smoke
+npm test          # typecheck, typetest, csstest, storetest, reacttest, uitest, pgtest, smoke
 npm run packtest  # pack the tarballs, install them clean, use them
 npm run pgtest    # @haikit/postgres on PGlite; set HAIKIT_PG_URL to add a real server
 ```
@@ -12,13 +12,27 @@ npm run pgtest    # @haikit/postgres on PGlite; set HAIKIT_PG_URL to add a real 
 ```
 packages/core        contracts — the four type guarantees live here
 packages/server      runtime, elicit state machine, routes
-packages/client      browser runtime + default UI (plain ESM, no build)
+packages/client      browser runtime + default UI (plain ESM, no build; see below)
 packages/anthropic   model adapter for Claude
 packages/openai      model adapter for OpenAI models
 packages/postgres    durable store adapter (bring your own driver)
 examples/*           demonstrations. private, never published
-scripts/             typetest.mjs, adaptertest.mjs, storetest.mjs, smoke.mjs, packtest.mjs
+scripts/             typetest.mjs, adaptertest.mjs, storetest.mjs, smoke.mjs, packtest.mjs,
+                     build-css.mjs, csstest.mjs
 ```
+
+## The client's stylesheet
+
+`packages/client/src/hai.css` is generated, and committed so the package
+still ships plain files: edit `packages/client/styles/` instead, then
+
+```bash
+npm run build:css
+```
+
+It writes the hand-written rules in `styles/hai.css`, followed by the
+utilities Tailwind compiles from the class names in `src/classes.js`.
+`npm run csstest` fails while the committed file is out of date.
 
 ## Two rules with teeth
 

@@ -1,0 +1,46 @@
+/**
+ * @haikit/client for a Tailwind CSS v4 app: the default UI's stylesheet, and
+ * HaiKIT's tokens as Tailwind theme values, so your surfaces can use them.
+ *
+ *   @import "tailwindcss";
+ *   @import "@haikit/client/tailwind.css";
+ *
+ *   <div class="border-3 border-hai-line bg-hai-panel text-hai-dim">
+ *
+ * Each value is the token itself, so an override on :root reaches your
+ * surfaces as it reaches the shell, and both schemes follow from it. That is
+ * also why there's no dark variant here: your app's own stays as it is.
+ */
+
+@import "./hai.css";
+
+@theme inline {
+  --color-hai-bg: var(--hai-bg);
+  --color-hai-panel: var(--hai-panel);
+  --color-hai-panel-2: var(--hai-panel-2);
+  --color-hai-line: var(--hai-line);
+  --color-hai-fg: var(--hai-fg);
+  --color-hai-dim: var(--hai-dim);
+  --color-hai-accent: var(--hai-accent);
+  --color-hai-on-accent: var(--hai-on-accent);
+  --color-hai-good: var(--hai-good);
+  --color-hai-warn: var(--hai-warn);
+  --color-hai-bad: var(--hai-bad);
+  --color-hai-user-bg: var(--hai-user-bg);
+  --color-hai-code-bg: var(--hai-code-bg);
+  --color-hai-selected: var(--hai-selected);
+  --color-hai-logo-ink: var(--hai-logo-ink);
+  --color-hai-logo-paper: var(--hai-logo-paper);
+  --color-hai-logo-hot: var(--hai-logo-hot);
+  --color-hai-line-soft: var(--hai-line-soft);
+  --color-hai-hover: var(--hai-hover);
+  --color-hai-accent-soft: var(--hai-accent-soft);
+  --color-hai-good-soft: var(--hai-good-soft);
+  --color-hai-warn-soft: var(--hai-warn-soft);
+  --color-hai-bad-soft: var(--hai-bad-soft);
+
+  --font-hai-sans: var(--hai-sans);
+  --font-hai-mono: var(--hai-mono);
+  --radius-hai: var(--hai-radius);
+  --shadow-hai: var(--hai-shadow);
+}

@@ -54,6 +54,25 @@ mountChat({
 });
 ```
 
+### With Tailwind CSS
+
+In an app built with Tailwind CSS v4, import `tailwind.css` in your
+stylesheet instead of importing `hai.css`. It brings `hai.css` with it, and
+gives your surfaces the [tokens](#the-variables) as theme values:
+
+```css
+@import "tailwindcss";
+@import "@haikit/client/tailwind.css";
+```
+
+```js
+row.className = "flex w-full gap-3 border-b border-hai-line-soft px-3 py-2 hover:bg-hai-hover";
+```
+
+Each value is the token itself, so overriding a token on `:root` restyles
+your surfaces along with the chat. The
+[reference](reference/ui.md#tailwindcss) lists them.
+
 ### Without a bundler
 
 The package ships plain ES modules, not a bundle. Serve its `src/` directory

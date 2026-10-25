@@ -18,6 +18,15 @@ not style the inside of your surfaces; your components emit their own class
 names and your stylesheet owns them. Every colour is a `--hai-*` custom
 property, so override what you like.
 
+With Tailwind CSS v4, import `tailwind.css` instead: it brings `hai.css`, and
+gives your surfaces the tokens as theme values, as in `bg-hai-panel` or
+`text-hai-dim`.
+
+```css
+@import "tailwindcss";
+@import "@haikit/client/tailwind.css";
+```
+
 The look is neo-brutalist: hard 3px borders, offset shadows, square corners,
 in Space Grotesk and Space Mono. `hai.css` names those faces but doesn't load
 them; link them on your page, or the system's faces stand in.
