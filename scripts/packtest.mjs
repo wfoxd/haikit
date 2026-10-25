@@ -474,6 +474,14 @@ await tick();
 console.error = logged;
 out.failedCleanly = failed && broken.textContent === "c" && !errors.some((e) => /already been passed to createRoot/.test(e));
 again.unmount();
+
+// a wrapper's context is there on the first render, which React 18 flushes synchronously too
+const Theme = React.createContext("none");
+const Providers = ({ children }) => React.createElement(Theme.Provider, { value: "wrapped" }, children);
+const themedEl = document.createElement("div");
+const themed = reactSurface(() => React.createElement("p", null, React.useContext(Theme)), { wrapper: Providers }).mount(themedEl, {}, { handle: "ui_03", mode: "display", state: "live", send: async () => {} });
+out.wrapped = themedEl.textContent === "wrapped";
+themed.unmount();
 console.log(JSON.stringify(out));
 `,
   );
@@ -484,6 +492,7 @@ console.log(JSON.stringify(out));
   });
   check("…renders on mount, re-renders frozen, and cleans up on unmount", () => on18.firstRender && on18.frozen && on18.unmounted);
   check("…and a first render that throws leaves no root behind", () => on18.failedCleanly);
+  check("…and a wrapper's context is there on the first render", () => on18.wrapped);
 
   writeFileSync(
     join(react18, "tsconfig.json"),
@@ -504,7 +513,7 @@ console.log(JSON.stringify(out));
     join(react18, "use.ts"),
     `
 import { defineSurface, resolve, type Schema } from "@haikit/core";
-import { reactSurface, type SurfaceProps } from "@haikit/react";
+import { reactNotice, reactSurface, type ReactOptions, type SurfaceProps } from "@haikit/react";
 
 const rows: Schema<{ rows: string[] }> = { parse: (v) => v as { rows: string[] } };
 const str: Schema<string> = { parse: (v) => v as string };
@@ -517,6 +526,13 @@ const def = reactSurface(({ props, send }: SurfaceProps<typeof picker>) => {
   return null;
 });
 void def;
+
+// inside a wrapper: the providers it needs, since each surface is a root of its own
+const providers: ReactOptions = { wrapper: ({ children }) => children };
+void reactSurface(({ props }: SurfaceProps<typeof picker>) => (void props.rows, null), providers);
+void reactNotice(() => null, providers);
+// @ts-expect-error  a wrapper is a component, not a tag name
+void reactSurface(() => null, { wrapper: "div" });
 `,
   );
   check("@haikit/react's types compile against React 18's", () => {
