@@ -74,6 +74,24 @@ function HoldConfirmed({ payload }: NoticeProps<typeof holdConfirmed>) {
 mountChat({ root, registry, notices: { hold_confirmed: reactNotice(HoldConfirmed) } });
 ```
 
+## Providers
+
+Each surface and notice is a React root of its own, so a provider around the
+rest of your app never reaches it. Pass the ones a component needs as
+`wrapper`, and it renders inside them every time:
+
+```tsx
+function Providers({ children }: { children: ReactNode }) {
+  return <TooltipProvider>{children}</TooltipProvider>;
+}
+
+export const registry = { greeting_picker: reactSurface(GreetingPicker, { wrapper: Providers }) };
+```
+
+`reactNotice` takes the same option. Without it, a component that needs a
+provider, such as shadcn/ui's `Tooltip`, fails its first render and the
+surface stays blank.
+
 ## Lifecycle
 
 The default transcript mounts a surface **once**, so `useState` survives the

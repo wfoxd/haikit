@@ -10,7 +10,7 @@
  * prop or an action that changes there stops this side compiling.
  */
 
-import { createElement, type ComponentType } from "react";
+import { createElement, type ComponentType, type ReactElement, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import type { ComponentDef, NoticeDef, SurfaceMode, SurfaceState } from "@haikit/client";
@@ -43,6 +43,21 @@ export interface SurfaceProps<S extends AnySurface> {
   send<K extends keyof ActionsOf<S> & string>(action: K, value: Infer<ActionsOf<S>[K]["input"]>): Promise<void>;
 }
 
+/** Options for {@link reactSurface} and {@link reactNotice}. */
+export interface ReactOptions {
+  /**
+   * Rendered around the component, every time: the providers it needs, such
+   * as a tooltip provider, a query client or a theme. Each surface and notice
+   * is a React root of its own, so a provider around the rest of the app never
+   * reaches it.
+   */
+  wrapper?: ComponentType<{ children: ReactNode }>;
+}
+
+/** The element to render: the component, inside the wrapper if there is one. */
+const wrapped = (element: ReactElement, wrapper?: ReactOptions["wrapper"]) =>
+  wrapper ? createElement(wrapper, null, element) : element;
+
 /**
  * A registry entry that renders `Component` into the surface's element.
  *
@@ -50,9 +65,13 @@ export interface SurfaceProps<S extends AnySurface> {
  * transcript scrolls to it; later ones are React's. It re-renders when the
  * surface freezes, is revised in place, or the conversation goes out of date,
  * and its root is unmounted when the surface goes away, so effects clean up
- * after themselves. A revision keeps the component's own state.
+ * after themselves. A revision keeps the component's own state, and the
+ * wrapper's.
  */
-export function reactSurface<S extends AnySurface>(Component: ComponentType<SurfaceProps<S>>): ComponentDef<PropsOf<S>> {
+export function reactSurface<S extends AnySurface>(
+  Component: ComponentType<SurfaceProps<S>>,
+  options: ReactOptions = {},
+): ComponentDef<PropsOf<S>> {
   return {
     mount(element, firstProps, ctx) {
       const root = createRoot(element);
@@ -64,14 +83,17 @@ export function reactSurface<S extends AnySurface>(Component: ComponentType<Surf
       let expired = false;
       const draw = () =>
         root.render(
-          createElement(Component, {
-            props,
-            mode: ctx.mode,
-            state,
-            selection,
-            expired,
-            send: ctx.send as SurfaceProps<S>["send"],
-          }),
+          wrapped(
+            createElement(Component, {
+              props,
+              mode: ctx.mode,
+              state,
+              selection,
+              expired,
+              send: ctx.send as SurfaceProps<S>["send"],
+            }),
+            options.wrapper,
+          ),
         );
       // A component that throws on its first render leaves no instance behind
       // to unmount later, so its root is let go of here, before the error goes
@@ -120,15 +142,19 @@ export interface NoticeProps<N extends AnyNotice> {
 
 /**
  * A notices registry entry that renders `Component` into the notice's element.
- * As with `reactSurface`, the first render is synchronous and the root is
- * unmounted when the notice goes away. A notice has no `send`.
+ * As with `reactSurface`, the first render is synchronous, it renders inside
+ * `options.wrapper` if there is one, and the root is unmounted when the notice
+ * goes away. A notice has no `send`.
  */
-export function reactNotice<N extends AnyNotice>(Component: ComponentType<NoticeProps<N>>): NoticeDef<PayloadOf<N>> {
+export function reactNotice<N extends AnyNotice>(
+  Component: ComponentType<NoticeProps<N>>,
+  options: ReactOptions = {},
+): NoticeDef<PayloadOf<N>> {
   return {
     mount(element, payload, ctx) {
       const root = createRoot(element);
       try {
-        flushSync(() => root.render(createElement(Component, { payload, seq: ctx.seq, handle: ctx.handle })));
+        flushSync(() => root.render(wrapped(createElement(Component, { payload, seq: ctx.seq, handle: ctx.handle }), options.wrapper)));
       } catch (err) {
         root.unmount();
         throw err;

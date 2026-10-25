@@ -6,7 +6,7 @@ for the client's registries. It's typed from the same `defineSurface` or
 changes there stops the browser side compiling.
 
 Exported by `@haikit/react`: `reactSurface`, `SurfaceProps`, `reactNotice`,
-`NoticeProps`.
+`NoticeProps`, `ReactOptions`.
 
 Checked against `@haikit/*` 0.20.0. Source: `packages/react/src/index.ts`.
 
@@ -31,12 +31,14 @@ props type.
 ```ts
 function reactSurface<S extends Surface<any, ActionMap, QueryMap>>(
   Component: ComponentType<SurfaceProps<S>>,
+  options?: ReactOptions,
 ): ComponentDef<PropsOf<S>>;
 ```
 
 Returns a registry entry (a `ComponentDef`, see
 [The browser client](client.md#registry-componentdef)) that renders
-`Component` into the surface's element. `S` is the surface contract's type,
+`Component` into the surface's element, inside `options.wrapper` if there is
+one (see [`ReactOptions`](#reactoptions)). `S` is the surface contract's type,
 `typeof yourSurface`.
 
 ```tsx
@@ -84,8 +86,10 @@ schemas and their library stay out of the browser bundle.
   the surface goes blank. Wrap the component in an error boundary of your own
   for a fallback.
 - **Each surface is its own React root.** The app's context providers (theme,
-  router, data client) don't reach it, and nothing adds `StrictMode` or an
-  error boundary. Render any providers inside the component you pass.
+  router, data client, a tooltip provider) don't reach it, and nothing adds
+  `StrictMode` or an error boundary. Pass the providers a component needs as
+  `options.wrapper` (see [`ReactOptions`](#reactoptions)), or render them
+  inside the component.
 - **On unmount,** it unmounts the root, so effects clean up. That happens
   when the surface goes away: `chat.reset()`, `chat.close()`, or mounting it
   again.
@@ -145,6 +149,7 @@ but arrives as a string. The same goes for `selection`.
 ```ts
 function reactNotice<N extends Notice<any, any>>(
   Component: ComponentType<NoticeProps<N>>,
+  options?: ReactOptions,
 ): NoticeDef<PayloadOf<N>>;
 ```
 
@@ -165,8 +170,9 @@ mountChat({ root, registry, notices: { hold_confirmed: reactNotice(HoldConfirmed
 ```
 
 As with `reactSurface`, the first render is synchronous, a throwing first
-render behaves the same way, each notice is its own root, and the root is
-unmounted when the notice goes away. A notice is rendered once: nothing
+render behaves the same way, each notice is its own root, rendered inside
+`options.wrapper` if there is one, and the root is unmounted when the notice
+goes away. A notice is rendered once: nothing
 about it changes.
 
 ## `NoticeProps`
@@ -187,6 +193,50 @@ interface NoticeProps<N extends Notice<any, any>> {
 
 There's no `send`: a notice can't reach the server. The notice's `version`
 isn't passed.
+
+## `ReactOptions`
+
+```ts
+interface ReactOptions {
+  wrapper?: ComponentType<{ children: ReactNode }>;
+}
+```
+
+The second argument of `reactSurface` and `reactNotice`. Optional, and so is
+its one field.
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `wrapper` | none | A component rendered around `Component`, with it as `children`: the providers it needs |
+
+Each surface and notice is a React root of its own, so a provider around the
+rest of the app never reaches it. A component that needs one, such as
+shadcn/ui's `Tooltip`, which needs a `TooltipProvider`, then fails its first
+render, and the surface stays blank (see
+[If that first render throws](#reactsurface)).
+
+```tsx
+import type { ReactNode } from "react";
+import { reactSurface } from "@haikit/react";
+import { TooltipProvider } from "@/components/ui/tooltip";
+
+function Providers({ children }: { children: ReactNode }) {
+  return <TooltipProvider>{children}</TooltipProvider>;
+}
+
+export const registry = { greeting_picker: reactSurface(GreetingPicker, { wrapper: Providers }) };
+```
+
+- **Every render goes inside it:** the first, synchronous one, and those for a
+  freeze, a revision and an expiry, so a provider is there before the
+  component reads it.
+- **It's mounted once per surface:** the same `wrapper` each render, so a
+  revision keeps the wrapper's state as it keeps the component's, and its
+  effects clean up when the surface goes away.
+- **A wrapper that throws** on the first render behaves as a component that
+  does.
+- **Without `wrapper`,** the component is rendered as it was before the
+  option existed, with nothing around it.
 
 ## Safety
 

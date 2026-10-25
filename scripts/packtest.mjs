@@ -314,7 +314,7 @@ import { pgStore } from "@haikit/postgres";
 import { createChat, type Registry, type MountCtx } from "@haikit/client";
 import { mountChat } from "@haikit/client/app.js";
 import { h } from "@haikit/client/transcript.js";
-import { reactSurface, type SurfaceProps } from "@haikit/react";
+import { reactNotice, reactSurface, type ReactOptions, type SurfaceProps } from "@haikit/react";
 import { z } from "zod";
 
 const picker = defineSurface({
@@ -359,8 +359,12 @@ const registry: Registry = {
     void send("pick", props.rows[0] ?? "");
     return null;
   }),
+  // inside a wrapper: the providers it needs, since each surface is a root of its own
+  w: reactSurface(({ props }: SurfaceProps<typeof picker>) => (void props.rows, null), { wrapper: ({ children }) => children }),
 };
 void registry;
+const providers: ReactOptions = { wrapper: ({ children }) => children };
+void reactNotice(() => null, providers);
 // the expiry state, reset() and close() are part of the published client types
 declare const chat: ReturnType<typeof createChat>;
 const notice: string | null = chat.state.expired;
