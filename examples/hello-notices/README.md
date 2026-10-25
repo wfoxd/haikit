@@ -22,10 +22,11 @@ That rebuilds the local packages first. Uses the scripted model in
 `src/server/scripted.ts`, so it needs no API key. Drop `HAI_SCRIPTED=1` and set
 `ANTHROPIC_API_KEY` to run it against Claude.
 
-The browser half is Vite's, as in `examples/hello`: the components and notices
-in `src/client/components.js` style themselves with Tailwind classes, and
-`src/client/styles.css` imports `@haikit/client/tailwind.css`. For the
-production path, from the repo root:
+The browser half is React with shadcn/ui, set up as in `examples/hello`. The
+surfaces in `src/client/components.tsx` are registered with `reactSurface`,
+and the two notices with `reactNotice`. The picker marks the languages a
+revision brings while it waits: `reactSurface` renders it again with the new
+props and keeps its filter. For the production path, from the repo root:
 
 ```bash
 npm run build                        # the local packages

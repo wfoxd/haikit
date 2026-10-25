@@ -67,13 +67,14 @@ Your server needs no compiling. The framework arrives from npm already built, an
       "strict": true,
       "noEmit": true,
       "allowImportingTsExtensions": true,
-      "rewriteRelativeImportExtensions": true
+      "rewriteRelativeImportExtensions": true,
+      "paths": { "@/*": ["./src/client/*"] }
     },
     "include": ["src/server", "src/shared"]
 }
 ```
 
-`nodenext` is not optional here. It is what makes TypeScript read the `exports` map in each `@haikit/*` package, and it is why `.ts` extensions appear in the imports later on.
+`nodenext` is not optional here. It is what makes TypeScript read the `exports` map in each `@haikit/*` package, and it is why `.ts` extensions appear in the imports later on. `paths` doesn't touch the server: it's there for shadcn's command line tool, below, which reads this file to learn that `@/` means `src/client/`.
 
 The browser half gets a config of its own, because it runs somewhere else: with the DOM, without Node, and through Vite.
 
@@ -84,42 +85,65 @@ The browser half gets a config of its own, because it runs somewhere else: with 
     "compilerOptions": {
       "target": "es2023",
       "lib": ["es2023", "dom", "dom.iterable"],
-      "types": [],
+      "types": ["vite/client"],
       "module": "esnext",
       "moduleResolution": "bundler",
+      "jsx": "react-jsx",
       "strict": true,
-      "noImplicitAny": false,
       "noEmit": true,
-      "allowJs": true,
-      "checkJs": true,
-      "allowImportingTsExtensions": true
+      "allowImportingTsExtensions": true,
+      "paths": { "@/*": ["./src/client/*"] }
     },
     "include": ["src/client"]
 }
 ```
 
-`checkJs` is what lets a plain `.js` component be checked against the contract, in step 05.
+`jsx` is for the React components in step 05, `vite/client` tells TypeScript what importing a `.css` file means, and `paths` is the same `@/`, for your own imports.
 
 **`vite.config.ts`** — *new file*
 
 ```ts
 import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
-  plugins: [tailwindcss()],
+  plugins: [react(), tailwindcss()],
+  resolve: { alias: { "@": new URL("./src/client", import.meta.url).pathname } },
 });
 ```
+
+And `@/` once more, for Vite, which does the resolving when it builds the page.
 
 **`terminal`** — *run*
 
 ```bash
-npm install @haikit/core @haikit/server @haikit/client @haikit/anthropic zod
+npm install @haikit/core @haikit/server @haikit/client @haikit/react @haikit/anthropic react react-dom zod
 ```
 
 ```bash
-npm install -D typescript @types/node vite tailwindcss @tailwindcss/vite
+npm install -D typescript @types/node @types/react @types/react-dom vite @vitejs/plugin-react tailwindcss @tailwindcss/vite
 ```
+
+The picker in step 05 is built from [shadcn/ui](https://ui.shadcn.com): components you copy into your project as source rather than install, styled with Tailwind. Its command line tool won't set up until there is a stylesheet that imports Tailwind, so start one:
+
+**`src/client/globals.css`** — *new file*
+
+```css
+@import "tailwindcss";
+@import "@haikit/client/tailwind.css";
+```
+
+The second line brings `hai.css`, the stylesheet for everything the framework renders, and gives Tailwind the chat's colours: `bg-hai-panel`, `text-hai-dim` and the rest. Step 05 finishes this file.
+
+**`terminal`** — *run*
+
+```bash
+npx shadcn@latest init -b radix -p lyra
+npx shadcn@latest add card toggle-group button badge tooltip
+```
+
+`init` writes `components.json`, which tells the tool where things go, adds shadcn's theme to `globals.css`, and installs what its components use. `-p lyra` picks the preset whose square, monospace look suits the chat. `add` copies five components into `src/client/components/ui/`: they're your code now, to read and change.
 
 ## 02 · Declare the contract
 
@@ -189,7 +213,7 @@ There is also `inform(schema)` for actions that add context without blocking; st
 
 **6** Exists so `digest` and `choose` can compute “most spoken” and a rank server-side, without a second lookup.
 
-**7** One source of truth for the type. `src/client/components.js` imports this exact type through JSDoc, which is how the browser half stays honest.
+**7** One source of truth for the type. `src/client/components.tsx` types its props from this same contract, which is how the browser half stays honest.
 
 **8** The registry key. It must match the key in the client's `registry` object or the surface renders an error card.
 
@@ -432,118 +456,204 @@ export const tools = [listGreetings];                      // 10
 
 ## 05 · Build the component
 
-Plain JS, styled with Tailwind. Its only channel to the server is `ctx.send(action, value)` — it cannot name a tool, a handler, or an endpoint.
+React, with shadcn/ui's components, styled with Tailwind. Its only channel to the server is `send(action, value)` — it cannot name a tool, a handler, or an endpoint.
 
-**`src/client/components.js`** — *new file*
+**`src/client/components.tsx`** — *new file*
 
-```js
-/** @typedef {import("../shared/surfaces.ts").Greeting} Greeting */  // 1
+```tsx
+import { useState, type ReactNode } from "react";
+import { reactSurface, type SurfaceProps } from "@haikit/react";
+import type { greetingPicker } from "../shared/surfaces.ts";  // 1
+import { Badge } from "@/components/ui/badge";  // 2
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
-const h = (tag, cls, text) => {
-  const n = document.createElement(tag);
-  if (cls) n.className = cls;
-  if (text != null) n.textContent = text;                // 2
-  return n;
-};
+function GreetingPicker({ props, send, mode, state, selection }: SurfaceProps<typeof greetingPicker>) {  // 3
+  const [script, setScript] = useState("all");  // 4
+  const live = state === "live" && mode === "elicit";  // 5
 
-const CHIP = "cursor-pointer rounded-full border px-2.5 py-0.75 font-hai-mono text-[11px]";  // 3
-const CHIP_ON = `${CHIP} border-hai-accent bg-hai-accent text-hai-on-accent`;
-const CHIP_OFF = `${CHIP} border-hai-line text-hai-dim hover:border-hai-accent hover:text-hai-fg`;
-const ROW = "grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] items-baseline gap-3 border-b border-hai-line-soft px-3 py-1.75";
+  const scripts = [...new Set(props.greetings.map((g) => g.script))].sort();  // 6
+  const rows = props.greetings.filter((g) => script === "all" || g.script === script);
+  const choose = (code: string) => send("choose", code);  // 7
+
+  return (
+    <Card className="gap-3 rounded-none bg-transparent py-3 shadow-none ring-0">
+      <CardHeader className="px-3">
+        <CardTitle>Pick a language</CardTitle>
+        <CardDescription>
+          {rows.length} of {props.greetings.length} greetings
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-2 px-3">
+        <ToggleGroup type="single" variant="outline" size="sm" className="flex-wrap" value={script} onValueChange={(v) => v && setScript(v)}>
+          {["all", ...scripts].map((sc) => (  // 8
+            <ToggleGroupItem key={sc} value={sc}>
+              {sc}
+            </ToggleGroupItem>
+          ))}
+        </ToggleGroup>
+        <div>
+          {rows.map((g) => (  // 9
+            <div key={g.code} className="flex items-center gap-3 border-b border-border/40 py-1.5">
+              <span className="flex-1 text-[15px]" dir={g.rtl ? "rtl" : undefined}>
+                {g.text}
+              </span>
+              <Tooltip>
+                <TooltipTrigger className="font-mono text-xs text-muted-foreground">{g.language}</TooltipTrigger>
+                <TooltipContent>{g.speakersM}M speakers</TooltipContent>
+              </Tooltip>
+              {live ? (  // 10
+                <Button size="sm" variant="outline" onClick={() => choose(g.code)}>
+                  Choose
+                </Button>
+              ) : g.code === selection ? (  // 11
+                <Badge>picked</Badge>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function Providers({ children }: { children: ReactNode }) {  // 12
+  return <TooltipProvider>{children}</TooltipProvider>;
+}
 
 export const registry = {
-  /** @type {import("@haikit/client").ComponentDef<{ greetings: Greeting[] }>} */  // 4
-  greeting_picker: {                                      // 5
-    mount(el, props, ctx) {                               // 6
-      let scriptFilter = null;                            // 7
-      let state = ctx.state;                               // 8
-      let picked = null;
-
-      const scripts = [...new Set(props.greetings.map((g) => g.script))].sort();  // 9
-
-      const render = () => {
-        el.replaceChildren();                             // 10
-        const live = state === "live" && ctx.mode === "elicit";  // 11
-
-        const chips = h("div", "flex flex-wrap gap-1.5 px-3 pt-2.25 pb-1");
-        for (const sc of [null, ...scripts]) {
-          const b = h("button", scriptFilter === sc ? CHIP_ON : CHIP_OFF, sc ?? "all");
-          b.onclick = () => { scriptFilter = sc; render(); };  // 12
-          chips.append(b);
-        }
-
-        const rows = props.greetings.filter((g) => !scriptFilter || g.script === scriptFilter);
-        const list = h("div", "pt-1 pb-2");
-        for (const g of rows) {
-          const row = h("div", live ? `${ROW} cursor-pointer hover:bg-hai-hover` : ROW);
-
-          const greeting = h("span", "text-[15px]", g.text);
-          if (g.rtl) greeting.dir = "rtl";                    // 13
-
-          row.append(greeting, h("span", "font-hai-mono text-xs text-hai-dim", g.language));
-          if (live) row.onclick = () => ctx.send("choose", g.code);  // 14
-          list.append(row);
-        }
-
-        el.append(chips, list);
-      };
-
-      render();
-      return {                                              // 15
-        freeze(sel) { state = "frozen"; picked = sel ?? null; render(); },  // 16
-      };
-    },
-  },
+  greeting_picker: reactSurface(GreetingPicker, { wrapper: Providers }),  // 13
 };
 ```
 
-**1** Pulls the type straight out of the contract. `npm run typecheck` checks this file too, through `tsconfig.client.json` and its `checkJs`, so changing a prop server-side breaks the browser build too.
+**1** A type-only import from the contract. `npm run typecheck` checks this file against step 02, so renaming a prop there breaks the browser build too. Being `import type`, it leaves the schemas and their library out of the browser bundle.
 
-**2** `textContent`, never `innerHTML`. Tool payloads are untrusted input — this is the line that keeps a malicious greeting from becoming markup.
+**2** shadcn's components, in your project since step 01. `@/` is `src/client/`, from the `paths` you set up.
 
-**3** Tailwind classes, written out in full, because Tailwind finds the ones you use by reading this file. The `hai-` colours, `hai-line`, `hai-dim`, `hai-accent` and the rest, are the chat's own, so the picker follows its light and dark schemes and any colour you change in it.
+**3** `SurfaceProps<typeof greetingPicker>` types everything the framework hands the component: `props` from the surface's schema, `send` against the actions it declares, and the `mode`, `state` and `selection` it is in.
 
-**4** Hands the contract's type to `mount`. Rename a prop in step 02, or misspell `ctx.send`, and `npm run typecheck` says so.
+**4** Local state. It is not in the contract, so there is no channel for it to reach the server even if you wanted one.
 
-**5** Key must match the surface's `name`. An unregistered component renders an error card rather than an improvised UI.
+**5** Two conditions. A display surface is never clickable, and an elicit surface stops being clickable the moment its turn resolves.
 
-**6** The framework calls this once, with validated props. Everything below is ordinary DOM code — there is no component model to learn.
+**6** Derived in the browser from data it already has. The server was never asked, and the model never learns the script list exists.
 
-**7** Local state. It is not in the contract, so there is no channel for it to reach the server even if you wanted one.
+**7** The single declared channel to the server. `"choose"` must be an action the contract declares, with a value of its input type: misspell it, or send a number, and `npm run typecheck` says so.
 
-**8** Copied out of `ctx` because `freeze()` mutates it later. Reading `ctx.state` inside `render` would always show the mount-time value.
+**8** The local tier: the toggle sets `script`, React draws the rows again, done. No `send`, no round trip, no token cost. If filtering cost a model call the app would feel broken.
 
-**9** Derived in the browser from data it already has. The server was never asked, and the model never learns the script list exists.
+**9** React writes `g.text` as text, never as markup. Tool payloads are untrusted input, so keep it that way: never pass them to `dangerouslySetInnerHTML`. The `dir` on the line below is the payoff of the `rtl` prop: the browser needs one attribute to lay out Arabic correctly, and the model needed to know nothing about it.
 
-**10** Full re-render on every local change. At 120 rows that is free; virtualize only when measurement says to.
+**10** While the question is live, each row offers a button that answers it.
 
-**11** Two conditions. A display surface is never clickable, and an elicit surface stops being clickable the moment its turn resolves.
+**11** When the turn resolves, `state` becomes `"frozen"`, `selection` is the value the user picked, and the component renders again with them. That is what swaps the buttons for a *picked* badge and stops accepting clicks.
 
-**12** The local tier: mutate, re-render, done. No `ctx.send`, no round trip, no token cost. If filtering cost a model call the app would feel broken.
+**12** Each surface is a React root of its own, so a provider around the page never reaches it. shadcn's tooltips need a `TooltipProvider` above them, and without one the picker's first render fails: the surface stays blank while its tool row says *awaiting you*. `wrapper` puts the provider around every render.
 
-**13** The payoff of the `rtl` prop. The browser needs one line to lay out Arabic correctly; the model needed to know nothing about it.
+**13** The key must match the surface's `name`. An unregistered component renders an error card rather than an improvised UI. `reactSurface` builds the `mount(element, props, ctx)` the framework calls, and unmounts the React root when the surface goes away: on *Start a new conversation*, or when the chat is closed.
 
-**14** The single declared channel to the server. `"choose"` must match the contract exactly — a typo surfaces as `unbound action` at runtime.
-
-**15** The mount return value is the component's handle back to the framework. If `mount` sets up anything that outlives its element, such as a timer, a subscription or a React root, return an `unmount()` that releases it. It is called when the surface goes away: on *Start a new conversation*, or when the chat is closed.
-
-**16** Called when the turn resolves, with the value the user picked. Re-rendering here is what flips the badge to “resolved” and stops accepting clicks.
+The chat already frames each surface, so the card drops its own: `rounded-none bg-transparent shadow-none ring-0`.
 
 > [!NOTE]
 > **Local vs declared**
 >
-> The script chips are *local*: they filter rows already in the browser and never touch the server. Only `choose` round-trips. If filtering a list cost a model round trip, the app would feel broken no matter how good the model is.
+> The script toggles are *local*: they filter rows already in the browser and never touch the server. Only `choose` round-trips. If filtering a list cost a model round trip, the app would feel broken no matter how good the model is.
 
-Tailwind needs a stylesheet to start from, and that is all of it:
+Last, make shadcn follow the chat. `init` gave its components a palette of their own, and a dark mode that switches on a `.dark` class HaiKIT never sets. Replace the whole file:
 
-**`src/client/styles.css`** — *new file*
+**`src/client/globals.css`** — *replace*
 
 ```css
 @import "tailwindcss";
 @import "@haikit/client/tailwind.css";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+/* dark: follows the chat: the system's scheme, unless a data-hai-theme pin
+   on <html> chooses one. */
+@custom-variant dark {
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-hai-theme="light"]) & {
+      @slot;
+    }
+  }
+  :root[data-hai-theme="dark"] & {
+    @slot;
+  }
+}
+
+@theme inline {
+  --font-sans: var(--hai-sans);
+  --font-mono: var(--hai-mono);
+  --font-heading: var(--hai-mono);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+}
+
+/* shadcn's colours are the chat's. One block, not a :root and a .dark: each
+   --hai-* token already has a light and a dark value. */
+:root {
+  --background: var(--hai-panel);
+  --foreground: var(--hai-fg);
+  --card: var(--hai-panel);
+  --card-foreground: var(--hai-fg);
+  --popover: var(--hai-panel);
+  --popover-foreground: var(--hai-fg);
+  --primary: var(--hai-accent);
+  --primary-foreground: var(--hai-on-accent);
+  --secondary: var(--hai-panel-2);
+  --secondary-foreground: var(--hai-fg);
+  --muted: var(--hai-hover);
+  --muted-foreground: var(--hai-dim);
+  --accent: var(--hai-hover);
+  --accent-foreground: var(--hai-fg);
+  --destructive: var(--hai-bad);
+  --border: var(--hai-line);
+  --input: var(--hai-line);
+  --ring: var(--hai-fg);
+  --radius: var(--hai-radius);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+}
 ```
 
-The second line brings `hai.css`, the stylesheet for everything the framework renders, and gives Tailwind the `hai-` colours. `hai.css` deliberately does not style the inside of a surface — the moment it did, it would be dictating what your UI looks like — so every class inside the picker is one you chose.
+The `:root` block is the heart of it. shadcn's components are drawn in its colours, `--primary`, `--border` and the rest, and here each one *is* a chat token, so the picker follows the chat's light and dark schemes and any token you change. One block does it where shadcn's had two, because every `--hai-*` token already holds a light and a dark value.
+
+The `@custom-variant` gives shadcn's `dark:` classes the chat's rule for which scheme is showing. `@haikit/client/tailwind.css` leaves `dark:` alone on purpose: it can't know how your app decides. The `@theme inline` block is shadcn's, cut to what its components use, with the chat's fonts in place of the one the preset brought. That font is installed but no longer used:
+
+**`terminal`** — *run*
+
+```bash
+npm uninstall @fontsource-variable/jetbrains-mono
+```
+
+`hai.css` deliberately does not style the inside of a surface — the moment it did, it would be dictating what your UI looks like — so every class inside the picker is one you or shadcn chose.
 
 ## 06 · Wire it up and run
 
@@ -651,27 +761,27 @@ And the page. `@haikit/client` ships the default UI — the shell, transcript, c
   </head>
   <body>
     <div id="app"></div>
-    <script type="module" src="/src/client/main.js"></script>
+    <script type="module" src="/src/client/main.tsx"></script>
   </body>
 </html>
 ```
 
-**`src/client/main.js`** — *new file*
+**`src/client/main.tsx`** — *new file*
 
-```js
-import "./styles.css";
+```tsx
+import "./globals.css";
 import { mountChat } from "@haikit/client/app.js";
-import { registry } from "./components.js";
+import { registry } from "./components.tsx";
 
 mountChat({
-  root: /** @type {HTMLElement} */ (document.querySelector("#app")),
+  root: document.querySelector<HTMLElement>("#app")!,
   registry,
   title: "hello",
   suggestions: ["greet me", "which ones are right-to-left?"],
 });
 ```
 
-That is all the code the page has. `mountChat` builds the shell, wires the composer, renders the transcript and mounts your surfaces; `hai.css`, which `styles.css` brings in, styles everything it renders. Your classes style only what *your* components emit, and a `--hai-*` token you override in `styles.css` reaches both. The `@type` tells `npm run typecheck` that `#app` is there, which `querySelector` can't promise.
+That is all the code the page has. `mountChat` builds the shell, wires the composer, renders the transcript and mounts your surfaces; `hai.css`, which `globals.css` brings in, styles everything it renders. Your classes and shadcn's style only what *your* components emit, and a `--hai-*` token you override in `globals.css` reaches both. The `!` tells `npm run typecheck` that `#app` is there, which `querySelector` can't promise.
 
 > [!NOTE]
 > **Where the line is**
@@ -822,14 +932,14 @@ const hai = createHai({
 > [!TIP]
 > **Checkpoint**
 >
-> Say *“greet me”*. You should see a tool row, a picker under it, the badge reading **awaiting selection**, and the status line saying the turn is parked. Open **Context** in the header: in the model context debug drawer, the model context holds your one-sentence digest — not the languages.
+> Say *“greet me”*. You should see a tool row, a picker under it, the badge reading **awaiting you**, and the status line saying the turn is parked. Open **Context** in the header: in the model context debug drawer, the model context holds your one-sentence digest — not the languages.
 >
-> Click a row. The badge flips to **resolved**, an interaction line appears with the rank, and the model finishes the *same turn*: **¡Hola, mundo!**
+> Click **Choose** on a row. The badge flips to **resolved**, an interaction line appears with the rank, and the model finishes the *same turn*: **¡Hola, mundo!**
 
 > [!WARNING]
 > **If nothing happens on click**
 >
-> Check that `ctx.send`'s first argument exactly matches an action key in your contract. A typo surfaces as `unbound action` in the transcript — that's the server-side binding table refusing something it wasn't told about.
+> Check that `send`'s first argument matches an action key in your contract. Typed by `SurfaceProps`, a typo doesn't compile, but `npm start` doesn't typecheck: the page still runs, and the click surfaces as `unbound action` in the transcript — that's the server-side binding table refusing something it wasn't told about. Run `npm run typecheck`.
 
 ## 07 · Add a dereference
 
@@ -927,37 +1037,50 @@ export const showGreeting = defineTool({
 
 Now the browser half. **This is the step that bites** — the registry key must match the surface's `name` exactly, and a mismatch is not a crash. The client renders `unknown component: greeting_card` in place of the card, because the registry is an allowlist and anything unlisted cannot be mounted at all.
 
-**`src/client/components.js`** — *append inside `registry`*
+**`src/client/components.tsx`** — *edit the contract import*
 
-```js
-  /** @type {import("@haikit/client").ComponentDef<{ greeting: Greeting }>} */
-  greeting_card: {
-    mount(el, props, ctx) {
-      const g = props.greeting;
+```tsx
+import type { greetingCard, greetingPicker } from "../shared/surfaces.ts";
+```
 
-      const card = h("div", "flex flex-col items-start gap-2 px-3.5 py-4");
-      const text = h("div", "text-[28px] leading-tight", g.text);
-      if (g.rtl) text.dir = "rtl";
+**`src/client/components.tsx`** — *add, above `Providers`*
 
-      const meta = h("div", "font-hai-mono text-xs text-hai-dim", `${g.language} · ${g.script} · ${g.speakersM}M speakers`);
+```tsx
+// A display surface never parks the turn, so it is never frozen and there is
+// nothing to resolve. `copy` is an `inform`: a line added to the
+// conversation after the fact.
+function GreetingCard({ props: { greeting: g }, send }: SurfaceProps<typeof greetingCard>) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    await navigator.clipboard?.writeText(g.text).catch(() => {});
+    setCopied(true);
+    void send("copy", { code: g.code });
+  };
 
-      // A display surface never parked the turn, so there is nothing to
-      // resolve. `inform` adds a line to the conversation after the fact.
-      const copy = h("button", CHIP_OFF, "copy");
-      copy.onclick = async () => {
-        await navigator.clipboard?.writeText(g.text).catch(() => {});
-        copy.textContent = "copied";
-        ctx.send("copy", { code: g.code });
-      };
+  return (
+    <Card className="rounded-none bg-transparent shadow-none ring-0">
+      <CardHeader>
+        <CardTitle className="text-[28px] leading-tight" dir={g.rtl ? "rtl" : undefined}>
+          {g.text}
+        </CardTitle>
+        <CardDescription className="font-mono text-xs">
+          {g.language} · {g.script} · {g.speakersM}M speakers
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Button size="sm" variant="outline" onClick={copy}>
+          {copied ? "Copied" : "Copy"}
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+```
 
-      card.append(text, meta, copy);
-      el.append(card);
+**`src/client/components.tsx`** — *append inside `registry`*
 
-      // No `freeze` — a display surface is never frozen, because it was never
-      // holding the turn open in the first place.
-      return {};
-    },
-  },
+```tsx
+  greeting_card: reactSurface(GreetingCard, { wrapper: Providers }),
 ```
 
 Then two one-line registrations. Miss the first and the model has no tool to call; miss the second and `query_ui` has nothing to dereference and the handle resolves to nothing.
@@ -1157,25 +1280,9 @@ if (/greet|hello|hi\b|hey|language|world|start/.test(text)) {
 
 `mountChat` starts each conversation this way, both when it opens and after *Start a new conversation*. With your own UI, call `chat.start()`. A client that never calls it still gets `init`, run with its first message instead. `init` can render surfaces too, and an elicit one ("which account?") parks the conversation before anyone has typed. If it throws, the start is refused and the next start or message tries again, so the model never begins without it.
 
-### Write a surface in React
+### Without React
 
-A component is anything with `mount(element, props, ctx)`, so any framework fits. `@haikit/react` makes React a first-class one: `reactSurface()` wraps a component, and `SurfaceProps<typeof greetingPicker>` types its props from the contract you wrote in step 2.
-
-```tsx
-import { useState } from "react";
-import { reactSurface, type SurfaceProps } from "@haikit/react";
-import type { greetingPicker } from "../shared/surfaces.ts";
-
-function GreetingPicker({ props, send, mode, state }: SurfaceProps<typeof greetingPicker>) {
-  const [script, setScript] = useState<string | null>(null);
-  const live = state === "live" && mode === "elicit";
-  // …the same chips and rows as step 5, as JSX
-}
-
-export const registry = { greeting_picker: reactSurface(GreetingPicker) };
-```
-
-`send("choose", g.code)` compiles. `send("delete", …)` doesn't, because the contract never declared it, and neither does a value of the wrong type. The transcript mounts each surface once, so `useState` survives the conversation streaming on. Vite already builds your browser half, so React needs only `react`, `react-dom`, `@haikit/react` and Vite's React plugin: `examples/hello-react` in the haikit repo is this tutorial's app built that way, with the same Tailwind classes as JSX.
+A component is anything with `mount(element, props, ctx)`. `reactSurface` builds one around a React component, but the framework needs neither: an object with that method, drawing with the DOM and answering through `ctx.send`, mounts the same way, and returns its own `freeze` and `update` for the framework to call. `examples/flights` in the haikit repo builds its surfaces like that, in plain JavaScript checked against the contract through JSDoc, styled with the same Tailwind and `hai-` colours. [The default UI](default-ui.md#the-registry) has the details.
 
 ### Tell the user things later
 

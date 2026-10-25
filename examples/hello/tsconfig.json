@@ -6,7 +6,8 @@
     "declaration": false,
     "declarationMap": false,
     "allowImportingTsExtensions": true,
-    "rewriteRelativeImportExtensions": true
+    "rewriteRelativeImportExtensions": true,
+    "paths": { "@/*": ["./src/client/*"] }
   },
   "include": [
     "src/server",

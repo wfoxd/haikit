@@ -8,11 +8,10 @@
     "module": "esnext",
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
-    "allowJs": true,
-    "checkJs": true,
+    "jsx": "react-jsx",
     "lib": ["es2023", "dom", "dom.iterable"],
-    "types": [],
-    "noImplicitAny": false
+    "types": ["vite/client"],
+    "paths": { "@/*": ["./src/client/*"] }
   },
   "include": ["src/client", "vite.config.ts"]
 }

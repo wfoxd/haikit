@@ -18,7 +18,7 @@ Its peer dependencies are `react` and `react-dom`, version 18 or 19. With
 TypeScript, also install `@types/react`. `@haikit/react` depends on
 `@haikit/client` and `@haikit/core` at exactly its own version, so install
 that same version of `@haikit/client`, or the app gets two copies. React needs
-a bundler: `examples/hello-react` runs Vite inside its own Node server while
+a bundler: `examples/hello` runs Vite inside its own Node server while
 developing, and serves `vite build`'s output in production.
 
 `PropsOf<S>`, `ActionsOf<S>` and `PayloadOf<N>` below are internal and not
@@ -237,6 +237,9 @@ export const registry = { greeting_picker: reactSurface(GreetingPicker, { wrappe
   does.
 - **Without `wrapper`,** the component is rendered as it was before the
   option existed, with nothing around it.
+
+[shadcn/ui in a HaiKIT app](../shadcn.md) covers the rest of what shadcn's
+components need on a HaiKIT page.
 
 ## Safety
 

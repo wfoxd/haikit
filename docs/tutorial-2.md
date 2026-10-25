@@ -234,52 +234,56 @@ connectPostOffice(hai.notify);
 
 Notices have their own registry, an allowlist by notice name, next to the surfaces' one. A notice component looks like a surface component with less in it: it gets its payload and mounts, and it has no `send`, because nothing in a notice reaches back.
 
-**`src/client/components.js`** — *append, after `registry`*
+**`src/client/components.tsx`** — *edit the imports*
 
-```js
-/** @typedef {import("@haikit/core").Infer<typeof import("../shared/notices.ts").postcardDelivered.payload>} Delivered */  // 1
+```tsx
+import { reactNotice, reactSurface, type NoticeProps, type SurfaceProps } from "@haikit/react";
+import type { postcardDelivered } from "../shared/notices.ts";
+```
 
-const NOTICE = "flex flex-wrap items-baseline gap-x-2.5 gap-y-1.5 px-3 py-2.25";
+The first line replaces the `@haikit/react` import; the second goes beside the import from `surfaces.ts`.
 
-export const notices = {                                  // 2
-  /** @type {import("@haikit/client").NoticeDef<Delivered>} */
-  postcard_delivered: {                                   // 3
-    mount(el, payload) {                                  // 4
-      const text = h("span", "text-sm", payload.text);    // 5
-      text.dir = "auto";                                  // 6
-      const line = h("div", NOTICE);
-      line.append(h("span", null, `Delivered to ${payload.to}: `), text, h("span", "font-hai-mono text-xs text-hai-dim", payload.reference));
-      el.append(line);
-    },
-  },
+**`src/client/components.tsx`** — *append, after `registry`*
+
+```tsx
+function PostcardDelivered({ payload }: NoticeProps<typeof postcardDelivered>) {  // 1
+  return (  // 2
+    <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1.5 px-3 py-2.25">
+      <span>Delivered to {payload.to}:</span>
+      <span className="text-sm" dir="auto">
+        {payload.text}
+      </span>
+      <Badge variant="outline">{payload.reference}</Badge>
+    </div>
+  );
+}
+
+export const notices = {  // 3
+  postcard_delivered: reactNotice(PostcardDelivered),  // 4
 };
 ```
 
-**1** The payload's type, read from the contract, as the first tutorial does for `Greeting`, and handed to `mount` by the `@type` below it. Rename a field in step 02 and `npm run typecheck` fails, since the first tutorial's `tsconfig.client.json` checks this file too.
+**1** `NoticeProps<typeof postcardDelivered>` types the payload from the contract, as `SurfaceProps` types a surface's props. Rename a field in step 02 and `npm run typecheck` fails. There is no `send`: nothing in a notice reaches back.
 
-**2** A separate export, so the two allowlists never mix. A notice can't be mounted as a surface, or a surface as a notice.
+**2** Rendered once, when the notice arrives, with its validated payload. React writes the payload's text as text: it came from outside your process, and it never becomes markup. The greeting may read right to left and the payload doesn't say, so `dir="auto"` lets the browser decide from the text.
 
-**3** Must match the notice's `name`. An unlisted notice renders a small error card instead, as an unlisted surface does.
+**3** A separate export, so the two allowlists never mix. A notice can't be mounted as a surface, or a surface as a notice.
 
-**4** Called once, when the notice arrives, with its validated payload. `mount` may return `{ unmount() }` if it sets up anything that outlives the element.
+**4** Must match the notice's `name`. An unlisted notice renders a small error card instead, as an unlisted surface does. `reactNotice` builds the notice's `mount`, and unmounts its React root when the notice goes away.
 
-**5** `textContent` again, through `h`. A notice's payload came from outside your process; it never becomes markup.
-
-**6** The greeting may read right to left, and the payload doesn't say. `dir="auto"` lets the browser decide from the text, so Arabic and Hebrew lay out correctly.
-
-The transcript draws the frame: a label saying which notice it is, and a body your component fills. `NOTICE` gives the line a little room inside it, and Tailwind picks the classes up from the file as before.
+The transcript draws the frame: a label saying which notice it is, and a body your component fills. The classes give the line a little room inside it, and the reference goes in one of the badges you added in the first tutorial.
 
 And hand the registry to `mountChat`:
 
-**`src/client/main.js`** — *edit*
+**`src/client/main.tsx`** — *edit*
 
-```js
-import "./styles.css";
+```tsx
+import "./globals.css";
 import { mountChat } from "@haikit/client/app.js";
-import { notices, registry } from "./components.js";
+import { notices, registry } from "./components.tsx";
 
 mountChat({
-  root: /** @type {HTMLElement} */ (document.querySelector("#app")),
+  root: document.querySelector<HTMLElement>("#app")!,
   registry,
   notices,
   title: "hello",
@@ -458,23 +462,35 @@ setTimeout(() => {
 
 And a component for it, beside the first:
 
-**`src/client/components.js`** — *append inside `notices`*
+**`src/client/components.tsx`** — *edit the notices import*
 
-```js
-  // with `/** @typedef {import("@haikit/core").Infer<typeof import("../shared/notices.ts").replyReceived.payload>} Reply */` beside `Delivered`
-  /** @type {import("@haikit/client").NoticeDef<Reply>} */
-  reply_received: {
-    mount(el, payload) {
-      const line = h("div", NOTICE);
-      const text = h("span", "text-sm", payload.text);
-      text.dir = "auto";                                  // 1
-      line.append(h("span", null, `${payload.from} replied: `), text);
-      el.append(line);
-    },
-  },
+```tsx
+import type { postcardDelivered, replyReceived } from "../shared/notices.ts";
 ```
 
-**1** The reply is in the postcard's language, which may read right to left, so it gets `dir="auto"` too.
+**`src/client/components.tsx`** — *add, above `notices`*
+
+```tsx
+function ReplyReceived({ payload }: NoticeProps<typeof replyReceived>) {
+  return (  // 1
+    <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1.5 px-3 py-2.25">
+      <span>{payload.from} replied:</span>
+      <span className="text-sm" dir="auto">
+        {payload.text}
+      </span>
+      <Badge variant="secondary">{payload.language}</Badge>
+    </div>
+  );
+}
+```
+
+**`src/client/components.tsx`** — *append inside `notices`*
+
+```tsx
+  reply_received: reactNotice(ReplyReceived),
+```
+
+**1** The reply is in the postcard's language, which may read right to left, so it gets `dir="auto"` too, and a badge saying which language it is.
 
 Nothing else changes. The turn runs where a browser is watching: the events stream, holding the conversation's connection, takes the lease and streams the turn down that same connection. The user message it records carries every unread notice, then a line saying the user hasn't said anything:
 
@@ -600,39 +616,22 @@ connectTranslators(hai.update);
 
 **1** Required for `hai.update`, even with notices listed. It is also what lets an update sent with `wake: true` start a turn.
 
-Last, the component. By default a revision mounts the component again with the new props, losing whatever the user did to it. Give the picker an `update` method and it keeps its state instead:
+Last, the component, and there is less to do than you might expect. A revision renders the picker again with the new props, and React keeps its state through it, so the user's script filter survives, which is the point of revising in place. `scripts` is worked out on every render, so a script that only a revision brings gets its toggle. What's left is showing the user what changed: mark the languages that arrived while the picker waited.
 
-**`src/client/components.js`** — *edit the picker*
+**`src/client/components.tsx`** — *add to the picker, after `useState("all")`*
 
-```js
-  greeting_picker: {
-    mount(el, props, ctx) {
-      let scriptFilter = null;
-      let state = ctx.state;
-      let picked = null;
-
-      const render = () => {
-        el.replaceChildren();
-        const live = state === "live" && ctx.mode === "elicit";
-        // worked out from the props each time: a revision can bring a new script
-        const scripts = [...new Set(props.greetings.map((g) => g.script))].sort();  // 1
-
-        // ...chips and rows exactly as before
-      };
-
-      render();
-      return {
-        freeze(sel) { state = "frozen"; picked = sel ?? null; render(); },
-        // A revision from the server: new rows, and the filter the user chose stays.
-        update(next) { props = next; render(); },         // 2
-      };
-    },
-  },
+```tsx
+  // the languages it opened with: any other came in a revision, while it waited
+  const [first] = useState(() => new Set(props.greetings.map((g) => g.code)));  // 1
 ```
 
-**1** Moved inside `render`. Computed once at mount, a script that only a revision brings would never get a chip.
+**1** React runs `useState`'s initializer once, when the picker mounts, so a revision doesn't change it: it holds the languages the picker first showed.
 
-**2** Swap the props and draw again. `scriptFilter` lives in this closure, so the user's filter survives the revision, which is the point of revising in place.
+**`src/client/components.tsx`** — *add to each row, before the `Tooltip`*
+
+```tsx
+              {first.has(g.code) ? null : <Badge variant="secondary">new</Badge>}
+```
 
 What happens, in order. `hai.update` takes the conversation's lease, as a request does, and stores the new props as a **new surface with a new handle** that supersedes the old one. Then it appends an *update notice*. The events stream sends that to the browser as the revision, and the browser swaps the props into the picker already on screen. The model hears it with the next user message:
 
