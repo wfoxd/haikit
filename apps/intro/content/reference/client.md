@@ -663,8 +663,7 @@ type ConversationStatus = "idle" | "streaming" | "awaiting";
 ## Serving it
 
 The package ships source, not a bundle. With a bundler, import it normally.
-With none, serve `node_modules/@haikit/client/src/` under a URL prefix, as
-`apps/rebook` in HaiKIT's repository does at `/hai-client/`, and import the
-modules from there. Any file in
+With none, serve `node_modules/@haikit/client/src/` under a URL prefix, such
+as `/hai-client/`, and import the modules from there. Any file in
 `src/` can be imported, through the package's `./*` export, but only the
 modules on this page and [The default UI](ui.md) are its API.
