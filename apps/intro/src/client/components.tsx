@@ -37,8 +37,11 @@ function Checkpoint({ props, send, mode, state, selection }: SurfaceProps<typeof
 
   const answer = async (id: string) => {
     setSending(id);
-    await send("answer", id); // the only channel back
-    setSending(null); // refused, the question stays live
+    try {
+      await send("answer", id); // the only channel back
+    } finally {
+      setSending(null); // refused, or never sent: the question stays live
+    }
   };
 
   return (

@@ -36,6 +36,10 @@ window.Element.prototype.scrollIntoView = function () {};
 globalThis.CSS ??= { escape: (s) => String(s).replace(/[^\w-]/g, (c) => `\\${c}`) };
 const copied = [];
 Object.defineProperty(globalThis.navigator, "clipboard", { value: { writeText: async (text) => void copied.push(text) }, configurable: true });
+// a click whose request fails rejects, as in the browser, where it lands in the console
+process.on("unhandledRejection", (err) => {
+  if (!(err instanceof TypeError && err.message === "Failed to fetch")) throw err;
+});
 // tells React that updates here are flushed through act()
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -62,7 +66,7 @@ try {
     let pending = [];
     const send = (action, value) => {
       sent.push([action, value]);
-      return new Promise((resolve) => pending.push(resolve));
+      return new Promise((resolve, reject) => pending.push({ resolve, reject }));
     };
     let instance;
     await act(async () => {
@@ -76,7 +80,13 @@ try {
       // the server's answer comes back: the surface stays live unless frozen
       release: () =>
         act(async () => {
-          for (const resolve of pending) resolve();
+          for (const { resolve } of pending) resolve();
+          pending = [];
+        }),
+      // or it never arrives: the request failed on its way
+      fail: () =>
+        act(async () => {
+          for (const { reject } of pending) reject(new TypeError("Failed to fetch"));
           pending = [];
         }),
     };
@@ -255,6 +265,10 @@ try {
     const props = checkpointProps("1.1");
     const c = await mount("checkpoint", props);
     check("it asks the lesson's question, waiting", text(c.el).includes("Waiting for your answer") && text(c.el).includes(`Checkpoint ${props.lessonId}`));
+    await click(buttons(c.el)[0]);
+    await c.fail();
+    check("an answer that never reaches the server leaves the question open to answer again", buttons(c.el).every((b) => !b.disabled));
+    c.sent.length = 0;
     await click(buttons(c.el)[1]);
     check("an option sends answer: its id", JSON.stringify(c.sent) === `[["answer","${props.options[1].id}"]]` && buttons(c.el).every((b) => b.disabled));
     await c.freeze(props.options[1].id);
