@@ -1,7 +1,7 @@
 {
   "name": "@haikit/client",
   "version": "0.24.0",
-  "description": "The haikit browser runtime: streams tool payloads into interactive UI surfaces. Plain ESM, no build step, no dependencies.",
+  "description": "The haikit browser runtime: streams tool payloads into interactive UI surfaces. Plain ESM, no build step, no dependencies; Tailwind CSS v4 optional.",
   "keywords": [
     "haikit",
     "llm",
@@ -29,6 +29,7 @@
       "default": "./src/transcript.js"
     },
     "./hai.css": "./src/hai.css",
+    "./tailwind.css": "./src/tailwind.css",
     "./package.json": "./package.json",
     "./*": "./src/*"
   },
@@ -38,6 +39,14 @@
   "sideEffects": [
     "*.css"
   ],
+  "peerDependencies": {
+    "tailwindcss": "^4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "tailwindcss": {
+      "optional": true
+    }
+  },
   "publishConfig": {
     "access": "public"
   },

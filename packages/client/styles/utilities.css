@@ -1,0 +1,58 @@
+/**
+ * The default UI's utilities: the `hai:` classes in src/classes.js, which
+ * scripts/build-css.mjs compiles and appends to styles/hai.css to make
+ * src/hai.css.
+ *
+ * Prefixed, on a 1px spacing scale of their own and with Tailwind's theme
+ * inlined, so what comes out is only `.hai\:*` rules in exact pixels: nothing
+ * an app's own classes can collide with, and nothing its theme or root font
+ * size can resize. No preflight: the shell sets what it needs on its own
+ * elements, so a page without Tailwind isn't reset, and one with it looks the
+ * same.
+ *
+ * Colours, faces, radius and shadow are the --hai-* tokens, never values, so
+ * a page that overrides a token restyles the shell as it always has.
+ */
+
+@import "tailwindcss/theme.css" prefix(hai) theme(inline);
+@import "tailwindcss/utilities.css";
+
+@theme inline {
+  --spacing: 1px;
+
+  --color-bg: var(--hai-bg);
+  --color-panel: var(--hai-panel);
+  --color-panel-2: var(--hai-panel-2);
+  --color-line: var(--hai-line);
+  --color-fg: var(--hai-fg);
+  --color-dim: var(--hai-dim);
+  --color-accent: var(--hai-accent);
+  --color-on-accent: var(--hai-on-accent);
+  --color-good: var(--hai-good);
+  --color-warn: var(--hai-warn);
+  --color-bad: var(--hai-bad);
+  --color-user-bg: var(--hai-user-bg);
+  --color-code-bg: var(--hai-code-bg);
+  --color-selected: var(--hai-selected);
+  --color-logo-ink: var(--hai-logo-ink);
+  --color-logo-paper: var(--hai-logo-paper);
+  --color-logo-hot: var(--hai-logo-hot);
+  --color-line-soft: var(--hai-line-soft);
+  --color-hover: var(--hai-hover);
+  --color-accent-soft: var(--hai-accent-soft);
+  --color-good-soft: var(--hai-good-soft);
+  --color-warn-soft: var(--hai-warn-soft);
+  --color-bad-soft: var(--hai-bad-soft);
+
+  --font-sans: var(--hai-sans);
+  --font-mono: var(--hai-mono);
+  --radius-hai: var(--hai-radius);
+  --shadow-hai: var(--hai-shadow);
+}
+
+/* A hover applies wherever a pointer is over it, touch screens included, as
+   it always has. Tailwind's own hover: waits for a device that can hover. */
+@custom-variant hover (&:hover);
+
+/* only the shell's class names, never the repo around them */
+@source "../src/classes.js";

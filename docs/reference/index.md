@@ -40,7 +40,7 @@ of 0.20.0, statement by statement.
 | [Models](models.md) | The model adapter interface, `@haikit/anthropic` and `@haikit/openai` | written |
 | [Stores](stores.md) | The store interface every store implements, `memoryStore`, and `@haikit/postgres`: schema, migration, cross-server channels, cleanup | written |
 | [The browser client](client.md) | `createChat`, the `Chat` object and its state, and the registries for surfaces, notices and signals | written |
-| [The default UI](ui.md) | `mountChat`, the transcript and inspector renderers, and the `hai.css` tokens | written |
+| [The default UI](ui.md) | `mountChat`, the transcript and inspector renderers, the `hai.css` tokens, and `tailwind.css` | written |
 | [React](react.md) | `reactSurface` and `reactNotice` | written |
 | [Configuration and limits](limits.md) | Every option in every package in one place, and every fixed limit and timing HaiKIT applies, with its value | written |
 
@@ -237,8 +237,8 @@ From `@haikit/client`:
 | `SurfaceState` | type | [The browser client](client.md) |
 | `WireEvent` | type | [The browser client](client.md) |
 
-From `@haikit/client/app.js`, `@haikit/client/transcript.js` and
-`@haikit/client/hai.css`:
+From `@haikit/client/app.js`, `@haikit/client/transcript.js`,
+`@haikit/client/hai.css` and `@haikit/client/tailwind.css`:
 
 | Symbol | Kind | Page |
 | --- | --- | --- |
@@ -251,6 +251,7 @@ From `@haikit/client/app.js`, `@haikit/client/transcript.js` and
 | `closeTranscript` | function (`transcript.js`) | [The default UI](ui.md) |
 | `h` | function (`transcript.js`) | [The default UI](ui.md) |
 | `--hai-*` custom properties | CSS (`hai.css`) | [The default UI](ui.md) |
+| `--color-hai-*`, `--font-hai-*`, `--radius-hai`, `--shadow-hai` | Tailwind theme values (`tailwind.css`) | [The default UI](ui.md) |
 
 ### `@haikit/react`
 

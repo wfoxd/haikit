@@ -244,6 +244,8 @@ out.handlerBuilt = typeof nodeHandler(hai, "/hai") === "function";
 
 // the css is reachable through the exports map — the no-bundler path needs it
 out.cssResolves = import.meta.resolve("@haikit/client/hai.css").endsWith("/src/hai.css");
+// and so does the Tailwind entry, beside it so its @import of hai.css resolves
+out.tailwindCssResolves = import.meta.resolve("@haikit/client/tailwind.css").endsWith("/src/tailwind.css");
 
 console.log(JSON.stringify(out));
 `,
@@ -270,6 +272,7 @@ console.log(JSON.stringify(out));
   check("memoryStore round-trips a conversation", () => runtime.storeRoundTrip === true);
   check("createHai + nodeHandler build", () => runtime.handlerBuilt === true);
   check("@haikit/client/hai.css resolves via exports", () => runtime.cssResolves === true);
+  check("@haikit/client/tailwind.css resolves via exports", () => runtime.tailwindCssResolves === true);
 
   // ── 5. types resolve for a consumer ────────────────────────────────────
   // This is what catches a missing `types` condition or an unemitted .d.ts.

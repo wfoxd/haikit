@@ -11,12 +11,14 @@ guide; this page is the exact reference.
 
 Exported by `@haikit/client/app.js`: `mountChat`, `MountChatOptions`,
 `renderInspector`. By `@haikit/client/transcript.js`: `renderTranscript`,
-`TranscriptOptions`, `DockRequest`, `closeTranscript`, `h`. And the
-stylesheet `@haikit/client/hai.css`.
+`TranscriptOptions`, `DockRequest`, `closeTranscript`, `h`. And two
+stylesheets: `@haikit/client/hai.css`, and `@haikit/client/tailwind.css` for an
+app built with Tailwind CSS v4.
 
 Checked against `@haikit/*` 0.20.0. Source: `packages/client/src/app.js`,
-`packages/client/src/transcript.js`, `packages/client/src/hai.css` and their
-`.d.ts` files.
+`packages/client/src/transcript.js` and their `.d.ts` files,
+`packages/client/src/hai.css` (built from `packages/client/styles/`) and
+`packages/client/src/tailwind.css`.
 
 - [`mountChat`](#mountchat), [`MountChatOptions`](#mountchatoptions)
 - [The model context debug drawer](#the-model-context-debug-drawer):
@@ -26,6 +28,7 @@ Checked against `@haikit/*` 0.20.0. Source: `packages/client/src/app.js`,
   [`closeTranscript`](#closetranscript)
 - [`h`](#h)
 - [`hai.css`](#haicss): the `--hai-*` tokens
+- [`tailwind.css`](#tailwindcss): the tokens as Tailwind theme values
 
 ## `mountChat`
 
@@ -467,7 +470,14 @@ everything with it. It's exported for components that want the same.
 
 That path is where the examples serve the package's `src/` (see
 [The browser client: serving it](client.md#serving-it)). With a bundler,
-import `@haikit/client/hai.css`.
+import `@haikit/client/hai.css`. With Tailwind CSS v4, import
+[`tailwind.css`](#tailwindcss) instead, which brings this file with it.
+
+It's plain CSS, loaded as it is. In HaiKIT's repository it's built by
+`npm run build:css`: the hand-written rules in `packages/client/styles/hai.css`,
+followed by any utilities compiled from the default UI's class names. Those
+are prefixed `hai:` and sized in pixels, so they can't collide with a page's
+own classes, and a page's Tailwind theme or root font size can't resize them.
 
 Styles only what the framework renders: the shell, the transcript's blocks,
 the tool rows, the surface container, the drawer and the dock. It doesn't style the
@@ -646,3 +656,35 @@ outside it. A focused button in a bar, or a row of the pile's list, has a 2px
 outline in its text colour 6px inside it, so a card can't clip it. Where the
 pointer is coarse, items, bars and the stub are at least 44px tall, the bars'
 buttons 44px wide, and Remove all 44px square.
+
+## `tailwind.css`
+
+```css
+@import "tailwindcss";
+@import "@haikit/client/tailwind.css";
+```
+
+For an app built with Tailwind CSS v4: an optional peer dependency of
+`@haikit/client`, `tailwindcss` `^4.0.0`. It imports [`hai.css`](#haicss), so
+an app that imports `tailwind.css` doesn't import `hai.css` as well. And it
+gives Tailwind the tokens as theme values, for your surfaces:
+
+```html
+<div class="border-3 border-hai-line bg-hai-panel text-hai-dim shadow-hai">
+```
+
+| Theme value | Utilities | Is |
+| --- | --- | --- |
+| `--color-hai-*` | `bg-hai-*`, `text-hai-*`, `border-hai-*` and every other colour utility | One for each colour token above, tints included: `--color-hai-panel` is `var(--hai-panel)`, `--color-hai-line-soft` is `var(--hai-line-soft)` |
+| `--font-hai-sans`, `--font-hai-mono` | `font-hai-sans`, `font-hai-mono` | `var(--hai-sans)`, `var(--hai-mono)` |
+| `--radius-hai` | `rounded-hai` | `var(--hai-radius)` |
+| `--shadow-hai` | `shadow-hai` | `var(--hai-shadow)` |
+
+They're declared `inline`, so a utility uses the token itself and the page
+gets no `--color-hai-*` variables. An override of a token on `:root` reaches
+your surfaces as it reaches the default UI, and an opacity modifier, as in
+`bg-hai-accent/50`, mixes the token. The tokens already follow the scheme, so
+these need no `dark:` variant, and `tailwind.css` doesn't define one: your
+app's own `dark` variant is left as it is.
+
+Source: `packages/client/src/tailwind.css`.
