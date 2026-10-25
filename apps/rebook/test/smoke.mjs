@@ -12,10 +12,13 @@
  * upgrade, a wake turn that never starts, a revision that doesn't reach the
  * browser, a click the server should refuse and doesn't.
  *
+ * The page is built with Vite first and served from dist/, as the Dockerfile
+ * serves it.
+ *
  *   npm run smoke
  */
 
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -122,9 +125,16 @@ async function waitFor(url, tries = 60) {
 }
 
 console.log("\nrebook");
+try {
+  execFileSync("npx", ["vite", "build", "--logLevel", "error"], { cwd: APP, stdio: "pipe" });
+  ok("builds with vite");
+} catch (err) {
+  bad(`vite build failed\n${err.stderr ?? err.message}`);
+  process.exit(1);
+}
 const child = spawn(process.execPath, ["src/server/main.ts"], {
   cwd: APP,
-  env: { ...process.env, HAI_SCRIPTED: "1", PORT: String(PORT) },
+  env: { ...process.env, HAI_SCRIPTED: "1", NODE_ENV: "production", PORT: String(PORT) },
   stdio: ["ignore", "ignore", "pipe"],
 });
 let stderr = "";
@@ -135,10 +145,23 @@ try {
     bad(`server did not start\n${stderr}`);
   } else {
     ok("boots");
-    for (const asset of ["/", "/components.js", "/ops.js", "/styles.css", "/hai-client/app.js", "/hai-client/hai.css"]) {
-      const res = await fetch(`${BASE}${asset}`);
-      check(res.ok, `serves ${asset}`, `${asset} → ${res.status}`);
+    const page = await fetch(`${BASE}/`).then((r) => r.text());
+    const script = page.match(/<script[^>]+src="([^"]+\.js)"/)?.[1];
+    const sheet = page.match(/<link[^>]+href="(\/[^"]+\.css)"/)?.[1];
+    for (const asset of [script, sheet, "/icon.svg"]) {
+      const res = asset ? await fetch(`${BASE}${asset}`) : null;
+      check(res?.ok, `serves ${asset}`, `${asset ?? "a script and a stylesheet in the page"} → ${res?.status ?? "missing"}`);
     }
+    // one stylesheet: Tailwind's utilities, the default UI's through
+    // @haikit/client/tailwind.css, then Rebook's palette and surfaces, and no
+    // preflight, since the surfaces rely on the browser's defaults
+    const css = sheet ? await fetch(`${BASE}${sheet}`).then((r) => r.text()) : "";
+    check(
+      css.includes(".hai\\:") && css.includes("--hai-panel") && css.includes(".ops-button") && css.includes("#0d121a"),
+      "the stylesheet holds the default UI's utilities, its tokens, and Rebook's palette and surfaces",
+      "the stylesheet is missing the default UI's utilities, its tokens, or Rebook's own rules",
+    );
+    check(!/\*,\s*:+after,\s*:+before/.test(css), "the stylesheet has no preflight reset", "the stylesheet has Tailwind's preflight reset in it");
 
     // 1 · the trip opens, and nothing happens until the airline does something
     const start = await sse("/hai/start", {});
@@ -1215,7 +1238,7 @@ try {
     check(/hasn't chosen an option yet/.test(early.model), "issue_boarding_pass refuses before the traveller has chosen", () => early.model);
 
     // 10 · each surface and notice has a component in the browser registry
-    const registry = await fetch(`${BASE}/components.js`).then((r) => r.text());
+    const registry = script ? await fetch(`${BASE}${script}`).then((r) => r.text()) : "";
     for (const component of [
       "trip_card", "rebooking_options", "seat_map", "care_options", "boarding_pass", "flight_cancelled", "seat_confirmed",
       "flight_search", "flight_results", "fare_options", "booking_review", "booking_confirmed", "ticket_issued",

@@ -1,11 +1,20 @@
-/* Rebook's own styles. /hai-client/hai.css styles the shell, transcript and
-   model context drawer; this sheet sets the palette through the --hai-*
-   tokens and styles the surfaces, from those same tokens, so they follow
-   light and dark.
+/* Rebook's stylesheet. Tailwind's theme and utilities come first, without
+   its preflight reset: the surfaces below were written against the browser's
+   own defaults, and keep them until they move to utilities. Then
+   @haikit/client/tailwind.css, which brings hai.css, the shell, transcript
+   and model context drawer, and HaiKIT's tokens as theme values
+   (bg-hai-panel, text-hai-dim…). The rest sets the palette through the
+   --hai-* tokens and styles the surfaces, from those same tokens, so they
+   follow light and dark.
 
    An airline's printed things: flight numbers, codes and times in a mono
    face, a boarding pass with its tear line. Cobalt is the airline, orange a
    disruption, green what's settled, amber a seat waiting on someone. */
+
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+@import "@haikit/client/tailwind.css";
 
 /* Plain dark values first: a browser without light-dark() keeps these. */
 :root {

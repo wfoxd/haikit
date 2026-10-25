@@ -212,5 +212,5 @@ transcript renders the notice with a button that calls it.
 
 This package ships source, not a bundle. With a bundler, import normally, as
 the examples do with Vite. With no bundler, serve
-`node_modules/@haikit/client/src/` under a URL prefix — `apps/rebook` in
-HaiKIT's repository mounts it at `/hai-client/`.
+`node_modules/@haikit/client/src/` under a URL prefix, such as `/hai-client/`,
+and import the modules from there.

@@ -17,7 +17,7 @@
     "allowImportingTsExtensions": true
   },
   "include": [
-    "public/components.js",
-    "public/ops.js"
+    "src/client",
+    "vite.config.ts"
   ]
 }

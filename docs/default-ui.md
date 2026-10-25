@@ -123,8 +123,6 @@ Then the whole page is:
 </html>
 ```
 
-[`apps/rebook`](../apps/rebook) is built this way.
-
 ### The registry
 
 The registry maps each surface's name to a component. A component is an object
