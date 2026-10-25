@@ -3,17 +3,21 @@
  *
  * The artwork is haikit's own, docs/haikit-logo/haikit-logo.svg in the haikit
  * repository, copied here so this app stays self-contained. Its colours are not
- * baked in: each part gets a class, and styles.css fills them from hai.css's
- * logo tokens, so the logo reverses in the dark scheme like the one in the
- * header does.
+ * baked in: each part is filled from hai.css's logo tokens, so the logo
+ * reverses in the dark scheme like the one in the header does.
  */
-
-const SVG = "http://www.w3.org/2000/svg";
 
 const VIEW_BOX = "7 8 209.57 48";
 
+const PAINT = {
+  ink: "fill-hai-logo-ink",
+  paper: "fill-hai-logo-paper",
+  "paper-dim": "fill-hai-logo-paper opacity-50",
+  hot: "fill-hai-logo-hot",
+};
+
 // [x, y, width, height, rx, part]
-const MARK = [
+const MARK: [number, number, number, number, number, keyof typeof PAINT][] = [
   [7, 8, 26, 48, 7, "ink"],
   [12.5, 14.5, 15, 3, 1.5, "paper"],
   [12.5, 20.5, 9, 3, 1.5, "paper-dim"],
@@ -30,51 +34,35 @@ const WORDMARK =
 /** The logo's width over its height, for placing it at a given height. */
 export const LOGO_RATIO = 209.57 / 48;
 
-/** @param {Element} parent */
-function draw(parent) {
-  for (const [x, y, width, height, rx, part] of MARK) {
-    const rect = document.createElementNS(SVG, "rect");
-    for (const [k, v] of Object.entries({ x, y, width, height, rx })) {
-      if (v) rect.setAttribute(k, String(v));
-    }
-    rect.setAttribute("class", `brand-${part}`);
-    parent.append(rect);
-  }
-  const word = document.createElementNS(SVG, "path");
-  word.setAttribute("class", "brand-ink");
-  word.setAttribute("d", WORDMARK);
-  parent.append(word);
+function Parts() {
+  return (
+    <>
+      {MARK.map(([x, y, width, height, rx, part], i) => (
+        <rect key={i} className={PAINT[part]} x={x} y={y} width={width} height={height} rx={rx || undefined} />
+      ))}
+      <path className={PAINT.ink} d={WORDMARK} />
+    </>
+  );
+}
+
+/** The full logo as an inline SVG, named "HaiKIT" for assistive technology. */
+export function Logo({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox={VIEW_BOX} role="img" aria-label="HaiKIT">
+      <title>HaiKIT</title>
+      <Parts />
+    </svg>
+  );
 }
 
 /**
- * The full logo as an inline SVG, named "HaiKIT" for assistive technology.
- * @param {string} className
- * @returns {SVGSVGElement}
- */
-export function logo(className) {
-  const svg = document.createElementNS(SVG, "svg");
-  svg.setAttribute("class", className);
-  svg.setAttribute("viewBox", VIEW_BOX);
-  svg.setAttribute("role", "img");
-  svg.setAttribute("aria-label", "HaiKIT");
-  const title = document.createElementNS(SVG, "title");
-  title.textContent = "HaiKIT";
-  svg.append(title);
-  draw(svg);
-  return svg;
-}
-
-/**
- * The logo inside an SVG being built, its top left at (x, y) and `height`
+ * The logo inside an SVG being drawn, its top left at (x, y) and `height`
  * tall. The enclosing SVG's label speaks for it.
- * @param {Element} parent
- * @param {number} x
- * @param {number} y
- * @param {number} height
  */
-export function logoInto(parent, x, y, height) {
-  const g = document.createElementNS(SVG, "g");
-  g.setAttribute("transform", `translate(${x} ${y}) scale(${height / 48}) translate(-7 -8)`);
-  draw(g);
-  parent.append(g);
+export function LogoAt({ x, y, height }: { x: number; y: number; height: number }) {
+  return (
+    <g transform={`translate(${x} ${y}) scale(${height / 48}) translate(-7 -8)`}>
+      <Parts />
+    </g>
+  );
 }

@@ -1,0 +1,154 @@
+/* The course's stylesheet: Tailwind, the default UI's stylesheet and HaiKIT's
+   tokens as theme values, and shadcn/ui's, all following one palette. The
+   surfaces are styled with utilities in their components; what's here is the
+   palette, shadcn's colours pointed at it, and the few rules a utility can't
+   say.
+
+   The palette follows the dual channel: the accent (cobalt) is what the model
+   receives, good (teal) is what stays in the browser, warn (amber) is a turn
+   parked on a person. */
+
+@import "tailwindcss";
+@import "@haikit/client/tailwind.css";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+/* Plain dark values first: a browser without light-dark() keeps these, as
+   hai.css's own tokens do. */
+:root {
+  --hai-bg: #0f141a;
+  --hai-panel: #161d26;
+  --hai-panel-2: #121921;
+  --hai-line: #2a3442;
+  --hai-fg: #e3e8ee;
+  --hai-dim: #93a0b0;
+  --hai-accent: #8ea6ff;
+  --hai-on-accent: #0b1220;
+  --hai-good: #4fd1bd;
+  --hai-warn: #e7b04f;
+  --hai-bad: #f08a8f;
+  --hai-user-bg: #1b2442;
+  --hai-code-bg: #10161e;
+  --hai-selected: var(--hai-accent-soft);
+  /* hai.css hovers in amber; here amber means a turn waiting on someone, so
+     a hovered row takes a neutral tint of the text colour instead. */
+  --hai-hover: color-mix(in srgb, var(--hai-fg) 6%, transparent);
+
+  --hai-sans: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+  --hai-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  /* The conversation uses the whole window, less the default UI's gutter
+     (16px at least). Text keeps its own measure: paragraphs stop near 66
+     characters, the guide's replies at 72, so only what's wide by nature,
+     code, tables, diagrams and the welcome screen's sections, spreads out. */
+  --hai-column: 100%;
+}
+
+/* One value per scheme. These follow the system, or a data-hai-theme pin. */
+@supports (color: light-dark(#000, #fff)) {
+  :root {
+    --hai-bg: light-dark(#edf1f5, #0f141a);
+    --hai-panel: light-dark(#ffffff, #161d26);
+    --hai-panel-2: light-dark(#f6f8fb, #121921);
+    --hai-line: light-dark(#cad3de, #2a3442);
+    --hai-fg: light-dark(#17202b, #e3e8ee);
+    --hai-dim: light-dark(#536173, #93a0b0);
+    --hai-accent: light-dark(#2b4fd6, #8ea6ff);
+    --hai-on-accent: light-dark(#ffffff, #0b1220);
+    --hai-good: light-dark(#0c7a6e, #4fd1bd);
+    --hai-warn: light-dark(#9a5d08, #e7b04f);
+    --hai-bad: light-dark(#b4232a, #f08a8f);
+    --hai-user-bg: light-dark(#e6ecfc, #1b2442);
+    --hai-code-bg: light-dark(#f3f5f9, #10161e);
+  }
+}
+
+/* dark: follows the chat: the system's scheme, unless a data-hai-theme pin
+   on <html> chooses one. */
+@custom-variant dark {
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-hai-theme="light"]) & {
+      @slot;
+    }
+  }
+  :root[data-hai-theme="dark"] & {
+    @slot;
+  }
+}
+
+@theme inline {
+  --font-sans: var(--hai-sans);
+  --font-mono: var(--hai-mono);
+  --font-heading: var(--hai-sans);
+  --font-serif: "Source Serif 4", "Iowan Old Style", Georgia, serif;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --animate-flash: flash 1.4s ease-out;
+  --animate-waiting: waiting 1.6s ease-in-out infinite;
+}
+
+/* shadcn's colours are the course's. One block, not a :root and a .dark:
+   each --hai-* token already has a light and a dark value. */
+:root {
+  --background: var(--hai-panel);
+  --foreground: var(--hai-fg);
+  --card: var(--hai-panel);
+  --card-foreground: var(--hai-fg);
+  --popover: var(--hai-panel);
+  --popover-foreground: var(--hai-fg);
+  --primary: var(--hai-accent);
+  --primary-foreground: var(--hai-on-accent);
+  --secondary: var(--hai-panel-2);
+  --secondary-foreground: var(--hai-fg);
+  --muted: var(--hai-hover);
+  --muted-foreground: var(--hai-dim);
+  --accent: var(--hai-hover);
+  --accent-foreground: var(--hai-fg);
+  --destructive: var(--hai-bad);
+  --border: var(--hai-line);
+  --input: var(--hai-line);
+  --ring: var(--hai-accent);
+  --radius: var(--hai-radius);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+}
+
+/* A line or a section a link brought into view, marked for a moment. */
+@keyframes flash {
+  0%,
+  40% {
+    background: var(--hai-warn-soft);
+  }
+  100% {
+    background: transparent;
+  }
+}
+/* the checkpoint's dot, while it waits */
+@keyframes waiting {
+  50% {
+    opacity: 0.25;
+  }
+}

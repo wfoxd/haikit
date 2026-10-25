@@ -241,34 +241,35 @@ export const part2: PartDef = {
       blocks: [
         {
           kind: "p",
-          text: "In the browser, a **registry** maps surface names to components. A component is anything with `mount(element, props, ctx)`. It draws the props, and calls `ctx.send(action, value)`, its only channel back to the server.",
+          text: "In the browser, a **registry** maps surface names to components. A registry entry is anything with `mount(element, props, ctx)`. This app writes its components in React, and `reactSurface` from `@haikit/react` builds that entry around each one. A component draws its props, and calls `send(action, value)`, its only channel back to the server.",
         },
         {
           kind: "excerpt",
-          file: app("src/client/components.js"),
+          file: app("src/client/components.tsx"),
           pick: { region: "checkpoint-component" },
-          lang: "js",
+          lang: "tsx",
         },
         {
           kind: "list",
           items: [
-            "`ctx.mode` and `ctx.state` say whether the surface is a live question. Once it's answered, the runtime calls `freeze(selection)` and the component stops offering choices.",
-            "Everything is built with `textContent`, never HTML. Tool payloads are untrusted input.",
+            "`SurfaceProps<typeof checkpoint>` types the component from the shared contract: its props, and a `send` that takes only the actions the contract declares, each with its value's type.",
+            "`mode` and `state` say whether the surface is a live question. Once it's answered, the runtime freezes it: `state` turns `frozen`, `selection` holds the answer, and the component stops offering choices.",
+            "React writes text with `textContent`, never as HTML. Tool payloads are untrusted input.",
             "The registry is an allowlist. A surface name it doesn't contain renders an error card, never improvised UI.",
           ],
         },
         {
           kind: "p",
-          text: "This file is plain JavaScript, typechecked against the shared contract through JSDoc, and Vite bundles it with the rest of the page. With `@haikit/react` the same component is a function typed by `SurfaceProps<typeof checkpoint>`; `examples/hello` in the haikit repository builds its surfaces that way, from shadcn/ui.",
+          text: "The card, the badge and the buttons are shadcn/ui components, copied into the app's `src/client/components/ui/` and coloured from HaiKIT's tokens, so they follow the chat into light and dark. Each surface is a React root of its own, so the providers they need, here the tooltips', go around each one as `reactSurface`'s `wrapper`.",
         },
       ],
       takeaways: [
-        "A component is anything with mount(element, props, ctx); the registry maps surface names to components.",
-        "ctx.send(action, value) is the only way back to the server, and only declared actions are accepted.",
-        "freeze(selection) is called when a question has been answered.",
+        "A registry entry is anything with mount(element, props, ctx); reactSurface builds one around a React component.",
+        "send(action, value) is the only way back to the server, and only declared actions are accepted.",
+        "Once a question has been answered, the surface is frozen: state is frozen, and selection holds the answer.",
       ],
       check: {
-        question: "A component calls ctx.send(\"grade\", \"a\"), but the contract declares only answer. What happens?",
+        question: "A component calls send(\"grade\", \"a\"), but the contract declares only answer. What happens?",
         options: [
           "The server refuses it as an unbound action",
           "The server routes it to the closest matching tool",
@@ -306,9 +307,9 @@ export const part2: PartDef = {
         { kind: "p", text: "In the browser, the whole page is one call:" },
         {
           kind: "excerpt",
-          file: app("src/client/main.js"),
+          file: app("src/client/main.tsx"),
           pick: { region: "mount" },
-          lang: "js",
+          lang: "tsx",
         },
         {
           kind: "note",

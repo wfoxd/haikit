@@ -2,15 +2,15 @@
   "compilerOptions": {
     "target": "es2023",
     "lib": ["es2023", "dom", "dom.iterable"],
-    "module": "nodenext",
-    "moduleResolution": "nodenext",
-    "types": [],
+    "types": ["vite/client"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
     "strict": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "allowJs": true,
-    "checkJs": true,
-    "allowImportingTsExtensions": true
+    "allowImportingTsExtensions": true,
+    "paths": { "@/*": ["./src/client/*"] }
   },
   "include": ["src/client", "vite.config.ts"]
 }

@@ -42,9 +42,11 @@ jobs:
 
       # server and browser typecheck, which also compiles test/guarantees.ts:
       # what HaiKIT refuses to compile, against this app's own surfaces.
-      # then the smoke test: the real server, every lesson's live excerpts,
-      # the tutorials and the reference manual parsed, every reference link
-      # checked, the guide driven through the menu, lessons and pages
+      # then every surface mounted with React in jsdom, from today's props and
+      # the shapes older versions saved. then the smoke test: the real server,
+      # every lesson's live excerpts, the tutorials and the reference manual
+      # parsed, every reference link checked, the guide driven through the
+      # menu, lessons and pages
       - run: npm test
 
   # The lockfile pins what `test` sees, so a HaiKIT release can't break it.
@@ -77,5 +79,5 @@ jobs:
         if: always() && matrix.update == 'haikit'
         run: |
           echo '```' >> "$GITHUB_STEP_SUMMARY"
-          npm ls @haikit/core @haikit/server @haikit/client @haikit/anthropic @haikit/postgres --depth=0 >> "$GITHUB_STEP_SUMMARY" || true
+          npm ls @haikit/core @haikit/server @haikit/client @haikit/react @haikit/anthropic @haikit/postgres --depth=0 >> "$GITHUB_STEP_SUMMARY" || true
           echo '```' >> "$GITHUB_STEP_SUMMARY"
