@@ -10,7 +10,7 @@ what it refuses, and every default and limit that applies.
 **Covers:** `@haikit/*` 0.20.0.
 
 **Status:** every page below is written, and was checked against the source
-of 0.20.0, statement by statement.
+statement by statement, at the version the page names.
 
 ## Packages
 
@@ -41,7 +41,9 @@ of 0.20.0, statement by statement.
 | [Stores](stores.md) | The store interface every store implements, `memoryStore`, and `@haikit/postgres`: schema, migration, cross-server channels, cleanup | written |
 | [The browser client](client.md) | `createChat`, the `Chat` object and its state, and the registries for surfaces, notices and signals | written |
 | [The default UI](ui.md) | `mountChat`, the transcript and inspector renderers, the `hai.css` tokens, and `tailwind.css` | written |
+| [Tailwind CSS](tailwind.md) | `tailwind.css` and every theme value it gives an app, where the default UI's rules land in a Tailwind build, overriding a token, and `dark:` on a HaiKIT page | written |
 | [React](react.md) | `reactSurface` and `reactNotice` | written |
+| [shadcn/ui](shadcn.md) | What a HaiKIT page does that shadcn/ui's components meet: its colours from the tokens, `dark:`, its base rules, providers, pop-ups, Escape, docking, an out-of-date surface and toasts | written |
 | [Configuration and limits](limits.md) | Every option in every package in one place, and every fixed limit and timing HaiKIT applies, with its value | written |
 
 ## How each entry is written
@@ -251,7 +253,7 @@ From `@haikit/client/app.js`, `@haikit/client/transcript.js`,
 | `closeTranscript` | function (`transcript.js`) | [The default UI](ui.md) |
 | `h` | function (`transcript.js`) | [The default UI](ui.md) |
 | `--hai-*` custom properties | CSS (`hai.css`) | [The default UI](ui.md) |
-| `--color-hai-*`, `--font-hai-*`, `--radius-hai`, `--shadow-hai` | Tailwind theme values (`tailwind.css`) | [The default UI](ui.md) |
+| `--color-hai-*`, `--font-hai-*`, `--radius-hai`, `--shadow-hai` | Tailwind theme values (`tailwind.css`) | [Tailwind CSS](tailwind.md) |
 
 ### `@haikit/react`
 

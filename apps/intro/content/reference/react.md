@@ -238,8 +238,9 @@ export const registry = { greeting_picker: reactSurface(GreetingPicker, { wrappe
 - **Without `wrapper`,** the component is rendered as it was before the
   option existed, with nothing around it.
 
-[shadcn/ui in a HaiKIT app](../shadcn.md) covers the rest of what shadcn's
-components need on a HaiKIT page.
+[shadcn/ui](shadcn.md) is exact about the rest of what shadcn's components
+meet on a HaiKIT page, and [shadcn/ui in a HaiKIT app](../shadcn.md) sets
+them up.
 
 ## Safety
 
