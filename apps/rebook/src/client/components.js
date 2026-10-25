@@ -10,24 +10,24 @@
  * here.
  */
 
-/** @typedef {import("../src/shared/surfaces.ts").TripCardProps} TripCardProps */
-/** @typedef {import("../src/shared/surfaces.ts").RebookingOptionsProps} RebookingOptionsProps */
-/** @typedef {import("../src/shared/surfaces.ts").RebookOption} RebookOption */
-/** @typedef {import("../src/shared/surfaces.ts").SeatMapProps} SeatMapProps */
-/** @typedef {import("../src/shared/surfaces.ts").CareOptionsProps} CareOptionsProps */
-/** @typedef {import("../src/shared/surfaces.ts").RebookingReviewProps} RebookingReviewProps */
-/** @typedef {import("../src/shared/surfaces.ts").BoardingPassProps} BoardingPassProps */
-/** @typedef {import("../src/shared/surfaces.ts").FlightSearchProps} FlightSearchProps */
-/** @typedef {import("../src/shared/surfaces.ts").FlightResultsProps} FlightResultsProps */
-/** @typedef {import("../src/shared/surfaces.ts").HomeFlight} HomeFlight */
-/** @typedef {import("../src/shared/surfaces.ts").FareOptionsProps} FareOptionsProps */
-/** @typedef {import("../src/shared/surfaces.ts").BookingReviewProps} BookingReviewProps */
-/** @typedef {import("../src/shared/surfaces.ts").BookingConfirmedProps} BookingConfirmedProps */
-/** @typedef {import("../src/shared/surfaces.ts").Day} Day */
-/** @typedef {import("../src/shared/surfaces.ts").TokyoAirport} TokyoAirport */
-/** @typedef {import("@haikit/core").Infer<typeof import("../src/shared/notices.ts").flightCancelled.payload>} FlightCancelled */
-/** @typedef {import("@haikit/core").Infer<typeof import("../src/shared/notices.ts").seatConfirmed.payload>} SeatConfirmed */
-/** @typedef {import("@haikit/core").Infer<typeof import("../src/shared/notices.ts").ticketIssued.payload>} TicketIssued */
+/** @typedef {import("../shared/surfaces.ts").TripCardProps} TripCardProps */
+/** @typedef {import("../shared/surfaces.ts").RebookingOptionsProps} RebookingOptionsProps */
+/** @typedef {import("../shared/surfaces.ts").RebookOption} RebookOption */
+/** @typedef {import("../shared/surfaces.ts").SeatMapProps} SeatMapProps */
+/** @typedef {import("../shared/surfaces.ts").CareOptionsProps} CareOptionsProps */
+/** @typedef {import("../shared/surfaces.ts").RebookingReviewProps} RebookingReviewProps */
+/** @typedef {import("../shared/surfaces.ts").BoardingPassProps} BoardingPassProps */
+/** @typedef {import("../shared/surfaces.ts").FlightSearchProps} FlightSearchProps */
+/** @typedef {import("../shared/surfaces.ts").FlightResultsProps} FlightResultsProps */
+/** @typedef {import("../shared/surfaces.ts").HomeFlight} HomeFlight */
+/** @typedef {import("../shared/surfaces.ts").FareOptionsProps} FareOptionsProps */
+/** @typedef {import("../shared/surfaces.ts").BookingReviewProps} BookingReviewProps */
+/** @typedef {import("../shared/surfaces.ts").BookingConfirmedProps} BookingConfirmedProps */
+/** @typedef {import("../shared/surfaces.ts").Day} Day */
+/** @typedef {import("../shared/surfaces.ts").TokyoAirport} TokyoAirport */
+/** @typedef {import("@haikit/core").Infer<typeof import("../shared/notices.ts").flightCancelled.payload>} FlightCancelled */
+/** @typedef {import("@haikit/core").Infer<typeof import("../shared/notices.ts").seatConfirmed.payload>} SeatConfirmed */
+/** @typedef {import("@haikit/core").Infer<typeof import("../shared/notices.ts").ticketIssued.payload>} TicketIssued */
 /** @typedef {import("@haikit/client").MountCtx} MountCtx */
 
 /**

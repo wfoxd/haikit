@@ -130,12 +130,17 @@ books the flight, fare, seat and total the traveller confirmed.
 
 ## Run it
 
-Needs Node 22.18 or later (it runs TypeScript directly, with no build step).
+Needs Node 22.18 or later. The server runs its TypeScript directly, with no
+build step; the page is built with Vite and Tailwind.
 
 ```bash
 npm install
 npm start                # http://localhost:5190
 ```
+
+`npm start` runs Vite inside the server, on the same port, so a change to the
+components, the ops bar or the styles shows at once. To run the built page, as
+the container does: `npm run build`, then `NODE_ENV=production npm start`.
 
 With no API key it uses a scripted guide, so anyone can use the demo at no
 model cost. The scripted guide reads only what a real model would: digests,
@@ -164,7 +169,8 @@ npm test
 ```
 
 That typechecks the server and the browser components against the shared
-contracts, then boots the server and drives both paths above over HTTP,
+contracts, builds the page, then boots the server on the built page and drives
+both paths above over HTTP,
 with the airline played by the `/ops` routes: the guide speaking first, the
 capped query, the revisions, the refused clicks, the boarding pass and the
 gate change; then the filled-in search, the fares, the seat, the raised fare
@@ -177,7 +183,9 @@ docker build -t haikit-rebook .
 docker run --env-file .env -p 8080:8080 haikit-rebook
 ```
 
-The image never contains `.env`: `.dockerignore` leaves it out, so a key
+The image is built in two stages: the first builds the page with Vite, and
+only its `dist/` goes into the second, with the server and its production
+dependencies. The image never contains `.env`: `.dockerignore` leaves it out, so a key
 isn't baked into an image that might be pushed or shared. Docker doesn't read
 `.env` by itself either. `--env-file .env` hands its variables to the
 container when it starts, and `-e ANTHROPIC_API_KEY` passes one from your
@@ -203,7 +211,15 @@ src/server/tools.ts        show_trip (init), show_bookings, find_rebooking, show
                            offer_care, review_rebooking, issue_boarding_pass; start_booking,
                            show_flights, show_fares, show_home_seats, review_booking, issue_ticket
 src/server/scripted.ts     the scripted guide, a ModelAdapter
-src/server/main.ts         createHai, the /ops routes, static files
-public/                    the page, the components, the Airline ops bar, the styles
+src/server/main.ts         createHai, the /ops routes, the page: through Vite while developing,
+                           from dist/ in production
+index.html                 the page
+src/client/main.js         mounts the chat and the Airline ops bar
+src/client/components.js   the browser halves of the surfaces and notices
+src/client/ops.js          the Airline ops bar
+src/client/styles.css      Tailwind's theme and utilities, without its preflight; the default UI,
+                           through @haikit/client/tailwind.css; Rebook's palette and surfaces
+public/icon.svg            the icon, copied into dist/ as it is
+vite.config.ts             the page's build
 test/smoke.mjs             the end-to-end check
 ```

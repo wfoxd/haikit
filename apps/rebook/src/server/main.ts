@@ -124,12 +124,15 @@ async function handleOps(req: http.IncomingMessage, res: http.ServerResponse, ac
   }
 }
 
-// ─────────────────────────────────────────────────── static files
+// ─────────────────────────────────────────────────── the page
 
-// This app's page, plus the client runtime served from wherever node resolves
-// @haikit/client: the version installed in node_modules.
-const PUBLIC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../public");
-const CLIENT = path.join(path.dirname(fileURLToPath(import.meta.resolve("@haikit/client/package.json"))), "src");
+// While developing, Vite runs inside this server as middleware: one process
+// and one port, hot reload for the components, the ops bar and the Tailwind
+// build. In production (NODE_ENV=production, as the Dockerfile sets it),
+// `npm run build` has written dist/, served here as plain files.
+const PRODUCTION = process.env.NODE_ENV === "production";
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const DIST = path.join(ROOT, "dist");
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -145,15 +148,12 @@ const server = http.createServer(async (req, res) => {
     if (op) return await handleOps(req, res, op);
     if (req.method !== "GET" && req.method !== "HEAD") return void res.writeHead(405).end();
     if (url.pathname === "/healthz") return void res.writeHead(200, { "content-type": "text/plain" }).end("ok");
+    if (vite) return vite.middlewares(req, res);
 
-    const clientPrefix = "/hai-client/";
-    const [root, rel] = url.pathname.startsWith(clientPrefix)
-      ? [CLIENT, url.pathname.slice(clientPrefix.length)]
-      : [PUBLIC, url.pathname === "/" ? "index.html" : url.pathname.slice(1)];
-    const file = path.join(root, rel);
-    if (!file.startsWith(root + path.sep)) return void res.writeHead(403).end("forbidden");
+    const file = path.join(DIST, url.pathname === "/" ? "index.html" : url.pathname.slice(1));
+    if (!file.startsWith(DIST + path.sep)) return void res.writeHead(403).end("forbidden");
     const body = await fs.readFile(file).catch(() => null);
-    if (!body) return void res.writeHead(404).end("not found");
+    if (!body) return void res.writeHead(404).end(url.pathname === "/" ? "not built: run `npm run build` first" : "not found");
     res.writeHead(200, {
       "content-type": MIME[path.extname(file)] ?? "application/octet-stream",
       "cache-control": "no-cache",
@@ -167,8 +167,15 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+// Made after the server so hot reload can share its port: on a port of its
+// own, two servers running at once would fight over it.
+const vite = PRODUCTION
+  ? null
+  : await (await import("vite")).createServer({ root: ROOT, appType: "spa", server: { middlewareMode: true, ws: { server } } });
+
 server.listen(PORT, () => {
-  console.log(`rebook  http://localhost:${PORT}   model=${SCRIPTED ? "scripted guide" : hai.config.model.id}   store=memory`);
+  const page = PRODUCTION ? "built" : "vite dev";
+  console.log(`rebook  http://localhost:${PORT}   ${page}   model=${SCRIPTED ? "scripted guide" : hai.config.model.id}   store=memory`);
 });
 
 // Containers stop with SIGTERM: finish the requests in flight, then exit.
