@@ -40,7 +40,9 @@ the page; [the tutorial](tutorial.md) walks through it.
 The default, and what [the tutorial](tutorial.md) and every example in the
 repository use. Your stylesheet is Tailwind CSS v4 and `tailwind.css`, which
 brings `hai.css` with it and gives your surfaces the [tokens](#the-variables)
-as theme values:
+as theme values. The tutorial and `examples/hello` build their surfaces with
+React and [shadcn/ui](shadcn.md); `examples/flights`, below, in plain
+JavaScript:
 
 ```css
 /* src/client/styles.css */
@@ -481,6 +483,9 @@ Without it, the same from the variables:
 
 Avoid hard-coded colours such as `#1a222c`: they look right in one scheme and
 wrong in the other.
+
+With [shadcn/ui](shadcn.md), point its colour variables at the tokens once,
+and its components follow the chat too.
 
 These hooks are stable if you need to style around a surface:
 

@@ -7,8 +7,7 @@
   "updateInternalDependencies": "patch",
   "ignore": [
     "hello",
-    "flights",
-    "hello-react"
+    "flights"
   ],
   "fixed": [
     [

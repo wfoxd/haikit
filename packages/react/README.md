@@ -107,6 +107,6 @@ input, so never pass them to `dangerouslySetInnerHTML`.
 
 ## Building
 
-React needs a bundler. `examples/hello-react` in the haikit repo runs Vite
+React needs a bundler. `examples/hello` in the haikit repo runs Vite
 inside its own node server while developing, so the app and `/hai` share one
 port with no proxy, and serves `vite build`'s output in production.

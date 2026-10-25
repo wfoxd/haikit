@@ -5,6 +5,7 @@
 | [**spec.md**](spec.md) | Design spec — the dual channel, the contract split, elicit mode, the four guarantees, package topology |
 | [**tutorial.md**](tutorial.md) | Build *Hello, World!* as a haikit app in ten steps, annotated line by line |
 | [**tutorial-2.md**](tutorial-2.md) | *Tell them later*: the same app, speaking up after the request is over — progress, notices, wake turns and live updates, in nine steps |
+| [**shadcn.md**](shadcn.md) | shadcn/ui in a HaiKIT app: the colours from the tokens, `dark:` following the chat, providers around each surface, toasts and pop-ups |
 | [**default-ui.md**](default-ui.md) | The chat UI `@haikit/client` ships: setting it up, what each part does, the model context debug drawer, theming, styling your surfaces, and building your own layout |
 | [**design/default-ui-tokens-and-states.pdf**](design/default-ui-tokens-and-states.pdf) | The default UI's design: every `--hai-*` token's light and dark value, each tool row state, notices and system cards, the empty conversation, and surface patterns built from the tokens. `hai.css` follows it |
 | [**design/dock-bar.pdf**](design/dock-bar.pdf) | The dock's design: a surface docked to the shelf on the composer and opened as a window, wide and on a phone, in light and dark, with every item, shelf, pile, surface bar and window state and the tokens each uses |

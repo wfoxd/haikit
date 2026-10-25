@@ -20,6 +20,8 @@ const CASES = [
     name: "hello",
     entry: "examples/hello/src/server/main.ts",
     build: "examples/hello",
+    // shadcn/ui's classes, and its dark: variant following the chat's pin
+    appCss: ["bg-primary", "data-hai-theme=dark"],
     env: { NODE_ENV: "production" },
     port: 5275,
     message: "greet me",
@@ -38,32 +40,11 @@ const CASES = [
     },
   },
   {
-    // hello's surfaces as React components
-    name: "hello-react",
-    entry: "examples/hello-react/src/server/main.ts",
-    build: "examples/hello-react",
-    env: { NODE_ENV: "production" },
-    port: 5276,
-    message: "greet me",
-    tool: "list_greetings",
-    component: "greeting_picker",
-    action: "choose",
-    value: "he",
-    expectInResolution: /Chose Hebrew/,
-    staleAfterMs: undefined,
-    display: {
-      message: "show the hebrew one",
-      component: "greeting_card",
-      action: "copy",
-      value: { code: "he" },
-      expectInLabel: /Copied the Hebrew greeting/,
-    },
-  },
-  {
     // tutorial 2's app: hello, telling the user things after the request is over
     name: "hello-notices",
     entry: "examples/hello-notices/src/server/main.ts",
     build: "examples/hello-notices",
+    appCss: ["bg-primary", "data-hai-theme=dark"],
     env: { NODE_ENV: "production" },
     port: 5274,
     message: "greet me",
@@ -241,7 +222,7 @@ for (const c of CASES) {
     // its tokens and its hai: utilities, and the Tailwind classes the app's
     // components use
     const css = await pageCss(base);
-    css.includes("--hai-panel") && css.includes(".hai\\:") && css.includes("bg-hai-hover")
+    css.includes("--hai-panel") && css.includes(".hai\\:") && (c.appCss ?? ["bg-hai-hover"]).every((rule) => css.includes(rule))
       ? ok("its stylesheet has the default UI's rules and the app's Tailwind classes")
       : bad("the built stylesheet is missing hai.css or the app's classes");
 

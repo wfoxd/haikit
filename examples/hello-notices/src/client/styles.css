@@ -1,5 +1,0 @@
-/* Tailwind, then the default UI's stylesheet and HaiKIT's tokens as theme
-   values: bg-hai-panel, text-hai-dim, border-hai-line-soft… The components
-   style themselves with them, so they follow the scheme and any override. */
-@import "tailwindcss";
-@import "@haikit/client/tailwind.css";

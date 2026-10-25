@@ -1,9 +1,9 @@
-import "./styles.css";
+import "./globals.css";
 import { mountChat } from "@haikit/client/app.js";
-import { notices, registry } from "./components.js";
+import { notices, registry } from "./components.tsx";
 
 mountChat({
-  root: /** @type {HTMLElement} */ (document.querySelector("#app")),
+  root: document.querySelector<HTMLElement>("#app")!,
   registry,
   notices,
   title: "hello",

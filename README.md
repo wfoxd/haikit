@@ -60,10 +60,10 @@ answer. **97% of the payload never enters context.**
   npm run example:hello      # http://localhost:5175
   ```
 
-  `npm run example:flights` (http://localhost:5173) is the flight search above,
-  and `npm run example:hello-react` (http://localhost:5176) is hello with React
-  components. Open **Context**, top right: the model context drawer shows
-  everything the model actually receives.
+  hello is the first tutorial's app: its surfaces are React components built
+  from shadcn/ui. `npm run example:flights` (http://localhost:5173) is the
+  flight search above, in plain JavaScript. Open **Context**, top right: the
+  model context drawer shows everything the model actually receives.
 
 ## Use it in your app
 
