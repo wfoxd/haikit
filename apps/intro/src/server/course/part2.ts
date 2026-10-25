@@ -259,7 +259,7 @@ export const part2: PartDef = {
         },
         {
           kind: "p",
-          text: "This file is plain JavaScript, typechecked against the shared contract through JSDoc, and Vite bundles it with the rest of the page. With `@haikit/react` the same component is a function typed by `SurfaceProps<typeof checkpoint>`; `examples/hello-react` in the haikit repository shows one.",
+          text: "This file is plain JavaScript, typechecked against the shared contract through JSDoc, and Vite bundles it with the rest of the page. With `@haikit/react` the same component is a function typed by `SurfaceProps<typeof checkpoint>`; `examples/hello` in the haikit repository builds its surfaces that way, from shadcn/ui.",
         },
       ],
       takeaways: [
