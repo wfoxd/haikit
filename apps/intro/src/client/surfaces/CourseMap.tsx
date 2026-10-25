@@ -1,6 +1,7 @@
 import { useRef, type ReactNode } from "react";
 import type { SurfaceProps } from "@haikit/react";
 import type { CourseMapProps, courseMap } from "../../shared/surfaces.ts";
+import { scrollTranscript } from "@/lib/scroll";
 import { cn } from "@/lib/utils";
 import { inline } from "../blocks/inline.tsx";
 import { Closed, useShowTop } from "./parts.tsx";
@@ -43,6 +44,13 @@ export function CourseMap({ props, send, mode, state, selection }: SurfaceProps<
     stored.tutorials ??
     (stored.tutorial ? [{ blurb: "Build a Hello, World! app with HaiKIT, step by step, read right here.", ...stored.tutorial }] : []);
 
+  const open = (id: string) => {
+    // the map opened at its top, so the transcript holds there: follow again,
+    // so what it opens streams into view
+    scrollTranscript(root.current?.parentElement, "bottom");
+    void send("open", id);
+  };
+
   const row = (id: string, children: ReactNode) => {
     const className = cn(
       "grid w-full grid-cols-[2.6em_minmax(0,1fr)_auto] gap-x-3 gap-y-0.5 border-b border-hai-line-soft px-2.5 py-[9px] text-left",
@@ -52,7 +60,7 @@ export function CourseMap({ props, send, mode, state, selection }: SurfaceProps<
     return (
       <li key={id}>
         {live ? (
-          <button type="button" className={className} onClick={() => void send("open", id)}>
+          <button type="button" className={className} onClick={() => open(id)}>
             {children}
           </button>
         ) : (
