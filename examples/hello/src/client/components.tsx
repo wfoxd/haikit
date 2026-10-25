@@ -42,7 +42,7 @@ function GreetingPicker({ props, send, mode, state, selection }: SurfaceProps<ty
                 <TooltipContent>{g.speakersM}M speakers</TooltipContent>
               </Tooltip>
               {live ? (
-                <Button size="sm" variant="outline" onClick={() => choose(g.code)}>
+                <Button size="sm" variant="outline" aria-label={`Choose ${g.language}`} onClick={() => choose(g.code)}>
                   Choose
                 </Button>
               ) : g.code === selection ? (

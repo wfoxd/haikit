@@ -103,13 +103,14 @@ The browser half gets a config of its own, because it runs somewhere else: with 
 **`vite.config.ts`** — *new file*
 
 ```ts
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  resolve: { alias: { "@": new URL("./src/client", import.meta.url).pathname } },
+  resolve: { alias: { "@": fileURLToPath(new URL("./src/client", import.meta.url)) } },
 });
 ```
 
@@ -505,7 +506,7 @@ function GreetingPicker({ props, send, mode, state, selection }: SurfaceProps<ty
                 <TooltipContent>{g.speakersM}M speakers</TooltipContent>
               </Tooltip>
               {live ? (  // 10
-                <Button size="sm" variant="outline" onClick={() => choose(g.code)}>
+                <Button size="sm" variant="outline" aria-label={`Choose ${g.language}`} onClick={() => choose(g.code)}>
                   Choose
                 </Button>
               ) : g.code === selection ? (  // 11
@@ -546,7 +547,7 @@ export const registry = {
 
 **9** React writes `g.text` as text, never as markup. Tool payloads are untrusted input, so keep it that way: never pass them to `dangerouslySetInnerHTML`. The `dir` on the line below is the payoff of the `rtl` prop: the browser needs one attribute to lay out Arabic correctly, and the model needed to know nothing about it.
 
-**10** While the question is live, each row offers a button that answers it.
+**10** While the question is live, each row offers a button that answers it. Its `aria-label` names the language, so a screen reader moving from button to button hears which one, not *Choose* six times.
 
 **11** When the turn resolves, `state` becomes `"frozen"`, `selection` is the value the user picked, and the component renders again with them. That is what swaps the buttons for a *picked* badge and stops accepting clicks.
 
