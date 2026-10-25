@@ -80,7 +80,8 @@ npx changeset          # describe the change
 
 Merging to `main` opens a "Version Packages" PR; merging that publishes. The
 release workflow runs `npm test` and `npm run packtest` before it will publish
-anything.
+anything. The PR is made by `npm run version-packages`: `changeset version`,
+then `npm install`, so `package-lock.json` moves with the versions.
 
 Auth is **trusted publishing**: npm verifies the release workflow's OIDC identity
 against a trusted publisher configured on each of the seven packages

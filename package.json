@@ -25,6 +25,7 @@
     "example:hello-react": "npm run build && HAI_SCRIPTED=1 node examples/hello-react/src/server/main.ts",
     "clean": "rm -rf packages/*/dist packages/*/*.tsbuildinfo",
     "release": "npm run build && npx changeset publish",
+    "version-packages": "npx changeset version && npm install",
     "changeset": "npx changeset",
     "reacttest": "node scripts/reacttest.mjs",
     "uitest": "node scripts/uitest.mjs"
