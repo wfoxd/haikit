@@ -13,7 +13,7 @@ for (const name of ["Node", "HTMLElement", "Event", "MouseEvent"]) globalThis[na
 // tells React that updates here are flushed through act()
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-const { createElement: h, useEffect, useState, act } = await import("react");
+const { createContext, createElement: h, useContext, useEffect, useState, act } = await import("react");
 const { reactSurface, reactNotice } = await import("../packages/react/dist/index.js");
 const { renderTranscript } = await import("../packages/client/src/transcript.js");
 
@@ -157,6 +157,75 @@ await act(async () => surfaces.get("ui_02").instance.unmount());
   );
   await act(async () => held.unmount());
   check("unmount() cleans up a React notice", noticeCleanups === 1 && noticeEl.childNodes.length === 0);
+}
+
+// ── a wrapper: the providers a surface needs, since each is a root of its own
+{
+  const Theme = createContext("none");
+  let wrapperEffects = 0;
+  let wrapperCleanups = 0;
+  let wrapperRenders = 0;
+  function Providers({ children }) {
+    wrapperRenders++;
+    // a provider with state of its own, to show a revision keeps it
+    const [theme] = useState(() => `tooltips-${wrapperEffects}`);
+    useEffect(() => {
+      wrapperEffects++;
+      return () => void wrapperCleanups++;
+    }, []);
+    return h(Theme.Provider, { value: theme }, children);
+  }
+  function Themed({ props, state, expired }) {
+    const theme = useContext(Theme);
+    const [open, setOpen] = useState(false);
+    return h(
+      "div",
+      { "data-state": state, "data-expired": String(expired) },
+      h("button", { className: "open", onClick: () => setOpen(true) }, "open"),
+      h("p", { className: "themed" }, `${theme} ${props.price} ${open ? "open" : "closed"}`),
+    );
+  }
+
+  // mounted as a browser would, with no act(): the provider is there on the first, synchronous render
+  globalThis.IS_REACT_ACT_ENVIRONMENT = false;
+  const wrappedEl = document.createElement("div");
+  document.body.append(wrappedEl);
+  const wrappedSurface = reactSurface(Themed, { wrapper: Providers }).mount(wrappedEl, { price: 343 }, { handle: "ui_01", mode: "display", state: "live", send: async () => {} });
+  check("a wrapper's context reaches the component on the first render, as soon as mount() returns", wrappedEl.querySelector("p.themed")?.textContent === "tooltips-0 343 closed");
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+
+  await act(async () => click(wrappedEl.querySelector("button.open")));
+  await act(async () => wrappedSurface.update({ price: 389 }));
+  check("update() under a wrapper keeps the component's state and the wrapper's", wrappedEl.querySelector("p.themed")?.textContent === "tooltips-0 389 open");
+
+  await act(async () => wrappedSurface.freeze(undefined));
+  await act(async () => wrappedSurface.expire());
+  check(
+    "freeze() and expire() re-render inside the wrapper",
+    wrappedEl.firstElementChild.dataset.state === "frozen" && wrappedEl.firstElementChild.dataset.expired === "true" && wrappedEl.querySelector("p.themed")?.textContent.startsWith("tooltips-0"),
+  );
+  check("the wrapper is mounted once, not again on each re-render", wrapperEffects === 1 && wrapperRenders >= 4);
+
+  await act(async () => wrappedSurface.unmount());
+  check("unmount() cleans up the wrapper's effects too", wrapperCleanups === 1 && wrappedEl.childNodes.length === 0);
+
+  const noticeEl = document.createElement("div");
+  document.body.append(noticeEl);
+  let notice;
+  await act(async () => {
+    notice = reactNotice(({ payload }) => h("p", { className: "themed" }, `${useContext(Theme)} ${payload.flight}`), { wrapper: Providers }).mount(noticeEl, { flight: "AC832" }, { seq: 1, version: 1 });
+  });
+  check("a React notice renders inside its wrapper", noticeEl.querySelector("p.themed")?.textContent === "tooltips-1 AC832");
+  await act(async () => notice.unmount());
+
+  const bareEl = document.createElement("div");
+  document.body.append(bareEl);
+  let bare;
+  await act(async () => {
+    bare = reactSurface(Themed).mount(bareEl, { price: 1 }, { handle: "ui_01", mode: "display", state: "live", send: async () => {} });
+  });
+  check("without a wrapper, a provider around the app is out of reach: the context has its default", bareEl.querySelector("p.themed")?.textContent === "none 1 closed");
+  await act(async () => bare.unmount());
 }
 
 console.log(failures ? `\n${failures} check(s) failed\n` : "\nreact: all checks passed\n");
