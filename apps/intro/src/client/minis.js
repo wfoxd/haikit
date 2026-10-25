@@ -10,7 +10,7 @@
  * grid is a picture, so it hears which seat was picked instead.
  */
 
-/** @typedef {import("../src/shared/surfaces.ts").WelcomeProps} WelcomeProps */
+/** @typedef {import("../shared/surfaces.ts").WelcomeProps} WelcomeProps */
 /** @typedef {Exclude<WelcomeProps["example"]["steps"][number]["scene"][number], { from: string }>} MiniLine */
 /** @typedef {{ k: string, v: string, moved?: boolean }} Fact */
 

@@ -13,7 +13,7 @@
 import { LOGO_RATIO, logoInto } from "./logo.js";
 import { arrow, el } from "./svg.js";
 
-/** @typedef {import("../src/shared/surfaces.ts").Architecture} Architecture */
+/** @typedef {import("../shared/surfaces.ts").Architecture} Architecture */
 /** @typedef {Architecture["nodes"][number]} Node */
 /** @typedef {Architecture["links"][number][number]} Arrow */
 

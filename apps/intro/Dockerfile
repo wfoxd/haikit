@@ -7,6 +7,15 @@
 # HAI_MODEL (another Claude model), DATABASE_URL (durable conversations in
 # Postgres instead of memory).
 
+# The page: Vite builds the components, the menu and the Tailwind stylesheet
+# into dist/. Only dist/ leaves this stage.
+FROM node:24-slim AS page
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
 FROM node:24-slim
 ENV NODE_ENV=production PORT=8080
 WORKDIR /app
@@ -15,7 +24,10 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
+# all of it, not only the server: the course quotes the page's own code and
+# reads its Markdown when it starts
 COPY . .
+COPY --from=page /app/dist dist
 USER node
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s \

@@ -22,7 +22,7 @@ software. You steer.":
    steps on a timeline. Each step's scene draws what you'd see: the AI's
    words, your clicks, and Rebook's own components, drawn small under the
    tool that rendered them (the trip card, the options, the seat map, the
-   night's question, the boarding pass; `public/minis.js`). Then a link to
+   night's question, the boarding pass; `src/client/minis.js`). Then a link to
    try it, and, for developers, the diagram of how a HaiKIT app works.
 4. **Fewer tokens.** How HaiKIT keeps the AI's bill small: a meter for two
    measured examples (a flight search's 47 results, about 1,958 tokens on
@@ -36,8 +36,8 @@ It ends with the place to start, beside a Tutorial panel whose steps open
 HaiKIT's tutorials right here, and under them a Reference panel whose buttons
 open each page of HaiKIT's reference manual. The text lives in
 `src/server/course/index.ts`, and the drawings are SVG in
-`public/illustrations.js` and `public/architecture.js`, and Rebook's
-components, drawn small, in `public/minis.js`. A welcome saved before this
+`src/client/illustrations.js` and `src/client/architecture.js`, and Rebook's
+components, drawn small, in `src/client/minis.js`. A welcome saved before this
 layout (version 10 or earlier), before the chatbot comparison (version 11), or
 before the tokens section (version 12) still renders as it was; one saved
 before the walkthrough drew Rebook's components (version 13) shows its four
@@ -142,12 +142,17 @@ server with the page, the line and the link.
 
 ## Run it
 
-Needs Node 22.18 or later (it runs TypeScript directly, with no build step).
+Needs Node 22.18 or later. The server runs its TypeScript directly, with no
+build step; the page is built with Vite and Tailwind.
 
 ```bash
 npm install
 npm start                # http://localhost:5180
 ```
+
+`npm start` runs Vite inside the server, on the same port, so a change to the
+components, the menu or the styles shows at once. To run the built page, as
+the container does: `npm run build`, then `NODE_ENV=production npm start`.
 
 With no API key it uses a scripted guide, so anyone can take the course at no
 model cost. To use Claude as the guide:
@@ -174,8 +179,8 @@ That runs two checks:
   against the shared contract. It also compiles `test/guarantees.ts`, which
   breaks haikit's rules on purpose; if a haikit release ever stopped
   rejecting one of those lines, the typecheck fails.
-- **`npm run smoke`** boots the server and drives the course the way a learner
-  does: the welcome screen on start and both of its choices, the course map,
+- **`npm run smoke`** builds the page, boots the server on it as the container
+  does, and drives the course the way a learner does: the welcome screen on start and both of its choices, the course map,
   opening a lesson, answering a checkpoint, typing instead of answering, a
   glossary lookup through `query_ui`, every lesson rendering, and every page
   of both tutorials, reached from the welcome screen, the map, the menu and by
@@ -218,8 +223,10 @@ docker build -t haikit-intro .
 docker run -p 8080:8080 haikit-intro
 ```
 
-Any container host works: point it at this folder's `Dockerfile`. The server
-listens on `PORT` (8080 in the image), and `GET /healthz` returns `ok`.
+Any container host works: point it at this folder's `Dockerfile`. It builds
+the page with Vite in a first stage, and the image serves what that wrote to
+`dist/`. The server listens on `PORT` (8080 in the image), and `GET /healthz`
+returns `ok`.
 
 | Variable | Default | Effect |
 | --- | --- | --- |
@@ -320,9 +327,16 @@ src/server/course/         the lessons, the introduction, the glossary and the a
 src/server/excerpts.ts     reads the code the lessons quote
 src/server/tutorial.ts     reads content/tutorial.md and tutorial-2.md into the tutorials' pages
 src/server/reference.ts    reads content/reference/ into the manual's pages, and checks its links
-src/server/main.ts         createHai, routes, static files
-public/                    the page, the components, the header menu, the styles, the HaiKIT logo,
-                           the welcome screen's diagram, illustrations and Rebook's components drawn small
+src/server/main.ts         createHai, routes, the page: through Vite while developing, from dist/
+                           in production
+index.html                 the page
+src/client/main.js         mounts the chat, the header menu and the reading-now chip
+src/client/                the components, the header menu, the HaiKIT logo, the welcome screen's
+                           diagram, illustrations and Rebook's components drawn small
+src/client/styles.css      Tailwind's theme and utilities, without its preflight; the default UI,
+                           through @haikit/client/tailwind.css; the course's palette and surfaces
+public/icon.svg            the icon, copied into dist/ as it is
+vite.config.ts             the page's build
 test/guarantees.ts         what haikit refuses to compile, quoted by lesson 2.7
 test/smoke.mjs             the end-to-end check
 content/tutorial.md        HaiKIT's tutorials, copied from the haikit repository

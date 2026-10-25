@@ -37,7 +37,7 @@ export const part2: PartDef = {
           rows: [
             ["`@haikit/core`", "`defineSurface`, `defineTool`, `cap`, the wire types, and the adapter interfaces. Runs anywhere."],
             ["`@haikit/server`", "The agent loop, the elicit state machine, the derived `query_ui` tool, and the HTTP routes."],
-            ["`@haikit/client`", "The browser runtime and the default chat UI. Plain ES modules, no build step."],
+            ["`@haikit/client`", "The browser runtime and the default chat UI. Plain ES modules: a bundler takes them as they are, and a page with no bundler can load them straight."],
             ["`@haikit/anthropic`", "The Claude model adapter."],
             ["`@haikit/postgres`", "A durable store, safe to share between several server instances."],
             ["`@haikit/react`", "Write surface components in React, typed from the contract."],
@@ -245,7 +245,7 @@ export const part2: PartDef = {
         },
         {
           kind: "excerpt",
-          file: app("public/components.js"),
+          file: app("src/client/components.js"),
           pick: { region: "checkpoint-component" },
           lang: "js",
         },
@@ -259,7 +259,7 @@ export const part2: PartDef = {
         },
         {
           kind: "p",
-          text: "This file is plain JavaScript with no build step, typechecked against the shared contract through JSDoc. With `@haikit/react` the same component is a function typed by `SurfaceProps<typeof checkpoint>`; `examples/hello-react` in the haikit repository shows one.",
+          text: "This file is plain JavaScript, typechecked against the shared contract through JSDoc, and Vite bundles it with the rest of the page. With `@haikit/react` the same component is a function typed by `SurfaceProps<typeof checkpoint>`; `examples/hello-react` in the haikit repository shows one.",
         },
       ],
       takeaways: [
@@ -306,7 +306,7 @@ export const part2: PartDef = {
         { kind: "p", text: "In the browser, the whole page is one call:" },
         {
           kind: "excerpt",
-          file: app("public/index.html"),
+          file: app("src/client/main.js"),
           pick: { region: "mount" },
           lang: "js",
         },
