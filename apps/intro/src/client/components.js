@@ -14,15 +14,15 @@ import { el } from "./svg.js";
 import { logo } from "./logo.js";
 import { mini } from "./minis.js";
 
-/** @typedef {import("../src/shared/surfaces.ts").WelcomeProps} WelcomeProps */
-/** @typedef {import("../src/shared/surfaces.ts").CourseMapProps} CourseMapProps */
-/** @typedef {import("../src/shared/surfaces.ts").LessonProps} LessonProps */
-/** @typedef {import("../src/shared/surfaces.ts").CheckpointProps} CheckpointProps */
-/** @typedef {import("../src/shared/surfaces.ts").NextLessonProps} NextLessonProps */
-/** @typedef {import("../src/shared/surfaces.ts").TutorialStepProps} TutorialStepProps */
-/** @typedef {import("../src/shared/surfaces.ts").ReferencePageProps} ReferencePageProps */
-/** @typedef {import("../src/shared/surfaces.ts").Block} Block */
-/** @typedef {import("../src/shared/surfaces.ts").Step} Step */
+/** @typedef {import("../shared/surfaces.ts").WelcomeProps} WelcomeProps */
+/** @typedef {import("../shared/surfaces.ts").CourseMapProps} CourseMapProps */
+/** @typedef {import("../shared/surfaces.ts").LessonProps} LessonProps */
+/** @typedef {import("../shared/surfaces.ts").CheckpointProps} CheckpointProps */
+/** @typedef {import("../shared/surfaces.ts").NextLessonProps} NextLessonProps */
+/** @typedef {import("../shared/surfaces.ts").TutorialStepProps} TutorialStepProps */
+/** @typedef {import("../shared/surfaces.ts").ReferencePageProps} ReferencePageProps */
+/** @typedef {import("../shared/surfaces.ts").Block} Block */
+/** @typedef {import("../shared/surfaces.ts").Step} Step */
 /** @typedef {import("@haikit/client").MountCtx} MountCtx */
 
 /**
@@ -592,7 +592,7 @@ function siteLink(link) {
  * A welcome stored before version 11: the diagram beside the lede, then
  * three sections, each a heading, an illustration and three points.
  * @typedef {{
- *   architecture?: import("../src/shared/surfaces.ts").Architecture,
+ *   architecture?: import("../shared/surfaces.ts").Architecture,
  *   sections?: { title: string, lead: string, image?: { kind: string, alt: string }, points: { title: string, text: string }[] }[],
  * }} LegacyWelcome
  */

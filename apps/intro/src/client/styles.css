@@ -1,11 +1,26 @@
-/* The course's own styles. /hai-client/hai.css styles the shell, transcript
-   and model context drawer; this sheet sets the course's palette through the
-   --hai-* tokens and styles everything inside the course's surfaces, built
-   from those same tokens so they follow light and dark.
+/* The course's stylesheet. Tailwind's theme and utilities come first,
+   without its preflight reset: the course's surfaces were written against the
+   browser's own defaults, and keep them until they move to utilities. Then
+   @haikit/client/tailwind.css, which brings hai.css, the shell, transcript and
+   model context drawer, and HaiKIT's tokens as theme values (bg-hai-panel,
+   text-hai-dim…). The rest sets the course's palette through the --hai-*
+   tokens and styles everything inside the course's surfaces, built from those
+   same tokens so they follow light and dark.
 
    The palette follows the dual channel: the accent (cobalt) is what the model
    receives, good (teal) is what stays in the browser, warn (amber) is a turn
    parked on a person. */
+
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities) source("./");
+@import "@haikit/client/tailwind.css";
+
+/* Tailwind makes a utility of any class name it finds in the source it scans:
+   this folder, the page's code, and not the course's Markdown or the server.
+   .contents is also the reference's contents button below: without this it
+   would be display: contents, with no box of its own. */
+@source not inline("contents");
 
 /* Plain dark values first: a browser without light-dark() keeps these, as
    hai.css's own tokens do. */

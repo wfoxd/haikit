@@ -8,10 +8,13 @@
  * server refuses to start), wire protocol drift after a haikit upgrade, a
  * state machine that stops parking, a binding table that stops rejecting.
  *
+ * The page is built with Vite first and served from dist/, as the Dockerfile
+ * serves it.
+ *
  *   npm run smoke
  */
 
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -76,9 +79,16 @@ const opened = (evs) => evs.filter((e) => e.type === "ui_open");
 const propsOf = (evs, handle) => evs.find((e) => e.type === "ui_props" && e.handle === handle)?.props;
 
 console.log("\nhaikit intro");
+try {
+  execFileSync("npx", ["vite", "build", "--logLevel", "error"], { cwd: APP, stdio: "pipe" });
+  ok("builds with vite");
+} catch (err) {
+  bad(`vite build failed\n${err.stderr ?? err.message}`);
+  process.exit(1);
+}
 const child = spawn(process.execPath, ["src/server/main.ts"], {
   cwd: APP,
-  env: { ...process.env, HAI_SCRIPTED: "1", PORT: String(PORT), DATABASE_URL: "" },
+  env: { ...process.env, HAI_SCRIPTED: "1", NODE_ENV: "production", PORT: String(PORT), DATABASE_URL: "" },
   stdio: ["ignore", "ignore", "pipe"],
 });
 let stderr = "";
@@ -96,11 +106,25 @@ try {
     const installed = JSON.parse(readFileSync(manifest, "utf8")).version;
     about.haikit === installed ? ok(`reports the installed haikit (${installed})`) : bad(`version.json says ${about.haikit}, installed is ${installed}`);
 
-    // the page and the client runtime it loads, served from node_modules
-    for (const asset of ["/", "/components.js", "/logo.js", "/svg.js", "/architecture.js", "/illustrations.js", "/minis.js", "/menu.js", "/styles.css", "/hai-client/app.js", "/hai-client/hai.css"]) {
-      const res = await get(`${BASE}${asset}`);
-      res.ok ? ok(`serves ${asset}`) : bad(`${asset} → ${res.status}`);
+    // the page and what it loads, built into dist/
+    const page = await get(`${BASE}/`).then((r) => r.text());
+    const script = page.match(/<script[^>]+src="([^"]+\.js)"/)?.[1];
+    const sheet = page.match(/<link[^>]+href="(\/[^"]+\.css)"/)?.[1];
+    for (const asset of [script, sheet, "/icon.svg"]) {
+      const res = asset ? await get(`${BASE}${asset}`) : null;
+      res?.ok ? ok(`serves ${asset}`) : bad(`${asset ?? "a script and a stylesheet in the page"} → ${res?.status ?? "missing"}`);
     }
+    // one stylesheet: Tailwind's utilities, the default UI's through
+    // @haikit/client/tailwind.css, then the course's palette and surfaces, and
+    // no preflight, since the surfaces rely on the browser's defaults
+    const css = sheet ? await get(`${BASE}${sheet}`).then((r) => r.text()) : "";
+    css.includes(".hai\\:") && css.includes("--hai-panel") && css.includes(".welcome-reference-page") && css.includes("#0f141a")
+      ? ok("the stylesheet holds the default UI's utilities, its tokens, and the course's palette and surfaces")
+      : bad("the stylesheet is missing the default UI's utilities, its tokens, or the course's own rules");
+    !/\*,\s*:+after,\s*:+before/.test(css) ? ok("the stylesheet has no preflight reset") : bad("the stylesheet has Tailwind's preflight reset in it");
+    !/\.contents\s*\{\s*display:\s*contents/.test(css)
+      ? ok("the reference's .contents button isn't made a Tailwind utility")
+      : bad("the stylesheet makes .contents display: contents, so the reference's contents button loses its box");
 
     // 1 · init parks the conversation on the welcome screen before anything is typed
     const start = await sse("/hai/start", {});
@@ -703,7 +727,7 @@ try {
     }
 
     // 9 · each surface has a component in the browser registry
-    const registry = await get(`${BASE}/components.js`).then((r) => r.text());
+    const registry = script ? await get(`${BASE}${script}`).then((r) => r.text()) : "";
     for (const component of ["welcome", "course_map", "lesson", "checkpoint", "next_lesson", "tutorial_step", "reference_page"]) {
       new RegExp(`\\b${component}\\s*:`).test(registry)
         ? ok(`${component} is registered in components.js`)

@@ -1,7 +1,7 @@
 /**
  * The contract for the course's surfaces. Both halves import this file:
  * the server implements it in ../server/surfaces.ts, and the browser renders it
- * in ../../public/components.js, typechecked against the types below.
+ * in ../client/components.js, typechecked against the types below.
  *
  * The #region markers are read by the server at startup: Part 2 of the course
  * shows these exact lines, so the lessons can never drift from the code.
