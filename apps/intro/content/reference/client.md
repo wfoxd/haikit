@@ -1,10 +1,12 @@
 # The browser client
 
 `@haikit/client` is the browser runtime: plain ES modules with no build step
-and no dependencies. `createChat` owns the transport, the transcript's
-blocks, and mounting surfaces and notices. It draws nothing itself, apart
-from an error card for a component the registry doesn't list. The
-default UI, `mountChat`, is built on it (see [The default UI](ui.md)).
+and no dependencies. Its one optional peer dependency, `tailwindcss`, is for
+an app that imports [`tailwind.css`](ui.md#tailwindcss). `createChat` owns
+the transport, the transcript's blocks, and mounting surfaces and notices. It
+draws nothing itself, apart from an error card for a component the registry
+doesn't list. The default UI, `mountChat`, is built on it (see
+[The default UI](ui.md)).
 
 Exported by `@haikit/client`: `createChat`, and the types `Chat`,
 `ChatState`, `SurfaceRecord`, `Block`, `WireEvent`, `Registry`,
@@ -661,7 +663,8 @@ type ConversationStatus = "idle" | "streaming" | "awaiting";
 ## Serving it
 
 The package ships source, not a bundle. With a bundler, import it normally.
-With none, serve `node_modules/@haikit/client/src/` under a URL prefix, as the
-examples do at `/hai-client/`, and import the modules from there. Any file in
+With none, serve `node_modules/@haikit/client/src/` under a URL prefix, as
+`apps/rebook` in HaiKIT's repository does at `/hai-client/`, and import the
+modules from there. Any file in
 `src/` can be imported, through the package's `./*` export, but only the
 modules on this page and [The default UI](ui.md) are its API.

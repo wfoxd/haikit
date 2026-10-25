@@ -355,7 +355,7 @@ try {
       const notices = await sse("/hai/chat", { conversationId: id, message: "Open tutorial step 2-05" });
       const five = pageOf(notices).props;
       const annotated = five?.blocks?.find((b) => b.kind === "code" && b.marks);
-      five?.id === "2-05" && annotated?.file === "public/components.js" && annotated.marks.length === 6 && annotated.notes?.length === 6
+      five?.id === "2-05" && annotated?.file === "src/client/components.js" && annotated.marks.length === 6 && annotated.notes?.length === 6
         ? ok("the menu's choice opens step 2-05, its code with its file and its 6 numbered notes")
         : bad(`step 2-05: ${five?.id}, ${annotated?.file}, ${annotated?.marks?.length} marks`);
 

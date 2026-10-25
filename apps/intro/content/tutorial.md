@@ -27,7 +27,7 @@ A standalone project. You do not need the haikit repo checked out — the four p
 **`terminal`** — *run*
 
 ```bash
-mkdir -p haikit_hello/src/{shared,server} haikit_hello/public
+mkdir -p haikit_hello/src/{shared,server,client}
 cd haikit_hello
 ```
 
@@ -42,14 +42,15 @@ Everything from here on is relative to `haikit_hello/`, and that is where every 
   "type": "module",
   "scripts": {
     "start": "node --env-file-if-exists=.env src/server/main.ts",
-    "typecheck": "tsc --noEmit"
+    "build": "vite build",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.client.json"
   }
 }
 ```
 
 No dependencies listed — you install them in a moment and npm writes the current versions, which beats copying pinned ones out of a page that ages.
 
-There is no `build` script and nothing to compile either. The framework arrives from npm already built, and Node 22+ runs your own `.ts` files directly by stripping the types — so `npm start` is the whole loop.
+Your server needs no compiling. The framework arrives from npm already built, and Node 22+ runs your own `.ts` files directly by stripping the types. The browser half goes through Vite, which also builds the Tailwind classes your component is styled with, and while you work it runs inside your server (step 06), so `npm start` is the whole loop. `npm run build` is for when you ship.
 
 `--env-file-if-exists=.env` loads a `.env` file beside `package.json` when there is one: that's where your API key goes in step 06. Node doesn't read a `.env` file on its own. Until you make one, Node carries on without it, and may print a line saying so.
 
@@ -68,11 +69,47 @@ There is no `build` script and nothing to compile either. The framework arrives 
       "allowImportingTsExtensions": true,
       "rewriteRelativeImportExtensions": true
     },
-    "include": ["src"]
+    "include": ["src/server", "src/shared"]
 }
 ```
 
 `nodenext` is not optional here. It is what makes TypeScript read the `exports` map in each `@haikit/*` package, and it is why `.ts` extensions appear in the imports later on.
+
+The browser half gets a config of its own, because it runs somewhere else: with the DOM, without Node, and through Vite.
+
+**`tsconfig.client.json`** — *new file*
+
+```json
+{
+    "compilerOptions": {
+      "target": "es2023",
+      "lib": ["es2023", "dom", "dom.iterable"],
+      "types": [],
+      "module": "esnext",
+      "moduleResolution": "bundler",
+      "strict": true,
+      "noImplicitAny": false,
+      "noEmit": true,
+      "allowJs": true,
+      "checkJs": true,
+      "allowImportingTsExtensions": true
+    },
+    "include": ["src/client"]
+}
+```
+
+`checkJs` is what lets a plain `.js` component be checked against the contract, in step 05.
+
+**`vite.config.ts`** — *new file*
+
+```ts
+import { defineConfig } from "vite";
+import tailwindcss from "@tailwindcss/vite";
+
+export default defineConfig({
+  plugins: [tailwindcss()],
+});
+```
 
 **`terminal`** — *run*
 
@@ -81,7 +118,7 @@ npm install @haikit/core @haikit/server @haikit/client @haikit/anthropic zod
 ```
 
 ```bash
-npm install -D typescript @types/node
+npm install -D typescript @types/node vite tailwindcss @tailwindcss/vite
 ```
 
 ## 02 · Declare the contract
@@ -152,7 +189,7 @@ There is also `inform(schema)` for actions that add context without blocking; st
 
 **6** Exists so `digest` and `choose` can compute “most spoken” and a rank server-side, without a second lookup.
 
-**7** One source of truth for the type. `public/components.js` imports this exact type through JSDoc, which is how the browser half stays honest.
+**7** One source of truth for the type. `src/client/components.js` imports this exact type through JSDoc, which is how the browser half stays honest.
 
 **8** The registry key. It must match the key in the client's `registry` object or the surface renders an error card.
 
@@ -395,12 +432,12 @@ export const tools = [listGreetings];                      // 10
 
 ## 05 · Build the component
 
-Plain JS, no build step. Its only channel to the server is `ctx.send(action, value)` — it cannot name a tool, a handler, or an endpoint.
+Plain JS, styled with Tailwind. Its only channel to the server is `ctx.send(action, value)` — it cannot name a tool, a handler, or an endpoint.
 
-**`public/components.js`** — *new file*
+**`src/client/components.js`** — *new file*
 
 ```js
-/** @typedef {import("../src/shared/surfaces.ts").Greeting} Greeting */  // 1
+/** @typedef {import("../shared/surfaces.ts").Greeting} Greeting */  // 1
 
 const h = (tag, cls, text) => {
   const n = document.createElement(tag);
@@ -409,36 +446,42 @@ const h = (tag, cls, text) => {
   return n;
 };
 
+const CHIP = "cursor-pointer rounded-full border px-2.5 py-0.75 font-hai-mono text-[11px]";  // 3
+const CHIP_ON = `${CHIP} border-hai-accent bg-hai-accent text-hai-on-accent`;
+const CHIP_OFF = `${CHIP} border-hai-line text-hai-dim hover:border-hai-accent hover:text-hai-fg`;
+const ROW = "grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] items-baseline gap-3 border-b border-hai-line-soft px-3 py-1.75";
+
 export const registry = {
-  greeting_picker: {                                      // 3
-    mount(el, props, ctx) {                               // 4
-      let scriptFilter = null;                            // 5
-      let state = ctx.state;                               // 6
+  /** @type {import("@haikit/client").ComponentDef<{ greetings: Greeting[] }>} */  // 4
+  greeting_picker: {                                      // 5
+    mount(el, props, ctx) {                               // 6
+      let scriptFilter = null;                            // 7
+      let state = ctx.state;                               // 8
       let picked = null;
 
-      const scripts = [...new Set(props.greetings.map((g) => g.script))].sort();  // 7
+      const scripts = [...new Set(props.greetings.map((g) => g.script))].sort();  // 9
 
       const render = () => {
-        el.replaceChildren();                             // 8
-        const live = state === "live" && ctx.mode === "elicit";  // 9
+        el.replaceChildren();                             // 10
+        const live = state === "live" && ctx.mode === "elicit";  // 11
 
-        const chips = h("div", "chips");
+        const chips = h("div", "flex flex-wrap gap-1.5 px-3 pt-2.25 pb-1");
         for (const sc of [null, ...scripts]) {
-          const b = h("button", scriptFilter === sc ? "chip on" : "chip", sc ?? "all");
-          b.onclick = () => { scriptFilter = sc; render(); };  // 10
+          const b = h("button", scriptFilter === sc ? CHIP_ON : CHIP_OFF, sc ?? "all");
+          b.onclick = () => { scriptFilter = sc; render(); };  // 12
           chips.append(b);
         }
 
         const rows = props.greetings.filter((g) => !scriptFilter || g.script === scriptFilter);
-        const list = h("div", "rows");
+        const list = h("div", "pt-1 pb-2");
         for (const g of rows) {
-          const row = h("div", live ? "row selectable" : "row");
+          const row = h("div", live ? `${ROW} cursor-pointer hover:bg-hai-hover` : ROW);
 
-          const greeting = h("span", "greeting", g.text);
-          if (g.rtl) greeting.dir = "rtl";                    // 11
+          const greeting = h("span", "text-[15px]", g.text);
+          if (g.rtl) greeting.dir = "rtl";                    // 13
 
-          row.append(greeting, h("span", "lang", g.language));
-          if (live) row.onclick = () => ctx.send("choose", g.code);  // 12
+          row.append(greeting, h("span", "font-hai-mono text-xs text-hai-dim", g.language));
+          if (live) row.onclick = () => ctx.send("choose", g.code);  // 14
           list.append(row);
         }
 
@@ -446,81 +489,65 @@ export const registry = {
       };
 
       render();
-      return {                                              // 13
-        freeze(sel) { state = "frozen"; picked = sel ?? null; render(); },  // 14
+      return {                                              // 15
+        freeze(sel) { state = "frozen"; picked = sel ?? null; render(); },  // 16
       };
     },
   },
 };
 ```
 
-**1** Pulls the type straight out of the contract. This file is checked by `tsc` with `checkJs`, so changing a prop server-side breaks the browser build too.
+**1** Pulls the type straight out of the contract. `npm run typecheck` checks this file too, through `tsconfig.client.json` and its `checkJs`, so changing a prop server-side breaks the browser build too.
 
 **2** `textContent`, never `innerHTML`. Tool payloads are untrusted input — this is the line that keeps a malicious greeting from becoming markup.
 
-**3** Key must match the surface's `name`. An unregistered component renders an error card rather than an improvised UI.
+**3** Tailwind classes, written out in full, because Tailwind finds the ones you use by reading this file. The `hai-` colours, `hai-line`, `hai-dim`, `hai-accent` and the rest, are the chat's own, so the picker follows its light and dark schemes and any colour you change in it.
 
-**4** The framework calls this once, with validated props. Everything below is ordinary DOM code — there is no component model to learn.
+**4** Hands the contract's type to `mount`. Rename a prop in step 02, or misspell `ctx.send`, and `npm run typecheck` says so.
 
-**5** Local state. It is not in the contract, so there is no channel for it to reach the server even if you wanted one.
+**5** Key must match the surface's `name`. An unregistered component renders an error card rather than an improvised UI.
 
-**6** Copied out of `ctx` because `freeze()` mutates it later. Reading `ctx.state` inside `render` would always show the mount-time value.
+**6** The framework calls this once, with validated props. Everything below is ordinary DOM code — there is no component model to learn.
 
-**7** Derived in the browser from data it already has. The server was never asked, and the model never learns the script list exists.
+**7** Local state. It is not in the contract, so there is no channel for it to reach the server even if you wanted one.
 
-**8** Full re-render on every local change. At 120 rows that is free; virtualize only when measurement says to.
+**8** Copied out of `ctx` because `freeze()` mutates it later. Reading `ctx.state` inside `render` would always show the mount-time value.
 
-**9** Two conditions. A display surface is never clickable, and an elicit surface stops being clickable the moment its turn resolves.
+**9** Derived in the browser from data it already has. The server was never asked, and the model never learns the script list exists.
 
-**10** The local tier: mutate, re-render, done. No `ctx.send`, no round trip, no token cost. If filtering cost a model call the app would feel broken.
+**10** Full re-render on every local change. At 120 rows that is free; virtualize only when measurement says to.
 
-**11** The payoff of the `rtl` prop. The browser needs one line to lay out Arabic correctly; the model needed to know nothing about it.
+**11** Two conditions. A display surface is never clickable, and an elicit surface stops being clickable the moment its turn resolves.
 
-**12** The single declared channel to the server. `"choose"` must match the contract exactly — a typo surfaces as `unbound action` at runtime.
+**12** The local tier: mutate, re-render, done. No `ctx.send`, no round trip, no token cost. If filtering cost a model call the app would feel broken.
 
-**13** The mount return value is the component's handle back to the framework. If `mount` sets up anything that outlives its element, such as a timer, a subscription or a React root, return an `unmount()` that releases it. It is called when the surface goes away: on *Start a new conversation*, or when the chat is closed.
+**13** The payoff of the `rtl` prop. The browser needs one line to lay out Arabic correctly; the model needed to know nothing about it.
 
-**14** Called when the turn resolves, with the value the user picked. Re-rendering here is what flips the badge to “resolved” and stops accepting clicks.
+**14** The single declared channel to the server. `"choose"` must match the contract exactly — a typo surfaces as `unbound action` at runtime.
+
+**15** The mount return value is the component's handle back to the framework. If `mount` sets up anything that outlives its element, such as a timer, a subscription or a React root, return an `unmount()` that releases it. It is called when the surface goes away: on *Start a new conversation*, or when the chat is closed.
+
+**16** Called when the turn resolves, with the value the user picked. Re-rendering here is what flips the badge to “resolved” and stops accepting clicks.
 
 > [!NOTE]
 > **Local vs declared**
 >
 > The script chips are *local*: they filter rows already in the browser and never touch the server. Only `choose` round-trips. If filtering a list cost a model round trip, the app would feel broken no matter how good the model is.
 
-Your component emits its own class names, so it needs its own stylesheet. `hai.css` deliberately does not style the inside of a surface — the moment it did, it would be dictating what your UI looks like.
+Tailwind needs a stylesheet to start from, and that is all of it:
 
-**`public/styles.css`** — *new file*
+**`src/client/styles.css`** — *new file*
 
 ```css
-/* This app's own styles. The framework ships /hai-client/hai.css for the
-   transcript, shell and debug drawer; everything here is inside our surface. */
-
-.chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 9px 12px 4px; }
-.chip {
-  background: none; color: var(--hai-dim); border: 1px solid var(--hai-line);
-  border-radius: 999px; padding: 3px 10px; font: 11px var(--hai-mono); cursor: pointer;
-}
-.chip:hover { color: var(--hai-fg); border-color: var(--hai-accent); }
-.chip.on { color: var(--hai-on-accent); background: var(--hai-accent); border-color: var(--hai-accent); }
-
-.rows { padding: 4px 0 8px; }
-.row {
-  display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
-  gap: 12px; align-items: baseline; padding: 7px 12px;
-  border-bottom: 1px solid var(--hai-line-soft);
-}
-.row.selectable { cursor: pointer; }
-.row.selectable:hover { background: var(--hai-hover); }
-.row.picked { background: var(--hai-selected); }
-.greeting { font-size: 15px; }
-.lang { color: var(--hai-dim); font: 12px var(--hai-mono); }
+@import "tailwindcss";
+@import "@haikit/client/tailwind.css";
 ```
 
-`index.html` in the next step links this as `/styles.css`, so the filename matters.
+The second line brings `hai.css`, the stylesheet for everything the framework renders, and gives Tailwind the `hai-` colours. `hai.css` deliberately does not style the inside of a surface — the moment it did, it would be dictating what your UI looks like — so every class inside the picker is one you chose.
 
 ## 06 · Wire it up and run
 
-The whole server in one file: the runtime, the two hai routes, and the static assets. There is no bundler — the app serves its own `public/` alongside the client runtime straight out of its package in `node_modules`, so the browser loads `@haikit/client` as plain ESM.
+The whole server in one file: the runtime, the two hai routes, and the browser half. While you work, Vite runs inside this server: it serves the page and your modules, builds the Tailwind classes, and reloads the browser when you save, all on the same port as `/hai`, so there is no proxy to set up. Once you've run `npm run build`, the same server serves what that wrote instead.
 
 **`src/server/main.ts`** — *new file*
 
@@ -554,39 +581,36 @@ user's browser, addressable by the handle in the digest (e.g. ui_01).
 
 const handleHai = nodeHandler(hai, "/hai");                  // 7
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const PUBLIC = path.resolve(HERE, "../../public");
-const CLIENT = path.dirname(fileURLToPath(import.meta.resolve("@haikit/client")));  // 8
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const DIST = path.join(ROOT, "dist");
+const PRODUCTION = process.env.NODE_ENV === "production";   // 8
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
 };
 
-http
-  .createServer(async (req, res) => {
-    if (await handleHai(req, res)) return;                 // 9
+const server = http.createServer(async (req, res) => {
+  if (await handleHai(req, res)) return;                     // 9
+  if (vite) return vite.middlewares(req, res);               // 10
 
-    const url = new URL(req.url ?? "/", "http://localhost");
-    const clientPrefix = "/hai-client/";
-    let file: string;
-    if (url.pathname.startsWith(clientPrefix)) {
-      file = path.join(CLIENT, url.pathname.slice(clientPrefix.length));
-      if (!file.startsWith(CLIENT)) return void res.writeHead(403).end("forbidden");  // 10
-    } else {
-      file = path.join(PUBLIC, url.pathname === "/" ? "index.html" : url.pathname.slice(1));
-      if (!file.startsWith(PUBLIC)) return void res.writeHead(403).end("forbidden");
-    }
+  const url = new URL(req.url ?? "/", "http://localhost");
+  const file = path.join(DIST, url.pathname === "/" ? "index.html" : url.pathname.slice(1));
+  if (!file.startsWith(DIST)) return void res.writeHead(403).end("forbidden");  // 11
+  try {
+    const body = await fs.readFile(file);
+    res.writeHead(200, { "content-type": MIME[path.extname(file)] ?? "application/octet-stream" });
+    res.end(body);
+  } catch {
+    res.writeHead(404).end("not found");
+  }
+});
 
-    try {
-      const body = await fs.readFile(file);
-      res.writeHead(200, { "content-type": MIME[path.extname(file)] ?? "application/octet-stream" });
-      res.end(body);
-    } catch {
-      res.writeHead(404).end("not found");
-    }
-  })
-  .listen(5175, () => console.log("hello  http://localhost:5175"));
+const vite = PRODUCTION                                      // 12
+  ? null
+  : await (await import("vite")).createServer({ root: ROOT, appType: "spa", server: { middlewareMode: true, ws: { server } } });
+
+server.listen(5175, () => console.log("hello  http://localhost:5175"));
 ```
 
 **1** The model seam. Swap in your own object with a `generate()` method and the runtime cannot tell — that is how `examples/flights` in the haikit repo ships a scripted model for demos.
@@ -603,43 +627,51 @@ http
 
 **7** Mounts the routes under `/hai`: `POST /hai/chat`, `POST /hai/interact`, and `POST /hai/start`, which answers with an empty stream for an app with no init tool, such as this one. Everything about the elicit state machine lives behind them.
 
-**8** Ask Node where the package actually is rather than hand-writing a path into `node_modules` — hoisting, pnpm and workspaces each put it somewhere different, and a guessed path breaks on whichever one you didn't test.
+**8** Production means `npm run build` has written `dist/`: the page, your components and the compiled stylesheet. Then the server serves those and never loads Vite.
 
 **9** Returns `true` if it handled the request, so hai composes with whatever else your server does rather than owning the process.
 
-**10** Not decoration. Without this check and its twin below it, a request for `/../../.env` escapes the directory you meant to expose.
+**10** While you work, everything else is Vite's: the page, your modules, `@haikit/client` out of `node_modules`, and the stylesheet with your classes built into it.
 
-And the page. `@haikit/client` ships the default UI — the shell, transcript, composer and model context debug drawer — so this is the whole of it:
+**11** Not decoration. Without this check, a request for `/../.env` escapes the directory you meant to expose.
 
-**`public/index.html`** — *new file*
+**12** Made after the server, so Vite's hot reload shares its port rather than opening one of its own, and imported only here, so production never loads it.
+
+And the page. `@haikit/client` ships the default UI — the shell, transcript, composer and model context debug drawer — so this is the whole of it. `index.html` goes at the top of the project, where Vite looks for it:
+
+**`index.html`** — *new file*
 
 ```html
 <!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>hello — built on haikit</title>
-    <link rel="stylesheet" href="/hai-client/hai.css" />
-    <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <div id="app"></div>
-    <script type="module">
-      import { mountChat } from "/hai-client/app.js";
-      import { registry } from "./components.js";
-
-      mountChat({
-        root: document.querySelector("#app"),
-        registry,
-        title: "hello",
-        suggestions: ["greet me", "which ones are right-to-left?"],
-      });
-    </script>
+    <script type="module" src="/src/client/main.js"></script>
   </body>
 </html>
 ```
 
-There is no `app.js`. `mountChat` builds the shell, wires the composer, renders the transcript and mounts your surfaces; `hai.css` styles everything it renders. Your own `styles.css` holds only what *your* components emit — `.chips`, `.row`, `.greeting` — plus any `--hai-*` token you want to override.
+**`src/client/main.js`** — *new file*
+
+```js
+import "./styles.css";
+import { mountChat } from "@haikit/client/app.js";
+import { registry } from "./components.js";
+
+mountChat({
+  root: /** @type {HTMLElement} */ (document.querySelector("#app")),
+  registry,
+  title: "hello",
+  suggestions: ["greet me", "which ones are right-to-left?"],
+});
+```
+
+That is all the code the page has. `mountChat` builds the shell, wires the composer, renders the transcript and mounts your surfaces; `hai.css`, which `styles.css` brings in, styles everything it renders. Your classes style only what *your* components emit, and a `--hai-*` token you override in `styles.css` reaches both. The `@type` tells `npm run typecheck` that `#app` is there, which `querySelector` can't promise.
 
 > [!NOTE]
 > **Where the line is**
@@ -895,22 +927,23 @@ export const showGreeting = defineTool({
 
 Now the browser half. **This is the step that bites** — the registry key must match the surface's `name` exactly, and a mismatch is not a crash. The client renders `unknown component: greeting_card` in place of the card, because the registry is an allowlist and anything unlisted cannot be mounted at all.
 
-**`public/components.js`** — *append inside `registry`*
+**`src/client/components.js`** — *append inside `registry`*
 
 ```js
+  /** @type {import("@haikit/client").ComponentDef<{ greeting: Greeting }>} */
   greeting_card: {
     mount(el, props, ctx) {
       const g = props.greeting;
 
-      const card = h("div", "card");
-      const text = h("div", "card-text", g.text);
+      const card = h("div", "flex flex-col items-start gap-2 px-3.5 py-4");
+      const text = h("div", "text-[28px] leading-tight", g.text);
       if (g.rtl) text.dir = "rtl";
 
-      const meta = h("div", "card-meta", `${g.language} · ${g.script} · ${g.speakersM}M speakers`);
+      const meta = h("div", "font-hai-mono text-xs text-hai-dim", `${g.language} · ${g.script} · ${g.speakersM}M speakers`);
 
       // A display surface never parked the turn, so there is nothing to
       // resolve. `inform` adds a line to the conversation after the fact.
-      const copy = h("button", "chip", "copy");
+      const copy = h("button", CHIP_OFF, "copy");
       copy.onclick = async () => {
         await navigator.clipboard?.writeText(g.text).catch(() => {});
         copy.textContent = "copied";
@@ -946,15 +979,7 @@ const hai = createHai({
 });
 ```
 
-A little CSS, since `hai.css` styles only what the framework renders — never the inside of your surfaces:
-
-**`public/styles.css`** — *append*
-
-```css
-.card { display: flex; flex-direction: column; gap: 8px; padding: 16px 14px; align-items: flex-start; }
-.card-text { font-size: 28px; line-height: 1.25; }
-.card-meta { color: var(--hai-dim); font: 12px var(--hai-mono); }
-```
+No stylesheet to touch: the card is styled by its classes, and Tailwind finds them in the file. The copy button reuses the chips' `CHIP_OFF`.
 
 > [!TIP]
 > **Checkpoint**
@@ -1066,6 +1091,7 @@ You now have every concept in the framework, in about 150 lines. The next app di
 
   Several server instances can share one database safely: a conversation takes one turn at a time however many processes receive its requests. On another database, implement `StoreAdapter` from `@haikit/core`: five methods, each documented with what it has to guarantee, and `packages/postgres` in the haikit repo is a worked example.
 - **Set real freshness windows.** Step 9 showed what one does. `"never"` is the default and right for greetings; prices and availability need the window their data actually holds for, such as `staleAfterMs: 15 * 60_000` for fares. With your own UI instead of `mountChat`, show `chat.state.expired` and call `chat.reset()` to start over.
+- **Build the browser half.** `npm run build` writes the page, your components and the stylesheet, with only the classes you use, to `dist/`. Start the server with `NODE_ENV=production` and it serves those, and never loads Vite.
 - **Gate the destructive tools.** An approval card is structurally identical to what you built in steps 2–6: a two-button surface with a `resolve` action. Same machinery, no new concepts, and its handler can do the destructive thing itself: it runs only for the click the turn is waiting for.
 
 ### Start every conversation the same way
@@ -1149,7 +1175,7 @@ function GreetingPicker({ props, send, mode, state }: SurfaceProps<typeof greeti
 export const registry = { greeting_picker: reactSurface(GreetingPicker) };
 ```
 
-`send("choose", g.code)` compiles. `send("delete", …)` doesn't, because the contract never declared it, and neither does a value of the wrong type. The transcript mounts each surface once, so `useState` survives the conversation streaming on. React needs a bundler: `examples/hello-react` is this tutorial's app with Vite, running inside the same node server.
+`send("choose", g.code)` compiles. `send("delete", …)` doesn't, because the contract never declared it, and neither does a value of the wrong type. The transcript mounts each surface once, so `useState` survives the conversation streaming on. Vite already builds your browser half, so React needs only `react`, `react-dom`, `@haikit/react` and Vite's React plugin: `examples/hello-react` in the haikit repo is this tutorial's app built that way, with the same Tailwind classes as JSX.
 
 ### Tell the user things later
 
