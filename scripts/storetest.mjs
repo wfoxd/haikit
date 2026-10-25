@@ -6846,7 +6846,8 @@ async function transcriptChecks() {
     const says = (block) => {
       renderTranscript(rows, asking);
       const row = rows.children[asking.state.blocks.indexOf(block)];
-      return `${row.className.match(/hai-status-\S+/)?.[0]} ${row.children[0].children[3].textContent}`;
+      // the hook, a class of its own: utilities name statuses too, as in hai:[&.hai-status-running]:bg-panel
+      return `${row.className.split(" ").find((c) => c.startsWith("hai-status-"))} ${row.children[0].children[3].textContent}`;
     };
 
     const finished = call("t-ok", "ok");
@@ -6910,7 +6911,7 @@ async function transcriptChecks() {
       renderTranscript(running, working);
       const el = running.children[0];
       const summary = el.children[0];
-      return { el, text: summary.children[3].textContent, bar: summary.children.find((c) => c.className === "hai-tbar") };
+      return { el, text: summary.children[3].textContent, bar: summary.children.find((c) => c.className.split(" ").includes("hai-tbar")) };
     };
     const first = runRow();
     check("a running tool with no progress says it is running", first.text === "running…" && first.bar?.hidden === true);
@@ -6955,7 +6956,7 @@ async function transcriptChecks() {
     const card = noticed.children[0];
     check(
       "a notice is a status region labelled with its name",
-      card?.className === "hai-notice" && card.attributes.role === "status" &&
+      card?.className.split(" ").includes("hai-notice") && card.attributes.role === "status" &&
         card.children[0].textContent === "notice · hold_confirmed",
     );
     check(

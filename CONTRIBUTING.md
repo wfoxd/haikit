@@ -24,15 +24,20 @@ scripts/             typetest.mjs, adaptertest.mjs, storetest.mjs, smoke.mjs, pa
 ## The client's stylesheet
 
 `packages/client/src/hai.css` is generated, and committed so the package
-still ships plain files: edit `packages/client/styles/` instead, then
+still ships plain files. The default UI is styled in
+`packages/client/src/classes.js`: each element's hook, then its `hai:`
+Tailwind utilities. The tokens and keyframes are in
+`packages/client/styles/hai.css`. Edit those, then
 
 ```bash
 npm run build:css
 ```
 
-It writes the hand-written rules in `styles/hai.css`, followed by the
-utilities Tailwind compiles from the class names in `src/classes.js`.
-`npm run csstest` fails while the committed file is out of date.
+It writes `styles/hai.css`, followed by the utilities Tailwind compiles from
+`classes.js`. `npm run csstest` fails while the committed file is out of date,
+when a class in `classes.js` compiles to nothing (a typo, as Tailwind skips
+those silently), and when an element with padding or a border doesn't say
+which `box-sizing` it uses: without one, a page's CSS reset would choose.
 
 ## Two rules with teeth
 

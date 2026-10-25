@@ -112,6 +112,31 @@ console.log("hai.css");
   check("styles nothing outside the default UI but custom properties (no preflight)", !outside.length, outside.slice(0, 3).join("\n      "));
 }
 
+console.log("classes.js");
+{
+  const cls = await import("../packages/client/src/classes.js");
+  const strings = Object.entries(cls).flatMap(([name, v]) => (typeof v === "string" ? [[name, v]] : Object.entries(v).map(([k, s]) => [`${name}.${k}`, s])));
+  // Tailwind drops a class it doesn't know without a word, so each must add a
+  // rule of its own. A compiler's build is cumulative, so each is measured by
+  // what it adds to the ones before it.
+  const styles = join(ROOT, "packages/client/styles");
+  const compiler = await compile(readFileSync(join(styles, "utilities.css"), "utf8"), { base: styles, onDependency() {} });
+  const utilities = [...new Set(strings.flatMap(([, s]) => s.split(/\s+/)).filter((c) => c.startsWith("hai:")))];
+  let before = compiler.build([]).length;
+  const dead = utilities.filter((c) => {
+    const now = compiler.build([c]).length;
+    const added = now > before;
+    before = now;
+    return !added;
+  });
+  check(`each of its ${utilities.length} utilities compiles to a rule`, !dead.length, dead.slice(0, 5).join(" "));
+  // with padding or a border, an element's size depends on its box-sizing, which a page's reset would otherwise choose
+  const unsized = strings
+    .filter(([, s]) => /(^|\s)hai:(p[xytrbl]?-(?!0(\s|$))|border(-[xytrbl])?-[1-9])/.test(s) && !/(^|\s)hai:box-(border|content)(\s|$)/.test(s))
+    .map(([name]) => name);
+  check("every element with padding or a border sets its box-sizing", !unsized.length, unsized.join(", "));
+}
+
 console.log("tailwind.css, in a Tailwind app");
 {
   // resolved from the repo root, where @haikit/client is the workspace's own
@@ -124,7 +149,7 @@ console.log("tailwind.css, in a Tailwind app");
   check("an opacity modifier mixes the token", /color-mix\([^)]*var\(--hai-accent\) 50%/.test(css));
   check("font-hai-mono, rounded-hai and shadow-hai are the tokens", rule("font-hai-mono").includes("var(--hai-mono)") && rule("rounded-hai").includes("var(--hai-radius)") && rule("shadow-hai").includes("var(--hai-shadow)"));
   check("emits no theme variables of its own", !/--color-hai-/.test(css));
-  check("brings the default UI's stylesheet with it", css.includes(".hai-shell {") && css.includes("--hai-panel: light-dark("));
+  check("brings the default UI's stylesheet with it", css.includes("--hai-panel: light-dark(") && css.includes(".hai\\:flex {"));
   check("leaves the app's dark variant alone", !/@custom-variant/.test(readFileSync(join(ROOT, "packages/client/src/tailwind.css"), "utf8")));
 }
 

@@ -5,6 +5,9 @@
  *
  * Styles ONLY what the framework renders: transcript blocks, the tool
  * provenance row, the surface container, and the shell that mountChat() builds.
+ * This file holds what isn't a utility: the tokens, the page's one rule and
+ * the keyframes. The rest is the hai: utilities in src/classes.js, which
+ * scripts/build-css.mjs compiles after it.
  *
  * It deliberately does not style the inside of your surfaces. Your components
  * emit their own class names and your own stylesheet owns them — otherwise the
@@ -100,949 +103,7 @@
 /* the shell is the page */
 :where(body:has(.hai-shell)) { margin: 0; }
 
-/* ── shell ──────────────────────────────────────────────────────────── */
-.hai-shell {
-  height: 100vh;
-  height: 100dvh;
-  display: flex;
-  flex-direction: column;
-  background: var(--hai-bg);
-  color: var(--hai-fg);
-  font: 14px/1.5 var(--hai-sans);
-  -webkit-font-smoothing: antialiased;
-}
-
-.hai-icon { width: 16px; height: 16px; flex: none; }
-
-.hai-top {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  height: 56px;
-  padding: 0 10px 0 16px;
-  border-bottom: 3px solid var(--hai-line);
-  background: var(--hai-panel);
-}
-.hai-brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.hai-logo { flex: none; }
-.hai-logo-ink { fill: var(--hai-logo-ink); }
-.hai-logo-paper { fill: var(--hai-logo-paper); }
-.hai-logo-paper-dim { fill: var(--hai-logo-paper); opacity: .5; }
-.hai-logo-hot { fill: var(--hai-logo-hot); }
-.hai-mark { width: 22px; height: 22px; }
-.hai-title { font-size: 16px; font-weight: 700; letter-spacing: -.01em; white-space: nowrap; }
-.hai-subtitle {
-  color: var(--hai-dim);
-  font-size: 13px;
-  padding-left: 10px;
-  border-left: 2px solid var(--hai-line);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.hai-actions { margin-left: auto; display: flex; align-items: center; gap: 4px; flex: none; }
-.hai-model {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-right: 6px;
-  padding: 2px 8px;
-  border: 2px solid var(--hai-line);
-  border-radius: var(--hai-radius);
-  font: 700 11.5px var(--hai-mono);
-}
-.hai-model::before {
-  content: "";
-  width: 10px;
-  height: 10px;
-  box-sizing: border-box;
-  border: 2px solid;
-  border-radius: 50%;
-  background: var(--hai-good);
-}
-.hai-model[hidden] { display: none; }
-
-.hai-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  height: 34px;
-  padding: 0 10px;
-  border: 2px solid transparent;
-  border-radius: var(--hai-radius);
-  background: none;
-  color: var(--hai-dim);
-  font: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-}
-.hai-btn:hover:not(:disabled),
-.hai-btn[aria-expanded="true"] { border-color: var(--hai-line); background: var(--hai-hover); color: var(--hai-fg); }
-.hai-btn:disabled { opacity: .4; cursor: default; }
-.hai-ctx-count { font: 11.5px var(--hai-mono); color: var(--hai-dim); }
-.hai-ctx-count:empty { display: none; }
-
-.hai-icon-btn {
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  border: 2px solid transparent;
-  border-radius: var(--hai-radius);
-  background: none;
-  color: var(--hai-dim);
-  cursor: pointer;
-}
-.hai-icon-btn:hover { border-color: var(--hai-line); background: var(--hai-hover); color: var(--hai-fg); }
-
-/* Clips the drawer while it waits off the right edge. `clip`, not just
-   `hidden`: a hidden box still scrolls, so bringing anything into view
-   centred, as find in page does, slid the whole chat sideways and left it
-   there. `hidden` stays for browsers without `clip`. */
-.hai-main { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr); min-height: 0; position: relative; overflow: hidden; overflow: clip; }
-
-/* the conversation is a centred column; the scrollbar stays at the edge */
-.hai-chat {
-  --hai-gutter: max(16px, calc((100% - var(--hai-column)) / 2));
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-  transition: margin-right .25s cubic-bezier(.2, .8, .2, 1), opacity .25s;
-}
-/* behind the drawer on a narrow screen, out of reach until it closes */
-.hai-chat[inert] { opacity: .4; }
-/* on a wide screen the chat makes room for the open drawer */
-@media (min-width: 900px) {
-  .hai-main.inspector-open > .hai-chat { margin-right: var(--hai-inspector-width); }
-}
-.hai-transcript {
-  flex: 1;
-  overflow-y: auto;
-  padding: 28px var(--hai-gutter) 8px;
-  scrollbar-width: thin;
-  scrollbar-color: var(--hai-line) transparent;
-}
-
-/* ── empty state ────────────────────────────────────────────────────── */
-.hai-empty { color: var(--hai-dim); }
-.hai-empty p { margin: 0; max-width: 54ch; font-size: 15px; line-height: 1.6; }
-.hai-empty-mark { width: 64px; height: 64px; margin-bottom: 20px; }
-/* alone, it greets; after what init showed, it stays out of the way */
-.hai-empty:first-child {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-  padding-top: clamp(24px, 14vh, 140px);
-}
-.hai-empty:first-child p { color: var(--hai-fg); font-size: 18px; font-weight: 700; line-height: 1.45; letter-spacing: -.01em; }
-.hai-empty:not(:first-child) .hai-empty-mark { display: none; }
-
-.hai-suggestions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 24px; }
-.hai-empty:first-child .hai-suggestions { justify-content: center; }
-.hai-empty:not(:first-child) .hai-suggestions { margin-top: 12px; }
-.hai-suggestion {
-  padding: 8px 16px;
-  border: 3px solid var(--hai-line);
-  border-radius: var(--hai-radius);
-  background: var(--hai-panel);
-  box-shadow: var(--hai-shadow);
-  color: var(--hai-fg);
-  font: inherit;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-}
-/* a solid button takes the hover tint over its own colour */
-.hai-suggestion:hover,
-.hai-new:hover { background-image: linear-gradient(var(--hai-hover) 0 0); }
-
-/* ── transcript blocks ──────────────────────────────────────────────── */
-.hai-block { margin: 0 0 18px; }
-.hai-user .hai-body,
-.hai-assistant .hai-body {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  /* each paragraph takes its own direction: a reply can mix scripts */
-  unicode-bidi: plaintext;
-  font-size: 15px;
-}
-.hai-assistant { max-width: 72ch; line-height: 1.65; }
-.hai-user { display: flex; justify-content: flex-end; }
-.hai-user .hai-body {
-  max-width: min(85%, 62ch);
-  padding: 9px 14px;
-  border: 3px solid var(--hai-line);
-  border-radius: var(--hai-radius);
-  background: var(--hai-user-bg);
-  box-shadow: var(--hai-shadow);
-}
-
-/* an answer given in a surface — it went back to the model as the tool result */
-.hai-interaction { display: flex; align-items: flex-start; gap: 8px; max-width: 72ch; font: 13px/1.6 var(--hai-mono); color: var(--hai-dim); }
-.hai-arrow { flex: none; display: grid; place-items: center; width: 18px; height: 21px; color: var(--hai-fg); }
-.hai-arrow .hai-icon { width: 15px; height: 15px; stroke-width: 2.5; }
-
-.hai-error,
-.hai-expired {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 12px 16px;
-  border: 3px solid var(--hai-line);
-  border-radius: var(--hai-radius);
-  color: var(--hai-fg);
-}
-.hai-error .hai-icon { margin-top: 3px; }
-.hai-error {
-  background: var(--hai-bad-soft);
-  box-shadow: 4px 4px 0 var(--hai-bad);
-  line-height: 1.55;
-}
-.hai-error .hai-body { overflow-wrap: anywhere; }
-
-/* tool provenance row — chrome for the surface directly beneath it. Rows
-   that want something (running, awaiting you, failed) stand out on a shadow;
-   settled ones lie flat. */
-.hai-tool {
-  border: 3px solid var(--hai-line);
-  border-radius: var(--hai-radius);
-  background: var(--hai-panel-2);
-  overflow: hidden;
-}
-.hai-tool:has(+ .hai-surface),
-.hai-tool:has(+ .hai-dockable) { margin-bottom: 0; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
-/* a row and its live surface are one card, under one shadow */
-.hai-tool:has(+ .hai-surface:not([data-expired])),
-.hai-tool:has(+ .hai-dockable:not([data-expired]):not([data-docked])) { box-shadow: var(--hai-shadow); }
-.hai-tool summary {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 44px;
-  padding: 8px 14px;
-  box-sizing: border-box;
-  cursor: pointer;
-  list-style: none;
-  font-size: 13px;
-  user-select: none;
-}
-.hai-tool summary::-webkit-details-marker { display: none; }
-.hai-tool summary:hover { background: var(--hai-hover); }
-/* where the call stands, as a dot; the glyph the row carries goes unshown */
-.hai-ticon {
-  flex: none;
-  width: 12px;
-  height: 12px;
-  box-sizing: border-box;
-  border: 2px solid;
-  border-radius: 50%;
-  background: var(--hai-good);
-}
-.hai-ticon > * { display: none; }
-.hai-tname { font: 700 13px var(--hai-mono); }
-.hai-targs {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font: 12px var(--hai-mono);
-  color: var(--hai-dim);
-}
-.hai-tstatus {
-  max-width: 50%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  padding: 1px 8px;
-  border: 2px solid var(--hai-line);
-  background: var(--hai-panel);
-  color: var(--hai-fg);
-  white-space: nowrap;
-  font: 700 12px var(--hai-mono);
-  font-variant-numeric: tabular-nums;
-}
-/* a running tool's progress: the message gives way before the count does */
-.hai-tprogress { display: flex; min-width: 0; white-space: pre; }
-.hai-tmessage { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.hai-tcount { flex: none; }
-/* …and a bar along the bottom edge of its row, the accent edged in ink */
-.hai-tool summary:has(.hai-tbar) { position: relative; }
-.hai-tbar {
-  position: absolute;
-  inset: auto 0 0 0;
-  height: 7px;
-  background:
-    linear-gradient(to right, var(--hai-accent) calc(var(--hai-progress, 0%) - 3px), transparent 0) 0 3px no-repeat,
-    linear-gradient(to right, var(--hai-line) var(--hai-progress, 0%), transparent 0);
-}
-.hai-chevron { width: 14px; height: 14px; stroke-width: 3; transition: transform .15s; }
-.hai-tool[open] .hai-chevron { transform: rotate(90deg); }
-
-.hai-tool.hai-status-running { background: var(--hai-panel); box-shadow: var(--hai-shadow); }
-.hai-status-running .hai-ticon { background: var(--hai-accent); animation: hai-blink 1.2s infinite both; }
-/* the component is the question: the turn is parked on it */
-.hai-tool.hai-status-awaiting { background: var(--hai-warn); box-shadow: var(--hai-shadow); }
-/* amber is as light in either scheme, so what's written on it is ink. The
-   arguments are too, in full, and set apart from the bold name by weight:
-   dimmed, they'd lose contrast on a darker amber with white text */
-.hai-status-awaiting summary {
-  --hai-dim: var(--hai-on-accent);
-  color: var(--hai-on-accent);
-}
-.hai-status-awaiting .hai-ticon { background: var(--hai-accent); }
-.hai-status-resolved .hai-tstatus { background: var(--hai-selected); }
-.hai-tool.hai-status-expired { background: color-mix(in srgb, var(--hai-dim) 10%, var(--hai-panel-2)); }
-.hai-status-expired .hai-ticon { background: color-mix(in srgb, var(--hai-dim) 60%, var(--hai-bg)); }
-.hai-status-expired .hai-tstatus { background: none; }
-.hai-tool.hai-status-error { background: var(--hai-bad-soft); box-shadow: 4px 4px 0 var(--hai-bad); }
-/* hover over the pink, in the dark scheme, leaves dim text too faint */
-.hai-status-error summary:hover .hai-targs { color: var(--hai-fg); }
-.hai-status-error .hai-ticon { background: var(--hai-bad); }
-
-.hai-tool-detail { padding: 0 14px 14px; border-top: 3px solid var(--hai-line); background: var(--hai-panel-2); }
-.hai-label { margin: 12px 0 6px; font: 700 11px var(--hai-mono); color: var(--hai-dim); }
-.hai-code,
-.hai-digest {
-  margin: 0;
-  padding: 9px 11px;
-  max-height: 200px;
-  overflow: auto;
-  border: 2px solid var(--hai-line);
-  border-radius: var(--hai-radius);
-  background: var(--hai-code-bg);
-  font: 12px/1.55 var(--hai-mono);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.hai-digest { background: var(--hai-good-soft); }
-
-.hai-pulse {
-  flex: none;
-  width: 12px;
-  height: 12px;
-  box-sizing: border-box;
-  border: 2px solid;
-  border-radius: 50%;
-  background: var(--hai-warn);
-  animation: hai-pulse 1.8s ease-out infinite;
-}
-
-/* surface container — your component mounts inside this */
-.hai-surface {
-  margin-bottom: 18px;
-  overflow: hidden;
-  border: 3px solid var(--hai-line);
-  border-radius: var(--hai-radius);
-  background: var(--hai-panel);
-  box-shadow: var(--hai-shadow);
-}
-.hai-tool + .hai-surface { border-top: none; border-top-left-radius: 0; border-top-right-radius: 0; }
-/* props still arriving: hatched bars, inked first, and the label under them */
-.hai-skeleton { display: grid; gap: 12px; padding: 16px; }
-.hai-skeleton-label { order: 1; font: 12px var(--hai-mono); color: var(--hai-dim); }
-.hai-shimmer {
-  height: 36px;
-  box-sizing: border-box;
-  border: 2px solid color-mix(in srgb, var(--hai-dim) 50%, transparent);
-  background: linear-gradient(45deg,
-    color-mix(in srgb, var(--hai-dim) 50%, transparent) 0 12.5%, transparent 0 50%,
-    color-mix(in srgb, var(--hai-dim) 50%, transparent) 0 62.5%, transparent 0) 0 0 / 12px 12px;
-  animation: hai-shimmer 1s linear infinite;
-}
-.hai-shimmer:nth-child(2) {
-  width: 40%;
-  height: 16px;
-  border-color: var(--hai-line);
-  background-image: linear-gradient(45deg,
-    var(--hai-line) 0 12.5%, transparent 0 50%,
-    var(--hai-line) 0 62.5%, transparent 0);
-}
-/* a notice: something the server said outside of any request */
-.hai-notice {
-  margin-bottom: 18px;
-  overflow: hidden;
-  border: 3px solid var(--hai-line);
-  border-radius: var(--hai-radius);
-  background: var(--hai-panel);
-  box-shadow: var(--hai-shadow);
-}
-.hai-notice-label {
-  padding: 6px 12px;
-  border-bottom: 3px solid var(--hai-line);
-  background: var(--hai-user-bg);
-  font: 700 11px var(--hai-mono);
-}
-.hai-notice > .hai-surface-error { margin: 0; border: none; border-radius: 0; box-shadow: none; }
-.hai-surface-error {
-  margin-bottom: 18px;
-  padding: 12px 16px;
-  border: 3px solid var(--hai-line);
-  border-radius: var(--hai-radius);
-  background: var(--hai-bad-soft);
-  box-shadow: 4px 4px 0 var(--hai-bad);
-  font: 12.5px var(--hai-mono);
-}
-
-/* out of date — the runtime has made the surface inert; this only shows it */
-.hai-surface[data-expired] { opacity: .45; filter: grayscale(.7); box-shadow: none; }
-
-/* ── the dock: a surface's card, its bar, and what stays when it docks ─ */
-/* With the dock on, a surface mounts inside a card of its own: a bar with its
-   name and Dock, then the surface. The card is what the transcript keeps; the
-   surface itself moves to the dock and back. */
-.hai-dockable {
-  margin-bottom: 18px;
-  overflow: hidden;
-  border: 3px solid var(--hai-line);
-  border-radius: var(--hai-radius);
-  background: var(--hai-panel);
-  box-shadow: var(--hai-shadow);
-}
-.hai-tool + .hai-dockable { border-top: none; border-top-left-radius: 0; border-top-right-radius: 0; }
-.hai-dockable > .hai-surface,
-.hai-dockable > .hai-surface-error,
-.hai-window-body > .hai-surface,
-.hai-window-body > .hai-surface-error { margin: 0; border: none; border-radius: 0; box-shadow: none; }
-.hai-dockable[data-expired] { box-shadow: none; }
-/* docked: a flat stub in the surface's place */
-.hai-dockable[data-docked] { background: var(--hai-panel-2); box-shadow: none; }
-
-.hai-surface-bar {
-  display: flex;
-  align-items: stretch;
-  min-height: 34px;
-  border-bottom: 2px solid var(--hai-line);
-  background: var(--hai-panel-2);
-  color: var(--hai-fg);
-}
-.hai-surface-name {
-  flex: 1;
-  min-width: 0;
-  align-self: center;
-  padding: 0 14px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font: 700 11.5px var(--hai-mono);
-  color: var(--hai-dim);
-}
-/* a button that is a bar's cell, an icon named for screen readers and in a
-   tooltip: Dock, Put back, and the window's Remove from dock and Dock */
-.hai-bar-btn {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 0 12px;
-  border: none;
-  border-left: 2px solid;
-  border-radius: 0;
-  background: none;
-  color: inherit;
-  font: 700 12px var(--hai-mono);
-  cursor: pointer;
-}
-.hai-bar-btn .hai-icon { width: 14px; height: 14px; stroke-width: 2.5; }
-.hai-bar-btn:hover { background: var(--hai-hover); }
-.hai-bar-icon { width: 40px; padding: 0; }
-.hai-bar-icon .hai-icon { width: 16px; height: 16px; }
-
-.hai-docked { display: flex; align-items: stretch; min-height: 40px; color: var(--hai-fg); }
-.hai-docked-text {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 14px;
-  font: 12px var(--hai-mono);
-  color: var(--hai-dim);
-}
-.hai-docked-text .hai-icon { width: 14px; height: 14px; stroke-width: 2.5; }
-.hai-expired {
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 14px;
-  padding-bottom: 16px;
-  border-style: dashed;
-  background: var(--hai-panel);
-}
-.hai-expired .hai-icon { display: none; }
-.hai-expired .hai-body { flex: 1 1 100%; }
-.hai-new {
-  padding: 8px 16px;
-  border: 3px solid var(--hai-line);
-  border-radius: var(--hai-radius);
-  background: var(--hai-accent);
-  box-shadow: var(--hai-shadow);
-  color: var(--hai-on-accent);
-  font: inherit;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-/* ── status + composer ──────────────────────────────────────────────── */
-.hai-status {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 22px;
-  padding: 0 var(--hai-gutter) 8px;
-  font: 700 12.5px var(--hai-mono);
-}
-/* thinking: one accent dot, blinking */
-.hai-dots { display: inline-flex; }
-.hai-dots i {
-  width: 12px;
-  height: 12px;
-  box-sizing: border-box;
-  border: 2px solid;
-  border-radius: 50%;
-  background: var(--hai-accent);
-  animation: hai-blink 1.2s infinite both;
-}
-.hai-dots i + i { display: none; }
-
-.hai-composer { flex: none; padding: 0 var(--hai-gutter) 20px; }
-.hai-composer-box {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  padding: 6px 6px 6px 14px;
-  border: 3px solid var(--hai-line);
-  border-radius: var(--hai-radius);
-  background: var(--hai-panel);
-  box-shadow: var(--hai-shadow);
-  transition: box-shadow .15s;
-}
-.hai-composer-box:focus-within { box-shadow: 4px 4px 0 var(--hai-accent); }
-.hai-input {
-  flex: 1;
-  box-sizing: border-box;
-  min-height: 34px;
-  max-height: 200px;
-  padding: 6px 0;
-  overflow-y: auto;
-  resize: none;
-  border: none;
-  outline: none;
-  background: transparent;
-  color: var(--hai-fg);
-  font: inherit;
-  font-size: 15px;
-  line-height: 1.45;
-}
-.hai-input::placeholder { color: var(--hai-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.hai-input:disabled { cursor: not-allowed; opacity: .6; }
-.hai-send {
-  flex: none;
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  border: 2px solid var(--hai-line);
-  border-radius: var(--hai-radius);
-  background: var(--hai-accent);
-  color: var(--hai-on-accent);
-  cursor: pointer;
-  transition: opacity .15s;
-}
-.hai-send .hai-icon { width: 18px; height: 18px; stroke-width: 2.5; }
-.hai-send:disabled { opacity: .35; cursor: default; }
-
-/* ── the dock's shelf, on top of the composer ───────────────────────── */
-/* The composer card's top row while anything is docked: one card, one
-   shadow. Not positioned, so the box below covers the shelf's own shadow. */
-.hai-dock {
-  /* Remove all's size: the pile's list lines up past it, with the shelf's end */
-  --hai-dock-clear: 36px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0 14px 0 12px;
-  border: 3px solid var(--hai-line);
-  border-radius: var(--hai-radius) var(--hai-radius) 0 0;
-  background: var(--hai-panel-2);
-  box-shadow: var(--hai-shadow);
-  transition: box-shadow .15s;
-}
-.hai-dock[hidden] { display: none; }
-.hai-dock:not([hidden]) + .hai-composer-box { border-top: none; border-top-left-radius: 0; border-top-right-radius: 0; }
-.hai-composer:has(.hai-composer-box:focus-within) > .hai-dock { box-shadow: 4px 4px 0 var(--hai-accent); }
-.hai-dock-count { flex: none; font: 700 11px var(--hai-mono); color: var(--hai-dim); }
-/* room above and to the right for an item's corner mark, below for its shadow */
-.hai-dock-row {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 8px 8px 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-/* a docked surface: open is pressed and inked; amber waits on you */
-.hai-dock-item {
-  position: relative;
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  height: 36px;
-  padding: 0 12px;
-  box-sizing: border-box;
-  border: 2px solid var(--hai-line);
-  border-radius: var(--hai-radius);
-  background: var(--hai-panel);
-  box-shadow: 3px 3px 0 var(--hai-line);
-  color: var(--hai-fg);
-  font: 700 12px var(--hai-mono);
-  white-space: nowrap;
-  cursor: pointer;
-}
-.hai-dock-item[hidden] { display: none; }
-.hai-dock-item .hai-icon { width: 14px; height: 14px; stroke-width: 2.5; }
-.hai-dock-item:hover { background-image: linear-gradient(var(--hai-hover) 0 0); }
-.hai-dock-item[data-status="awaiting"] { background-color: var(--hai-warn); color: var(--hai-on-accent); }
-.hai-dock-item[aria-expanded="true"] {
-  background: var(--hai-fg);
-  color: var(--hai-panel);
-  box-shadow: none;
-  transform: translate(3px, 3px);
-}
-.hai-dock-item[data-status="expired"] {
-  border-style: dashed;
-  border-color: var(--hai-dim);
-  background: transparent;
-  box-shadow: none;
-  color: var(--hai-dim);
-}
-.hai-dock-dot {
-  width: 10px;
-  height: 10px;
-  box-sizing: border-box;
-  border: 2px solid;
-  border-radius: 50%;
-  background: var(--hai-accent);
-}
-.hai-dock-dot[hidden] { display: none; }
-.hai-dock-item[aria-expanded="true"] .hai-dock-dot { background: var(--hai-warn); }
-.hai-dock-changed {
-  position: absolute;
-  top: -7px;
-  right: -7px;
-  width: 12px;
-  height: 12px;
-  box-sizing: border-box;
-  border: 2px solid var(--hai-line);
-  background: var(--hai-accent);
-}
-.hai-dock-changed[hidden] { display: none; }
-
-/* the pile the oldest go into when the row is full: two edges behind it */
-.hai-dock-pile {
-  position: relative;
-  /* above an open window, which its list may overlap */
-  z-index: 6;
-  isolation: isolate;
-  flex: none;
-  display: inline-flex;
-  margin: 8px 8px 8px 0;
-}
-.hai-dock-pile[hidden] { display: none; }
-.hai-dock-pile::before,
-.hai-dock-pile::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  box-sizing: border-box;
-  border: 2px solid var(--hai-line);
-  background: var(--hai-panel);
-  transform: translate(8px, -8px);
-}
-.hai-dock-pile::after { transform: translate(4px, -4px); }
-/* Remove all, at the shelf's end: a quiet icon until the pointer's on it */
-.hai-dock-clear {
-  flex: none;
-  display: grid;
-  place-items: center;
-  width: var(--hai-dock-clear);
-  height: var(--hai-dock-clear);
-  padding: 0;
-  border: 2px solid transparent;
-  border-radius: var(--hai-radius);
-  background: none;
-  color: var(--hai-dim);
-  cursor: pointer;
-}
-.hai-dock-clear .hai-icon { width: 16px; height: 16px; stroke-width: 2.5; }
-.hai-dock-clear:hover { border-color: var(--hai-line); background: var(--hai-hover); color: var(--hai-fg); }
-/* what's in it, oldest first, above the shelf */
-/* Its right edge lines up with the shelf's: past the pile's margin, the gap,
-   Remove all, the shelf's padding and its border. So it opens leftward from
-   the shelf's end, and fits whatever the screen fits. */
-.hai-pile-list {
-  position: absolute;
-  right: calc(-1 * (8px + 10px + var(--hai-dock-clear, 36px) + 14px + 3px));
-  bottom: calc(100% + 18px);
-  z-index: 6;
-  width: 280px;
-  max-width: calc(100vw - 32px);
-  /* the room above the shelf, measured as it opens; this until then */
-  max-height: 60vh;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--hai-line) transparent;
-  border: 3px solid var(--hai-line);
-  border-radius: var(--hai-radius);
-  background: var(--hai-panel);
-  box-shadow: var(--hai-shadow);
-}
-.hai-pile-list[hidden] { display: none; }
-.hai-pile-head {
-  position: sticky;
-  top: 0;
-  padding: 6px 12px;
-  border-bottom: 2px solid var(--hai-line);
-  background: var(--hai-panel-2);
-  font: 700 11px var(--hai-mono);
-  color: var(--hai-dim);
-}
-.hai-pile-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  min-height: 44px;
-  padding: 0 12px;
-  border: none;
-  border-bottom: 2px solid var(--hai-line-soft);
-  background: none;
-  color: var(--hai-fg);
-  font: 700 12px var(--hai-mono);
-  text-align: left;
-  cursor: pointer;
-}
-.hai-pile-row:last-child { border-bottom: none; }
-.hai-pile-row:hover { background: var(--hai-hover); }
-.hai-pile-row .hai-icon { width: 14px; height: 14px; stroke-width: 2.5; }
-.hai-pile-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.hai-pile-row .hai-dock-changed { position: static; flex: none; }
-
-/* ── a docked surface, open as a window ─────────────────────────────── */
-/* Above the status line and the composer, in the column; raised higher than a
-   card. Its title bar is inked like its pressed item, amber while it waits. */
-.hai-window {
-  position: absolute;
-  z-index: 5;
-  left: var(--hai-gutter);
-  bottom: calc(var(--hai-foot, 140px) + 8px);
-  display: flex;
-  flex-direction: column;
-  width: min(560px, 100% - 2 * var(--hai-gutter));
-  max-height: calc(100% - var(--hai-foot, 140px) - 32px);
-  box-sizing: border-box;
-  border: 3px solid var(--hai-line);
-  border-radius: var(--hai-radius);
-  background: var(--hai-panel);
-  box-shadow: 8px 8px 0 var(--hai-line);
-  color: var(--hai-fg);
-}
-.hai-window[hidden] { display: none; }
-.hai-window:focus { outline: none; }
-.hai-window:focus-visible { outline: 3px solid var(--hai-fg); outline-offset: 2px; }
-.hai-window-bar {
-  flex: none;
-  display: flex;
-  align-items: stretch;
-  gap: 10px;
-  min-height: 40px;
-  padding-left: 12px;
-  border-bottom: 3px solid var(--hai-line);
-  background: var(--hai-fg);
-  color: var(--hai-panel);
-}
-.hai-window-bar > .hai-icon { align-self: center; width: 14px; height: 14px; stroke-width: 2.5; }
-/* a long name gives way, after the tool's, so the bar's buttons stay in reach */
-.hai-window-name {
-  flex: 0 1 auto;
-  min-width: 0;
-  align-self: center;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font: 700 12.5px var(--hai-mono);
-}
-.hai-window-tool {
-  flex: 1;
-  min-width: 0;
-  align-self: center;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font: 12px var(--hai-mono);
-}
-.hai-window-badge { flex: none; align-self: center; }
-.hai-window-badge[hidden] { display: none; }
-.hai-window-bar > .hai-bar-btn + .hai-bar-btn { margin-left: -10px; }
-.hai-window[data-status="awaiting"] .hai-window-bar { background: var(--hai-warn); color: var(--hai-on-accent); }
-.hai-window[data-status="expired"] { border-style: dashed; border-color: var(--hai-dim); box-shadow: none; }
-.hai-window[data-status="expired"] .hai-window-bar {
-  border-bottom-style: dashed;
-  border-color: var(--hai-dim);
-  background: color-mix(in srgb, var(--hai-dim) 10%, var(--hai-panel-2));
-  color: var(--hai-fg);
-}
-.hai-window[data-status="expired"] .hai-window-badge { background: none; }
-.hai-window-body {
-  min-height: 0;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--hai-line) transparent;
-}
-
-/* for a screen reader only: what docking just did */
-.hai-dock-live {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-
-/* ── model context debug drawer ─────────────────────────────────────── */
-/* Closed, it waits off the right edge, out of the tab order and the
-   accessibility tree; open, it slides in, over the chat on a narrow screen. */
-.hai-inspector {
-  position: absolute;
-  inset: 0 0 0 auto;
-  z-index: 10;
-  display: flex;
-  flex-direction: column;
-  width: min(100%, var(--hai-inspector-width));
-  min-height: 0;
-  border-left: 3px solid var(--hai-line);
-  background: var(--hai-panel-2);
-  transform: translateX(100%);
-  visibility: hidden;
-  transition: transform .25s cubic-bezier(.2, .8, .2, 1), visibility 0s .25s;
-}
-.hai-main.inspector-open > .hai-inspector {
-  transform: none;
-  visibility: visible;
-  transition: transform .25s cubic-bezier(.2, .8, .2, 1), visibility 0s;
-}
-.hai-inspector-head { display: flex; align-items: center; gap: 8px; padding: 10px 10px 10px 16px; border-bottom: 3px solid var(--hai-line); }
-.hai-inspector-title { flex: 1; display: flex; flex-direction: column; font-size: 13px; font-weight: 700; }
-.hai-inspector-title span { color: var(--hai-dim); font-size: 12px; font-weight: 400; }
-.hai-inspector-body {
-  flex: 1;
-  overflow-y: auto;
-  padding: 0 16px 16px;
-  scrollbar-width: thin;
-  scrollbar-color: var(--hai-line) transparent;
-}
-.hai-inspector-empty { margin: 16px 0; color: var(--hai-dim); font-size: 13px; }
-
-/* the numbers stay in view as the context scrolls under them */
-.hai-ctx {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  padding: 14px 0 12px;
-  border-bottom: 3px solid var(--hai-line);
-  background: var(--hai-panel-2);
-}
-.hai-ctx-headline { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; font-size: 12.5px; color: var(--hai-dim); }
-.hai-ctx-pct { font-size: 26px; font-weight: 700; letter-spacing: -.02em; color: var(--hai-fg); font-variant-numeric: tabular-nums; }
-.hai-meter { display: flex; height: 10px; margin-bottom: 10px; overflow: hidden; border: 2px solid var(--hai-line); border-radius: var(--hai-radius); background: var(--hai-good); }
-.hai-meter-model { min-width: 2px; border-right: 2px solid var(--hai-line); background: var(--hai-accent); }
-.hai-ctx-stat { display: flex; justify-content: space-between; padding: 1px 0; font: 12px var(--hai-mono); }
-.hai-ctx-label { display: inline-flex; align-items: center; gap: 7px; color: var(--hai-dim); }
-.hai-ctx-tok { font-variant-numeric: tabular-nums; }
-.hai-key { width: 10px; height: 10px; box-sizing: border-box; border: 2px solid var(--hai-line); border-radius: var(--hai-radius); }
-.hai-key-model { background: var(--hai-accent); }
-.hai-key-ui { background: var(--hai-good); }
-
-.hai-msg { margin-top: 14px; padding-left: 11px; border-left: 3px solid var(--hai-line); }
-.hai-role { margin-bottom: 4px; font: 700 10px var(--hai-mono); text-transform: uppercase; letter-spacing: .08em; color: var(--hai-dim); }
-.hai-mbody { display: grid; gap: 6px; font: 12px/1.55 var(--hai-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
-.hai-tu,
-.hai-tr { padding: 6px 8px; border: 2px solid var(--hai-line); border-radius: var(--hai-radius); }
-.hai-tu { background: var(--hai-accent-soft); }
-.hai-tr { background: var(--hai-good-soft); }
-.hai-kind { display: block; margin-bottom: 2px; font-size: 10.5px; font-weight: 700; opacity: .75; }
-
-/* ── narrow screens ─────────────────────────────────────────────────── */
-@media (max-width: 899.98px) {
-  .hai-subtitle { display: none; }
-  .hai-btn { padding: 0 8px; }
-  .hai-btn-label {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
-  /* the window is a sheet over the chat, down to the composer; the chat
-     behind it dims, out of reach until it docks again */
-  .hai-window {
-    left: 0;
-    right: 0;
-    top: 12%;
-    bottom: var(--hai-composer-height, 120px);
-    width: auto;
-    max-height: none;
-    border-left: none;
-    border-right: none;
-    border-radius: 0;
-    box-shadow: none;
-  }
-  .hai-chat.window-open > .hai-transcript,
-  .hai-chat.window-open > .hai-status { opacity: .4; }
-  .hai-dock-count { display: none; }
-}
-/* a finger's worth, wherever the pointer is coarse */
-@media (pointer: coarse) {
-  .hai-dock-item { height: 44px; }
-  .hai-dock { --hai-dock-clear: 44px; }
-  .hai-surface-bar { min-height: 44px; }
-  .hai-docked { min-height: 44px; }
-  .hai-window-bar { min-height: 44px; }
-  .hai-bar-icon { width: 44px; }
-}
-@media (max-width: 599.98px) {
-  .hai-model { display: none; }
-  .hai-transcript { padding-top: 18px; }
-  .hai-composer { padding-bottom: 12px; }
-}
-
-/* ── focus, motion ──────────────────────────────────────────────────── */
-.hai-btn:focus-visible,
-.hai-icon-btn:focus-visible,
-.hai-send:focus-visible,
-.hai-suggestion:focus-visible,
-.hai-new:focus-visible { outline: 3px solid var(--hai-fg); outline-offset: 2px; }
-/* inside the row's border, clear of it, in the row's text colour: ink on amber too */
-.hai-tool summary:focus-visible { outline: 2px solid currentColor; outline-offset: -5px; }
-/* the dock's items and its pile take the buttons' ring; a bar's cells and the
-   pile's rows, where a card would clip it, a ring inside */
-.hai-dock-item:focus-visible,
-.hai-dock-clear:focus-visible { outline: 3px solid var(--hai-fg); outline-offset: 2px; }
-.hai-bar-btn:focus-visible,
-.hai-pile-row:focus-visible { outline: 2px solid currentColor; outline-offset: -6px; }
-
+/* the keyframes the utilities name: a waiting dot, a blink, and the hatching */
 @keyframes hai-pulse {
   0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--hai-warn) 55%, transparent); }
   100% { box-shadow: 0 0 0 7px transparent; }
@@ -1050,15 +111,2097 @@
 @keyframes hai-blink { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
 @keyframes hai-shimmer { to { background-position: 12px 0; } }
 
+/* ── utilities, from src/classes.js ─────────────────────────────────── */
+
+/*! tailwindcss v4.3.3 | MIT License | https://tailwindcss.com */
+@layer properties {
+  @supports (((-webkit-hyphens: none)) and (not (margin-trim: inline))) or ((-moz-orient: inline) and (not (color: rgb(from red r g b)))) {
+    *, :before, :after, ::backdrop {
+      --tw-rotate-x: initial;
+      --tw-rotate-y: initial;
+      --tw-rotate-z: initial;
+      --tw-skew-x: initial;
+      --tw-skew-y: initial;
+      --tw-border-style: solid;
+      --tw-leading: initial;
+      --tw-font-weight: initial;
+      --tw-tracking: initial;
+      --tw-ordinal: initial;
+      --tw-slashed-zero: initial;
+      --tw-numeric-figure: initial;
+      --tw-numeric-spacing: initial;
+      --tw-numeric-fraction: initial;
+      --tw-shadow: 0 0 #0000;
+      --tw-shadow-color: initial;
+      --tw-shadow-alpha: 100%;
+      --tw-inset-shadow: 0 0 #0000;
+      --tw-inset-shadow-color: initial;
+      --tw-inset-shadow-alpha: 100%;
+      --tw-ring-color: initial;
+      --tw-ring-shadow: 0 0 #0000;
+      --tw-inset-ring-color: initial;
+      --tw-inset-ring-shadow: 0 0 #0000;
+      --tw-ring-inset: initial;
+      --tw-ring-offset-width: 0px;
+      --tw-ring-offset-color: #fff;
+      --tw-ring-offset-shadow: 0 0 #0000;
+      --tw-content: "";
+      --tw-outline-style: solid;
+    }
+  }
+}
+
+.hai\:invisible {
+  visibility: hidden;
+}
+
+.hai\:absolute {
+  position: absolute;
+}
+
+.hai\:relative {
+  position: relative;
+}
+
+.hai\:sticky {
+  position: sticky;
+}
+
+.hai\:-top-7 {
+  top: -7px;
+}
+
+.hai\:top-0 {
+  top: 0;
+}
+
+.hai\:-right-7 {
+  right: -7px;
+}
+
+.hai\:right-0 {
+  right: 0;
+}
+
+.hai\:right-\[calc\(-1_\*_\(8px_\+_10px_\+_var\(--hai-dock-clear\,36px\)_\+_14px_\+_3px\)\)\] {
+  right: calc(-1 * (8px + 10px + var(--hai-dock-clear, 36px) + 14px + 3px));
+}
+
+.hai\:bottom-0 {
+  bottom: 0;
+}
+
+.hai\:bottom-\[calc\(100\%_\+_18px\)\] {
+  bottom: calc(100% + 18px);
+}
+
+.hai\:bottom-\[calc\(var\(--hai-foot\,140px\)_\+_8px\)\] {
+  bottom: calc(var(--hai-foot, 140px) + 8px);
+}
+
+.hai\:left-0 {
+  left: 0;
+}
+
+.hai\:left-\[var\(--hai-gutter\)\] {
+  left: var(--hai-gutter);
+}
+
+.hai\:left-auto {
+  left: auto;
+}
+
+.hai\:isolate {
+  isolation: isolate;
+}
+
+.hai\:z-1 {
+  z-index: 1;
+}
+
+.hai\:z-5 {
+  z-index: 5;
+}
+
+.hai\:z-6 {
+  z-index: 6;
+}
+
+.hai\:z-10 {
+  z-index: 10;
+}
+
+.hai\:order-1 {
+  order: 1;
+}
+
+.hai\:m-0 {
+  margin: 0;
+}
+
+.hai\:mx-0 {
+  margin-inline: 0;
+}
+
+.hai\:my-8 {
+  margin-block: 8px;
+}
+
+.hai\:my-16 {
+  margin-block: 16px;
+}
+
+.hai\:mt-3 {
+  margin-top: 3px;
+}
+
+.hai\:mt-12 {
+  margin-top: 12px;
+}
+
+.hai\:mt-14 {
+  margin-top: 14px;
+}
+
+.hai\:mt-24 {
+  margin-top: 24px;
+}
+
+.hai\:mr-6 {
+  margin-right: 6px;
+}
+
+.hai\:mr-8 {
+  margin-right: 8px;
+}
+
+.hai\:mb-2 {
+  margin-bottom: 2px;
+}
+
+.hai\:mb-4 {
+  margin-bottom: 4px;
+}
+
+.hai\:mb-6 {
+  margin-bottom: 6px;
+}
+
+.hai\:mb-8 {
+  margin-bottom: 8px;
+}
+
+.hai\:mb-10 {
+  margin-bottom: 10px;
+}
+
+.hai\:mb-18 {
+  margin-bottom: 18px;
+}
+
+.hai\:mb-20 {
+  margin-bottom: 20px;
+}
+
+.hai\:ml-0 {
+  margin-left: 0;
+}
+
+.hai\:ml-auto {
+  margin-left: auto;
+}
+
+.hai\:box-border {
+  box-sizing: border-box;
+}
+
+.hai\:box-content {
+  box-sizing: content-box;
+}
+
+.hai\:block {
+  display: block;
+}
+
+.hai\:flex {
+  display: flex;
+}
+
+.hai\:grid {
+  display: grid;
+}
+
+.hai\:hidden {
+  display: none;
+}
+
+.hai\:inline-flex {
+  display: inline-flex;
+}
+
+.hai\:size-1 {
+  width: 1px;
+  height: 1px;
+}
+
+.hai\:size-10 {
+  width: 10px;
+  height: 10px;
+}
+
+.hai\:size-12 {
+  width: 12px;
+  height: 12px;
+}
+
+.hai\:size-14 {
+  width: 14px;
+  height: 14px;
+}
+
+.hai\:size-15 {
+  width: 15px;
+  height: 15px;
+}
+
+.hai\:size-16 {
+  width: 16px;
+  height: 16px;
+}
+
+.hai\:size-18 {
+  width: 18px;
+  height: 18px;
+}
+
+.hai\:size-22 {
+  width: 22px;
+  height: 22px;
+}
+
+.hai\:size-32 {
+  width: 32px;
+  height: 32px;
+}
+
+.hai\:size-34 {
+  width: 34px;
+  height: 34px;
+}
+
+.hai\:size-64 {
+  width: 64px;
+  height: 64px;
+}
+
+.hai\:size-\[var\(--hai-dock-clear\)\] {
+  width: var(--hai-dock-clear);
+  height: var(--hai-dock-clear);
+}
+
+.hai\:h-7 {
+  height: 7px;
+}
+
+.hai\:h-10 {
+  height: 10px;
+}
+
+.hai\:h-21 {
+  height: 21px;
+}
+
+.hai\:h-34 {
+  height: 34px;
+}
+
+.hai\:h-36 {
+  height: 36px;
+}
+
+.hai\:h-56 {
+  height: 56px;
+}
+
+.hai\:h-dvh {
+  height: 100dvh;
+}
+
+.hai\:max-h-200 {
+  max-height: 200px;
+}
+
+.hai\:max-h-\[60vh\] {
+  max-height: 60vh;
+}
+
+.hai\:max-h-\[calc\(100\%_-_var\(--hai-foot\,140px\)_-_32px\)\] {
+  max-height: calc(100% - var(--hai-foot, 140px) - 32px);
+}
+
+.hai\:min-h-0 {
+  min-height: 0;
+}
+
+.hai\:min-h-22 {
+  min-height: 22px;
+}
+
+.hai\:min-h-34 {
+  min-height: 34px;
+}
+
+.hai\:min-h-40 {
+  min-height: 40px;
+}
+
+.hai\:min-h-44 {
+  min-height: 44px;
+}
+
+.hai\:w-18 {
+  width: 18px;
+}
+
+.hai\:w-40 {
+  width: 40px;
+}
+
+.hai\:w-280 {
+  width: 280px;
+}
+
+.hai\:w-\[min\(100\%\,var\(--hai-inspector-width\)\)\] {
+  width: min(100%, var(--hai-inspector-width));
+}
+
+.hai\:w-\[min\(560px\,100\%_-_2_\*_var\(--hai-gutter\)\)\] {
+  width: min(560px, 100% - 2 * var(--hai-gutter));
+}
+
+.hai\:w-full {
+  width: 100%;
+}
+
+.hai\:max-w-\[50\%\] {
+  max-width: 50%;
+}
+
+.hai\:max-w-\[54ch\] {
+  max-width: 54ch;
+}
+
+.hai\:max-w-\[72ch\] {
+  max-width: 72ch;
+}
+
+.hai\:max-w-\[calc\(100vw_-_32px\)\] {
+  max-width: calc(100vw - 32px);
+}
+
+.hai\:max-w-\[min\(85\%\,62ch\)\] {
+  max-width: min(85%, 62ch);
+}
+
+.hai\:min-w-0 {
+  min-width: 0;
+}
+
+.hai\:min-w-2 {
+  min-width: 2px;
+}
+
+.hai\:flex-1 {
+  flex: 1;
+}
+
+.hai\:flex-\[0_1_auto\] {
+  flex: 0 auto;
+}
+
+.hai\:flex-\[1_1_100\%\] {
+  flex: 100%;
+}
+
+.hai\:flex-none {
+  flex: none;
+}
+
+.hai\:transform-\[translateX\(100\%\)\] {
+  transform: translateX(100%);
+}
+
+.hai\:animate-\[hai-blink_1\.2s_infinite_both\] {
+  animation: 1.2s infinite both hai-blink;
+}
+
+.hai\:animate-\[hai-pulse_1\.8s_ease-out_infinite\] {
+  animation: 1.8s ease-out infinite hai-pulse;
+}
+
+.hai\:animate-\[hai-shimmer_1s_linear_infinite\] {
+  animation: 1s linear infinite hai-shimmer;
+}
+
+.hai\:cursor-pointer {
+  cursor: pointer;
+}
+
+.hai\:resize-none {
+  resize: none;
+}
+
+.hai\:\[scrollbar-width\:none\] {
+  scrollbar-width: none;
+}
+
+.hai\:\[scrollbar-width\:thin\] {
+  scrollbar-width: thin;
+}
+
+.hai\:\[scrollbar-color\:var\(--hai-line\)_transparent\] {
+  scrollbar-color: var(--hai-line) transparent;
+}
+
+.hai\:list-outside {
+  list-style-position: outside;
+}
+
+.hai\:list-none {
+  list-style-type: none;
+}
+
+.hai\:grid-cols-\[minmax\(0\,1fr\)\] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.hai\:flex-col {
+  flex-direction: column;
+}
+
+.hai\:flex-wrap {
+  flex-wrap: wrap;
+}
+
+.hai\:place-items-center {
+  place-items: center;
+}
+
+.hai\:items-baseline {
+  align-items: baseline;
+}
+
+.hai\:items-center {
+  align-items: center;
+}
+
+.hai\:items-end {
+  align-items: flex-end;
+}
+
+.hai\:items-start {
+  align-items: flex-start;
+}
+
+.hai\:items-stretch {
+  align-items: stretch;
+}
+
+.hai\:justify-between {
+  justify-content: space-between;
+}
+
+.hai\:justify-center {
+  justify-content: center;
+}
+
+.hai\:justify-end {
+  justify-content: flex-end;
+}
+
+.hai\:gap-4 {
+  gap: 4px;
+}
+
+.hai\:gap-6 {
+  gap: 6px;
+}
+
+.hai\:gap-7 {
+  gap: 7px;
+}
+
+.hai\:gap-8 {
+  gap: 8px;
+}
+
+.hai\:gap-10 {
+  gap: 10px;
+}
+
+.hai\:gap-12 {
+  gap: 12px;
+}
+
+.hai\:gap-14 {
+  gap: 14px;
+}
+
+.hai\:self-center {
+  align-self: center;
+}
+
+.hai\:overflow-auto {
+  overflow: auto;
+}
+
+.hai\:overflow-clip {
+  overflow: clip;
+}
+
+.hai\:overflow-hidden {
+  overflow: hidden;
+}
+
+.hai\:overflow-x-auto {
+  overflow-x: auto;
+}
+
+.hai\:overflow-y-auto {
+  overflow-y: auto;
+}
+
+.hai\:rounded-\[50\%\] {
+  border-radius: 50%;
+}
+
+.hai\:rounded-hai {
+  border-radius: var(--hai-radius);
+}
+
+.hai\:rounded-none {
+  border-radius: 0;
+}
+
+.hai\:rounded-t-hai {
+  border-top-left-radius: var(--hai-radius);
+  border-top-right-radius: var(--hai-radius);
+}
+
+.hai\:border-0 {
+  border-style: var(--tw-border-style);
+  border-width: 0;
+}
+
+.hai\:border-2 {
+  border-style: var(--tw-border-style);
+  border-width: 2px;
+}
+
+.hai\:border-3 {
+  border-style: var(--tw-border-style);
+  border-width: 3px;
+}
+
+.hai\:border-t-3 {
+  border-top-style: var(--tw-border-style);
+  border-top-width: 3px;
+}
+
+.hai\:border-r-2 {
+  border-right-style: var(--tw-border-style);
+  border-right-width: 2px;
+}
+
+.hai\:border-b-2 {
+  border-bottom-style: var(--tw-border-style);
+  border-bottom-width: 2px;
+}
+
+.hai\:border-b-3 {
+  border-bottom-style: var(--tw-border-style);
+  border-bottom-width: 3px;
+}
+
+.hai\:border-l-2 {
+  border-left-style: var(--tw-border-style);
+  border-left-width: 2px;
+}
+
+.hai\:border-l-3 {
+  border-left-style: var(--tw-border-style);
+  border-left-width: 3px;
+}
+
+.hai\:border-dashed {
+  --tw-border-style: dashed;
+  border-style: dashed;
+}
+
+.hai\:border-\[color-mix\(in_srgb\,var\(--hai-dim\)_50\%\,transparent\)\] {
+  border-color: var(--hai-dim);
+}
+
+@supports (color: color-mix(in lab, red, red)) {
+  .hai\:border-\[color-mix\(in_srgb\,var\(--hai-dim\)_50\%\,transparent\)\] {
+    border-color: color-mix(in srgb,var(--hai-dim) 50%,transparent);
+  }
+}
+
+.hai\:border-current {
+  border-color: currentColor;
+}
+
+.hai\:border-line {
+  border-color: var(--hai-line);
+}
+
+.hai\:border-transparent {
+  border-color: #0000;
+}
+
+.hai\:border-t-line {
+  border-top-color: var(--hai-line);
+}
+
+.hai\:border-r-line {
+  border-right-color: var(--hai-line);
+}
+
+.hai\:border-b-line {
+  border-bottom-color: var(--hai-line);
+}
+
+.hai\:border-b-line-soft {
+  border-bottom-color: var(--hai-line-soft);
+}
+
+.hai\:border-l-line {
+  border-left-color: var(--hai-line);
+}
+
+.hai\:bg-accent {
+  background-color: var(--hai-accent);
+}
+
+.hai\:bg-accent-soft {
+  background-color: var(--hai-accent-soft);
+}
+
+.hai\:bg-bad-soft {
+  background-color: var(--hai-bad-soft);
+}
+
+.hai\:bg-bg {
+  background-color: var(--hai-bg);
+}
+
+.hai\:bg-code-bg {
+  background-color: var(--hai-code-bg);
+}
+
+.hai\:bg-fg {
+  background-color: var(--hai-fg);
+}
+
+.hai\:bg-good {
+  background-color: var(--hai-good);
+}
+
+.hai\:bg-good-soft {
+  background-color: var(--hai-good-soft);
+}
+
+.hai\:bg-panel {
+  background-color: var(--hai-panel);
+}
+
+.hai\:bg-panel-2 {
+  background-color: var(--hai-panel-2);
+}
+
+.hai\:bg-transparent {
+  background-color: #0000;
+}
+
+.hai\:bg-user-bg {
+  background-color: var(--hai-user-bg);
+}
+
+.hai\:bg-warn {
+  background-color: var(--hai-warn);
+}
+
+.hai\:fill-logo-hot {
+  fill: var(--hai-logo-hot);
+}
+
+.hai\:fill-logo-ink {
+  fill: var(--hai-logo-ink);
+}
+
+.hai\:fill-logo-paper {
+  fill: var(--hai-logo-paper);
+}
+
+.hai\:stroke-3 {
+  stroke-width: 3px;
+}
+
+.hai\:stroke-\[2\.5\] {
+  stroke-width: 2.5px;
+}
+
+.hai\:p-0 {
+  padding: 0;
+}
+
+.hai\:p-16 {
+  padding: 16px;
+}
+
+.hai\:px-0 {
+  padding-inline: 0;
+}
+
+.hai\:px-6 {
+  padding-inline: 6px;
+}
+
+.hai\:px-8 {
+  padding-inline: 8px;
+}
+
+.hai\:px-10 {
+  padding-inline: 10px;
+}
+
+.hai\:px-11 {
+  padding-inline: 11px;
+}
+
+.hai\:px-12 {
+  padding-inline: 12px;
+}
+
+.hai\:px-14 {
+  padding-inline: 14px;
+}
+
+.hai\:px-16 {
+  padding-inline: 16px;
+}
+
+.hai\:px-\[var\(--hai-gutter\)\] {
+  padding-inline: var(--hai-gutter);
+}
+
+.hai\:py-0 {
+  padding-block: 0;
+}
+
+.hai\:py-1 {
+  padding-block: 1px;
+}
+
+.hai\:py-2 {
+  padding-block: 2px;
+}
+
+.hai\:py-6 {
+  padding-block: 6px;
+}
+
+.hai\:py-8 {
+  padding-block: 8px;
+}
+
+.hai\:py-9 {
+  padding-block: 9px;
+}
+
+.hai\:py-10 {
+  padding-block: 10px;
+}
+
+.hai\:py-12 {
+  padding-block: 12px;
+}
+
+.hai\:pt-12 {
+  padding-top: 12px;
+}
+
+.hai\:pt-14 {
+  padding-top: 14px;
+}
+
+.hai\:pt-28 {
+  padding-top: 28px;
+}
+
+.hai\:pr-6 {
+  padding-right: 6px;
+}
+
+.hai\:pr-8 {
+  padding-right: 8px;
+}
+
+.hai\:pr-10 {
+  padding-right: 10px;
+}
+
+.hai\:pr-14 {
+  padding-right: 14px;
+}
+
+.hai\:pb-8 {
+  padding-bottom: 8px;
+}
+
+.hai\:pb-12 {
+  padding-bottom: 12px;
+}
+
+.hai\:pb-14 {
+  padding-bottom: 14px;
+}
+
+.hai\:pb-16 {
+  padding-bottom: 16px;
+}
+
+.hai\:pb-20 {
+  padding-bottom: 20px;
+}
+
+.hai\:pl-0 {
+  padding-left: 0;
+}
+
+.hai\:pl-10 {
+  padding-left: 10px;
+}
+
+.hai\:pl-11 {
+  padding-left: 11px;
+}
+
+.hai\:pl-12 {
+  padding-left: 12px;
+}
+
+.hai\:pl-14 {
+  padding-left: 14px;
+}
+
+.hai\:pl-16 {
+  padding-left: 16px;
+}
+
+.hai\:text-left {
+  text-align: left;
+}
+
+.hai\:align-baseline {
+  vertical-align: baseline;
+}
+
+.hai\:\[font-family\:inherit\] {
+  font-family: inherit;
+}
+
+.hai\:font-mono {
+  font-family: var(--hai-mono);
+}
+
+.hai\:font-sans {
+  font-family: var(--hai-sans);
+}
+
+.hai\:\[font-size\:inherit\] {
+  font-size: inherit;
+}
+
+.hai\:text-\[10\.5px\] {
+  font-size: 10.5px;
+}
+
+.hai\:text-\[10px\] {
+  font-size: 10px;
+}
+
+.hai\:text-\[11\.5px\] {
+  font-size: 11.5px;
+}
+
+.hai\:text-\[11px\] {
+  font-size: 11px;
+}
+
+.hai\:text-\[12\.5px\] {
+  font-size: 12.5px;
+}
+
+.hai\:text-\[12px\] {
+  font-size: 12px;
+}
+
+.hai\:text-\[13px\] {
+  font-size: 13px;
+}
+
+.hai\:text-\[14px\] {
+  font-size: 14px;
+}
+
+.hai\:text-\[15px\] {
+  font-size: 15px;
+}
+
+.hai\:text-\[16px\] {
+  font-size: 16px;
+}
+
+.hai\:text-\[26px\] {
+  font-size: 26px;
+}
+
+.hai\:leading-\[1\.5\] {
+  --tw-leading: 1.5;
+  line-height: 1.5;
+}
+
+.hai\:leading-\[1\.6\] {
+  --tw-leading: 1.6;
+  line-height: 1.6;
+}
+
+.hai\:leading-\[1\.45\] {
+  --tw-leading: 1.45;
+  line-height: 1.45;
+}
+
+.hai\:leading-\[1\.55\] {
+  --tw-leading: 1.55;
+  line-height: 1.55;
+}
+
+.hai\:leading-\[1\.65\] {
+  --tw-leading: 1.65;
+  line-height: 1.65;
+}
+
+.hai\:leading-\[normal\] {
+  --tw-leading: normal;
+  line-height: normal;
+}
+
+.hai\:\[line-height\:inherit\] {
+  line-height: inherit;
+}
+
+.hai\:font-bold {
+  --tw-font-weight: 700;
+  font-weight: 700;
+}
+
+.hai\:font-medium {
+  --tw-font-weight: 500;
+  font-weight: 500;
+}
+
+.hai\:font-normal {
+  --tw-font-weight: 400;
+  font-weight: 400;
+}
+
+.hai\:font-semibold {
+  --tw-font-weight: 600;
+  font-weight: 600;
+}
+
+.hai\:tracking-\[-\.01em\] {
+  --tw-tracking: -.01em;
+  letter-spacing: -.01em;
+}
+
+.hai\:tracking-\[-\.02em\] {
+  --tw-tracking: -.02em;
+  letter-spacing: -.02em;
+}
+
+.hai\:tracking-\[\.08em\] {
+  --tw-tracking: .08em;
+  letter-spacing: .08em;
+}
+
+.hai\:wrap-anywhere {
+  overflow-wrap: anywhere;
+}
+
+.hai\:text-ellipsis {
+  text-overflow: ellipsis;
+}
+
+.hai\:whitespace-nowrap {
+  white-space: nowrap;
+}
+
+.hai\:whitespace-pre {
+  white-space: pre;
+}
+
+.hai\:whitespace-pre-wrap {
+  white-space: pre-wrap;
+}
+
+.hai\:text-dim {
+  color: var(--hai-dim);
+}
+
+.hai\:text-fg {
+  color: var(--hai-fg);
+}
+
+.hai\:text-inherit {
+  color: inherit;
+}
+
+.hai\:text-on-accent {
+  color: var(--hai-on-accent);
+}
+
+.hai\:text-panel {
+  color: var(--hai-panel);
+}
+
+.hai\:uppercase {
+  text-transform: uppercase;
+}
+
+.hai\:tabular-nums {
+  --tw-numeric-spacing: tabular-nums;
+  font-variant-numeric: var(--tw-ordinal, ) var(--tw-slashed-zero, ) var(--tw-numeric-figure, ) var(--tw-numeric-spacing, ) var(--tw-numeric-fraction, );
+}
+
+.hai\:antialiased {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.hai\:opacity-50 {
+  opacity: .5;
+}
+
+.hai\:opacity-75 {
+  opacity: .75;
+}
+
+.hai\:shadow-\[3px_3px_0_var\(--hai-line\)\] {
+  --tw-shadow: 3px 3px 0 var(--tw-shadow-color, var(--hai-line));
+  box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+}
+
+.hai\:shadow-\[4px_4px_0_var\(--hai-bad\)\] {
+  --tw-shadow: 4px 4px 0 var(--tw-shadow-color, var(--hai-bad));
+  box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+}
+
+.hai\:shadow-\[8px_8px_0_var\(--hai-line\)\] {
+  --tw-shadow: 8px 8px 0 var(--tw-shadow-color, var(--hai-line));
+  box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+}
+
+.hai\:shadow-hai {
+  --tw-shadow: var(--hai-shadow);
+  box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+}
+
+.hai\:outline-none {
+  --tw-outline-style: none;
+  outline-style: none;
+}
+
+.hai\:select-none {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.hai\:\[--hai-dock-clear\:36px\] {
+  --hai-dock-clear: 36px;
+}
+
+.hai\:\[--hai-gutter\:max\(16px\,calc\(\(100\%_-_var\(--hai-column\)\)_\/_2\)\)\] {
+  --hai-gutter: max(16px, calc((100% - var(--hai-column)) / 2));
+}
+
+.hai\:\[background\:linear-gradient\(45deg\,color-mix\(in_srgb\,var\(--hai-dim\)_50\%\,transparent\)_0_12\.5\%\,transparent_0_50\%\,color-mix\(in_srgb\,var\(--hai-dim\)_50\%\,transparent\)_0_62\.5\%\,transparent_0\)_0_0_\/_12px_12px\] {
+  background: linear-gradient(45deg,var(--hai-dim) 0 12.5%,transparent 0 50%,var(--hai-dim) 0 62.5%,transparent 0) 0 0 / 12px 12px;
+}
+
+@supports (color: color-mix(in lab, red, red)) {
+  .hai\:\[background\:linear-gradient\(45deg\,color-mix\(in_srgb\,var\(--hai-dim\)_50\%\,transparent\)_0_12\.5\%\,transparent_0_50\%\,color-mix\(in_srgb\,var\(--hai-dim\)_50\%\,transparent\)_0_62\.5\%\,transparent_0\)_0_0_\/_12px_12px\] {
+    background: linear-gradient(45deg,color-mix(in srgb,var(--hai-dim) 50%,transparent) 0 12.5%,transparent 0 50%,color-mix(in srgb,var(--hai-dim) 50%,transparent) 0 62.5%,transparent 0) 0 0 / 12px 12px;
+  }
+}
+
+.hai\:\[background\:linear-gradient\(to_right\,var\(--hai-accent\)_calc\(var\(--hai-progress\,0\%\)_-_3px\)\,transparent_0\)_0_3px_no-repeat\,linear-gradient\(to_right\,var\(--hai-line\)_var\(--hai-progress\,0\%\)\,transparent_0\)\] {
+  background: linear-gradient(to right,var(--hai-accent) calc(var(--hai-progress, 0%) - 3px),transparent 0) 0 3px no-repeat,linear-gradient(to right,var(--hai-line) var(--hai-progress, 0%),transparent 0);
+}
+
+.hai\:\[clip-path\:inset\(50\%\)\] {
+  clip-path: inset(50%);
+}
+
+.hai\:\[transition\:box-shadow_\.15s\] {
+  transition: box-shadow .15s;
+}
+
+.hai\:\[transition\:margin-right_\.25s_cubic-bezier\(\.2\,\.8\,\.2\,1\)\,opacity_\.25s\] {
+  transition: margin-right .25s cubic-bezier(.2, .8, .2, 1), opacity .25s;
+}
+
+.hai\:\[transition\:opacity_\.15s\] {
+  transition: opacity .15s;
+}
+
+.hai\:\[transition\:transform_\.15s\] {
+  transition: transform .15s;
+}
+
+.hai\:\[transition\:transform_\.25s_cubic-bezier\(\.2\,\.8\,\.2\,1\)\,visibility_0s_\.25s\] {
+  transition: transform .25s cubic-bezier(.2, .8, .2, 1), visibility 0s .25s;
+}
+
+.hai\:\[unicode-bidi\:plaintext\] {
+  unicode-bidi: plaintext;
+}
+
+:is(.hai\:\*\:hidden > *) {
+  display: none;
+}
+
+.hai\:placeholder\:overflow-hidden::placeholder {
+  overflow: hidden;
+}
+
+.hai\:placeholder\:text-ellipsis::placeholder {
+  text-overflow: ellipsis;
+}
+
+.hai\:placeholder\:whitespace-nowrap::placeholder {
+  white-space: nowrap;
+}
+
+.hai\:placeholder\:text-dim::placeholder {
+  color: var(--hai-dim);
+}
+
+.hai\:before\:absolute:before {
+  content: var(--tw-content);
+  position: absolute;
+}
+
+.hai\:before\:inset-0:before {
+  content: var(--tw-content);
+  inset: 0;
+}
+
+.hai\:before\:-z-1:before {
+  content: var(--tw-content);
+  z-index: calc(1 * -1);
+}
+
+.hai\:before\:box-border:before {
+  content: var(--tw-content);
+  box-sizing: border-box;
+}
+
+.hai\:before\:size-10:before {
+  content: var(--tw-content);
+  width: 10px;
+  height: 10px;
+}
+
+.hai\:before\:transform-\[translate\(8px\,-8px\)\]:before {
+  content: var(--tw-content);
+  transform: translate(8px, -8px);
+}
+
+.hai\:before\:rounded-\[50\%\]:before {
+  content: var(--tw-content);
+  border-radius: 50%;
+}
+
+.hai\:before\:border-2:before {
+  content: var(--tw-content);
+  border-style: var(--tw-border-style);
+  border-width: 2px;
+}
+
+.hai\:before\:border-current:before {
+  content: var(--tw-content);
+  border-color: currentColor;
+}
+
+.hai\:before\:border-line:before {
+  content: var(--tw-content);
+  border-color: var(--hai-line);
+}
+
+.hai\:before\:bg-good:before {
+  content: var(--tw-content);
+  background-color: var(--hai-good);
+}
+
+.hai\:before\:bg-panel:before {
+  content: var(--tw-content);
+  background-color: var(--hai-panel);
+}
+
+.hai\:before\:content-\[\'\'\]:before {
+  --tw-content: "";
+  content: var(--tw-content);
+}
+
+.hai\:after\:absolute:after {
+  content: var(--tw-content);
+  position: absolute;
+}
+
+.hai\:after\:inset-0:after {
+  content: var(--tw-content);
+  inset: 0;
+}
+
+.hai\:after\:-z-1:after {
+  content: var(--tw-content);
+  z-index: calc(1 * -1);
+}
+
+.hai\:after\:box-border:after {
+  content: var(--tw-content);
+  box-sizing: border-box;
+}
+
+.hai\:after\:transform-\[translate\(4px\,-4px\)\]:after {
+  content: var(--tw-content);
+  transform: translate(4px, -4px);
+}
+
+.hai\:after\:border-2:after {
+  content: var(--tw-content);
+  border-style: var(--tw-border-style);
+  border-width: 2px;
+}
+
+.hai\:after\:border-line:after {
+  content: var(--tw-content);
+  border-color: var(--hai-line);
+}
+
+.hai\:after\:bg-panel:after {
+  content: var(--tw-content);
+  background-color: var(--hai-panel);
+}
+
+.hai\:after\:content-\[\'\'\]:after {
+  --tw-content: "";
+  content: var(--tw-content);
+}
+
+.hai\:first\:flex:first-child {
+  display: flex;
+}
+
+.hai\:first\:flex-col:first-child {
+  flex-direction: column;
+}
+
+.hai\:first\:items-center:first-child {
+  align-items: center;
+}
+
+.hai\:first\:pt-\[clamp\(24px\,14vh\,140px\)\]:first-child {
+  padding-top: clamp(24px, 14vh, 140px);
+}
+
+.hai\:first\:text-center:first-child {
+  text-align: center;
+}
+
+.hai\:last\:border-b-0:last-child {
+  border-bottom-style: var(--tw-border-style);
+  border-bottom-width: 0;
+}
+
+.hai\:last\:border-b-current:last-child {
+  border-bottom-color: currentColor;
+}
+
+.hai\:empty\:hidden:empty {
+  display: none;
+}
+
+.hai\:focus-within\:shadow-\[4px_4px_0_var\(--hai-accent\)\]:focus-within {
+  --tw-shadow: 4px 4px 0 var(--tw-shadow-color, var(--hai-accent));
+  box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+}
+
+.hai\:hover\:border-line:hover {
+  border-color: var(--hai-line);
+}
+
+.hai\:hover\:bg-hover:hover {
+  background-color: var(--hai-hover);
+}
+
+.hai\:hover\:bg-\[linear-gradient\(var\(--hai-hover\)_0_0\)\]:hover {
+  background-image: linear-gradient(var(--hai-hover) 0 0);
+}
+
+.hai\:hover\:text-fg:hover {
+  color: var(--hai-fg);
+}
+
+.hai\:focus\:outline-none:focus {
+  --tw-outline-style: none;
+  outline-style: none;
+}
+
+.hai\:focus-visible\:outline-2:focus-visible {
+  outline-style: var(--tw-outline-style);
+  outline-width: 2px;
+}
+
+.hai\:focus-visible\:outline-3:focus-visible {
+  outline-style: var(--tw-outline-style);
+  outline-width: 3px;
+}
+
+.hai\:focus-visible\:-outline-offset-5:focus-visible {
+  outline-offset: calc(5px * -1);
+}
+
+.hai\:focus-visible\:-outline-offset-6:focus-visible {
+  outline-offset: calc(6px * -1);
+}
+
+.hai\:focus-visible\:outline-offset-2:focus-visible {
+  outline-offset: 2px;
+}
+
+.hai\:focus-visible\:outline-current:focus-visible {
+  outline-color: currentColor;
+}
+
+.hai\:focus-visible\:outline-fg:focus-visible {
+  outline-color: var(--hai-fg);
+}
+
+.hai\:hover\:enabled\:border-line:hover:enabled {
+  border-color: var(--hai-line);
+}
+
+.hai\:hover\:enabled\:bg-hover:hover:enabled {
+  background-color: var(--hai-hover);
+}
+
+.hai\:hover\:enabled\:text-fg:hover:enabled {
+  color: var(--hai-fg);
+}
+
+.hai\:disabled\:cursor-default:disabled {
+  cursor: default;
+}
+
+.hai\:disabled\:cursor-not-allowed:disabled {
+  cursor: not-allowed;
+}
+
+.hai\:disabled\:opacity-35:disabled {
+  opacity: .35;
+}
+
+.hai\:disabled\:opacity-40:disabled {
+  opacity: .4;
+}
+
+.hai\:disabled\:opacity-60:disabled {
+  opacity: .6;
+}
+
+.hai\:has-\[\.hai-tbar\]\:relative:has(.hai-tbar) {
+  position: relative;
+}
+
+.hai\:has-\[\+\.hai-dockable\:not\(\[data-expired\]\)\:not\(\[data-docked\]\)\]\:shadow-hai:has( + .hai-dockable:not([data-expired]):not([data-docked])), .hai\:has-\[\+\.hai-surface\:not\(\[data-expired\]\)\]\:shadow-hai:has( + .hai-surface:not([data-expired])) {
+  --tw-shadow: var(--hai-shadow);
+  box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+}
+
+.hai\:has-\[\+\:is\(\.hai-surface\,\.hai-dockable\)\]\:mb-0:has( + :is(.hai-surface, .hai-dockable)) {
+  margin-bottom: 0;
+}
+
+.hai\:has-\[\+\:is\(\.hai-surface\,\.hai-dockable\)\]\:rounded-b-none:has( + :is(.hai-surface, .hai-dockable)) {
+  border-bottom-right-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.hai\:aria-expanded\:transform-\[translate\(3px\,3px\)\][aria-expanded="true"] {
+  transform: translate(3px, 3px);
+}
+
+.hai\:aria-expanded\:border-line[aria-expanded="true"] {
+  border-color: var(--hai-line);
+}
+
+.hai\:aria-expanded\:bg-hover[aria-expanded="true"] {
+  background-color: var(--hai-hover);
+}
+
+.hai\:aria-expanded\:text-fg[aria-expanded="true"] {
+  color: var(--hai-fg);
+}
+
+.hai\:aria-expanded\:text-panel[aria-expanded="true"] {
+  color: var(--hai-panel);
+}
+
+.hai\:aria-expanded\:shadow-none[aria-expanded="true"] {
+  --tw-shadow: 0 0 #0000;
+  box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+}
+
+.hai\:aria-expanded\:\[background\:var\(--hai-fg\)\][aria-expanded="true"] {
+  background: var(--hai-fg);
+}
+
+.hai\:data-docked\:bg-panel-2[data-docked] {
+  background-color: var(--hai-panel-2);
+}
+
+.hai\:data-docked\:shadow-none[data-docked] {
+  --tw-shadow: 0 0 #0000;
+  box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+}
+
+.hai\:data-expired\:opacity-45[data-expired] {
+  opacity: .45;
+}
+
+.hai\:data-expired\:shadow-none[data-expired] {
+  --tw-shadow: 0 0 #0000;
+  box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+}
+
+.hai\:data-expired\:\[filter\:grayscale\(\.7\)\][data-expired] {
+  filter: grayscale(.7);
+}
+
+.hai\:data-\[status\=awaiting\]\:not-aria-expanded\:bg-warn[data-status="awaiting"]:not([aria-expanded="true"]) {
+  background-color: var(--hai-warn);
+}
+
+.hai\:data-\[status\=awaiting\]\:not-aria-expanded\:text-on-accent[data-status="awaiting"]:not([aria-expanded="true"]) {
+  color: var(--hai-on-accent);
+}
+
+.hai\:data-\[status\=expired\]\:border-dashed[data-status="expired"] {
+  --tw-border-style: dashed;
+  border-style: dashed;
+}
+
+.hai\:data-\[status\=expired\]\:border-dim[data-status="expired"] {
+  border-color: var(--hai-dim);
+}
+
+.hai\:data-\[status\=expired\]\:text-dim[data-status="expired"] {
+  color: var(--hai-dim);
+}
+
+.hai\:data-\[status\=expired\]\:shadow-none[data-status="expired"] {
+  --tw-shadow: 0 0 #0000;
+  box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+}
+
+.hai\:data-\[status\=expired\]\:\[background\:transparent\][data-status="expired"] {
+  background: none;
+}
+
+.hai\:nth-2\:h-16:nth-child(2) {
+  height: 16px;
+}
+
+.hai\:nth-2\:w-\[40\%\]:nth-child(2) {
+  width: 40%;
+}
+
+.hai\:nth-2\:border-line:nth-child(2) {
+  border-color: var(--hai-line);
+}
+
+.hai\:nth-2\:bg-\[linear-gradient\(45deg\,var\(--hai-line\)_0_12\.5\%\,transparent_0_50\%\,var\(--hai-line\)_0_62\.5\%\,transparent_0\)\]:nth-child(2) {
+  background-image: linear-gradient(45deg,var(--hai-line) 0 12.5%,transparent 0 50%,var(--hai-line) 0 62.5%,transparent 0);
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .hai-status-running .hai-ticon,
-  .hai-pulse,
-  .hai-dots i,
-  .hai-shimmer { animation: none; }
-  .hai-chevron,
-  .hai-composer-box,
-  .hai-dock,
-  .hai-chat,
-  .hai-inspector,
-  .hai-main.inspector-open > .hai-inspector { transition: none; }
+  .hai\:motion-reduce\:animate-none {
+    animation: none;
+  }
+
+  .hai\:motion-reduce\:\[transition\:none\] {
+    transition: none;
+  }
+}
+
+@media not all and (min-width: 900px) {
+  .hai\:max-\[900px\]\:absolute {
+    position: absolute;
+  }
+
+  .hai\:max-\[900px\]\:top-\[12\%\] {
+    top: 12%;
+  }
+
+  .hai\:max-\[900px\]\:right-0 {
+    right: 0;
+  }
+
+  .hai\:max-\[900px\]\:bottom-\[var\(--hai-composer-height\,120px\)\] {
+    bottom: var(--hai-composer-height, 120px);
+  }
+
+  .hai\:max-\[900px\]\:left-0 {
+    left: 0;
+  }
+
+  .hai\:max-\[900px\]\:hidden {
+    display: none;
+  }
+
+  .hai\:max-\[900px\]\:size-1 {
+    width: 1px;
+    height: 1px;
+  }
+
+  .hai\:max-\[900px\]\:max-h-none {
+    max-height: none;
+  }
+
+  .hai\:max-\[900px\]\:w-auto {
+    width: auto;
+  }
+
+  .hai\:max-\[900px\]\:overflow-hidden {
+    overflow: hidden;
+  }
+
+  .hai\:max-\[900px\]\:rounded-none {
+    border-radius: 0;
+  }
+
+  .hai\:max-\[900px\]\:border-x-0 {
+    border-inline-style: var(--tw-border-style);
+    border-inline-width: 0;
+  }
+
+  .hai\:max-\[900px\]\:px-8 {
+    padding-inline: 8px;
+  }
+
+  .hai\:max-\[900px\]\:whitespace-nowrap {
+    white-space: nowrap;
+  }
+
+  .hai\:max-\[900px\]\:shadow-none {
+    --tw-shadow: 0 0 #0000;
+    box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+  }
+
+  .hai\:max-\[900px\]\:\[clip-path\:inset\(50\%\)\] {
+    clip-path: inset(50%);
+  }
+}
+
+@media not all and (min-width: 600px) {
+  .hai\:max-\[600px\]\:hidden {
+    display: none;
+  }
+
+  .hai\:max-\[600px\]\:pt-18 {
+    padding-top: 18px;
+  }
+
+  .hai\:max-\[600px\]\:pb-12 {
+    padding-bottom: 12px;
+  }
+}
+
+@media (pointer: coarse) {
+  .hai\:pointer-coarse\:h-44 {
+    height: 44px;
+  }
+
+  .hai\:pointer-coarse\:min-h-44 {
+    min-height: 44px;
+  }
+
+  .hai\:pointer-coarse\:w-44 {
+    width: 44px;
+  }
+
+  .hai\:pointer-coarse\:\[--hai-dock-clear\:44px\] {
+    --hai-dock-clear: 44px;
+  }
+}
+
+.hai\:\[\&\.hai-status-awaiting\]\:bg-warn.hai-status-awaiting {
+  background-color: var(--hai-warn);
+}
+
+.hai\:\[\&\.hai-status-awaiting\]\:shadow-hai.hai-status-awaiting {
+  --tw-shadow: var(--hai-shadow);
+  box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+}
+
+.hai\:\[\&\.hai-status-error\]\:bg-bad-soft.hai-status-error {
+  background-color: var(--hai-bad-soft);
+}
+
+.hai\:\[\&\.hai-status-error\]\:shadow-\[4px_4px_0_var\(--hai-bad\)\].hai-status-error {
+  --tw-shadow: 4px 4px 0 var(--tw-shadow-color, var(--hai-bad));
+  box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+}
+
+.hai\:\[\&\.hai-status-expired\]\:bg-\[color-mix\(in_srgb\,var\(--hai-dim\)_10\%\,var\(--hai-panel-2\)\)\].hai-status-expired {
+  background-color: var(--hai-dim);
+}
+
+@supports (color: color-mix(in lab, red, red)) {
+  .hai\:\[\&\.hai-status-expired\]\:bg-\[color-mix\(in_srgb\,var\(--hai-dim\)_10\%\,var\(--hai-panel-2\)\)\].hai-status-expired {
+    background-color: color-mix(in srgb,var(--hai-dim) 10%,var(--hai-panel-2));
+  }
+}
+
+.hai\:\[\&\.hai-status-running\]\:bg-panel.hai-status-running {
+  background-color: var(--hai-panel);
+}
+
+.hai\:\[\&\.hai-status-running\]\:shadow-hai.hai-status-running {
+  --tw-shadow: var(--hai-shadow);
+  box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+}
+
+.hai\:\[\&\:\:-webkit-details-marker\]\:hidden::-webkit-details-marker {
+  display: none;
+}
+
+.hai\:\[\&\[hidden\]\]\:hidden[hidden] {
+  display: none;
+}
+
+.hai\:\[\&\[inert\]\]\:opacity-40[inert] {
+  opacity: .4;
+}
+
+.hai-composer:has(.hai-composer-box:focus-within) > .hai\:\[\.hai-composer\:has\(\.hai-composer-box\:focus-within\)\>\&\]\:shadow-\[4px_4px_0_var\(--hai-accent\)\] {
+  --tw-shadow: 4px 4px 0 var(--tw-shadow-color, var(--hai-accent));
+  box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+}
+
+.hai-dock-item[aria-expanded="true"] .hai\:\[\.hai-dock-item\[aria-expanded\=true\]_\&\]\:bg-warn {
+  background-color: var(--hai-warn);
+}
+
+.hai-dock:not([hidden]) + .hai\:\[\.hai-dock\:not\(\[hidden\]\)\+\&\]\:rounded-t-none {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+.hai-dock:not([hidden]) + .hai\:\[\.hai-dock\:not\(\[hidden\]\)\+\&\]\:border-t-0 {
+  border-top-style: var(--tw-border-style);
+  border-top-width: 0;
+}
+
+.hai-empty:first-child .hai\:\[\.hai-empty\:first-child_\&\]\:justify-center {
+  justify-content: center;
+}
+
+.hai-empty:first-child .hai\:\[\.hai-empty\:first-child_\&\]\:text-\[18px\] {
+  font-size: 18px;
+}
+
+.hai-empty:first-child .hai\:\[\.hai-empty\:first-child_\&\]\:leading-\[1\.45\] {
+  --tw-leading: 1.45;
+  line-height: 1.45;
+}
+
+.hai-empty:first-child .hai\:\[\.hai-empty\:first-child_\&\]\:font-bold {
+  --tw-font-weight: 700;
+  font-weight: 700;
+}
+
+.hai-empty:first-child .hai\:\[\.hai-empty\:first-child_\&\]\:tracking-\[-\.01em\] {
+  --tw-tracking: -.01em;
+  letter-spacing: -.01em;
+}
+
+.hai-empty:first-child .hai\:\[\.hai-empty\:first-child_\&\]\:text-fg {
+  color: var(--hai-fg);
+}
+
+.hai-empty:not(:first-child) .hai\:\[\.hai-empty\:not\(\:first-child\)_\&\]\:mt-12 {
+  margin-top: 12px;
+}
+
+.hai-empty:not(:first-child) .hai\:\[\.hai-empty\:not\(\:first-child\)_\&\]\:hidden {
+  display: none;
+}
+
+.hai-main.inspector-open > .hai\:\[\.hai-main\.inspector-open\>\&\]\:visible {
+  visibility: visible;
+}
+
+.hai-main.inspector-open > .hai\:\[\.hai-main\.inspector-open\>\&\]\:transform-none {
+  transform: none;
+}
+
+.hai-main.inspector-open > .hai\:\[\.hai-main\.inspector-open\>\&\]\:\[transition\:transform_\.25s_cubic-bezier\(\.2\,\.8\,\.2\,1\)\,visibility_0s\] {
+  transition: transform .25s cubic-bezier(.2, .8, .2, 1), visibility;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hai-main.inspector-open > .hai\:motion-reduce\:\[\.hai-main\.inspector-open\>\&\]\:\[transition\:none\] {
+    transition: none;
+  }
+}
+
+@media (min-width: 900px) {
+  .hai-main.inspector-open > .hai\:min-\[900px\]\:\[\.hai-main\.inspector-open\>\&\]\:mr-\[var\(--hai-inspector-width\)\] {
+    margin-right: var(--hai-inspector-width);
+  }
+}
+
+.hai-pile-row .hai\:\[\.hai-pile-row_\&\]\:static {
+  position: static;
+}
+
+.hai-pile-row .hai\:\[\.hai-pile-row_\&\]\:flex-none {
+  flex: none;
+}
+
+.hai-status-awaiting .hai\:\[\.hai-status-awaiting_\&\]\:bg-accent {
+  background-color: var(--hai-accent);
+}
+
+.hai-status-awaiting .hai\:\[\.hai-status-awaiting_\&\]\:text-on-accent {
+  color: var(--hai-on-accent);
+}
+
+.hai-status-awaiting .hai\:\[\.hai-status-awaiting_\&\]\:\[--hai-dim\:var\(--hai-on-accent\)\] {
+  --hai-dim: var(--hai-on-accent);
+}
+
+.hai-status-error .hai\:\[\.hai-status-error_\&\]\:bg-bad {
+  background-color: var(--hai-bad);
+}
+
+.hai-status-error summary:hover .hai\:\[\.hai-status-error_summary\:hover_\&\]\:text-fg {
+  color: var(--hai-fg);
+}
+
+.hai-status-expired .hai\:\[\.hai-status-expired_\&\]\:bg-\[color-mix\(in_srgb\,var\(--hai-dim\)_60\%\,var\(--hai-bg\)\)\] {
+  background-color: var(--hai-dim);
+}
+
+@supports (color: color-mix(in lab, red, red)) {
+  .hai-status-expired .hai\:\[\.hai-status-expired_\&\]\:bg-\[color-mix\(in_srgb\,var\(--hai-dim\)_60\%\,var\(--hai-bg\)\)\] {
+    background-color: color-mix(in srgb,var(--hai-dim) 60%,var(--hai-bg));
+  }
+}
+
+.hai-status-expired .hai\:\[\.hai-status-expired_\&\]\:bg-transparent {
+  background-color: #0000;
+}
+
+.hai-status-resolved .hai\:\[\.hai-status-resolved_\&\]\:bg-selected {
+  background-color: var(--hai-selected);
+}
+
+.hai-status-running .hai\:\[\.hai-status-running_\&\]\:animate-\[hai-blink_1\.2s_infinite_both\] {
+  animation: 1.2s infinite both hai-blink;
+}
+
+.hai-status-running .hai\:\[\.hai-status-running_\&\]\:bg-accent {
+  background-color: var(--hai-accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hai-status-running .hai\:motion-reduce\:\[\.hai-status-running_\&\]\:animate-none {
+    animation: none;
+  }
+}
+
+.hai-tool + .hai\:\[\.hai-tool\+\&\]\:rounded-t-none {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+.hai-tool + .hai\:\[\.hai-tool\+\&\]\:border-t-0 {
+  border-top-style: var(--tw-border-style);
+  border-top-width: 0;
+}
+
+.hai-tool[open] .hai\:\[\.hai-tool\[open\]_\&\]\:transform-\[rotate\(90deg\)\] {
+  transform: rotate(90deg);
+}
+
+.hai-window-bar > .hai-bar-btn + .hai\:\[\.hai-window-bar\>\.hai-bar-btn\+\&\]\:-ml-10 {
+  margin-left: -10px;
+}
+
+.hai-window[data-status="awaiting"] .hai\:\[\.hai-window\[data-status\=awaiting\]_\&\]\:bg-warn {
+  background-color: var(--hai-warn);
+}
+
+.hai-window[data-status="awaiting"] .hai\:\[\.hai-window\[data-status\=awaiting\]_\&\]\:text-on-accent {
+  color: var(--hai-on-accent);
+}
+
+.hai-window[data-status="expired"] .hai\:\[\.hai-window\[data-status\=expired\]_\&\]\:\[border-bottom-style\:dashed\] {
+  border-bottom-style: dashed;
+}
+
+.hai-window[data-status="expired"] .hai\:\[\.hai-window\[data-status\=expired\]_\&\]\:border-dim {
+  border-color: var(--hai-dim);
+}
+
+.hai-window[data-status="expired"] .hai\:\[\.hai-window\[data-status\=expired\]_\&\]\:bg-\[color-mix\(in_srgb\,var\(--hai-dim\)_10\%\,var\(--hai-panel-2\)\)\] {
+  background-color: var(--hai-dim);
+}
+
+@supports (color: color-mix(in lab, red, red)) {
+  .hai-window[data-status="expired"] .hai\:\[\.hai-window\[data-status\=expired\]_\&\]\:bg-\[color-mix\(in_srgb\,var\(--hai-dim\)_10\%\,var\(--hai-panel-2\)\)\] {
+    background-color: color-mix(in srgb,var(--hai-dim) 10%,var(--hai-panel-2));
+  }
+}
+
+.hai-window[data-status="expired"] .hai\:\[\.hai-window\[data-status\=expired\]_\&\]\:bg-transparent {
+  background-color: #0000;
+}
+
+.hai-window[data-status="expired"] .hai\:\[\.hai-window\[data-status\=expired\]_\&\]\:text-fg {
+  color: var(--hai-fg);
+}
+
+@media not all and (min-width: 900px) {
+  .window-open > .hai\:max-\[900px\]\:\[\.window-open\>\&\]\:opacity-40 {
+    opacity: .4;
+  }
+}
+
+:is(.hai-dockable, .hai-window-body) > .hai\:\[\:is\(\.hai-dockable\,\.hai-window-body\)\>\&\]\:m-0 {
+  margin: 0;
+}
+
+:is(.hai-dockable, .hai-window-body) > .hai\:\[\:is\(\.hai-dockable\,\.hai-window-body\)\>\&\]\:rounded-none {
+  border-radius: 0;
+}
+
+:is(.hai-dockable, .hai-window-body) > .hai\:\[\:is\(\.hai-dockable\,\.hai-window-body\)\>\&\]\:border-0 {
+  border-style: var(--tw-border-style);
+  border-width: 0;
+}
+
+:is(.hai-dockable, .hai-window-body) > .hai\:\[\:is\(\.hai-dockable\,\.hai-window-body\)\>\&\]\:shadow-none {
+  --tw-shadow: 0 0 #0000;
+  box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+}
+
+:is(.hai-notice, .hai-dockable, .hai-window-body) > .hai\:\[\:is\(\.hai-notice\,\.hai-dockable\,\.hai-window-body\)\>\&\]\:m-0 {
+  margin: 0;
+}
+
+:is(.hai-notice, .hai-dockable, .hai-window-body) > .hai\:\[\:is\(\.hai-notice\,\.hai-dockable\,\.hai-window-body\)\>\&\]\:rounded-none {
+  border-radius: 0;
+}
+
+:is(.hai-notice, .hai-dockable, .hai-window-body) > .hai\:\[\:is\(\.hai-notice\,\.hai-dockable\,\.hai-window-body\)\>\&\]\:border-0 {
+  border-style: var(--tw-border-style);
+  border-width: 0;
+}
+
+:is(.hai-notice, .hai-dockable, .hai-window-body) > .hai\:\[\:is\(\.hai-notice\,\.hai-dockable\,\.hai-window-body\)\>\&\]\:shadow-none {
+  --tw-shadow: 0 0 #0000;
+  box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+}
+
+i + .hai\:\[i\+\&\]\:hidden {
+  display: none;
+}
+
+@property --tw-rotate-x {
+  syntax: "*";
+  inherits: false
+}
+
+@property --tw-rotate-y {
+  syntax: "*";
+  inherits: false
+}
+
+@property --tw-rotate-z {
+  syntax: "*";
+  inherits: false
+}
+
+@property --tw-skew-x {
+  syntax: "*";
+  inherits: false
+}
+
+@property --tw-skew-y {
+  syntax: "*";
+  inherits: false
+}
+
+@property --tw-border-style {
+  syntax: "*";
+  inherits: false;
+  initial-value: solid;
+}
+
+@property --tw-leading {
+  syntax: "*";
+  inherits: false
+}
+
+@property --tw-font-weight {
+  syntax: "*";
+  inherits: false
+}
+
+@property --tw-tracking {
+  syntax: "*";
+  inherits: false
+}
+
+@property --tw-ordinal {
+  syntax: "*";
+  inherits: false
+}
+
+@property --tw-slashed-zero {
+  syntax: "*";
+  inherits: false
+}
+
+@property --tw-numeric-figure {
+  syntax: "*";
+  inherits: false
+}
+
+@property --tw-numeric-spacing {
+  syntax: "*";
+  inherits: false
+}
+
+@property --tw-numeric-fraction {
+  syntax: "*";
+  inherits: false
+}
+
+@property --tw-shadow {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0 0 #0000;
+}
+
+@property --tw-shadow-color {
+  syntax: "*";
+  inherits: false
+}
+
+@property --tw-shadow-alpha {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: 100%;
+}
+
+@property --tw-inset-shadow {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0 0 #0000;
+}
+
+@property --tw-inset-shadow-color {
+  syntax: "*";
+  inherits: false
+}
+
+@property --tw-inset-shadow-alpha {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: 100%;
+}
+
+@property --tw-ring-color {
+  syntax: "*";
+  inherits: false
+}
+
+@property --tw-ring-shadow {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0 0 #0000;
+}
+
+@property --tw-inset-ring-color {
+  syntax: "*";
+  inherits: false
+}
+
+@property --tw-inset-ring-shadow {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0 0 #0000;
+}
+
+@property --tw-ring-inset {
+  syntax: "*";
+  inherits: false
+}
+
+@property --tw-ring-offset-width {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0;
+}
+
+@property --tw-ring-offset-color {
+  syntax: "*";
+  inherits: false;
+  initial-value: #fff;
+}
+
+@property --tw-ring-offset-shadow {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0 0 #0000;
+}
+
+@property --tw-content {
+  syntax: "*";
+  inherits: false;
+  initial-value: "";
+}
+
+@property --tw-outline-style {
+  syntax: "*";
+  inherits: false;
+  initial-value: solid;
 }

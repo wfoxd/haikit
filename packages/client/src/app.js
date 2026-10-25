@@ -18,6 +18,7 @@
 import { createChat } from "./index.js";
 import { renderTranscript, closeTranscript, h } from "./transcript.js";
 import { icon, mark, FAVICON } from "./icons.js";
+import * as cls from "./classes.js";
 
 /** Below this width the drawer opens over the chat rather than beside it. */
 const WIDE = "(min-width: 900px)";
@@ -129,42 +130,42 @@ export function mountChat({
   addFavicon();
 
   // ── shell ──────────────────────────────────────────────────────────
-  const shell = h("div", "hai-shell");
+  const shell = h("div", cls.shell);
 
-  const top = h("header", "hai-top");
-  const brand = h("div", "hai-brand");
-  brand.append(mark("small", "hai-logo hai-mark"), h("span", "hai-title", title));
-  if (subtitle) brand.append(h("span", "hai-subtitle", subtitle));
+  const top = h("header", cls.top);
+  const brand = h("div", cls.brand);
+  brand.append(mark("small", cls.markSmall), h("span", cls.title, title));
+  if (subtitle) brand.append(h("span", cls.subtitle, subtitle));
 
-  const modelEl = h("span", "hai-model");
+  const modelEl = h("span", cls.model);
   modelEl.hidden = true;
-  const newBtn = button("hai-btn", "plus", "New chat");
+  const newBtn = button(cls.btn, "plus", "New chat");
   newBtn.onclick = () => chat.reset();
-  const actions = h("div", "hai-actions");
+  const actions = h("div", cls.actions);
   actions.append(modelEl, newBtn);
   top.append(brand, actions);
 
-  const transcript = h("div", "hai-transcript");
-  const statusEl = h("div", "hai-status");
+  const transcript = h("div", cls.transcript);
+  const statusEl = h("div", cls.status);
   statusEl.setAttribute("role", "status");
-  const input = h("textarea", "hai-input");
+  const input = h("textarea", cls.input);
   input.rows = 1;
   input.placeholder = placeholder;
   input.setAttribute("aria-label", "Message");
-  const sendBtn = h("button", "hai-send");
+  const sendBtn = h("button", cls.send);
   sendBtn.type = "button";
   sendBtn.setAttribute("aria-label", "Send");
-  sendBtn.append(icon("send"));
+  sendBtn.append(icon("send", cls.sendIcon));
 
-  const box = h("div", "hai-composer-box");
+  const box = h("div", cls.composerBox);
   box.append(input, sendBtn);
-  const composer = h("div", "hai-composer");
+  const composer = h("div", cls.composer);
   composer.append(box);
 
-  const chatPane = h("section", "hai-chat");
+  const chatPane = h("section", cls.chat);
   chatPane.append(transcript, statusEl, composer);
 
-  const main = h("div", `hai-main${inspector ? " has-inspector" : ""}`);
+  const main = h("div", inspector ? `${cls.main} has-inspector` : cls.main);
   main.append(chatPane);
 
   const wideQuery = typeof matchMedia === "function" ? matchMedia(WIDE) : null;
@@ -186,23 +187,23 @@ export function mountChat({
     // from the right, beside the chat on a wide screen and over it on a
     // narrow one. The header button that opens it says how much the model
     // holds, open or not.
-    const aside = h("aside", "hai-inspector");
+    const aside = h("aside", cls.inspector);
     aside.id = `${id}-inspector`;
     aside.setAttribute("aria-label", DRAWER);
-    const head = h("div", "hai-inspector-head");
-    const heading = h("div", "hai-inspector-title", DRAWER);
-    heading.append(h("span", null, "everything the model sees"));
-    const hide = h("button", "hai-icon-btn");
+    const head = h("div", cls.inspectorHead);
+    const heading = h("div", cls.inspectorTitle, DRAWER);
+    heading.append(h("span", cls.inspectorSub, "everything the model sees"));
+    const hide = h("button", cls.iconBtn);
     hide.type = "button";
     hide.setAttribute("aria-label", `Close ${DRAWER.toLowerCase()}`);
     hide.append(icon("close"));
     head.append(heading, hide);
-    inspectorBody = h("div", "hai-inspector-body");
+    inspectorBody = h("div", cls.inspectorBody);
     aside.append(head, inspectorBody);
     main.append(aside);
 
-    const toggle = button("hai-btn hai-ctx-toggle", "panel", "Context");
-    ctxCount = h("span", "hai-ctx-count");
+    const toggle = button(cls.ctxToggle, "panel", "Context");
+    ctxCount = h("span", cls.ctxCount);
     toggle.append(ctxCount);
     toggle.title = DRAWER;
     toggle.setAttribute("aria-controls", aside.id);
@@ -309,14 +310,14 @@ export function mountChat({
 
   // ── empty state ────────────────────────────────────────────────────
   function emptyState() {
-    const empty = h("div", "hai-empty");
+    const empty = h("div", cls.empty);
     if (!emptyText && !suggestions.length) return empty;
-    empty.append(mark("full", "hai-logo hai-empty-mark"));
-    if (emptyText) empty.append(h("p", null, emptyText));
+    empty.append(mark("full", cls.emptyMark));
+    if (emptyText) empty.append(h("p", cls.emptyText, emptyText));
     if (suggestions.length) {
-      const row = h("div", "hai-suggestions");
+      const row = h("div", cls.suggestions);
       for (const s of suggestions) {
-        const b = h("button", "hai-suggestion", s);
+        const b = h("button", cls.suggestion, s);
         b.type = "button";
         b.onclick = () => { input.value = s; send(); };
         row.append(b);
@@ -350,12 +351,12 @@ export function mountChat({
     statusEl.dataset.status = status;
     statusEl.replaceChildren();
     if (status === "streaming") {
-      const dots = h("span", "hai-dots");
+      const dots = h("span", cls.dots);
       dots.setAttribute("aria-hidden", "true");
-      dots.append(h("i"), h("i"), h("i"));
+      dots.append(h("i", cls.dot), h("i", cls.dot), h("i", cls.dot));
       statusEl.append(dots, "Thinking");
     } else if (status === "awaiting") {
-      statusEl.append(h("span", "hai-pulse"), `Waiting on your selection ${where}`);
+      statusEl.append(h("span", cls.pulse), `Waiting on your selection ${where}`);
     }
   }
 
@@ -445,61 +446,61 @@ function createDock({ chat, id, shell, chatPane, transcript, composer, statusEl,
   let open = null;
 
   // ── the shelf ────────────────────────────────────────────────────────
-  const shelf = h("div", "hai-dock");
+  const shelf = h("div", cls.dock);
   shelf.hidden = true;
   shelf.setAttribute("role", "toolbar");
   shelf.setAttribute("aria-label", "Docked surfaces");
-  const count = h("span", "hai-dock-count");
+  const count = h("span", cls.dockCount);
   count.setAttribute("aria-hidden", "true");
-  const row = h("div", "hai-dock-row");
-  const pile = h("span", "hai-dock-pile");
+  const row = h("div", cls.dockRow);
+  const pile = h("span", cls.dockPile);
   pile.hidden = true;
-  const pileBtn = h("button", "hai-dock-item");
+  const pileBtn = h("button", cls.dockItem);
   pileBtn.type = "button";
   pileBtn.setAttribute("aria-expanded", "false");
   pileBtn.setAttribute("aria-controls", `${id}-pile`);
   const pileText = h("span");
   const pileMark = changedMark();
-  pileBtn.append(icon("stack"), pileText, pileMark);
-  const list = h("div", "hai-pile-list");
+  pileBtn.append(icon("stack", cls.dockItemIcon), pileText, pileMark);
+  const list = h("div", cls.pileList);
   list.id = `${id}-pile`;
   list.hidden = true;
   pile.append(pileBtn, list);
   // Remove all, at the shelf's end: every docked surface back in the chat
-  const clear = h("button", "hai-dock-clear");
+  const clear = h("button", cls.dockClear);
   clear.type = "button";
   clear.title = "Remove all from dock";
   clear.setAttribute("aria-label", "Remove all from the dock");
-  clear.append(icon("undockAll"));
+  clear.append(icon("undockAll", cls.dockClearIcon));
   shelf.append(count, row, pile, clear);
   composer.prepend(shelf);
 
   // ── the window ───────────────────────────────────────────────────────
-  const win = h("section", "hai-window");
+  const win = h("section", cls.win);
   win.id = `${id}-window`;
   win.hidden = true;
   win.tabIndex = -1;
   win.setAttribute("role", "dialog");
   win.setAttribute("aria-labelledby", `${id}-window-name`);
-  const winName = h("span", "hai-window-name");
+  const winName = h("span", cls.winName);
   winName.id = `${id}-window-name`;
-  const winTool = h("span", "hai-window-tool");
-  const winBadge = h("span", "hai-tstatus hai-window-badge");
-  const remove = h("button", "hai-bar-btn hai-bar-icon");
+  const winTool = h("span", cls.winTool);
+  const winBadge = h("span", cls.winBadge);
+  const remove = h("button", cls.barIcon);
   remove.type = "button";
   remove.title = "Remove from dock";
-  remove.append(icon("undock"));
-  const minimise = h("button", "hai-bar-btn hai-bar-icon");
+  remove.append(icon("undock", cls.barIconIcon));
+  const minimise = h("button", cls.barIcon);
   minimise.type = "button";
   minimise.title = "Dock";
-  minimise.append(icon("dock"));
-  const winBar = h("div", "hai-window-bar");
-  winBar.append(icon("window"), winName, winTool, winBadge, remove, minimise);
-  const winBody = h("div", "hai-window-body");
+  minimise.append(icon("dock", cls.barIconIcon));
+  const winBar = h("div", cls.winBar);
+  winBar.append(icon("window", cls.winIcon), winName, winTool, winBadge, remove, minimise);
+  const winBody = h("div", cls.winBody);
   win.append(winBar, winBody);
 
   // what docking did, for a screen reader: the button pressed has gone
-  const live = h("div", "hai-dock-live");
+  const live = h("div", cls.dockLive);
   live.setAttribute("role", "status");
   chatPane.append(win, live);
 
@@ -521,24 +522,24 @@ function createDock({ chat, id, shell, chatPane, transcript, composer, statusEl,
     const entry = { block, card, element, bar: card.firstElementChild, props: surfaceOf({ block })?.props, changed: false, stacked: false };
 
     // what stays in the transcript, in the surface's place
-    entry.stubText = h("span", "hai-docked-text");
-    entry.back = h("button", "hai-bar-btn hai-bar-icon");
+    entry.stubText = h("span", cls.dockedText);
+    entry.back = h("button", cls.barIcon);
     entry.back.type = "button";
     entry.back.title = "Put back";
-    entry.back.append(icon("undock"));
+    entry.back.append(icon("undock", cls.barIconIcon));
     entry.back.onclick = () => undock(entry, true);
-    const stub = h("div", "hai-docked");
+    const stub = h("div", cls.docked);
     stub.append(entry.stubText, entry.back);
 
     // and its button on the shelf
-    entry.item = h("button", "hai-dock-item");
+    entry.item = h("button", cls.dockItem);
     entry.item.type = "button";
     entry.item.setAttribute("aria-controls", win.id);
     entry.itemName = h("span");
-    entry.dot = h("span", "hai-dock-dot");
+    entry.dot = h("span", cls.dockDot);
     entry.dot.setAttribute("aria-hidden", "true");
     entry.mark = changedMark();
-    entry.item.append(icon("window"), entry.itemName, entry.dot, entry.mark);
+    entry.item.append(icon("window", cls.dockItemIcon), entry.itemName, entry.dot, entry.mark);
     entry.item.onclick = () => (open === entry ? close(true) : show(entry));
     row.append(entry.item);
 
@@ -637,7 +638,7 @@ function createDock({ chat, id, shell, chatPane, transcript, composer, statusEl,
       setHidden(entry.dot, status !== "awaiting");
       setHidden(entry.mark, !entry.changed);
       const text = `${name} ${isOpen ? "is open in a window" : "is in the dock"}`;
-      if (entry.stubText.textContent !== text) entry.stubText.replaceChildren(icon("dock"), text);
+      if (entry.stubText.textContent !== text) entry.stubText.replaceChildren(icon("dock", cls.dockedIcon), text);
       setAttr(entry.back, "aria-label", `Put ${name} back`);
     }
     setHidden(shelf, entries.length === 0);
@@ -725,11 +726,11 @@ function createDock({ chat, id, shell, chatPane, transcript, composer, statusEl,
     listed = key;
     const focusedEntry = [...rows].find(([, row]) => row === focused)?.[0];
     rows.clear();
-    list.replaceChildren(h("div", "hai-pile-head", `stacked · ${stacked.length} · oldest first`));
+    list.replaceChildren(h("div", cls.pileHead, `stacked · ${stacked.length} · oldest first`));
     for (const entry of stacked) {
-      const b = h("button", "hai-pile-row");
+      const b = h("button", cls.pileRow);
       b.type = "button";
-      b.append(icon("window"), h("span", "hai-pile-name", nameOf(entry)));
+      b.append(icon("window", cls.pileRowIcon), h("span", cls.pileName, nameOf(entry)));
       if (entry.changed) {
         const mark = changedMark();
         mark.hidden = false;
@@ -848,7 +849,7 @@ function createDock({ chat, id, shell, chatPane, transcript, composer, statusEl,
 
 /** The accent square a docked surface wears while it has changed unseen. */
 function changedMark() {
-  const mark = h("span", "hai-dock-changed");
+  const mark = h("span", cls.dockChanged);
   mark.setAttribute("aria-hidden", "true");
   mark.hidden = true;
   return mark;
@@ -859,7 +860,7 @@ function changedMark() {
 function button(className, iconName, label) {
   const b = h("button", className);
   b.type = "button";
-  b.append(icon(iconName), h("span", "hai-btn-label", label));
+  b.append(icon(iconName), h("span", cls.btnLabel, label));
   return b;
 }
 
@@ -874,48 +875,48 @@ export function renderInspector(el, { messages = [], modelTokens = 0, uiTokens =
 
   if (!messages.length && !modelTokens && !uiTokens) {
     el.append(
-      h("p", "hai-inspector-empty", "Nothing yet. Every message, tool call and digest the model receives shows up here."),
+      h("p", cls.inspectorEmpty, "Nothing yet. Every message, tool call and digest the model receives shows up here."),
     );
     return;
   }
 
   const total = modelTokens + uiTokens;
   const pct = uiTokens ? Math.round((1 - modelTokens / total) * 100) : 0;
-  const stats = h("div", "hai-ctx");
+  const stats = h("div", cls.ctx);
   if (uiTokens) {
-    const headline = h("div", "hai-ctx-headline");
-    headline.append(h("span", "hai-ctx-pct", `${pct}%`), h("span", null, "kept out of context"));
+    const headline = h("div", cls.ctxHeadline);
+    headline.append(h("span", cls.ctxPct, `${pct}%`), h("span", null, "kept out of context"));
     stats.append(headline);
   }
-  const meter = h("div", "hai-meter");
+  const meter = h("div", cls.meter);
   meter.setAttribute("aria-hidden", "true");
-  const share = h("span", "hai-meter-model");
+  const share = h("span", cls.meterModel);
   share.style.width = `${total ? (modelTokens / total) * 100 : 100}%`;
   meter.append(share);
   stats.append(
     meter,
-    stat("hai-key-model", "model context", modelTokens),
-    stat("hai-key-ui", "browser payload", uiTokens),
+    stat(cls.keyModel, "model context", modelTokens),
+    stat(cls.keyUi, "browser payload", uiTokens),
   );
   el.append(stats);
 
   for (const m of messages) {
-    const box = h("div", `hai-msg hai-msg-${m.role}`);
-    box.append(h("div", "hai-role", m.role));
-    const body = h("div", "hai-mbody");
+    const box = h("div", `${cls.msg} hai-msg-${m.role}`);
+    box.append(h("div", cls.role, m.role));
+    const body = h("div", cls.mbody);
     if (typeof m.content === "string") {
       body.append(h("div", null, m.content));
     } else {
       for (const b of m.content ?? []) {
         if (b.type === "text" && b.text) body.append(h("div", null, b.text));
         if (b.type === "tool_use") {
-          const call = h("div", "hai-tu");
-          call.append(h("span", "hai-kind", `tool_use · ${b.name}`), h("div", null, JSON.stringify(b.input)));
+          const call = h("div", cls.toolUse);
+          call.append(h("span", cls.kind, `tool_use · ${b.name}`), h("div", null, JSON.stringify(b.input)));
           body.append(call);
         }
         if (b.type === "tool_result") {
-          const result = h("div", "hai-tr");
-          result.append(h("span", "hai-kind", "tool_result"), h("div", null, plain(b.content)));
+          const result = h("div", cls.toolResult);
+          result.append(h("span", cls.kind, "tool_result"), h("div", null, plain(b.content)));
           body.append(result);
         }
       }
@@ -928,10 +929,10 @@ export function renderInspector(el, { messages = [], modelTokens = 0, uiTokens =
 }
 
 function stat(key, label, tokens) {
-  const row = h("div", "hai-ctx-stat");
-  const name = h("span", "hai-ctx-label");
-  name.append(h("i", `hai-key ${key}`), label);
-  row.append(name, h("span", "hai-ctx-tok", `~${tokens.toLocaleString()} tok`));
+  const row = h("div", cls.ctxStat);
+  const name = h("span", cls.ctxLabel);
+  name.append(h("i", key), label);
+  row.append(name, h("span", cls.ctxTok, `~${tokens.toLocaleString()} tok`));
   return row;
 }
 

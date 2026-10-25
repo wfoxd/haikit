@@ -7,6 +7,7 @@
  */
 
 import { icon } from "./icons.js";
+import * as cls from "./classes.js";
 
 export const h = (tag, className, text) => {
   const node = document.createElement(tag);
@@ -150,14 +151,14 @@ function showStatus({ status: text, bar }, block, status) {
   const message = progress?.message ?? "";
   const count = progress ? progressCount(progress) : "";
   if (message || count) {
-    text.className = "hai-tstatus hai-tprogress";
+    text.className = cls.tprogress;
     const parts = [];
-    if (message) parts.push(h("span", "hai-tmessage", message));
+    if (message) parts.push(h("span", cls.tmessage, message));
     if (message && count) parts.push(h("span", null, " · "));
-    if (count) parts.push(h("span", "hai-tcount", count));
+    if (count) parts.push(h("span", cls.tcount, count));
     text.replaceChildren(...parts);
   } else {
-    text.className = "hai-tstatus";
+    text.className = cls.tstatus;
     text.textContent = (STATUS_TEXT[status] ?? ((ms) => `${ms} ms`))(block.ms);
   }
 
@@ -173,9 +174,9 @@ function showStatus({ status: text, bar }, block, status) {
 }
 
 function statusMark(status) {
-  const mark = h("span", "hai-ticon");
-  if (status === "running") mark.append(h("span", "hai-spinner"));
-  else if (status === "awaiting") mark.append(h("span", "hai-pulse"));
+  const mark = h("span", cls.ticon);
+  if (status === "running") mark.append(h("span", cls.spinner));
+  else if (status === "awaiting") mark.append(h("span", cls.pulse));
   else mark.append(icon(status === "error" ? "alert" : status === "expired" ? "clock" : "check"));
   return mark;
 }
@@ -302,17 +303,17 @@ const cards = new WeakMap();
  * dock's to decide.
  */
 function dockable(block, el, surface, onDock) {
-  const card = h("div", "hai-dockable");
+  const card = h("div", cls.dockable);
   card.dataset.handle = block.handle;
   const name = surface?.component ?? "surface";
-  const bar = h("div", "hai-surface-bar");
-  bar.append(h("span", "hai-surface-name", name));
+  const bar = h("div", cls.surfaceBar);
+  bar.append(h("span", cls.surfaceName, name));
   if (surface?.props) {
-    const dock = h("button", "hai-bar-btn hai-bar-icon");
+    const dock = h("button", cls.barIcon);
     dock.type = "button";
     dock.title = "Dock";
     dock.setAttribute("aria-label", `Dock ${name}`);
-    dock.append(icon("dock"));
+    dock.append(icon("dock", cls.barIconIcon));
     dock.onclick = () => onDock({ handle: card.dataset.handle, card, element: el });
     bar.append(dock);
   }
@@ -324,41 +325,41 @@ function dockable(block, el, surface, onDock) {
 function renderBlock(block, chat, onDock) {
   switch (block.kind) {
     case "user": {
-      const el = h("div", "hai-block hai-user");
-      el.append(h("div", "hai-body", block.text));
+      const el = h("div", cls.user);
+      el.append(h("div", cls.userBody, block.text));
       return el;
     }
 
     case "assistant": {
-      const el = h("div", "hai-block hai-assistant");
-      el.append(h("div", "hai-body", block.text ?? ""));
+      const el = h("div", cls.assistant);
+      el.append(h("div", cls.assistantBody, block.text ?? ""));
       return el;
     }
 
     // The user's answer, given in a surface rather than typed: it went back to
     // the model as the tool's result.
     case "interaction": {
-      const el = h("div", "hai-block hai-interaction");
-      const arrow = h("span", "hai-arrow");
-      arrow.append(icon("reply"));
-      el.append(arrow, h("span", "hai-body", block.label));
+      const el = h("div", cls.interaction);
+      const arrow = h("span", cls.arrow);
+      arrow.append(icon("reply", cls.arrowIcon));
+      el.append(arrow, h("span", cls.body, block.label));
       return el;
     }
 
     case "error": {
-      const el = h("div", "hai-block hai-error");
+      const el = h("div", cls.error);
       el.setAttribute("role", "alert");
-      el.append(icon("alert"), h("div", "hai-body", block.message));
+      el.append(icon("alert", cls.errorIcon), h("div", cls.errorBody, block.message));
       return el;
     }
 
     // The conversation is closed, so the notice carries the only way forward.
     case "expired": {
-      const el = h("div", "hai-block hai-expired");
-      const again = h("button", "hai-new", "Start a new conversation");
+      const el = h("div", cls.expired);
+      const again = h("button", cls.newChat, "Start a new conversation");
       again.type = "button";
       again.onclick = () => chat.reset();
-      el.append(icon("clock"), h("div", "hai-body", block.message), again);
+      el.append(icon("clock", cls.expiredIcon), h("div", cls.expiredBody, block.message), again);
       return el;
     }
 
@@ -366,19 +367,19 @@ function renderBlock(block, chat, onDock) {
     // what produced this, with what arguments, and what the model got back.
     case "tool": {
       const status = toolStatus(block, chat);
-      const el = h("details", `hai-block hai-tool hai-status-${status}`);
-      const summary = h("summary");
-      const parts = { status: h("span", "hai-tstatus"), bar: null };
+      const el = h("details", `${cls.tool} hai-status-${status}`);
+      const summary = h("summary", cls.toolSummary);
+      const parts = { status: h("span", cls.tstatus), bar: null };
       summary.append(
         statusMark(status),
-        h("span", "hai-tname", block.name),
-        h("span", "hai-targs", JSON.stringify(block.input)),
+        h("span", cls.tname, block.name),
+        h("span", cls.targs, JSON.stringify(block.input)),
         parts.status,
-        icon("chevron", "hai-icon hai-chevron"),
+        icon("chevron", cls.chevron),
       );
       // a thin bar along the row's bottom edge, for progress with a total
       if (status === "running") {
-        parts.bar = h("span", "hai-tbar");
+        parts.bar = h("span", cls.tbar);
         parts.bar.setAttribute("role", "progressbar");
         parts.bar.setAttribute("aria-label", `${block.name} progress`);
         parts.bar.setAttribute("aria-valuemin", "0");
@@ -387,19 +388,19 @@ function renderBlock(block, chat, onDock) {
       rowParts.set(el, parts);
       showStatus(parts, block, status);
       el.append(summary);
-      const detail = h("div", "hai-tool-detail");
+      const detail = h("div", cls.toolDetail);
       detail.append(
-        h("div", "hai-label", "input"),
-        h("pre", "hai-code", JSON.stringify(block.input ?? {}, null, 2)),
-        h("div", "hai-label", "→ tool_result — all the model receives"),
-        h("pre", "hai-digest", block.result ?? "…"),
+        h("div", cls.label, "input"),
+        h("pre", cls.code, JSON.stringify(block.input ?? {}, null, 2)),
+        h("div", cls.label, "→ tool_result — all the model receives"),
+        h("pre", cls.digest, block.result ?? "…"),
       );
       el.append(detail);
       return el;
     }
 
     case "ui": {
-      const el = h("div", "hai-surface");
+      const el = h("div", cls.surface);
       el.dataset.handle = block.handle;
       const surface = chat.state.surfaces.get(block.handle);
       if (surface) el.dataset.component = surface.component;
@@ -407,9 +408,9 @@ function renderBlock(block, chat, onDock) {
         queueMicrotask(() => chat.mount(block.handle, el));
       } else {
         el.setAttribute("aria-busy", "true");
-        const skeleton = h("div", "hai-skeleton");
-        skeleton.append(h("div", "hai-skeleton-label", `${surface?.component ?? "surface"} · loading…`));
-        for (let i = 0; i < 3; i++) skeleton.append(h("div", "hai-shimmer"));
+        const skeleton = h("div", cls.skeleton);
+        skeleton.append(h("div", cls.skeletonLabel, `${surface?.component ?? "surface"} · loading…`));
+        for (let i = 0; i < 3; i++) skeleton.append(h("div", cls.shimmer));
         el.append(skeleton);
       }
       return onDock ? dockable(block, el, surface, onDock) : el;
@@ -419,17 +420,17 @@ function renderBlock(block, chat, onDock) {
     // label says what kind; the app's component, from the notices registry,
     // draws the rest. A status region, so a screen reader announces it.
     case "notice": {
-      const el = h("div", "hai-notice");
+      const el = h("div", cls.notice);
       el.setAttribute("role", "status");
       el.dataset.notice = block.name;
-      el.append(h("div", "hai-notice-label", `notice · ${block.name}`));
-      const body = h("div", "hai-notice-body");
+      el.append(h("div", cls.noticeLabel, `notice · ${block.name}`));
+      const body = h("div", cls.noticeBody);
       el.append(body);
       queueMicrotask(() => chat.mountNotice(block.seq, body));
       return el;
     }
 
     default:
-      return h("div", "hai-block", JSON.stringify(block));
+      return h("div", cls.block, JSON.stringify(block));
   }
 }

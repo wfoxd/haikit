@@ -475,10 +475,21 @@ the examples are built, import [`tailwind.css`](#tailwindcss) instead, which
 brings this file with it.
 
 It's plain CSS, loaded as it is. In HaiKIT's repository it's built by
-`npm run build:css`: the hand-written rules in `packages/client/styles/hai.css`,
-followed by any utilities compiled from the default UI's class names. Those
-are prefixed `hai:` and sized in pixels, so they can't collide with a page's
-own classes, and a page's Tailwind theme or root font size can't resize them.
+`npm run build:css`: the tokens and keyframes in
+`packages/client/styles/hai.css`, followed by the Tailwind utilities that style
+everything the default UI renders, compiled from the class names in
+`packages/client/src/classes.js`. Those are prefixed `hai:` and sized in
+pixels, so they can't collide with a page's own classes, and a page's Tailwind
+theme or root font size can't resize them. Each element sets everything it
+needs itself, including its `box-sizing`, so the default UI looks the same on a
+page with a CSS reset, Tailwind's preflight among them, as on one without.
+
+Each element the default UI builds carries its hook, the `hai-*` class this
+page names it by, followed by those utilities. The hooks are for finding and
+restyling elements, and stay; the `hai:` utilities aren't API, and change
+between versions. To restyle the default UI, override its [tokens](#tokens).
+A rule of your own on a hook works too, loaded after `hai.css`, as long as
+it's at least as specific as the default UI's rule for the same state.
 
 Styles only what the framework renders: the shell, the transcript's blocks,
 the tool rows, the surface container, the drawer and the dock. It doesn't style the

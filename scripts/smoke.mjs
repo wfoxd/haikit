@@ -238,9 +238,10 @@ for (const c of CASES) {
     ok("boots and serves the page");
 
     // one stylesheet: the default UI's, through @haikit/client/tailwind.css,
-    // and the Tailwind classes the app's components use
+    // its tokens and its hai: utilities, and the Tailwind classes the app's
+    // components use
     const css = await pageCss(base);
-    css.includes(".hai-shell{") && css.includes("bg-hai-hover")
+    css.includes("--hai-panel") && css.includes(".hai\\:") && css.includes("bg-hai-hover")
       ? ok("its stylesheet has the default UI's rules and the app's Tailwind classes")
       : bad("the built stylesheet is missing hai.css or the app's classes");
 
