@@ -676,27 +676,11 @@ buttons 44px wide, and Remove all 44px square.
 @import "@haikit/client/tailwind.css";
 ```
 
-For an app built with Tailwind CSS v4: an optional peer dependency of
-`@haikit/client`, `tailwindcss` `^4.0.0`. It imports [`hai.css`](#haicss), so
-an app that imports `tailwind.css` doesn't import `hai.css` as well. And it
-gives Tailwind the tokens as theme values, for your surfaces:
-
-```html
-<div class="border-3 border-hai-line bg-hai-panel text-hai-dim shadow-hai">
-```
-
-| Theme value | Utilities | Is |
-| --- | --- | --- |
-| `--color-hai-*` | `bg-hai-*`, `text-hai-*`, `border-hai-*` and every other colour utility | One for each colour token above, tints included: `--color-hai-panel` is `var(--hai-panel)`, `--color-hai-line-soft` is `var(--hai-line-soft)` |
-| `--font-hai-sans`, `--font-hai-mono` | `font-hai-sans`, `font-hai-mono` | `var(--hai-sans)`, `var(--hai-mono)` |
-| `--radius-hai` | `rounded-hai` | `var(--hai-radius)` |
-| `--shadow-hai` | `shadow-hai` | `var(--hai-shadow)` |
-
-They're declared `inline`, so a utility uses the token itself and the page
-gets no `--color-hai-*` variables. An override of a token on `:root` reaches
-your surfaces as it reaches the default UI, and an opacity modifier, as in
-`bg-hai-accent/50`, mixes the token. The tokens already follow the scheme, so
-these need no `dark:` variant, and `tailwind.css` doesn't define one: your
-app's own `dark` variant is left as it is.
+For an app built with Tailwind CSS v4. It imports [`hai.css`](#haicss), so an
+app that imports `tailwind.css` doesn't import `hai.css` as well, and gives
+Tailwind the tokens as theme values for your surfaces, such as `bg-hai-panel`
+and `shadow-hai`. [Tailwind CSS](tailwind.md) is its reference: every theme
+value, where the default UI's rules land in a Tailwind build, overriding a
+token, and what `dark:` means on a HaiKIT page.
 
 Source: `packages/client/src/tailwind.css`.

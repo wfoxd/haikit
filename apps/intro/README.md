@@ -117,7 +117,7 @@ npm run docs:update   # fetches them from GitHub, then runs npm test
 
 ## The reference manual
 
-HaiKIT's reference manual is built in too: all 16 pages of `docs/reference/`,
+HaiKIT's reference manual is built in too: all 18 pages of `docs/reference/`,
 from the contents (`index`) to *Configuration and limits*, in the order the
 contents lists them. Each page is a `reference_page` surface, like a tutorial
 page: the browser holds the whole page, about 8,000 tokens for *Surfaces*,
