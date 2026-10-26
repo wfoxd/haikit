@@ -68,12 +68,17 @@ export function OpsBar({ chat }: { chat: Chat }) {
   /** Seconds left on the countdown, while it runs. */
   const [left, setLeft] = useState<number | null>(null);
   const countdown = useRef<{ tick: ReturnType<typeof setInterval>; due: ReturnType<typeof setTimeout> } | null>(null);
+  /** A cancellation that came due while another request was going, waiting for it to finish. */
+  const retry = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** The countdown stands down: a cancellation was sent or seen, or the visitor is booking the flight home. */
   const cancelling = useRef(false);
   /** The conversation the countdown last started for: it starts once, with the trip that opens it. */
   const counted = useRef<string | null>(null);
 
   const stopCountdown = () => {
+    // a cancellation already due stands down with it
+    if (retry.current) clearTimeout(retry.current);
+    retry.current = null;
     if (!countdown.current) return;
     clearInterval(countdown.current.tick);
     clearTimeout(countdown.current.due);
@@ -98,7 +103,8 @@ export function OpsBar({ chat }: { chat: Chat }) {
           // cancelled it: a new chat starts its own
           if (chat.state.conversationId !== conversationId || cancelling.current) return;
           // another of the airline's requests is still going: cancel once it's done
-          if (busyNow.current) return void setTimeout(fire, 300);
+          if (busyNow.current) return void (retry.current = setTimeout(fire, 300));
+          retry.current = null;
           cancelling.current = true;
           void run(ACTIONS[0], `Nobody cancelled it, so after ${AUTO_CANCEL_MS / 1000} seconds the airline did. `);
         };
