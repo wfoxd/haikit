@@ -132,6 +132,23 @@ export function OpsBar({ chat }: { chat: Chat }) {
         stopCountdown();
       }
     });
+    // mountChat started the conversation before this ran, and subscribers
+    // hear only what comes next: catch up with where it already is. The
+    // trip open and nothing done yet starts the countdown; the flight
+    // cancelled, or the flight home begun, leaves nothing to start.
+    const { conversationId, surfaces, notices } = chat.state;
+    const shown = [...surfaces.values()];
+    if (conversationId && counted.current !== conversationId && shown.some((s) => s.component === "trip_card")) {
+      const cancelled =
+        notices.some((n) => n.name === "flight_cancelled") ||
+        shown.some((s) => s.component === "flight_search" || (s.component === "trip_card" && (s.props as { status?: string } | null)?.status === "cancelled"));
+      if (cancelled) {
+        counted.current = conversationId;
+        cancelling.current = true;
+      } else {
+        startCountdown(conversationId);
+      }
+    }
     return () => {
       off();
       stopCountdown();

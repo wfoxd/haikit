@@ -26,22 +26,28 @@ const enabled = (root: HTMLElement, key: string) => {
  * from somewhere else on the page.
  */
 export function useKeepFocus(root: RefObject<HTMLElement | null>) {
-  const held = useRef<string | undefined>(undefined);
+  /** The key the focus is held for, with the controls' order as it was then: the control may be gone since. */
+  const held = useRef<{ key: string; order: string[] } | undefined>(undefined);
   // Read as this render starts, while the DOM is still the last render's.
+  const focused = focusedKey(root.current);
   const nowhere = typeof document !== "undefined" && (!document.activeElement || document.activeElement === document.body);
-  const key = focusedKey(root.current) ?? (nowhere ? held.current : undefined);
-  const order = key && root.current ? [...root.current.querySelectorAll<HTMLElement>("button[data-key]")].map((b) => b.dataset.key ?? "") : [];
+  const place = focused
+    ? { key: focused, order: [...root.current!.querySelectorAll<HTMLElement>("button[data-key]")].map((b) => b.dataset.key ?? "") }
+    : nowhere
+      ? held.current
+      : undefined;
 
   useLayoutEffect(() => {
     held.current = undefined;
     const el = root.current;
-    if (!el || !key) return;
+    if (!el || !place) return;
+    const { key, order } = place;
     const kind = key.slice(0, key.indexOf(":") + 1);
     const at = order.indexOf(key);
     const around = [...order.slice(at + 1), ...order.slice(0, Math.max(at, 0)).reverse()].filter((k) => k.startsWith(kind));
     // A disabled control can keep the focus in some browsers: what counts is whether it's enabled.
     const next = enabled(el, key) ?? around.map((k) => enabled(el, k)).find(Boolean);
-    if (!next) held.current = key;
+    if (!next) held.current = place;
     else if (document.activeElement !== next) next.focus({ preventScroll: true });
   });
 }

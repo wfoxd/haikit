@@ -141,6 +141,13 @@ try {
     await click(keyed(o.el, `option:${first.id}`));
     await o.fail();
     check("a send that fails does the same, and is logged", !keyed(o.el, `option:${first.id}`).disabled && logged.some((l) => l.includes("the click wasn't sent")));
+    const [, , , mid, after] = options;
+    await focus(keyed(o.el, `option:${mid.id}`));
+    await click(keyed(o.el, `option:${mid.id}`));
+    await o.update({ ...optionsProps, options: options.map((x) => (x.id === mid.id ? { ...x, seatsLeft: 0 } : x)) });
+    await o.release();
+    check(`${mid.flights.join(" + ")} sells out while its click is on its way: refused, the keyboard goes to the next option, not the first`, document.activeElement === keyed(o.el, `option:${after.id}`));
+    await o.update(optionsProps);
     await o.freeze(first.id);
     check("frozen, it says what was chosen, and the rows are rows", text(o.el).includes(`You chose ${first.flights.join(" + ")}.`) && !o.el.querySelector("[data-key^='option:']"));
     const closed = await mount("rebooking_options", optionsProps, { state: "frozen" });
@@ -358,12 +365,27 @@ try {
       return { ok: true, status: 200, json: async () => ({ message: "The airline cancelled UA 837." }) };
     };
     const subscribers = [];
-    const chat = { state: { conversationId: "c_1" }, subscribe: (fn) => (subscribers.push(fn), () => subscribers.splice(subscribers.indexOf(fn), 1)) };
+    const chatWith = (state) => ({ state, subscribe: (fn) => (subscribers.push(fn), () => subscribers.splice(subscribers.indexOf(fn), 1)) });
+    const chat = chatWith({ conversationId: "c_1", surfaces: new Map(), notices: [] });
     const hear = (event) => act(async () => subscribers.forEach((fn) => fn(chat.state, event)));
-    const el = document.createElement("div");
-    document.body.append(el);
-    const root = createRoot(el);
-    await act(async () => root.render(createElement(OpsBar, { chat })));
+    /** The bar, rendered into a root of its own as main.tsx does. */
+    const bar = async (chat) => {
+      const el = document.createElement("div");
+      document.body.append(el);
+      const root = createRoot(el);
+      await act(async () => root.render(createElement(OpsBar, { chat })));
+      return { el, root };
+    };
+    const countdownOn = (el) => /\d+s$/.test(buttons(el).find((b) => b.textContent.startsWith("Cancel the flight")).textContent);
+    // mountChat starts the conversation before the bar subscribes: it reads where the conversation already is
+    const trip = { handle: "ui_01", component: "trip_card", props: TRIP };
+    const early = await bar(chatWith({ conversationId: "c_0", surfaces: new Map([["ui_01", trip]]), notices: [] }));
+    check("the trip opened before the bar subscribed: the countdown starts all the same", countdownOn(early.el));
+    await act(async () => early.root.unmount());
+    const late = await bar(chatWith({ conversationId: "c_0", surfaces: new Map([["ui_01", trip]]), notices: [{ seq: 1, name: "flight_cancelled", version: 1, payload: {} }] }));
+    check("the flight already cancelled when it subscribed: no countdown", !countdownOn(late.el));
+    await act(async () => late.root.unmount());
+    const { el, root } = await bar(chat);
     check("it offers the airline's four actions", ["Cancel the flight", "Release the holds", "Change the gate", "Raise the fare"].every((l) => buttons(el).some((b) => b.textContent.startsWith(l))));
     await hear({ type: "ui_open", component: "trip_card", handle: "ui_01" });
     const cancel = buttons(el).find((b) => b.textContent.startsWith("Cancel the flight"));
