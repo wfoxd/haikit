@@ -295,11 +295,17 @@ export function createChat({
    * never set goes back to what it was.
    */
   function settle() {
-    if (!outgoing) return;
+    if (!letGo()) return;
+    notify({ type: "settled" });
+  }
+
+  /** What `settle` undoes, without telling anyone. False if no request is out. */
+  function letGo() {
+    if (!outgoing) return false;
     withdraw();
     if (!outgoing.said && state.status === "streaming") state.status = outgoing.was;
     outgoing = null;
-    notify({ type: "settled" });
+    return true;
   }
 
   /**
@@ -922,6 +928,9 @@ export function createChat({
     clearTimeout(timer);
     for (const surface of state.surfaces.values()) unmount(surface);
     for (const seq of [...noticeMounts.keys()]) unmountNotice(seq);
+    // a request still out is aborted, so it's undone as a failed one is,
+    // and the state left behind shows nothing the server never confirmed
+    letGo();
     // Every subscriber hears it, even after one that throws, and none is held
     // on to: they are let go of before they are told.
     const subscribers = [...listeners];

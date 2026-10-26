@@ -241,7 +241,8 @@ export interface Chat {
   /**
    * Done with this chat for good, as when the page showing it goes away.
    * Anything queued is never sent, a request still open is aborted, and every
-   * surface is unmounted. Subscribers are notified with `{ type: "closed" }`
+   * surface is unmounted. A message whose request was out is taken out of
+   * `blocks`, and `status` goes back. Subscribers are notified with `{ type: "closed" }`
    * and then dropped. From then on `send` and `start` resolve `false`, and
    * `interact`, `mount` and `reset` do nothing. `mountChat` removes its shell.
    */

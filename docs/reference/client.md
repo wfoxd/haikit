@@ -166,8 +166,10 @@ hold the whole response back until the turn has ended.
   `expired` meanwhile, `status` goes back to what it was before.
 
 A message waiting behind another request isn't shown until its own request
-goes out. If `reset()` or `close()` is called meanwhile, the pending block
-goes with the old conversation, and no `settled` follows.
+goes out. If `reset()` is called meanwhile, the pending block goes with the
+old conversation. If `close()` is, the pending block is taken out and
+`status` goes back, as for a failed request, before subscribers hear
+`closed`. No `settled` follows either.
 
 ### `interact`
 
@@ -266,8 +268,9 @@ close(): void;
 ```
 
 Ends the chat for good, as when the page showing it goes away. Requests and
-the events stream stop, and every surface and notice is unmounted.
-Subscribers hear `{ type: "closed" }`, every one even if one throws, and are
+the events stream stop, and every surface and notice is unmounted. A
+message whose request was out is taken out of `blocks`, and `status` goes
+back, as for a failed request (see [`send`](#send)). Subscribers hear `{ type: "closed" }`, every one even if one throws, and are
 dropped. From then on `send` and `start` resolve `false`, `interact`,
 `reset` and `close` do nothing, `mount` and `mountNotice` return `null`, and
 `subscribe` adds no one.

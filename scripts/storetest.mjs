@@ -4613,7 +4613,11 @@ async function sendingChecks() {
     new Promise((resolve, reject) => {
       const answer = { resolve, reject };
       answers.push(answer);
-      init.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+      // an aborted request is answered by no one: the next answer is the next request's
+      init.signal?.addEventListener("abort", () => {
+        answers = answers.filter((a) => a !== answer);
+        reject(new DOMException("aborted", "AbortError"));
+      });
     });
   const answer = async (response) => {
     for (const end = Date.now() + 2000; !answers.length && Date.now() < end; ) await wait(5);
@@ -4775,6 +4779,24 @@ async function sendingChecks() {
         chat.state.blocks.length === 0 && chat.state.status === "idle" && heard.join() === "sending,reset",
       );
       chat.close();
+    }
+
+    // close() while a message is held: undone as a failed request is, with no `settled`
+    {
+      const chat = createChat({ endpoint: "http://x/hai", registry: {} });
+      const first = await go(chat, (c) => c.send("ask me"));
+      await answer(sse([hello, { type: "status", status: "awaiting" }]));
+      await first();
+      const heard = [];
+      chat.subscribe((s, e) => heard.push(`${e.type}:${s.status}:${s.blocks.length}`));
+      const sent = await go(chat, (c) => c.send("hello"));
+      chat.close();
+      await sent().catch(() => {});
+      await wait(10);
+      check(
+        "close() while a message is held takes it out and puts the status back before `closed`, with no `settled`",
+        heard.join() === "sending:streaming:1,closed:awaiting:0",
+      );
     }
   } finally {
     globalThis.fetch = realFetch;
