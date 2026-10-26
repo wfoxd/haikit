@@ -207,6 +207,7 @@ export function createChat({
         await remote;
         if (gen !== generation || closed()) return;
       }
+      stillOut();
       res = await post(path, body, signal); // rejects at once if reset() aborted it meanwhile
     }
     // A wake turn this client lost sight of holds the conversation until it
@@ -217,6 +218,7 @@ export function createChat({
       for (let wait = 250; res.status === 409 && Date.now() < giveUp; wait = Math.min(wait * 2, 2_000)) {
         await new Promise((r) => setTimeout(r, wait));
         if (gen !== generation || closed()) return;
+        stillOut();
         res = await post(path, body, signal);
       }
     }
@@ -297,6 +299,20 @@ export function createChat({
   function settle() {
     if (!letGo()) return;
     notify({ type: "settled" });
+  }
+
+  /**
+   * A request going out again after a 409. A wake turn it waited behind may
+   * have set the status meanwhile, such as `idle` at its end: it says
+   * `streaming` again, and would go back to that status, the latest the
+   * server set, if the server sets none in answer to it.
+   */
+  function stillOut() {
+    if (!outgoing || state.status === "streaming") return;
+    outgoing.was = state.status;
+    outgoing.said = false;
+    state.status = "streaming";
+    notify({ type: "status", status: "streaming" });
   }
 
   /** What `settle` undoes, without telling anyone. False if no request is out. */
