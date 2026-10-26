@@ -7,7 +7,7 @@
 # passes its variables when the container starts. With no ANTHROPIC_API_KEY
 # it runs the scripted guide, at no model cost.
 
-# The page: Vite builds the components, the ops bar and the Tailwind
+# The page: Vite builds the React components, the ops bar and the Tailwind
 # stylesheet into dist/. Only dist/ leaves this stage.
 FROM node:24-slim AS page
 WORKDIR /app
