@@ -2,7 +2,9 @@
  * The default UI (`mountChat`) in a DOM (jsdom), driven by a fetch that
  * answers with scripted event streams: it passes its polling options through
  * to the chat, and a message whose request fails comes back to the message
- * box, reported rather than left as an unhandled rejection. Its dock moves a
+ * box, reported rather than left as an unhandled rejection. A message held on
+ * its way shows at once, with "Thinking", until the server's copy takes its
+ * place. Its dock moves a
  * surface to the shelf and a window and back without mounting it again, and
  * `dock: false` leaves surfaces as they were.
  */
@@ -50,6 +52,41 @@ try {
     check("a message whose request fails comes back to the message box", input.value === "hello there");
     check("…and is reported, not left unhandled", logged.some((l) => l.startsWith("[haikit] the message wasn't sent:")) && unhandled.length === 0);
     check("a start whose request fails is reported too", logged.some((l) => l.startsWith("[haikit] the conversation couldn't start:")));
+    chat.close();
+  }
+
+  // a message held on its way, as a proxy that inspects traffic holds it,
+  // shows at once with "Thinking", and the server's copy takes its place
+  {
+    let release;
+    globalThis.fetch = async (url) => {
+      if (String(url).endsWith("/start")) return sse([]);
+      await new Promise((r) => (release = r));
+      return sse([
+        { type: "hello", conversationId: "c1", model: "m" },
+        { type: "block_start", block: { kind: "user", id: "b_1", text: "hello there" } },
+        { type: "status", status: "streaming" },
+        { type: "status", status: "idle" },
+      ]);
+    };
+    const root = document.getElementById("app");
+    const chat = mountChat({ root, registry: {} });
+    await wait(20);
+    const q = (s) => root.querySelector(s);
+    q(".hai-input").value = "hello there";
+    q(".hai-send").click();
+    await wait(20);
+    check(
+      "a message held on its way is in the transcript at once, marked pending",
+      root.querySelectorAll(".hai-user").length === 1 && q(".hai-user").textContent === "hello there" && q(".hai-user").hasAttribute("data-pending"),
+    );
+    check("…the status line says Thinking, and Send is off", q(".hai-status").textContent === "Thinking" && q(".hai-send").disabled);
+    release();
+    await wait(20);
+    check(
+      "the server's copy takes its place: once, not pending, and the status line clears",
+      root.querySelectorAll(".hai-user").length === 1 && !q(".hai-user").hasAttribute("data-pending") && q(".hai-status").textContent === "",
+    );
     chat.close();
   }
 

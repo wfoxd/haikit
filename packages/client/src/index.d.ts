@@ -29,9 +29,18 @@ export interface NoticeRecord {
   handle?: string;
 }
 
-/** Blocks the server emits, plus the four the client synthesises locally. */
+/**
+ * Blocks the server emits, plus the four the client synthesises locally, and
+ * a typed message shown as its request goes out (`pending`).
+ */
 export type Block =
-  | { kind: "user"; id: string; text: string }
+  | {
+      kind: "user";
+      id: string;
+      text: string;
+      /** Shown as its request went out, until the server's copy takes its place. Never from the server. */
+      pending?: true;
+    }
   | { kind: "assistant"; id: string; text: string }
   | {
       kind: "tool";
@@ -193,6 +202,11 @@ export interface Chat {
    * while it waited behind a long turn), `reset()` started a new conversation
    * before its turn, or the server was still busy after one retry. A UI that
    * cleared its input can then put the text back.
+   *
+   * As the request goes out, the message is added to `blocks` as a `pending`
+   * user block and `status` becomes `streaming`, before the server answers.
+   * The server's copy of the message takes its place; if none arrives, it is
+   * taken out again.
    */
   send(text: string): Promise<boolean>;
   /**
@@ -203,6 +217,7 @@ export interface Chat {
    * again. `mountChat` calls it when it opens and after `reset()`.
    */
   start(): Promise<boolean>;
+  /** Sends a click. As the request goes out, `status` becomes `streaming`, before the server answers. */
   interact(handle: string, action: string, value: unknown): Promise<void>;
   /**
    * Mounts the surface for `handle` into `element`. Null if props have not
@@ -226,12 +241,18 @@ export interface Chat {
   /**
    * Done with this chat for good, as when the page showing it goes away.
    * Anything queued is never sent, a request still open is aborted, and every
-   * surface is unmounted. Subscribers are notified with `{ type: "closed" }`
+   * surface is unmounted. A message whose request was out is taken out of
+   * `blocks`, and `status` goes back. Subscribers are notified with `{ type: "closed" }`
    * and then dropped. From then on `send` and `start` resolve `false`, and
    * `interact`, `mount` and `reset` do nothing. `mountChat` removes its shell.
    */
   close(): void;
-  /** Returns an unsubscribe function. */
+  /**
+   * Called after every event the chat applies, and with `{ type: "sending" }`
+   * when a `send` or `interact` request goes out, `{ type: "settled" }` when
+   * its response has ended or failed, `{ type: "reset" }` and
+   * `{ type: "closed" }`. Returns an unsubscribe function.
+   */
   subscribe(fn: (state: ChatState, event: WireEvent) => void): () => void;
 }
 

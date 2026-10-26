@@ -4597,6 +4597,212 @@ async function clientHookChecks() {
   }
 }
 
+// ── a message or a click shows it has gone before the server answers ────
+// A proxy that inspects traffic can hold a whole response, headers too, until
+// the turn ends. The fetch here answers only when a case lets it.
+async function sendingChecks() {
+  console.log("\nsending");
+  const { createChat } = await import("../packages/client/src/index.js");
+  const realFetch = globalThis.fetch;
+  const frames = (events) => events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join("");
+  const sse = (events) => new Response(frames(events), { status: 200, headers: { "content-type": "text/event-stream" } });
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  // each request's answer, held until the case gives it: a response, or an error to throw
+  let answers = [];
+  globalThis.fetch = (_url, init = {}) =>
+    new Promise((resolve, reject) => {
+      const answer = { resolve, reject };
+      answers.push(answer);
+      // an aborted request is answered by no one: the next answer is the next request's
+      init.signal?.addEventListener("abort", () => {
+        answers = answers.filter((a) => a !== answer);
+        reject(new DOMException("aborted", "AbortError"));
+      });
+    });
+  const answer = async (response) => {
+    for (const end = Date.now() + 2000; !answers.length && Date.now() < end; ) await wait(5);
+    const next = answers.shift();
+    if (response instanceof Error) next?.reject(response);
+    else next?.resolve(response);
+  };
+  const userBlock = { type: "block_start", block: { kind: "user", id: "b_1", text: "hello" } };
+  const hello = { type: "hello", conversationId: "c1", model: "m" };
+  const pending = (chat) => chat.state.blocks.filter((b) => b.pending);
+  // a request made and on its way; it gives back how to wait for its end
+  const go = async (chat, request) => {
+    const result = request(chat);
+    result.catch(() => {});
+    await wait(10);
+    return () => result;
+  };
+
+  try {
+    // held: the message and `streaming` are there before any byte comes back
+    {
+      const chat = createChat({ endpoint: "http://x/hai", registry: {} });
+      const heard = [];
+      chat.subscribe((_s, e) => heard.push(e.type));
+      const sent = await go(chat, (c) => c.send("hello"));
+      const shown = chat.state.blocks.at(-1);
+      check(
+        "a message held on its way shows at once, pending, and the chat says streaming",
+        shown?.kind === "user" && shown.text === "hello" && shown.pending === true && chat.state.status === "streaming",
+      );
+      check("…its id is s<n>, and subscribers hear `sending`", shown?.id === "s0" && heard.join() === "sending");
+      await answer(sse([hello, userBlock, { type: "status", status: "streaming" }, { type: "status", status: "idle" }]));
+      const took = await sent();
+      const users = chat.state.blocks.filter((b) => b.kind === "user");
+      check(
+        "the server's copy takes the pending one's place: one message, not pending",
+        took === true && users.length === 1 && users[0].id === "b_1" && !users[0].pending && chat.state.status === "idle",
+      );
+      check("…and subscribers hear `settled` once the response has ended", heard.at(-1) === "settled");
+      chat.close();
+    }
+
+    // turned away: two 409s, and the message is not left in the transcript
+    {
+      const chat = createChat({ endpoint: "http://x/hai", registry: {} });
+      const sent = await go(chat, (c) => c.send("hello"));
+      const busy = () => new Response(JSON.stringify({ error: "busy" }), { status: 409 });
+      await answer(busy());
+      await answer(busy());
+      const took = await sent();
+      check(
+        "a message turned away twice is taken out, and the error block keeps the id it had",
+        took === false && pending(chat).length === 0 && chat.state.blocks.length === 1 && chat.state.blocks[0].id === "e0" && chat.state.status === "idle",
+      );
+      chat.close();
+    }
+
+    // the stream says the conversation is out of date before the message
+    {
+      const chat = createChat({ endpoint: "http://x/hai", registry: {} });
+      const sent = await go(chat, (c) => c.send("hello"));
+      await answer(sse([{ type: "expired", message: "out of date" }]));
+      const took = await sent();
+      check(
+        "a message the stream refuses as expired is taken out: x0, and no user block",
+        took === false && chat.state.blocks.map((b) => b.id).join() === "x0",
+      );
+      chat.close();
+    }
+
+    // the request fails: the message goes, and the status is the one before
+    {
+      const chat = createChat({ endpoint: "http://x/hai", registry: {} });
+      const first = await go(chat, (c) => c.send("ask me"));
+      await answer(sse([hello, { type: "status", status: "awaiting" }]));
+      await first();
+      const heard = [];
+      chat.subscribe((_s, e) => heard.push(e.type));
+      const sent = await go(chat, (c) => c.send("hello"));
+      check("typed over a question, the chat says streaming while the message is on its way", chat.state.status === "streaming");
+      await answer(new TypeError("network down"));
+      const failed = await sent().then(() => false, (err) => err instanceof TypeError);
+      check(
+        "a request that fails takes its message out and puts the status back",
+        failed && pending(chat).length === 0 && chat.state.status === "awaiting" && heard.join() === "sending,settled",
+      );
+      chat.close();
+    }
+
+    // the stream breaks after the server's copy arrived: that copy stays
+    {
+      const chat = createChat({ endpoint: "http://x/hai", registry: {} });
+      const sent = await go(chat, (c) => c.send("hello"));
+      const body = new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode(frames([hello, userBlock])));
+          setTimeout(() => c.error(new TypeError("network lost")), 10);
+        },
+      });
+      await answer(new Response(body, { status: 200 }));
+      await sent().catch(() => {});
+      const users = chat.state.blocks.filter((b) => b.kind === "user");
+      check("a stream cut after the server's copy arrived keeps that copy", users.length === 1 && users[0].id === "b_1");
+      chat.close();
+    }
+
+    // a response that ends without saying anything of the message or a status
+    {
+      const chat = createChat({ endpoint: "http://x/hai", registry: {} });
+      const sent = await go(chat, (c) => c.send("hello"));
+      await answer(sse([hello]));
+      await sent();
+      check(
+        "a response that never sends the message back takes it out, and the status goes back",
+        pending(chat).length === 0 && chat.state.blocks.length === 0 && chat.state.status === "idle",
+      );
+      chat.close();
+    }
+
+    // a click: `streaming` at once, no message, and back if the server says no status
+    {
+      const chat = createChat({ endpoint: "http://x/hai", registry: {} });
+      const first = await go(chat, (c) => c.send("ask me"));
+      await answer(sse([hello, { type: "status", status: "awaiting" }]));
+      await first();
+      const blocks = chat.state.blocks.length;
+      const clicked = await go(chat, (c) => c.interact("ui_01", "choose", "A"));
+      check("a click held on its way says streaming at once, and adds no message", chat.state.status === "streaming" && chat.state.blocks.length === blocks);
+      await answer(sse([{ type: "ui_state", handle: "ui_01", state: "frozen", selection: "A" }]));
+      await clicked();
+      check("…and a response with no status puts the one before back", chat.state.status === "awaiting");
+      chat.close();
+    }
+
+    // start() goes out on its own, before anything is typed: it shows nothing
+    {
+      const chat = createChat({ endpoint: "http://x/hai", registry: {} });
+      const heard = [];
+      chat.subscribe((_s, e) => heard.push(e.type));
+      const started = await go(chat, (c) => c.start());
+      check("start() held on its way shows nothing: idle, no blocks, nothing heard", chat.state.status === "idle" && chat.state.blocks.length === 0 && heard.length === 0);
+      await answer(sse([]));
+      await started();
+      check("…nor once it has ended", heard.length === 0);
+      chat.close();
+    }
+
+    // reset() while a message is held: it goes with the old conversation
+    {
+      const chat = createChat({ endpoint: "http://x/hai", registry: {} });
+      const heard = [];
+      chat.subscribe((_s, e) => heard.push(e.type));
+      const sent = await go(chat, (c) => c.send("hello"));
+      chat.reset();
+      await sent().catch(() => {});
+      await wait(10);
+      check(
+        "reset() while a message is held leaves the new conversation empty and idle, with no `settled`",
+        chat.state.blocks.length === 0 && chat.state.status === "idle" && heard.join() === "sending,reset",
+      );
+      chat.close();
+    }
+
+    // close() while a message is held: undone as a failed request is, with no `settled`
+    {
+      const chat = createChat({ endpoint: "http://x/hai", registry: {} });
+      const first = await go(chat, (c) => c.send("ask me"));
+      await answer(sse([hello, { type: "status", status: "awaiting" }]));
+      await first();
+      const heard = [];
+      chat.subscribe((s, e) => heard.push(`${e.type}:${s.status}:${s.blocks.length}`));
+      const sent = await go(chat, (c) => c.send("hello"));
+      chat.close();
+      await sent().catch(() => {});
+      await wait(10);
+      check(
+        "close() while a message is held takes it out and puts the status back before `closed`, with no `settled`",
+        heard.join() === "sending:streaming:1,closed:awaiting:0",
+      );
+    }
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
 // ── every tool call in the history gets a result ────────────────────────
 // The Messages API refuses a history with a tool_use that has no tool_result
 // after it, from the next call on, for good. A reply cut off by max_tokens
@@ -7077,6 +7283,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   await pollChecks();
   await wakeLeaseChecks();
   await clientHookChecks();
+  await sendingChecks();
   await toolResultChecks();
   await blockIdChecks();
   await transcriptChecks();

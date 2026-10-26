@@ -255,6 +255,7 @@ with the parameters `conversationId`, `after`, `poll`, `wait`, `turn` and
 | `inert`, `data-expired` | a surface's element, once the conversation has expired | [The browser client](client.md#freshness-in-the-browser) |
 | `data-handle`, `data-component` | a surface's element in the default transcript | [The default UI](ui.md#rendertranscript) |
 | `data-notice` | a notice's element in the default transcript | [The default UI](ui.md#rendertranscript) |
+| `data-pending` | a message's element in the default transcript, while its request is out and the server's copy hasn't arrived | [The default UI](ui.md#rendertranscript) |
 | `data-status` | the default UI's status line | [The default UI](ui.md#mountchat) |
 
 ### Tables

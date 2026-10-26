@@ -115,6 +115,12 @@ export function createChat({
    */
   let sentAt = 0;
   /**
+   * The `send` or `interact` request that has gone out and not yet ended:
+   * the status it found, whether the server has set one since, and the
+   * pending message it shows until the server's own copy arrives.
+   */
+  let outgoing = null;
+  /**
    * The last notice the events stream finished sending, by its id: where a
    * reconnect resumes. Update notices arrive as surface frames, not notices,
    * so `state.notices` alone would miss them.
@@ -170,6 +176,21 @@ export function createChat({
       if (gen !== generation || closed()) return;
     }
     sentAt = Date.now();
+    // A message or a click shows that it has gone the moment it goes, not
+    // when the server first says so: something on the way, such as a proxy
+    // that inspects traffic, can hold the whole response until the turn ends.
+    // `start` goes out on its own, before anything is typed.
+    const byUser = path !== "/start";
+    try {
+      if (byUser) goOut(path === "/chat" ? body.message : undefined);
+      await exchange(path, body, gen, signal, outcome);
+    } finally {
+      if (byUser && gen === generation && !shutDown) settle();
+    }
+  }
+
+  /** The request itself, once it may go: posted, retried on 409, and its events applied. */
+  async function exchange(path, body, gen, signal, outcome) {
     let res = await post(path, body, signal);
 
     // 409 means someone else holds this conversation's turn. Almost always that
@@ -246,6 +267,48 @@ export function createChat({
   }
 
   /**
+   * A `send` or `interact` request going out: `streaming` at once, and a
+   * typed message as a pending `user` block at the end of the transcript.
+   */
+  function goOut(text) {
+    outgoing = { was: state.status, said: false, block: null };
+    state.status = "streaming";
+    if (text !== undefined) {
+      outgoing.block = { kind: "user", id: `s${state.blocks.length}`, text, pending: true };
+      state.blocks.push(outgoing.block);
+    }
+    notify({ type: "sending" });
+  }
+
+  /** The pending message out of the transcript, if it is still in it. */
+  function withdraw() {
+    const block = outgoing?.block;
+    if (!block) return;
+    outgoing.block = null;
+    const at = state.blocks.indexOf(block);
+    if (at >= 0) state.blocks.splice(at, 1);
+  }
+
+  /**
+   * The request has ended, or failed. A message the server never sent back
+   * is withdrawn, since nothing here says the server has it; a status it
+   * never set goes back to what it was.
+   */
+  function settle() {
+    if (!letGo()) return;
+    notify({ type: "settled" });
+  }
+
+  /** What `settle` undoes, without telling anyone. False if no request is out. */
+  function letGo() {
+    if (!outgoing) return false;
+    withdraw();
+    if (!outgoing.said && state.status === "streaming") state.status = outgoing.was;
+    outgoing = null;
+    return true;
+  }
+
+  /**
    * `from`: when a surface in this event was rendered, at the latest, by this
    * browser's clock, for one that no request of its own asked for.
    */
@@ -288,6 +351,8 @@ export function createChat({
       // far: a block this client already has is brought up to date, not added
       // again.
       case "block_start": {
+        // the server's copy of the message takes over from the pending one
+        if (event.block.kind === "user") withdraw();
         const known = state.blocks.find((b) => b.id === event.block.id);
         if (known) Object.assign(known, event.block);
         else state.blocks.push({ ...event.block });
@@ -424,13 +489,18 @@ export function createChat({
 
       case "status":
         state.status = event.status;
+        if (outgoing) outgoing.said = true;
         break;
 
       case "context":
         state.context = event;
         break;
 
+      // An error before the server's copy of the message arrived takes the
+      // pending one out: nothing says the server has it.
       case "error":
+        withdraw();
+        if (outgoing) outgoing.said = true;
         state.blocks.push({ kind: "error", id: `e${state.blocks.length}`, message: event.message });
         state.status = "idle";
         break;
@@ -438,6 +508,8 @@ export function createChat({
       // The local timer and the server can both report this; once is enough.
       case "expired":
         if (state.expired) return;
+        withdraw();
+        if (outgoing) outgoing.said = true;
         state.expired = event.message;
         state.status = "idle";
         clearTimeout(timer);
@@ -818,6 +890,8 @@ export function createChat({
     stopListening();
     cutOff = false;
     resumeAfter = 0;
+    // the request it belonged to is aborted, and its pending message goes with the old blocks
+    outgoing = null;
     // turns are numbered per conversation
     turnShowing = 0;
     turnSeen = 0;
@@ -854,6 +928,9 @@ export function createChat({
     clearTimeout(timer);
     for (const surface of state.surfaces.values()) unmount(surface);
     for (const seq of [...noticeMounts.keys()]) unmountNotice(seq);
+    // a request still out is aborted, so it's undone as a failed one is,
+    // and the state left behind shows nothing the server never confirmed
+    letGo();
     // Every subscriber hears it, even after one that throws, and none is held
     // on to: they are let go of before they are told.
     const subscribers = [...listeners];
