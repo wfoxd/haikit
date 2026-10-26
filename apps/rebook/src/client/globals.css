@@ -1,0 +1,140 @@
+/* Rebook's stylesheet: Tailwind, the default UI's stylesheet and HaiKIT's
+   tokens as theme values, and shadcn/ui's, all following one palette. The
+   surfaces and the Airline ops bar are styled with utilities in their
+   components; what's here is the palette, shadcn's colours pointed at it, and
+   the one animation a utility can't say.
+
+   An airline's printed things: flight numbers, codes and times in a mono
+   face, a boarding pass with its tear line. Cobalt is the airline, orange a
+   disruption, green what's settled, amber a seat waiting on someone. */
+
+@import "tailwindcss";
+@import "@haikit/client/tailwind.css";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+/* Plain dark values first: a browser without light-dark() keeps these, as
+   hai.css's own tokens do. */
+:root {
+  --hai-bg: #0d121a;
+  --hai-panel: #151c27;
+  --hai-panel-2: #111823;
+  --hai-line: #263142;
+  --hai-fg: #e6ebf2;
+  --hai-dim: #94a1b5;
+  --hai-accent: #8eaaff;
+  --hai-on-accent: #0b1220;
+  --hai-good: #4cd39b;
+  --hai-warn: #f0b74d;
+  --hai-bad: #ff8f5e;
+  --hai-user-bg: #18233a;
+  --hai-code-bg: #0f1520;
+  /* hai.css hovers in amber; here amber means a turn waiting on someone, so
+     a hovered row takes a neutral tint of the text colour instead. */
+  --hai-hover: color-mix(in srgb, var(--hai-fg) 6%, transparent);
+
+  --hai-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --hai-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+/* One value per scheme. These follow the system, or a data-hai-theme pin. */
+@supports (color: light-dark(#000, #fff)) {
+  :root {
+    --hai-bg: light-dark(#eef1f5, #0d121a);
+    --hai-panel: light-dark(#ffffff, #151c27);
+    --hai-panel-2: light-dark(#f6f8fb, #111823);
+    --hai-line: light-dark(#d4dbe5, #263142);
+    --hai-fg: light-dark(#121a2b, #e6ebf2);
+    --hai-dim: light-dark(#59657a, #94a1b5);
+    --hai-accent: light-dark(#1d3fbf, #8eaaff);
+    --hai-on-accent: light-dark(#ffffff, #0b1220);
+    --hai-good: light-dark(#0f7a55, #4cd39b);
+    --hai-warn: light-dark(#8a5a00, #f0b74d);
+    --hai-bad: light-dark(#c2410c, #ff8f5e);
+    --hai-user-bg: light-dark(#e5ebfb, #18233a);
+    --hai-code-bg: light-dark(#f2f5f9, #0f1520);
+  }
+}
+
+/* dark: follows the chat: the system's scheme, unless a data-hai-theme pin
+   on <html> chooses one. */
+@custom-variant dark {
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-hai-theme="light"]) & {
+      @slot;
+    }
+  }
+  :root[data-hai-theme="dark"] & {
+    @slot;
+  }
+}
+
+@theme inline {
+  --font-sans: var(--hai-sans);
+  --font-mono: var(--hai-mono);
+  --font-heading: var(--hai-mono);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --animate-moved: moved 2.4s ease-out;
+}
+
+/* shadcn's colours are Rebook's. One block, not a :root and a .dark: each
+   --hai-* token already has a light and a dark value. */
+:root {
+  --background: var(--hai-panel);
+  --foreground: var(--hai-fg);
+  --card: var(--hai-panel);
+  --card-foreground: var(--hai-fg);
+  --popover: var(--hai-panel);
+  --popover-foreground: var(--hai-fg);
+  --primary: var(--hai-accent);
+  --primary-foreground: var(--hai-on-accent);
+  --secondary: var(--hai-panel-2);
+  --secondary-foreground: var(--hai-fg);
+  --muted: var(--hai-hover);
+  --muted-foreground: var(--hai-dim);
+  --accent: var(--hai-hover);
+  --accent-foreground: var(--hai-fg);
+  --destructive: var(--hai-bad);
+  --border: var(--hai-line);
+  --input: var(--hai-line);
+  --ring: var(--hai-accent);
+  --radius: var(--hai-radius);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+}
+
+/* the boarding pass's gate, when the airline has just moved it */
+@keyframes moved {
+  0%,
+  30% {
+    background: color-mix(in srgb, var(--hai-bad) 22%, transparent);
+  }
+  100% {
+    background: transparent;
+  }
+}

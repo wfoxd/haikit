@@ -2,7 +2,7 @@
  * The contracts for Rebook's surfaces: five for rebooking a cancelled flight,
  * and five for booking the flight home. Both halves import this file: the
  * server implements it in ../server/surfaces.ts, and the browser renders it in
- * ../client/components.js, typechecked against the types below.
+ * ../client/components.tsx, typechecked against the types below.
  *
  * Nothing here says how a surface looks or what its digest is. A contract is
  * what may cross between the halves: the props, the actions a click may send,

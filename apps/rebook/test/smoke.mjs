@@ -152,16 +152,15 @@ try {
       const res = asset ? await fetch(`${BASE}${asset}`) : null;
       check(res?.ok, `serves ${asset}`, `${asset ?? "a script and a stylesheet in the page"} → ${res?.status ?? "missing"}`);
     }
-    // one stylesheet: Tailwind's utilities, the default UI's through
-    // @haikit/client/tailwind.css, then Rebook's palette and surfaces, and no
-    // preflight, since the surfaces rely on the browser's defaults
+    // one stylesheet: Tailwind, the default UI's through
+    // @haikit/client/tailwind.css, Rebook's palette, shadcn/ui's colours and
+    // the utilities its components use, and a dark: that follows the chat's pin
     const css = sheet ? await fetch(`${BASE}${sheet}`).then((r) => r.text()) : "";
     check(
-      css.includes(".hai\\:") && css.includes("--hai-panel") && css.includes(".ops-button") && css.includes("#0d121a"),
-      "the stylesheet holds the default UI's utilities, its tokens, and Rebook's palette and surfaces",
-      "the stylesheet is missing the default UI's utilities, its tokens, or Rebook's own rules",
+      css.includes(".hai\\:") && css.includes("--hai-panel") && css.includes("#0d121a") && css.includes(".bg-primary") && /data-hai-theme=["']?dark/.test(css),
+      "the stylesheet holds the default UI's utilities, its tokens, Rebook's palette, shadcn's classes and the chat's dark variant",
+      "the stylesheet is missing the default UI's utilities, its tokens, Rebook's palette, shadcn's classes or the dark variant",
     );
-    check(!/\*,\s*:+after,\s*:+before/.test(css), "the stylesheet has no preflight reset", "the stylesheet has Tailwind's preflight reset in it");
 
     // 1 · the trip opens, and nothing happens until the airline does something
     const start = await sse("/hai/start", {});
@@ -1243,7 +1242,7 @@ try {
       "trip_card", "rebooking_options", "seat_map", "care_options", "boarding_pass", "flight_cancelled", "seat_confirmed",
       "flight_search", "flight_results", "fare_options", "booking_review", "booking_confirmed", "ticket_issued",
     ]) {
-      check(new RegExp(`\\b${component}\\s*:`).test(registry), `${component} is registered in components.js`, `${component} missing from components.js`);
+      check(new RegExp(`\\b${component}\\s*:`).test(registry), `${component} is registered in components.tsx`, `${component} missing from components.tsx`);
     }
   }
 } finally {
