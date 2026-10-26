@@ -76,7 +76,7 @@ mountChat({ root: document.querySelector("#app"), registry, suggestions: ["Say h
 | Main | `div.hai-main` | Holds the chat and the drawer. Has `.has-inspector` with `inspector`, and `.inspector-open` while the drawer is open |
 | Chat | `section.hai-chat` | Holds the transcript, the status line and the composer (`div.hai-composer` > `div.hai-composer-box`), and with `dock`, the dock's window. Has `.window-open` while the window is open |
 | Transcript | `div.hai-transcript` | Drawn by `renderTranscript` on every event, with `onDock` when `dock` is on |
-| Status line | `div.hai-status`, `role="status"` | `Thinking` while streaming, `Waiting on your selection above` while awaiting, or `Waiting on your selection in the dock` while the question is docked, empty otherwise. It changes only when the status does, or where the question is, so a screen reader hears it once per turn. Its `data-status` is the status, or `idle` once the conversation has expired. It's absent until the first event |
+| Status line | `div.hai-status`, `role="status"` | `Thinking` while streaming, which starts as a message or a click goes out, `Waiting on your selection above` while awaiting, or `Waiting on your selection in the dock` while the question is docked, empty otherwise. It changes only when the status does, or where the question is, so a screen reader hears it once per turn. Its `data-status` is the status, or `idle` once the conversation has expired. It's absent until the first event |
 | Dock shelf | `div.hai-dock`, `role="toolbar"`, `aria-label="Docked surfaces"` | The composer's first child, above `div.hai-composer-box`. Hidden while nothing is docked. Only with `dock` (see [The dock](#the-dock)) |
 | Window | `section.hai-window`, `role="dialog"` | A docked surface, opened. Hidden while none is open. Only with `dock` |
 | Message box | `textarea.hai-input`, `aria-label="Message"` | Grows with what's typed, up to 200 px |
@@ -98,22 +98,24 @@ mountChat({ root: document.querySelector("#app"), registry, suggestions: ["Say h
 - **When the conversation has expired,** the box is disabled, with the
   placeholder `start a new conversation to continue`. Otherwise the
   placeholder is `placeholder`.
-- **The Send button is disabled** while a turn streams, and once the
-  conversation has expired. Enter still sends while a turn streams: the
+- **The Send button is disabled** while a turn streams, from the moment a
+  message or a click goes out, and once the conversation has expired. Enter still sends while a turn streams: the
   message is queued behind the turn.
 - **If a request fails,** such as on a network error, the text goes back in
   the message box, unless something new has been typed, and the error is
-  logged with `console.error` (`[haikit] the message wasn't sent:`). Nothing
-  appears in the transcript. A `start()` that fails is logged the same way
+  logged with `console.error` (`[haikit] the message wasn't sent:`). The
+  message, shown while its request was out, is taken out of the transcript,
+  unless the server's copy had already arrived. A `start()` that fails is logged the same way
   (`[haikit] the conversation couldn't start:`): the first message starts the
   conversation instead.
 
 ### The empty conversation
 
 Until the transcript has a `user` or `interaction` block, it ends with
-`div.hai-empty`. The server sends those blocks once it accepts a message or a
-click, so the empty state stays while the first message is queued, and stays
-if it's turned away. With `emptyText` or `suggestions`, it holds HaiKIT's
+`div.hai-empty`. A message's block comes as its request goes out, pending
+until the server's copy takes its place, and a click's once the server
+accepts it. So the empty state stays while the first message is queued, goes
+as it's sent, and comes back if it's turned away. With `emptyText` or `suggestions`, it holds HaiKIT's
 mark, `emptyText` as a paragraph, and one `button.hai-suggestion` per
 suggestion. Clicking one puts it in the message box, replacing any draft, and
 sends it as a typed message would be. Blocks the conversation opened with,
@@ -373,7 +375,7 @@ back down. A new conversation starts at the bottom.
 
 | Block | Element | Contents |
 | --- | --- | --- |
-| `user` | `div.hai-block.hai-user` | The text |
+| `user` | `div.hai-block.hai-user`, with `data-pending` while it's pending | The text. A pending message looks the same as any other: `data-pending` is there for a stylesheet that wants it to differ |
 | `assistant` | `div.hai-block.hai-assistant` | The text, as it streams |
 | `tool` | `details.hai-block.hai-tool.hai-status-<status>` | A summary row: a status mark, the tool's name, its input as JSON, and its status text. Expanded: the input, pretty-printed, and `→ tool_result — all the model receives` with the result, or `…` until it arrives. An expanded row stays expanded as its status changes |
 | `interaction` | `div.hai-block.hai-interaction` | An arrow and the click's label |

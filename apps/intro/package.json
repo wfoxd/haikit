@@ -18,12 +18,12 @@
     "docs:update": "node scripts/update-docs.mjs && npm test"
   },
   "dependencies": {
-    "@haikit/anthropic": "^0.27.0",
-    "@haikit/client": "^0.27.0",
-    "@haikit/core": "^0.27.0",
-    "@haikit/postgres": "^0.27.0",
-    "@haikit/react": "^0.27.0",
-    "@haikit/server": "^0.27.0",
+    "@haikit/anthropic": "^0.28.0",
+    "@haikit/client": "^0.28.0",
+    "@haikit/core": "^0.28.0",
+    "@haikit/postgres": "^0.28.0",
+    "@haikit/react": "^0.28.0",
+    "@haikit/server": "^0.28.0",
     "@phosphor-icons/react": "^2.1.10",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.5.0",

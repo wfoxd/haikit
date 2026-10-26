@@ -150,6 +150,32 @@ meanwhile, it resolves instead: `true` if the server had already answered,
 The request's `conversationId` is read when it's sent, not when it's queued,
 so a `send` queued behind `start` uses the id from `start`'s `hello`.
 
+**The message shows as soon as its request goes out,** before the server
+answers: something on the way, such as a proxy that inspects traffic, can
+hold the whole response back until the turn has ended.
+
+- It's added at the end of `blocks` as a `user` block with `pending: true`,
+  with the id `s<n>`, where `n` is the number of blocks before it. `status`
+  becomes `streaming`. Subscribers hear `{ type: "sending" }`.
+- The server's `user` block takes its place: the pending block is taken out
+  when it arrives, and the server's is added at the end.
+- An `error` or `expired` that comes first takes it out, as does a response
+  that ends, or fails, without the server's `user` block.
+- When the response has ended, or failed, subscribers hear
+  `{ type: "settled" }`. If the server sent no `status`, `error` or
+  `expired` meanwhile, `status` goes back to what it was before.
+- **A retry after a 409 says `streaming` again** if a wake turn's events set
+  the status while the request waited (see [Requests](#requests)).
+  Subscribers hear `{ type: "status", status: "streaming" }`, from the chat,
+  not the server. If the server then sends no `status`, `error` or
+  `expired`, `status` goes back to the one the wake turn left.
+
+A message waiting behind another request isn't shown until its own request
+goes out. If `reset()` is called meanwhile, the pending block goes with the
+old conversation. If `close()` is, the pending block is taken out and
+`status` goes back, as for a failed request, before subscribers hear
+`closed`. No `settled` follows either.
+
 ### `interact`
 
 ```ts
@@ -167,6 +193,11 @@ its `send` (see [`MountCtx`](#mountctx)).
   conversation whose timer slept through its deadline.
 - It resolves when the response has been read. A dropped click resolves at
   once, the same way. It rejects as `send` does on a failed request.
+- **`status` becomes `streaming` as the request goes out,** before the server
+  answers, and subscribers hear `{ type: "sending" }`, then
+  `{ type: "settled" }` once the response has ended or failed. If the server
+  sent no `status`, `error` or `expired` meanwhile, `status` goes back to
+  what it was before. No block is added.
 
 The server's answer arrives as events: a refused click as an `error` block.
 
@@ -242,8 +273,9 @@ close(): void;
 ```
 
 Ends the chat for good, as when the page showing it goes away. Requests and
-the events stream stop, and every surface and notice is unmounted.
-Subscribers hear `{ type: "closed" }`, every one even if one throws, and are
+the events stream stop, and every surface and notice is unmounted. A
+message whose request was out is taken out of `blocks`, and `status` goes
+back, as for a failed request (see [`send`](#send)). Subscribers hear `{ type: "closed" }`, every one even if one throws, and are
 dropped. From then on `send` and `start` resolve `false`, `interact`,
 `reset` and `close` do nothing, `mount` and `mountNotice` return `null`, and
 `subscribe` adds no one.
@@ -255,8 +287,18 @@ subscribe(fn: (state: ChatState, event: WireEvent) => void): () => void;
 ```
 
 Calls `fn` after every event the chat applies, with the state and the event,
-and with `{ type: "reset" }` and `{ type: "closed" }`. Returns a function
-that unsubscribes. After `close`, it returns a function that does nothing.
+and with five of the chat's own:
+
+| Event | When |
+| --- | --- |
+| `{ type: "sending" }` | A `send` or `interact` request goes out. The state already shows it (see [`send`](#send)) |
+| `{ type: "status", status: "streaming" }` | That request tries again after a 409, and a wake turn set the status while it waited. Only then: the server's `status` events come as they are |
+| `{ type: "settled" }` | That request's response has ended, or failed. Not after a `reset()` or `close()` |
+| `{ type: "reset" }` | `reset()` |
+| `{ type: "closed" }` | `close()` |
+
+`start` hears neither `sending` nor `settled`. Returns a function that
+unsubscribes. After `close`, it returns a function that does nothing.
 
 **A subscriber mustn't throw.** Subscribers are called directly, in turn,
 so one that throws:
@@ -264,6 +306,7 @@ so one that throws:
 - stops the subscribers after it hearing that event;
 - stops the rest of that response's events from being applied, and makes the
   `start`, `send` or `interact` promise reject;
+- on `sending`, stops the request going out at all;
 - on the events stream, counts as a dropped connection, which reconnects.
 
 Events the chat doesn't know still reach subscribers, as do the ones it
@@ -290,7 +333,7 @@ interface ChatState {
 | --- | --- |
 | `conversationId` | The conversation, from `hello`, or `null` before one |
 | `model` | The model adapter's `id`, from `hello`. `""` until the first `hello` |
-| `status` | From `status` events. It also becomes `idle` on `error` and `expired` |
+| `status` | From `status` events. It also becomes `idle` on `error` and `expired`, and `streaming` as a `send` or `interact` request goes out, going back once the response ends if the server set none (see [`send`](#send)) |
 | `blocks` | The transcript, in order. See [`Block`](#block) |
 | `surfaces` | Every surface shown, by its current handle. A revised surface moves to its new handle |
 | `context` | The last `context` event: the whole history, and the token estimates |
@@ -334,7 +377,7 @@ interface SurfaceRecord {
 
 ```ts
 type Block =
-  | { kind: "user"; id: string; text: string }
+  | { kind: "user"; id: string; text: string; pending?: true }
   | { kind: "assistant"; id: string; text: string }
   | { kind: "tool"; id: string; name: string; input: unknown; status: string; ms?: number; result?: string; progress?: Progress }
   | { kind: "interaction"; id: string; handle: string; label: string }
@@ -345,10 +388,12 @@ type Block =
 ```
 
 The first four come from the server, in `block_start` events (see
-[HTTP routes and the wire](http.md#block)). The client adds four of its own:
+[HTTP routes and the wire](http.md#block)). The client adds a `user` block
+of its own while a message's request is out, and four other kinds:
 
 | Kind | Made from | Id | Where it goes |
 | --- | --- | --- | --- |
+| `user`, with `pending: true` | a `send` request going out | `s<n>`, where `n` is the number of blocks before it | at the end. Taken out when the server's `user` block arrives, on an `error` or `expired` first, or when the response ends without one (see [`send`](#send)) |
 | `ui` | a `ui_open` for a surface not seen before | `ui:<first handle>` | at the end. `handle` follows revisions; `toolId` is the `tool` block that showed it |
 | `error` | an `error` event | `e<n>`, where `n` is the number of blocks before it | at the end |
 | `expired` | an `expired` event, or the local deadline | `x<n>`, likewise | at the end |
@@ -516,7 +561,7 @@ otherwise.
 | `hello` | Sets `conversationId` and `model`. With `events: true`, opens the events stream for the conversation, if it isn't open already |
 | `notice` | Ignored if its `seq` isn't above the last notice's. Otherwise added to `notices`, and a `notice` block placed |
 | `signal` | Sets `signals[name]`, and calls the handler |
-| `block_start` | Adds the block, or, if a block with that id exists (a stream rejoining a wake turn), brings it up to date |
+| `block_start` | A `user` block first takes out the pending message, if there is one. Then adds the block, or, if a block with that id exists (a stream rejoining a wake turn), brings it up to date |
 | `text_delta` | Appends to the block's text |
 | `block_update` | Merges the event's fields into the block |
 | `progress` | Merges the fields into the `tool` block's `progress` |
@@ -525,8 +570,8 @@ otherwise.
 | `ui_state` | Sets the surface's `state` and `selection`, and calls `freeze` |
 | `status` | Sets `status` |
 | `context` | Sets `context` |
-| `error` | Adds an `error` block, and sets `status` to `idle` |
-| `expired` | Once only: sets `expired`, sets `status` to `idle`, adds an `expired` block, and seals every surface |
+| `error` | Takes out the pending message, if there is one. Adds an `error` block, and sets `status` to `idle` |
+| `expired` | Once only: takes out the pending message, if there is one, sets `expired`, sets `status` to `idle`, adds an `expired` block, and seals every surface |
 | `released` | Lets requests waiting behind a wake turn go (see [The events stream](#the-events-stream)) |
 
 ## Requests
@@ -540,10 +585,17 @@ read the response as server-sent events.
   send the next request too early, into a 409.
 - **Behind a wake turn too.** While a wake turn runs on the events stream,
   requests wait until its `released`.
+- **Shown as it goes out.** A `send` or `interact` request sets `status` to
+  `streaming` when it goes out, after any wait, and a `send` shows its
+  message as a pending block, before the response's first byte (see
+  [`send`](#send)). `start` doesn't.
 - **409 once:** the chat waits 150 ms, and any wake turn that has started,
   then tries once more. That covers the previous request's tail. A second tab
   holding the conversation is reported, as an `error` block with the server's
-  message, or `another turn is already in flight` if it has none.
+  message, or `another turn is already in flight` if it has none. A `send` or
+  `interact` request says `streaming` again as it tries, if a wake turn
+  changed the status while it waited (see [`send`](#send)), and so does each
+  try below.
 - **409 after a lost wake turn:** if the events connection dropped while a
   wake turn ran, the turn's `released` was lost with it. The next request
   then keeps trying, waiting 250 ms, then twice as long each time up to
