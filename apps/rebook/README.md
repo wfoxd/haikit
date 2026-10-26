@@ -131,7 +131,9 @@ books the flight, fare, seat and total the traveller confirmed.
 ## Run it
 
 Needs Node 22.18 or later. The server runs its TypeScript directly, with no
-build step; the page is built with Vite and Tailwind.
+build step. The page is React, built with Vite: its components are
+[shadcn/ui](https://ui.shadcn.com)'s, in the Lyra style, on Rebook's palette
+through HaiKIT's tokens, and styled with Tailwind CSS.
 
 ```bash
 npm install
@@ -169,8 +171,10 @@ npm test
 ```
 
 That typechecks the server and the browser components against the shared
-contracts, builds the page, then boots the server on the built page and drives
-both paths above over HTTP,
+contracts. It mounts every component in a DOM (jsdom) with the demo's own
+data, to check what it shows, what each click sends, and that a refused click
+leaves it live with the keyboard where it was. Then it builds the page, boots
+the server on the built page and drives both paths above over HTTP,
 with the airline played by the `/ops` routes: the guide speaking first, the
 capped query, the revisions, the refused clicks, the boarding pass and the
 gate change; then the filled-in search, the fares, the seat, the raised fare
@@ -214,12 +218,19 @@ src/server/scripted.ts     the scripted guide, a ModelAdapter
 src/server/main.ts         createHai, the /ops routes, the page: through Vite while developing,
                            from dist/ in production
 index.html                 the page
-src/client/main.js         mounts the chat and the Airline ops bar
-src/client/components.js   the browser halves of the surfaces and notices
-src/client/ops.js          the Airline ops bar
-src/client/styles.css      Tailwind's theme and utilities, without its preflight; the default UI,
-                           through @haikit/client/tailwind.css; Rebook's palette and surfaces
+src/client/main.tsx        mounts the chat, and the Airline ops bar under its header
+src/client/components.tsx  the registry: a React component for each surface and notice
+src/client/surfaces/       the surfaces, one file each, and parts.tsx, the pieces they share
+src/client/notices.tsx     the notices
+src/client/ops.tsx         the Airline ops bar
+src/client/lib/            the parked-turn pattern, keeping the keyboard's place, the first
+                           scroll, and how times and money are written
+src/client/components/ui/  shadcn/ui's components, as `shadcn add` wrote them
+src/client/globals.css     Tailwind, the default UI through @haikit/client/tailwind.css,
+                           shadcn/ui's colours pointed at Rebook's palette
+components.json            shadcn/ui's settings: the radix base, the Lyra style
 public/icon.svg            the icon, copied into dist/ as it is
-vite.config.ts             the page's build
+vite.config.ts             the page's build: React, Tailwind, and the @/ alias for src/client
+test/clienttest.mjs        each component in a DOM: what it shows, and what its clicks send
 test/smoke.mjs             the end-to-end check
 ```
