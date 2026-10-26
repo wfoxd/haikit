@@ -164,6 +164,11 @@ hold the whole response back until the turn has ended.
 - When the response has ended, or failed, subscribers hear
   `{ type: "settled" }`. If the server sent no `status`, `error` or
   `expired` meanwhile, `status` goes back to what it was before.
+- **A retry after a 409 says `streaming` again** if a wake turn's events set
+  the status while the request waited (see [Requests](#requests)).
+  Subscribers hear `{ type: "status", status: "streaming" }`, from the chat,
+  not the server. If the server then sends no `status`, `error` or
+  `expired`, `status` goes back to the one the wake turn left.
 
 A message waiting behind another request isn't shown until its own request
 goes out. If `reset()` is called meanwhile, the pending block goes with the
@@ -282,11 +287,12 @@ subscribe(fn: (state: ChatState, event: WireEvent) => void): () => void;
 ```
 
 Calls `fn` after every event the chat applies, with the state and the event,
-and with four of the chat's own:
+and with five of the chat's own:
 
 | Event | When |
 | --- | --- |
 | `{ type: "sending" }` | A `send` or `interact` request goes out. The state already shows it (see [`send`](#send)) |
+| `{ type: "status", status: "streaming" }` | That request tries again after a 409, and a wake turn set the status while it waited. Only then: the server's `status` events come as they are |
 | `{ type: "settled" }` | That request's response has ended, or failed. Not after a `reset()` or `close()` |
 | `{ type: "reset" }` | `reset()` |
 | `{ type: "closed" }` | `close()` |
@@ -586,7 +592,10 @@ read the response as server-sent events.
 - **409 once:** the chat waits 150 ms, and any wake turn that has started,
   then tries once more. That covers the previous request's tail. A second tab
   holding the conversation is reported, as an `error` block with the server's
-  message, or `another turn is already in flight` if it has none.
+  message, or `another turn is already in flight` if it has none. A `send` or
+  `interact` request says `streaming` again as it tries, if a wake turn
+  changed the status while it waited (see [`send`](#send)), and so does each
+  try below.
 - **409 after a lost wake turn:** if the events connection dropped while a
   wake turn ran, the turn's `released` was lost with it. The next request
   then keeps trying, waiting 250 ms, then twice as long each time up to

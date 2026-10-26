@@ -4609,16 +4609,32 @@ async function sendingChecks() {
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   // each request's answer, held until the case gives it: a response, or an error to throw
   let answers = [];
-  globalThis.fetch = (_url, init = {}) =>
-    new Promise((resolve, reject) => {
-      const answer = { resolve, reject };
-      answers.push(answer);
-      // an aborted request is answered by no one: the next answer is the next request's
-      init.signal?.addEventListener("abort", () => {
-        answers = answers.filter((a) => a !== answer);
-        reject(new DOMException("aborted", "AbortError"));
-      });
-    });
+  // the events stream, when a conversation has one: open at once, and fed by the case
+  let events = null;
+  const feed = (list) => events.enqueue(new TextEncoder().encode(frames(list)));
+  globalThis.fetch = (url, init = {}) =>
+    String(url).includes("/events")
+      ? Promise.resolve(
+          new Response(
+            new ReadableStream({
+              start(c) {
+                events = c;
+                c.enqueue(new TextEncoder().encode(": open\n\n"));
+                init.signal?.addEventListener("abort", () => c.error(new DOMException("aborted", "AbortError")));
+              },
+            }),
+            { status: 200, headers: { "content-type": "text/event-stream" } },
+          ),
+        )
+      : new Promise((resolve, reject) => {
+          const answer = { resolve, reject };
+          answers.push(answer);
+          // an aborted request is answered by no one: the next answer is the next request's
+          init.signal?.addEventListener("abort", () => {
+            answers = answers.filter((a) => a !== answer);
+            reject(new DOMException("aborted", "AbortError"));
+          });
+        });
   const answer = async (response) => {
     for (const end = Date.now() + 2000; !answers.length && Date.now() < end; ) await wait(5);
     const next = answers.shift();
@@ -4777,6 +4793,39 @@ async function sendingChecks() {
       check(
         "reset() while a message is held leaves the new conversation empty and idle, with no `settled`",
         chat.state.blocks.length === 0 && chat.state.status === "idle" && heard.join() === "sending,reset",
+      );
+      chat.close();
+    }
+
+    // a wake turn ends while a message waits out a 409: the retry still says streaming
+    {
+      const chat = createChat({ endpoint: "http://x/hai", registry: {} });
+      const first = await go(chat, (c) => c.send("ask me"));
+      await answer(sse([{ ...hello, events: true }, { type: "status", status: "awaiting" }]));
+      await first();
+      await wait(10);
+      const heard = [];
+      chat.subscribe((_s, e) => heard.push(e.type));
+      const sent = await go(chat, (c) => c.send("hello"));
+      // a wake turn holds the conversation, so the message is turned away once
+      feed([{ type: "status", status: "streaming", wake: 1 }]);
+      await answer(new Response(JSON.stringify({ error: "busy" }), { status: 409 }));
+      await wait(30);
+      feed([
+        { type: "block_start", block: { kind: "assistant", id: "w1", text: "woke" } },
+        { type: "status", status: "idle" },
+        { type: "released" },
+      ]);
+      await wait(250);
+      check(
+        "a retry after a wake turn ended says streaming again, its message still pending",
+        chat.state.status === "streaming" && pending(chat).length === 1 && heard.filter((t) => t === "sending").length === 1,
+      );
+      await answer(new TypeError("network down"));
+      await sent().catch(() => {});
+      check(
+        "…and if it fails, the status goes back to the wake turn's, not the one before the send",
+        chat.state.status === "idle" && pending(chat).length === 0 && heard.filter((t) => t === "settled").length === 1,
       );
       chat.close();
     }
