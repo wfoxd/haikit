@@ -10,7 +10,8 @@
     "noEmit": true,
     "verbatimModuleSyntax": true,
     "allowImportingTsExtensions": true,
-    "rewriteRelativeImportExtensions": true
+    "rewriteRelativeImportExtensions": true,
+    "paths": { "@/*": ["./src/client/*"] }
   },
-  "include": ["src", "test"]
+  "include": ["src/server", "src/shared", "test"]
 }
