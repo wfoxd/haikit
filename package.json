@@ -16,7 +16,7 @@
     "storetest": "node scripts/storetest.mjs",
     "adaptertest": "node scripts/adaptertest.mjs",
     "pgtest": "node packages/postgres/test/conform.mjs && node packages/auth/test/conform.mjs",
-    "authtest": "node packages/auth/test/auth.mjs",
+    "authtest": "node packages/auth/test/auth.mjs && node packages/auth/test/oidc.mjs",
     "packtest": "node scripts/packtest.mjs",
     "test": "npm run typecheck && npm run typetest && npm run csstest && npm run adaptertest && npm run storetest && npm run authtest && npm run reacttest && npm run uitest && npm run pgtest && npm run smoke",
     "prepublish-check": "npm run test && npm run packtest",

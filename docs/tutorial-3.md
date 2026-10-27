@@ -1,6 +1,6 @@
 # Who's asking
 
-> The hello app from the first tutorial, signed in: each person sees only their own conversations, the model knows who it's talking to, and *sign out everywhere* does what it says. Nine steps, annotated line by line.
+> The hello app from the first tutorial, signed in: each person sees only their own conversations, the model knows who it's talking to, and *sign out everywhere* does what it says. Nine steps, and a tenth to sign in with Google, annotated line by line.
 
 ## Hello, who's asking — the app knows each person, and keeps them apart
 
@@ -465,6 +465,174 @@ The first is refused with *this request came from another site* (403): the cooki
 >
 > The gate, not the conversation id, decides who gets in, and it decides before anything is read. A signed-in user's cookie only works from your own pages. And a configuration that would make tokens forgeable stops the server rather than running weakly.
 
+## 10 · Sign in with Google
+
+This step is optional: it needs a Google account and a few minutes in Google's console. Everything before it works without it.
+
+Your users may not want one more password. With `@haikit/auth/oidc`, they can sign in with Google instead. The browser goes to Google, the person picks an account, and Google sends them back with a code. Your server trades that code with Google for who they are, then calls the same `signIn` as step 04's form. The token, the gate and *sign out everywhere* work exactly as before.
+
+First, register the app with Google:
+
+1. In the [Google Cloud console](https://console.cloud.google.com/apis/credentials), choose **Create credentials**, then **OAuth client ID**. If it asks you to configure a consent screen first, give it an app name and your email, and keep the defaults.
+2. For **Application type**, choose **Web application**. Under **Authorized redirect URIs**, add `http://localhost:5175/auth/google/callback`.
+3. Click **Create**, and copy the client ID and the client secret into `.env`. As with the secret in step 02, `npm start` reads that file, and so does `npm run mock` if you gave it `--env-file-if-exists=.env`.
+
+**`.env`** — *edit*
+
+```bash
+GOOGLE_CLIENT_ID=paste the client ID
+GOOGLE_CLIENT_SECRET=paste the client secret
+```
+
+A user id from Google is `google:` and a long number, which is no way to greet anyone. So keep the names people go by somewhere the welcome tool can read them:
+
+**`src/server/names.ts`** — *new file*
+
+```ts
+/**
+ * What people who signed in with Google are called, by user id: theirs is
+ * `google:` and a number, which is no way to greet anyone. A real app keeps
+ * this in its users table. This map forgets on a restart, and `welcome` then
+ * says the id.
+ */
+export const names = new Map<string, string>();
+```
+
+Then add Google to the auth object. Here it is whole:
+
+**`src/server/auth.ts`** — *edit*
+
+```ts
+import { randomBytes } from "node:crypto";
+import { createAuth, memoryAuthStore } from "@haikit/auth";
+import { google } from "@haikit/auth/oidc";                                           // 1
+import { names } from "./names.ts";
+
+const PRODUCTION = process.env.NODE_ENV === "production";
+
+// The secret tokens are signed with. Without one, a random secret for this run
+// only: every sign-in ends when the server stops.
+const SECRET = process.env.HAIKIT_AUTH_SECRET ?? (PRODUCTION ? undefined : randomBytes(32).toString("base64url"));
+if (!SECRET) throw new Error("set HAIKIT_AUTH_SECRET: at least 32 bytes, such as `openssl rand -base64 32`");
+
+// Sign in with Google as well, once there's a Google client to sign in with.
+const { GOOGLE_CLIENT_ID: clientId, GOOGLE_CLIENT_SECRET: clientSecret } = process.env;
+export const withGoogle = Boolean(clientId && clientSecret);                          // 2
+
+export const auth = createAuth({
+  // memoryAuthStore keeps owners in this process; pgAuthStore shares them
+  store: memoryAuthStore(),
+  jwt: { secret: SECRET },
+  // Safari keeps no Secure cookie on http://localhost; in production, always Secure
+  cookie: { secure: PRODUCTION },
+  providers:
+    clientId && clientSecret
+      ? [
+          google({
+            clientId,
+            clientSecret,
+            // exactly as registered with Google: never worked out from the request
+            redirectUri: process.env.GOOGLE_REDIRECT_URI ?? "http://localhost:5175/auth/google/callback",  // 3
+            failureUrl: "/sign-in",                                                   // 4
+            // signed in as google:<sub>, Google's id for them, and their name kept to greet them by
+            user({ provider, sub, claims }) {                                         // 5
+              const userId = `${provider}:${sub}`;
+              if (typeof claims.name === "string") names.set(userId, claims.name);
+              return userId;
+            },
+          }),
+        ]
+      : [],
+});
+```
+
+**1** Google speaks OpenID Connect, as most identity providers do. `google()` is that protocol with Google's address and settings filled in. Its sibling `oidc()` takes any other provider's.
+
+**2** Only when both are set. Without them, there's no Google sign-in, and the app is exactly as it was.
+
+**3** This must match the redirect URI you registered, character for character. It's written out rather than worked out from the request. A request's `Host` header can say anything, and a sign-in sent back to the wrong host would hand someone else its code.
+
+**4** A sign-in that fails is sent here, with `?sign_in_error=` saying why.
+
+**5** Who the person signs in as. `sub` is Google's id for them: it never changes, even when their email does, and it's never reused. So their user id is `google:` and that. Their name is kept, to greet them by. Returning `null` refuses them. Without `user`, they sign in as `google:<sub>`, with their name and their verified email in the token.
+
+`main.ts` doesn't change. `auth.handler` already answers the two new routes: `GET /auth/google` sends the browser to Google, and `GET /auth/google/callback` is where Google sends it back.
+
+The sign-in page offers the link, and says why a sign-in failed:
+
+**`src/server/sign-in.ts`** — *edit*
+
+```ts
+import { withGoogle } from "./auth.ts";                     // with the other imports
+
+export async function signInPage(req: IncomingMessage, res: ServerResponse, auth: Auth) {
+  if (req.method === "GET") {
+    const why = new URL(req.url ?? "/", "http://localhost").searchParams.get("sign_in_error");
+    return page(res, await auth.user(req), SIGN_IN_ERRORS.get(why ?? "") ?? "", 200);    // 1
+  }
+  // ...the rest unchanged
+}
+
+/** What each way a sign-in through Google can fail means to the person trying. */
+const SIGN_IN_ERRORS = new Map([                                                         // 2
+  ["access_denied", "Signing in with Google was cancelled."],
+  ["refused", "That Google account can't sign in here."],
+  ["expired", "That sign-in took too long, or another one started since. Try again."],
+  ["failed", "Signing in with Google didn't work. Try again in a moment."],
+]);
+
+function page(res: ServerResponse, user: { id: string } | null, problem = "", status = problem ? 400 : 200) {
+  // ...and in the signed-out content, after the form:
+  //   ${withGoogle ? `<p><a href="/auth/google">Sign in with Google</a></p>` : ""}       // 3
+  // ...and the response's status is `status`:
+  res.writeHead(status, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+}
+```
+
+**1** The page itself is fine, so it's a 200. Only the sign-in failed.
+
+**2** `sign_in_error` is one of these four:
+- `access_denied`: they said no on Google's page.
+- `refused`: your `user` returned `null`.
+- `expired`: they took more than 10 minutes, or started another sign-in in another tab since.
+- `failed`: anything else. The server logs why, and never tells the browser.
+
+**3** A plain link: a sign-in starts with a GET. Add `?return_to=/somewhere` to send them back there instead of `/`.
+
+The welcome tool greets them by name, and so does the header:
+
+**`src/server/tools.ts`** — *edit*
+
+```ts
+import { names } from "./names.ts";                     // with the other imports
+
+  async run(_input, ctx) {
+    const owner = await auth.ownerOf(ctx.conversationId);
+    // someone signed in with Google is google: and a number: greet them by their name
+    return ctx.text(`Signed in as ${(owner !== null && names.get(owner)) || owner}.`);
+  },
+```
+
+**`src/client/main.tsx`** — *edit*
+
+```tsx
+  // a name, from Google, if they signed in with it
+  subtitle: user ? `signed in as ${user.claims.name ?? user.id}` : "signed out",
+```
+
+> [!TIP]
+> **Checkpoint**
+>
+> Restart, and open `/sign-in`: under the form there's a **Sign in with Google** link. Follow it, and pick your account. You're back in the chat, and the header says *signed in as* your name. The welcome row says it too, and *“greet me”* greets you by it. On `/sign-in`, your user id is `google:` and a long number. Now click **Sign out** there, and open `http://localhost:5175/auth/google/callback?code=x&state=y` yourself. It's a way back from Google that no sign-in of yours started, so it's turned away: the sign-in page says *That sign-in took too long, or another one started since.*
+
+Behind the link, `@haikit/auth` does what a sign-in like this needs:
+
+- **A one-time `state`**, so only the browser that started the sign-in can finish it.
+- **A `nonce`**, which Google writes back into what it says about the person, so that answer can't be replayed.
+- **PKCE**, so a code that leaks on its way back is of no use without the secret only that browser had.
+
+All three travel in a cookie that's encrypted and lasts 10 minutes. Then it checks that Google's answer names your client, comes from Google and hasn't expired. In production, register your https redirect URI with Google as well, and set `GOOGLE_REDIRECT_URI` to it.
+
 ## Where to go next
 
 The hello app now knows who everyone is: it signs them in, keeps them to their own conversations, tells the model their name, and signs them out everywhere at once.
@@ -483,6 +651,7 @@ The hello app now knows who everyone is: it signs them in, keeps them to their o
 
 - **Serve it over https.** In production the cookie is `Secure` and named `__Host-haikit_token`, so the browser sends it only over https, and only to the host that set it.
 - **Put your real login where step 04 checks the name.** And call `auth.revoke(userId)` whenever a user changes their password, or tells you a device is lost.
+- **If you did step 10,** register your https redirect URI with Google, set `GOOGLE_REDIRECT_URI` to it, and keep the client secret where `HAIKIT_AUTH_SECRET` is, out of the code. Keep each user's name in your users table rather than in `names`.
 - **Behind a proxy that rewrites the `Host` header,** list your public origin, such as `origins: ["https://hello.example.com"]`, so cookie requests from your own pages aren't mistaken for another site's. Step 04's sign-in page checks the origin itself, against `Host` too: have its `sameHost` accept that origin as well, or signing in and out will be refused.
 
 ### Use your identity provider instead
@@ -515,6 +684,22 @@ mountChat({
 - **Step 04's sign-in page goes,** and so does its guard on `/`: loading the page carries no `Authorization` header, so `auth.user(req)` there would always send the visitor to `/sign-in`. Let your provider's SDK decide whether to show its login instead.
 - **Step 05's `/auth/me` call** needs the token too, through the same `fetch`, or take the user's name from your provider's SDK.
 - **`mountChat`'s `signIn` link** points at your provider's login.
+
+Or keep step 04's page and HaiKIT's own cookie, and send people to your provider to sign in, as step 10 does with Google. Most providers speak OpenID Connect, and `oidc()` from `@haikit/auth/oidc` works with any of them:
+
+```ts
+import { oidc } from "@haikit/auth/oidc";
+
+providers: [
+  oidc({
+    name: "okta",                                   // its routes: /auth/okta, and the redirect URI's path
+    issuer: "https://YOUR_ORG.okta.com",
+    clientId: process.env.OKTA_CLIENT_ID!,
+    clientSecret: process.env.OKTA_CLIENT_SECRET!,
+    redirectUri: "https://hello.example.com/auth/okta/callback",
+  }),
+],
+```
 
 ### Conversations from before sign-in
 

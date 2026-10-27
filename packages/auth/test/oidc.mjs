@@ -1,0 +1,473 @@
+#!/usr/bin/env node
+/**
+ * @haikit/auth/oidc: signing in through a provider, against a stand-in for
+ * one that runs in this process, reached through the providers' `fetch`.
+ * What createAuth and oidc() refuse, the trip there and back, and every way
+ * it can fail.
+ *
+ *   node packages/auth/test/oidc.mjs
+ */
+
+import http from "node:http";
+import { createHash, hkdfSync } from "node:crypto";
+import { EncryptJWT, SignJWT, decodeJwt, generateKeyPair } from "jose";
+import { createAuth, memoryAuthStore } from "../dist/index.js";
+import { google, oidc } from "../dist/oidc.js";
+
+let failures = 0;
+const check = (label, ok) => {
+  console.log(`  ${ok ? "\x1b[32m✓" : "\x1b[31m✗"}\x1b[0m ${label}`);
+  if (!ok) failures++;
+};
+const throws = (fn, message) => {
+  try {
+    fn();
+    return false;
+  } catch (err) {
+    return err.message === message;
+  }
+};
+/** What a function logs to console.error, kept from the test's output. */
+const quietly = async (fn) => {
+  const error = console.error;
+  const logged = [];
+  console.error = (...args) => logged.push(args.map(String).join(" "));
+  try {
+    await fn();
+  } finally {
+    console.error = error;
+  }
+  return logged;
+};
+
+const SECRET = "a-secret-for-tests-that-is-long-enough";
+const OLD_SECRET = "the-secret-that-came-before-this-one!!";
+const CLIENT = { clientId: "the-client", clientSecret: "the-client-secret" };
+const REDIRECT = "http://localhost/auth/fake/callback";
+
+// ── a provider, in this process ─────────────────────────────────────────
+
+/**
+ * Answers discovery for its issuer, and its token endpoint, as an OpenID
+ * provider does; `authorize` stands in for the user signing in on its page.
+ */
+async function fakeProvider({ issuer = "https://fake.test", authorize = `${issuer}/authorize`, token = `${issuer}/token` } = {}) {
+  const { privateKey } = await generateKeyPair("RS256");
+  const codes = new Map();
+  const provider = {
+    discoveries: 0,
+    down: false,
+    /** The next token response's ID token claims are changed by these. */
+    tamper: {},
+    fetch: async (url, init = {}) => {
+      if (provider.down) throw new TypeError("fetch failed");
+      const json = (status, body) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+      if (url === `${issuer}/.well-known/openid-configuration`) {
+        provider.discoveries++;
+        return json(200, {
+          issuer,
+          authorization_endpoint: authorize,
+          token_endpoint: token,
+          jwks_uri: `${issuer}/jwks`,
+          response_types_supported: ["code"],
+          subject_types_supported: ["public"],
+          id_token_signing_alg_values_supported: ["RS256"],
+          code_challenge_methods_supported: ["S256"],
+          token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post"],
+        });
+      }
+      if (url === token && init.method === "POST") {
+        const form = new URLSearchParams(String(init.body));
+        // client_secret_basic: each half form-urlencoded, then base64 (RFC 6749 §2.3.1)
+        const basic = new Headers(init.headers).get("authorization")?.match(/^Basic (.+)$/)?.[1];
+        const [id, secret] = Buffer.from(basic ?? "", "base64").toString().split(":").map((s) => decodeURIComponent(s.replace(/\+/g, " ")));
+        const grant = codes.get(form.get("code"));
+        codes.delete(form.get("code"));
+        if (id !== CLIENT.clientId || secret !== CLIENT.clientSecret) return json(401, { error: "invalid_client" });
+        if (!grant || form.get("grant_type") !== "authorization_code" || form.get("redirect_uri") !== grant.redirectUri) return json(400, { error: "invalid_grant" });
+        const challenge = createHash("sha256").update(form.get("code_verifier") ?? "").digest("base64url");
+        if (challenge !== grant.challenge) return json(400, { error: "invalid_grant", error_description: "PKCE" });
+        const now = Math.floor(Date.now() / 1000);
+        const idToken = await new SignJWT({ nonce: grant.nonce, ...grant.claims, ...provider.tamper })
+          .setProtectedHeader({ alg: "RS256" })
+          .setIssuer(provider.tamper.iss ?? issuer)
+          .setAudience(provider.tamper.aud ?? CLIENT.clientId)
+          .setSubject(grant.sub)
+          .setIssuedAt(now)
+          .setExpirationTime(now + 3600)
+          .sign(privateKey);
+        provider.tamper = {};
+        return json(200, { access_token: "at", token_type: "Bearer", expires_in: 3600, id_token: idToken });
+      }
+      return json(404, { error: "not_found" });
+    },
+    /** The user signs in at `location` as `sub`: where the provider sends their browser back. */
+    signIn(location, sub = "1234", claims = { name: "Ada Lovelace", email: "ada@example.com", email_verified: true }) {
+      const at = new URL(location);
+      const code = `code-${codes.size}-${Math.random()}`;
+      codes.set(code, {
+        sub,
+        claims,
+        nonce: at.searchParams.get("nonce"),
+        challenge: at.searchParams.get("code_challenge"),
+        redirectUri: at.searchParams.get("redirect_uri"),
+      });
+      const back = new URL(at.searchParams.get("redirect_uri"));
+      back.searchParams.set("code", code);
+      back.searchParams.set("state", at.searchParams.get("state"));
+      return back;
+    },
+    /** The user says no on its page. */
+    deny(location) {
+      const at = new URL(location);
+      const back = new URL(at.searchParams.get("redirect_uri"));
+      back.searchParams.set("error", "access_denied");
+      back.searchParams.set("state", at.searchParams.get("state"));
+      return back;
+    },
+  };
+  return provider;
+}
+
+/** A server answering auth.handler("/auth"), and a browser with a cookie jar that follows nothing by itself. */
+async function serve(auth) {
+  const handle = auth.handler("/auth");
+  const server = http.createServer(async (req, res) => (await handle(req, res)) || res.writeHead(404).end());
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const browser = () => {
+    const jar = new Map();
+    return {
+      jar,
+      /** GET a path here, keeping the cookies it sets: its status, where it sends the browser, and the Set-Cookie lines. */
+      async get(path) {
+        const res = await fetch(base + path, {
+          redirect: "manual",
+          headers: { cookie: [...jar].map(([n, v]) => `${n}=${v}`).join("; ") },
+        });
+        const cookies = res.headers.getSetCookie();
+        for (const line of cookies) {
+          const [pair] = line.split(";");
+          const at = pair.indexOf("=");
+          const [name, value] = [pair.slice(0, at), pair.slice(at + 1)];
+          if (/Max-Age=0\b/.test(line)) jar.delete(name);
+          else jar.set(name, value);
+        }
+        await res.arrayBuffer();
+        return { status: res.status, location: res.headers.get("location"), cookies };
+      },
+    };
+  };
+  return { server, browser };
+}
+/** The path and query a browser asks this server for, of a URL the provider sends it to. */
+const pathOf = (url) => {
+  const at = new URL(url);
+  return at.pathname + at.search;
+};
+
+// ── createAuth and oidc() refuse what can't work ────────────────────────
+console.log("\nrefusals");
+{
+  const fake = (over = {}) => oidc({ name: "fake", issuer: "https://fake.test", ...CLIENT, redirectUri: REDIRECT, ...over });
+  const make = (providers, jwt = { secret: SECRET }) => () => createAuth({ store: memoryAuthStore(), jwt, providers });
+  check("providers without jwt.secret", throws(make([fake()], { jwks: "https://idp.example/jwks" }), "createAuth: providers need jwt.secret: a sign-in through one ends in signIn"));
+  const named = (name) => ({ name, redirectUri: `https://app.example/${name}/cb`, failureUrl: "/", start: async () => ({}), finish: async () => ({}) });
+  for (const name of ["me", "sign-out", "Google", "", "a".repeat(33), "1st"]) {
+    check(`a provider named ${JSON.stringify(name)}`, throws(make([named(name)]), `createAuth: "${name}" can't name a provider: 1 to 32 lowercase letters, digits or dashes, starting with a letter, and not me or sign-out`));
+  }
+  check("two providers of one name", throws(make([fake(), fake({ redirectUri: "http://localhost/other" })]), 'createAuth: two providers are named "fake"'));
+  check(
+    "two providers that come back to one path",
+    throws(make([fake(), oidc({ name: "other", issuer: "https://other.test", ...CLIENT, redirectUri: REDIRECT })]), 'createAuth: providers "fake" and "other" both come back to /auth/fake/callback'),
+  );
+  for (const failureUrl of ["https://evil.example/", "//evil.example", "/\\evil.example", "sign-in", "/a\tb"]) {
+    check(`a failureUrl of ${JSON.stringify(failureUrl)}`, throws(make([fake({ failureUrl })]), `createAuth: provider "fake"'s failureUrl must be a path on this site, such as /sign-in`));
+  }
+  check("an http issuer", throws(() => fake({ issuer: "http://fake.test" }), "oidc: issuer must be an https URL"));
+  check("an issuer that isn't a URL", throws(() => fake({ issuer: "fake.test" }), "oidc: issuer must be a URL, such as https://accounts.google.com"));
+  check("an empty clientId", throws(() => fake({ clientId: "" }), "oidc: clientId must be a non-empty string"));
+  check("an empty clientSecret", throws(() => fake({ clientSecret: "" }), "oidc: clientSecret must be a non-empty string"));
+  for (const redirectUri of ["http://app.example/cb", "https://app.example/cb#x", "ftp://localhost/cb"]) {
+    check(`a redirectUri of ${redirectUri}`, throws(() => fake({ redirectUri }), "oidc: redirectUri must be https, or http on localhost, with no #fragment"));
+  }
+  check("a redirectUri that isn't a URL", throws(() => fake({ redirectUri: "/cb" }), "oidc: redirectUri must be a URL, such as https://app.example.com/auth/google/callback"));
+  check("http on 127.0.0.1 is allowed", fake({ redirectUri: "http://127.0.0.1:5176/cb" }).redirectUri === "http://127.0.0.1:5176/cb");
+  check("params that set the flow's own", throws(() => fake({ params: { state: "x" } }), "oidc: params can't set state: the sign-in sets it"));
+  check("a bad name", throws(() => fake({ name: "Fake" }), "oidc: name must be 1 to 32 lowercase letters, digits or dashes, starting with a letter"));
+  check("google: an empty hostedDomain", throws(() => google({ ...CLIENT, redirectUri: REDIRECT, hostedDomain: "" }), "google: hostedDomain must be a domain, such as example.com"));
+}
+
+// ── there and back ──────────────────────────────────────────────────────
+console.log("\nthere and back");
+{
+  const idp = await fakeProvider();
+  const auth = createAuth({
+    store: memoryAuthStore(),
+    jwt: { secret: SECRET },
+    cookie: { secure: false },
+    providers: [oidc({ name: "fake", issuer: "https://fake.test", ...CLIENT, redirectUri: REDIRECT, failureUrl: "/sign-in", fetch: idp.fetch })],
+  });
+  const { server, browser } = await serve(auth);
+  try {
+    const b = browser();
+    const started = await b.get("/auth/fake?return_to=/chats/7%3Fx=1");
+    const to = new URL(started.location);
+    const flowLine = started.cookies.find((c) => c.startsWith("haikit_sign_in="));
+    check("start: a 303 to the provider's sign-in page", started.status === 303 && to.origin + to.pathname === "https://fake.test/authorize");
+    const p = Object.fromEntries(to.searchParams);
+    check(
+      "…with the client, the redirect, a code, the scopes, state, nonce and an S256 challenge",
+      p.client_id === "the-client" &&
+        p.redirect_uri === REDIRECT &&
+        p.response_type === "code" &&
+        p.scope === "openid email profile" &&
+        p.state?.length >= 32 &&
+        p.nonce?.length >= 32 &&
+        p.code_challenge_method === "S256" &&
+        /^[\w-]{43}$/.test(p.code_challenge),
+    );
+    check("…and the flow in a cookie: HttpOnly, Lax, 10 minutes", /^haikit_sign_in=[^;]+; Max-Age=600; Path=\/; HttpOnly; SameSite=Lax$/.test(flowLine ?? ""));
+    check("…sealed: nothing in it can be read", !flowLine.includes(p.state) && flowLine.split(".").length === 5);
+    check("the provider's settings were read once", idp.discoveries === 1);
+
+    const back = await b.get(pathOf(idp.signIn(started.location)));
+    const token = b.jar.get("haikit_token");
+    const claims = token && decodeJwt(token);
+    check("back: a 303 to return_to", back.status === 303 && back.location === "/chats/7?x=1");
+    check("…signed in as {name}:{sub}, with the name and the verified email", claims?.sub === "fake:1234" && claims.name === "Ada Lovelace" && claims.email === "ada@example.com");
+    check("…and the flow cookie is cleared", !b.jar.has("haikit_sign_in") && back.cookies.some((c) => /^haikit_sign_in=; Max-Age=0/.test(c)));
+    check("…the user is who the gate admits", (await auth.verify(token))?.id === "fake:1234");
+
+    const again = await b.get("/auth/fake");
+    await b.get(pathOf(idp.signIn(again.location, "5678", { name: "Bob", email: "bob@example.com", email_verified: false })));
+    const bob = decodeJwt(b.jar.get("haikit_token"));
+    check("an unverified email isn't passed on", bob.sub === "fake:5678" && bob.name === "Bob" && !("email" in bob));
+    check("the settings are kept: read once still", idp.discoveries === 1);
+
+    for (const returnTo of ["//evil.example", "https://evil.example", "/\\evil.example", "/%09/evil.example".replace("%09", "\t"), "/" + "a".repeat(2_048)]) {
+      const c = browser();
+      const s = await c.get(`/auth/fake?return_to=${encodeURIComponent(returnTo)}`);
+      const done = await c.get(pathOf(idp.signIn(s.location)));
+      check(`return_to ${JSON.stringify(returnTo.slice(0, 20))}${returnTo.length > 20 ? "…" : ""} goes to /`, done.location === "/");
+    }
+    const longest = browser();
+    const ok = "/" + "a".repeat(2_047);
+    const s = await longest.get(`/auth/fake?return_to=${ok}`);
+    check("a return_to of 2,048 characters is kept", (await longest.get(pathOf(idp.signIn(s.location)))).location === ok);
+  } finally {
+    server.close();
+  }
+}
+
+// ── and every way it can fail ───────────────────────────────────────────
+console.log("\nfailures");
+{
+  const idp = await fakeProvider();
+  let hook = undefined;
+  const auth = createAuth({
+    store: memoryAuthStore(),
+    jwt: { secret: SECRET },
+    providers: [
+      oidc({ name: "fake", issuer: "https://fake.test", ...CLIENT, redirectUri: REDIRECT, failureUrl: "/sign-in?from=fake", fetch: idp.fetch, user: (profile) => (hook ? hook(profile) : `fake:${profile.sub}`) }),
+      oidc({ name: "other", issuer: "https://fake.test", ...CLIENT, redirectUri: "http://localhost/auth/other/callback", fetch: idp.fetch }),
+    ],
+  });
+  const { server, browser } = await serve(auth);
+  const why = (r) => r.status === 303 && new URL(r.location, "http://x").searchParams.get("sign_in_error");
+  try {
+    let b = browser();
+    let s = await b.get("/auth/fake");
+    check("a secure flow cookie is __Host-haikit_sign_in, and Secure", s.cookies.some((c) => /^__Host-haikit_sign_in=[^;]+; Max-Age=600; Path=\/; HttpOnly; SameSite=Lax; Secure$/.test(c)));
+    let r = await b.get(pathOf(idp.deny(s.location)));
+    check("the user says no: access_denied, at the failureUrl", why(r) === "access_denied" && r.location === "/sign-in?from=fake&sign_in_error=access_denied");
+    check("…and no one is signed in", !b.jar.has("__Host-haikit_token") && !b.jar.has("__Host-haikit_sign_in"));
+
+    b = browser();
+    s = await b.get("/auth/fake");
+    const callback = idp.signIn(s.location);
+    r = await browser().get(pathOf(callback));
+    check("no flow cookie: expired", why(r) === "expired");
+    // the first character of the ciphertext: every bit of it counts
+    const parts = b.jar.get("__Host-haikit_sign_in").split(".");
+    parts[3] = (parts[3][0] === "A" ? "B" : "A") + parts[3].slice(1);
+    b.jar.set("__Host-haikit_sign_in", parts.join("."));
+    r = await b.get(pathOf(callback));
+    check("a flow cookie changed by a byte: expired", why(r) === "expired");
+
+    b = browser();
+    const first = await b.get("/auth/fake");
+    await b.get("/auth/fake"); // another tab, started since
+    r = await b.get(pathOf(idp.signIn(first.location)));
+    check("the answer to a sign-in another tab has replaced: expired", why(r) === "expired");
+
+    b = browser();
+    s = await b.get("/auth/other");
+    r = await b.get(pathOf(idp.signIn(s.location)).replace("/auth/other/", "/auth/fake/"));
+    check("a flow cookie for another provider: expired", why(r) === "expired");
+
+    // sealed as the server seals one, by the documented derivation, but ten minutes ago
+    const key = new Uint8Array(hkdfSync("sha256", new TextEncoder().encode(SECRET), new Uint8Array(0), "haikit/auth sign-in flow", 32));
+    b = browser();
+    s = await b.get("/auth/fake");
+    const state = new URL(s.location).searchParams.get("state");
+    const stale = await new EncryptJWT({ p: "fake", f: { state, nonce: "n", verifier: "v" }, r: "/" })
+      .setProtectedHeader({ alg: "dir", enc: "A256GCM" })
+      .setExpirationTime(Math.floor(Date.now() / 1000) - 1)
+      .encrypt(key);
+    b.jar.set("__Host-haikit_sign_in", stale);
+    r = await b.get(pathOf(idp.signIn(s.location)));
+    check("a flow cookie past its 10 minutes: expired", why(r) === "expired");
+
+    const fails = async (label, tamper) => {
+      const c = browser();
+      const started = await c.get("/auth/fake");
+      idp.tamper = tamper;
+      let answer;
+      const logged = await quietly(async () => (answer = await c.get(pathOf(idp.signIn(started.location)))));
+      check(`${label}: failed, logged, and nothing said to the browser`, why(answer) === "failed" && logged.some((l) => l.startsWith("[haikit] auth: a sign-in with fake failed:")) && !c.jar.has("__Host-haikit_token"));
+    };
+    await fails("an ID token with another nonce", { nonce: "someone-elses" });
+    await fails("an ID token for another client", { aud: "another-client" });
+    await fails("an ID token from another issuer", { iss: "https://evil.test" });
+    {
+      const c = browser();
+      const started = await c.get("/auth/fake");
+      const at = new URL(started.location);
+      at.searchParams.set("code_challenge", "A".repeat(43)); // a challenge this browser's verifier doesn't answer
+      let answer;
+      const logged = await quietly(async () => (answer = await c.get(pathOf(idp.signIn(at.href)))));
+      check("a verifier that doesn't answer the challenge (PKCE): failed, logged", why(answer) === "failed" && logged.length === 1);
+    }
+    {
+      const c = browser();
+      const started = await c.get("/auth/fake");
+      idp.down = true;
+      let answer;
+      const logged = await quietly(async () => (answer = await c.get(pathOf(idp.signIn(started.location)))));
+      idp.down = false;
+      check("the token endpoint down: failed, logged", why(answer) === "failed" && logged.length === 1);
+    }
+
+    const as = async (fn) => {
+      hook = fn;
+      const c = browser();
+      const started = await c.get("/auth/fake");
+      let answer;
+      const logged = await quietly(async () => (answer = await c.get(pathOf(idp.signIn(started.location)))));
+      hook = undefined;
+      return { answer, logged, claims: c.jar.has("__Host-haikit_token") ? decodeJwt(c.jar.get("__Host-haikit_token")) : null };
+    };
+    let got = await as(() => null);
+    check("user returns null: refused", why(got.answer) === "refused" && got.claims === null && got.logged.length === 0);
+    got = await as(() => {
+      throw new Error("the users table is down");
+    });
+    check("user throws: failed, logged", why(got.answer) === "failed" && got.logged.some((l) => l.includes("the users table is down")));
+    got = await as(({ sub }) => `user-${sub}`);
+    check("user returns a string: that id, with the default claims", got.claims?.sub === "user-1234" && got.claims.name === "Ada Lovelace" && got.claims.email === "ada@example.com");
+    got = await as(({ sub }) => ({ userId: `u${sub}`, claims: { role: "admin" } }));
+    check("user returns { userId, claims }: exactly those", got.claims?.sub === "u1234" && got.claims.role === "admin" && !("name" in got.claims));
+    got = await as(() => ({ userId: "x", claims: { exp: 1 } }));
+    check("claims signIn sets itself: failed, logged", why(got.answer) === "failed" && got.logged.some((l) => l.includes('"exp" is set by signIn')));
+  } finally {
+    server.close();
+  }
+}
+
+// ── the provider's settings, unreachable ────────────────────────────────
+console.log("\nsettings");
+{
+  const idp = await fakeProvider();
+  const auth = createAuth({
+    store: memoryAuthStore(),
+    jwt: { secret: SECRET },
+    providers: [oidc({ name: "fake", issuer: "https://fake.test", ...CLIENT, redirectUri: REDIRECT, fetch: idp.fetch })],
+  });
+  const { server, browser } = await serve(auth);
+  try {
+    idp.down = true;
+    let r;
+    const logged = await quietly(async () => (r = await browser().get("/auth/fake")));
+    check("unreachable: a 303 to the failureUrl with failed, logged", r.status === 303 && r.location === "/?sign_in_error=failed" && logged.some((l) => l.startsWith("[haikit] auth: a sign-in with fake couldn't start:")));
+    check("…and no flow cookie", r.cookies.length === 0);
+    idp.down = false;
+    r = await browser().get("/auth/fake");
+    check("read again on the next sign-in", r.status === 303 && r.location.startsWith("https://fake.test/authorize") && idp.discoveries === 1);
+    check("the routes answer GET only", (await fetch(`http://127.0.0.1:${server.address().port}/auth/fake`, { method: "POST" })).status === 404);
+    check("an unknown provider isn't a route", (await browser().get("/auth/nobody")).status === 404);
+  } finally {
+    server.close();
+  }
+}
+
+// ── rotation ────────────────────────────────────────────────────────────
+console.log("\nrotation");
+{
+  const idp = await fakeProvider();
+  const make = (secret) =>
+    createAuth({ store: memoryAuthStore(), jwt: { secret }, providers: [oidc({ name: "fake", issuer: "https://fake.test", ...CLIENT, redirectUri: REDIRECT, fetch: idp.fetch })] });
+  const before = await serve(make(OLD_SECRET));
+  const after = await serve(make([SECRET, OLD_SECRET]));
+  try {
+    const b = before.browser();
+    const s = await b.get("/auth/fake");
+    const a = after.browser();
+    a.jar.set("__Host-haikit_sign_in", b.jar.get("__Host-haikit_sign_in"));
+    const r = await a.get(pathOf(idp.signIn(s.location)));
+    check("a flow begun under the old secret ends under the new ones", r.status === 303 && r.location === "/" && a.jar.has("__Host-haikit_token"));
+  } finally {
+    before.server.close();
+    after.server.close();
+  }
+}
+
+// ── google() ────────────────────────────────────────────────────────────
+console.log("\ngoogle");
+{
+  const idp = await fakeProvider({
+    issuer: "https://accounts.google.com",
+    authorize: "https://accounts.google.com/o/oauth2/v2/auth",
+    token: "https://oauth2.googleapis.com/token",
+  });
+  let asked = 0;
+  const auth = createAuth({
+    store: memoryAuthStore(),
+    jwt: { secret: SECRET },
+    providers: [
+      google({
+        ...CLIENT,
+        redirectUri: "http://localhost:5176/auth/google/callback",
+        hostedDomain: "example.com",
+        fetch: idp.fetch,
+        user: (profile) => (asked++, `${profile.provider}:${profile.sub}`),
+      }),
+    ],
+  });
+  const plain = google({ ...CLIENT, redirectUri: REDIRECT, prompt: "", params: { login_hint: "ada@example.com" }, fetch: idp.fetch });
+  const { server, browser } = await serve(auth);
+  try {
+    check("named google", plain.name === "google");
+    let b = browser();
+    let s = await b.get("/auth/google");
+    const p = new URL(s.location).searchParams;
+    check("start: Google's sign-in page, asking which account, offering the domain's", s.location.startsWith("https://accounts.google.com/o/oauth2/v2/auth?") && p.get("prompt") === "select_account" && p.get("hd") === "example.com");
+    const { url } = await plain.start();
+    check("prompt: \"\" sends none, and params pass through", !url.searchParams.has("prompt") && !url.searchParams.has("hd") && url.searchParams.get("login_hint") === "ada@example.com");
+    let r = await b.get(pathOf(idp.signIn(s.location, "42", { name: "Ada", hd: "example.com", email: "ada@example.com", email_verified: true })));
+    check("an account of the domain signs in, as google:{sub}", r.location === "/" && decodeJwt(b.jar.get("__Host-haikit_token")).sub === "google:42" && asked === 1);
+    b = browser();
+    s = await b.get("/auth/google");
+    r = await b.get(pathOf(idp.signIn(s.location, "43", { name: "Eve", email: "eve@gmail.com", email_verified: true })));
+    check("an account of no domain: refused, before the app's user is asked", r.location === "/?sign_in_error=refused" && asked === 1);
+    b = browser();
+    s = await b.get("/auth/google");
+    r = await b.get(pathOf(idp.signIn(s.location, "44", { name: "Mallory", hd: "evil.example" })));
+    check("…or another domain's: refused", r.location === "/?sign_in_error=refused" && asked === 1);
+  } finally {
+    server.close();
+  }
+}
+
+console.log(failures ? `\n${failures} check(s) failed\n` : "\noidc: all checks passed\n");
+process.exit(failures ? 1 : 0);

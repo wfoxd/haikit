@@ -28,6 +28,21 @@ request to `/hai`:
   half its life, and passes `signIn: { href: "/sign-in" }` to `mountChat`. A
   request turned away then says why in the status line, with a link to sign in.
 
+To sign in with Google as well, tutorial 3's step 10, make a Web-application
+OAuth client in the Google Cloud console with the redirect URI
+`http://localhost:5176/auth/google/callback`, and start it with its id and
+secret:
+
+```bash
+GOOGLE_CLIENT_ID=… GOOGLE_CLIENT_SECRET=… npm run example:hello-auth
+```
+
+`src/server/auth.ts` then passes `google()` from `@haikit/auth/oidc` to
+`createAuth`, and `/sign-in` links to `/auth/google`. Someone who signs in
+there is `google:` and Google's id for them; `src/server/names.ts` keeps their
+name, which `welcome` greets them by. `GOOGLE_REDIRECT_URI` overrides the
+redirect URI, as it must in production.
+
 Sign in as two names in two browsers. A conversation id from one, sent by the
 other, is answered `404 unknown conversation`. **Sign out everywhere**, on
 `/sign-in`, calls `auth.revoke`: a copy of that user's token is refused from

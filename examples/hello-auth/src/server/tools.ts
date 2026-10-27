@@ -3,6 +3,7 @@ import { z } from "zod";
 import { GREETINGS } from "./data.ts";
 import { greetingCardServer, greetingPickerServer } from "./surfaces.ts";
 import { auth } from "./auth.ts";
+import { names } from "./names.ts";
 
 export const listGreetings = defineTool({
   name: "list_greetings",                               
@@ -54,7 +55,9 @@ export const welcome = defineTool({
   inputJsonSchema: { type: "object", properties: {}, additionalProperties: false },
 
   async run(_input, ctx) {
-    return ctx.text(`Signed in as ${await auth.ownerOf(ctx.conversationId)}.`);
+    const owner = await auth.ownerOf(ctx.conversationId);
+    // someone signed in with Google is google: and a number: greet them by their name
+    return ctx.text(`Signed in as ${(owner !== null && names.get(owner)) || owner}.`);
   },
 });
 

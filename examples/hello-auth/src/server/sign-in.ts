@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Auth } from "@haikit/auth";
+import { withGoogle } from "./auth.ts";
 
 /**
  * The app's own login, as small as one can be: a name, and no password. A
@@ -12,7 +13,10 @@ import type { Auth } from "@haikit/auth";
  *   POST /sign-in   action=revoke   sign out everywhere: every sign-in before now is refused
  */
 export async function signInPage(req: IncomingMessage, res: ServerResponse, auth: Auth) {
-  if (req.method === "GET") return page(res, await auth.user(req));
+  if (req.method === "GET") {
+    const why = new URL(req.url ?? "/", "http://localhost").searchParams.get("sign_in_error");
+    return page(res, await auth.user(req), SIGN_IN_ERRORS.get(why ?? "") ?? "", 200);
+  }
   if (req.method !== "POST") return void res.writeHead(405, { allow: "GET, POST" }).end();
 
   // A form from another site must not sign anyone in or out here, nor one
@@ -53,7 +57,15 @@ async function body(req: IncomingMessage): Promise<string> {
 
 const escape = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
-function page(res: ServerResponse, user: { id: string } | null, problem = "") {
+/** What each way a sign-in through Google can fail means to the person trying. */
+const SIGN_IN_ERRORS = new Map([
+  ["access_denied", "Signing in with Google was cancelled."],
+  ["refused", "That Google account can't sign in here."],
+  ["expired", "That sign-in took too long, or another one started since. Try again."],
+  ["failed", "Signing in with Google didn't work. Try again in a moment."],
+]);
+
+function page(res: ServerResponse, user: { id: string } | null, problem = "", status = problem ? 400 : 200) {
   const content = user
     ? `<p>Signed in as <strong>${escape(user.id)}</strong>.</p>
        <p><a href="/">Back to the chat</a></p>
@@ -63,9 +75,10 @@ function page(res: ServerResponse, user: { id: string } | null, problem = "") {
          <label>Your name <input name="name" autofocus required maxlength="40" autocomplete="username"></label>
          <button>Sign in</button>
        </form>
+       ${withGoogle ? `<p><a href="/auth/google">Sign in with Google</a></p>` : ""}
        ${problem ? `<p role="alert">${escape(problem)}</p>` : ""}
        <p>No password: this example shows what happens after the app's own login.</p>`;
-  res.writeHead(problem ? 400 : 200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+  res.writeHead(status, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
   res.end(`<!doctype html>
 <html lang="en">
 <head>
