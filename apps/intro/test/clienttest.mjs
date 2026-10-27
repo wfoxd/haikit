@@ -606,12 +606,15 @@ try {
     check("…and leaving puts it away, the focus still where it was", !card() && document.activeElement === typing);
     await pointer(face(grace.el), "pointerover", "mouse");
     await wait(250);
+    // as a browser clicks: Radix hears the pointerdown, a click outside the card to it
+    await pointer(face(grace.el), "pointerdown", "mouse");
     await click(face(grace.el));
     await pointer(face(grace.el), "pointerout", "mouse");
     await wait(300);
-    check("opened under the mouse, a click on the picture keeps it after the mouse leaves", !!card());
+    check("opened under the mouse, a click on the picture keeps it after the mouse leaves, and takes the focus in", !!card() && document.activeElement === card());
     await key(document.body, "Escape");
-    check("…until Escape", !card());
+    await wait(0);
+    check("…until Escape, which gives the focus back to the picture", !card() && document.activeElement === face(grace.el));
     typing.remove();
     await fire(img, new window.Event("error"));
     check("a picture that won't load leaves their initials", !face(grace.el).querySelector("img") && text(face(grace.el)).trim() === "GH");

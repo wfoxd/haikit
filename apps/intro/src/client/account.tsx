@@ -67,6 +67,9 @@ function Profile({ reader }: { reader: NonNullable<Reader> }) {
   // opened, or clicked in, to stay, until it next opens under a resting mouse
   const kept = useRef(false);
   const card = useRef<HTMLDivElement>(null);
+  const face = useRef<HTMLButtonElement>(null);
+  // closed by a click or the focus outside it, not on the picture: the focus stays where that put it
+  const away = useRef(false);
   useEffect(() => () => clearTimeout(timer.current), []);
   const name = typeof reader.claims.name === "string" ? reader.claims.name : undefined;
   const picture = pictureOf(reader);
@@ -113,11 +116,15 @@ function Profile({ reader }: { reader: NonNullable<Reader> }) {
     >
       <Popover.Trigger
         {...near}
-        // open under a resting mouse, a click there keeps it, rather than closing what the reader came to see
+        ref={face}
+        // Open under a resting mouse, a click there, or Enter, keeps it rather
+        // than closing what the reader came to see, and takes the focus in,
+        // as opening it to stay does, so Tab reaches Sign out.
         onClick={(event) => {
           if (open && !kept.current) {
             event.preventDefault();
             keep();
+            card.current?.focus();
           }
         }}
         aria-label={name ? `${name}, signed in with Google` : "Signed in with Google"}
@@ -133,14 +140,23 @@ function Profile({ reader }: { reader: NonNullable<Reader> }) {
           align="end"
           sideOffset={4}
           aria-label="Who's signed in"
-          // Opened to stay, the focus moves in, so Tab reaches Sign out. Under
-          // a resting mouse, it stays where the reader left it, the message
-          // they're typing say, both as it opens and as it closes.
+          // Opened to stay, the focus moves in, so Tab reaches Sign out, and
+          // back to the picture as it closes. Under a resting mouse, it stays
+          // where the reader left it, the message they're typing say, as it
+          // opens and as it closes. This, not Radix, decides: Radix takes a
+          // click on the picture for one outside, and gives nothing back after.
+          onInteractOutside={(event) => {
+            if (!face.current?.contains(event.target as Node)) away.current = true;
+          }}
           onOpenAutoFocus={(event) => {
             event.preventDefault();
+            away.current = false;
             if (kept.current) card.current?.focus();
           }}
-          onCloseAutoFocus={(event) => kept.current || event.preventDefault()}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            if (kept.current && !away.current) face.current?.focus();
+          }}
           className="z-50 w-[min(18rem,calc(100vw-24px))] border-2 border-hai-line bg-hai-panel p-3 text-hai-fg shadow-sm outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 motion-reduce:animate-none"
         >
           <div className="flex items-center gap-3">
