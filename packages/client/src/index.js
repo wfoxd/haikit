@@ -252,7 +252,9 @@ export function createChat({
       if (res.status === 401 || res.status === 403) unauthorized(res.status, message);
       return;
     }
-    // taken up: whatever turned this browser away before no longer does
+    // Taken up: whatever turned this browser away before no longer does. Not
+    // for a request reset() has left behind, as no response of one is applied.
+    if (gen !== generation) return;
     if (state.unauthorized) resume();
 
     const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
