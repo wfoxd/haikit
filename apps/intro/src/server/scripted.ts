@@ -74,20 +74,22 @@ function read(messages: ModelRequest["messages"], system = "", tools: ModelReque
   const shown = uses.filter((b) => b.name === "show_lesson").at(-1);
   const current = lessons.find((l) => l.id === shown?.input?.id) ?? null;
 
-  // The tutorials' pages, in reading order: the welcome digest gives each
-  // one's steps as a range, such as "steps 01–10", around an intro and
-  // next-steps. A later tutorial's ids carry its number, as "2-" or "3-".
+  // The tutorials' pages, in reading order: each one's steps as a range,
+  // such as "01 to 10", around an intro and next-steps. A later tutorial's
+  // ids carry its number, as "2-" or "3-".
   const span = (prefix: string, from: string, to: string) => [
     `${prefix}intro`,
     ...Array.from({ length: Number(to) - Number(from) + 1 }, (_, i) => `${prefix}${String(Number(from) + i).padStart(2, "0")}`),
     `${prefix}next-steps`,
   ];
-  const range = all.match(/built into this app: "[^"]+", steps (\d+)–(\d+)/);
-  // A conversation saved before a later tutorial has a welcome digest
-  // without it; the system prompt, always today's, lists its pages too.
+  // Today's system prompt lists them, and comes first: a conversation saved
+  // before a step was added has a welcome digest that stops short of it, and
+  // one saved before a tutorial, none of it. The digest is for a prompt without.
+  const range =
+    system.match(/\(intro, (\d+) to (\d+), next-steps\)/) ?? all.match(/built into this app: "[^"]+", steps (\d+)–(\d+)/);
   const later = (n: number) =>
-    all.match(new RegExp(`Then the \\w+ tutorial: "[^"]+", pages ${n}-intro and steps ${n}-(\\d+)–${n}-(\\d+)`)) ??
-    system.match(new RegExp(`\\(${n}-intro, ${n}-(\\d+) to ${n}-(\\d+), ${n}-next-steps\\)`));
+    system.match(new RegExp(`\\(${n}-intro, ${n}-(\\d+) to ${n}-(\\d+), ${n}-next-steps\\)`)) ??
+    all.match(new RegExp(`Then the \\w+ tutorial: "[^"]+", pages ${n}-intro and steps ${n}-(\\d+)–${n}-(\\d+)`));
   const pages = [
     ...(range ? span("", range[1]!, range[2]!) : []),
     ...[2, 3].flatMap((n) => {

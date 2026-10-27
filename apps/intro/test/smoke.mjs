@@ -487,6 +487,49 @@ try {
       third?.name === "show_tutorial_step" && third.input?.id === "3-03"
         ? ok("…and the third tutorial's too")
         : bad(`an old conversation's "Open tutorial step 3-03": ${JSON.stringify(third)}`);
+
+      // one saved when the third tutorial had nine steps: its digest stops at 3-09, today's prompt doesn't
+      const nineSteps = oldWelcome.replace(
+        "The course: …",
+        'Then the second tutorial: "Tell them later", pages 2-intro and steps 2-01–2-09, then 2-next-steps. ' +
+          'Then the third tutorial: "Who\'s asking", pages 3-intro and steps 3-01–3-09, then 3-next-steps. The course: …',
+      );
+      const resumed = [...messages.slice(0, 2), { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: nineSteps }] }, messages[3]];
+      const ask = async (...turns) =>
+        (await scripted().generate({ system, tools: [], messages: [...resumed, ...turns], onTextDelta() {} })).content.find((b) => b.type === "tool_use");
+      const ten = await ask({ role: "user", content: "Open tutorial step 3-10" });
+      ten?.name === "show_tutorial_step" && ten.input?.id === "3-10"
+        ? ok("a conversation from when the third tutorial had nine steps opens step 3-10, from today's prompt")
+        : bad(`a nine-step conversation's "Open tutorial step 3-10": ${JSON.stringify(ten)}`);
+      const after = await ask(
+        { role: "user", content: "Open tutorial step 3-09" },
+        { role: "assistant", content: [{ type: "tool_use", id: "t2", name: "show_tutorial_step", input: { id: "3-09" } }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "t2", content: "Tutorial page 3-09 on display as ui_02: …" }] },
+        { role: "assistant", content: [{ type: "text", text: "Step 09." }] },
+        { role: "user", content: "next" },
+      );
+      after?.name === "show_tutorial_step" && after.input?.id === "3-10"
+        ? ok("…and “next” from 3-09 is 3-10, not 3-next-steps")
+        : bad(`a nine-step conversation's "next" from 3-09: ${JSON.stringify(after)}`);
+
+      // what the model is told it can show, against the tutorials themselves
+      const { tutorialRefs } = await import("../src/server/tutorial.ts");
+      const { showTutorialStep } = await import("../src/server/tools.ts");
+      const stale = [1, 2, 3].flatMap((n) => {
+        const ids = tutorialRefs(n).map((p) => p.id);
+        const steps = ids.filter((id) => /^(\d+-)?\d+$/.test(id));
+        const [intro, first, last, end] = [ids[0], steps[0], steps.at(-1), ids.at(-1)];
+        return [
+          [system, `(${intro}, ${first} to ${last}, ${end})`],
+          [showTutorialStep.description, `${intro}, a step from ${first} to ${last}, or ${end}`],
+          [showTutorialStep.inputJsonSchema.properties.id.description, `${intro}, ${first} … ${last}, ${end}`],
+        ]
+          .filter(([told, want]) => !told.includes(want))
+          .map(([, want]) => want);
+      });
+      stale.length
+        ? bad(`the model isn't told of every tutorial page; missing: ${stale.join("; ")}`)
+        : ok("the prompt and show_tutorial_step give each tutorial's pages as the tutorials have them");
     }
 
     // 7c · the contents rail: what it lists, and what each kind of choice opens

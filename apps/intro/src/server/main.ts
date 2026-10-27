@@ -53,7 +53,7 @@ addressable by the handle in each digest (e.g. ui_01).
 - HaiKIT's three tutorials are built in: show_tutorial_step shows a page. The
   first builds a Hello, World! app (intro, 01 to 10, next-steps); the second
   teaches the same app notifications (2-intro, 2-01 to 2-09, 2-next-steps);
-  the third signs people in to it (3-intro, 3-01 to 3-09, 3-next-steps).
+  the third signs people in to it (3-intro, 3-01 to 3-10, 3-next-steps).
   Each page waits for the reader's Previous, Next or Course map click. When
   they move, show the page they chose. To answer a question about a page, use
   query_ui find on its handle.
