@@ -429,6 +429,37 @@ console.log("\nfailures");
   }
 }
 
+// ── jwt.userClaim: the claim that names the user ────────────────────────
+console.log("\nuser claim");
+{
+  const idp = await fakeProvider();
+  for (const userClaim of ["email", "name"]) {
+    let mapped = undefined;
+    const auth = createAuth({
+      store: memoryAuthStore(),
+      jwt: { secret: SECRET, userClaim },
+      cookie: { secure: false },
+      providers: [oidc({ name: "fake", issuer: "https://fake.test", ...CLIENT, redirectUri: REDIRECT, fetch: idp.fetch, user: (profile) => mapped?.(profile) ?? `fake:${profile.sub}` })],
+    });
+    const { server, browser } = await serve(auth);
+    try {
+      let b = browser();
+      let s = await b.get("/auth/fake");
+      let r = await b.get(pathOf(idp.signIn(s.location)));
+      let claims = b.jar.has("haikit_token") && decodeJwt(b.jar.get("haikit_token"));
+      check(`userClaim "${userClaim}": the default claims sign in, the user id in ${userClaim}`, r.location === "/" && claims?.sub === "fake:1234" && claims[userClaim] === "fake:1234");
+      mapped = ({ claims }) => ({ userId: String(claims.email), claims: { [userClaim]: "another", role: "admin" } });
+      b = browser();
+      s = await b.get("/auth/fake");
+      r = await b.get(pathOf(idp.signIn(s.location)));
+      claims = b.jar.has("haikit_token") && decodeJwt(b.jar.get("haikit_token"));
+      check(`…and a user's own ${userClaim} claim gives way to the user id`, r.location === "/" && claims?.sub === "ada@example.com" && claims[userClaim] === "ada@example.com" && claims.role === "admin");
+    } finally {
+      server.close();
+    }
+  }
+}
+
 // ── the provider's settings, unreachable ────────────────────────────────
 console.log("\nsettings");
 {

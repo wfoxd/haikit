@@ -463,7 +463,10 @@ for a provider that doesn't speak OpenID Connect.
        flow's: the next is tried, and this one's cookie is kept, for its own
        way back.
      - **A user:** its cookie is cleared, `signIn(res, userId, claims ?? {})`,
-       then **303** to `return_to`.
+       then **303** to `return_to`. A claim named as `jwt.userClaim` is left
+       out of `claims` first: that claim holds the user id, as when
+       `/auth/me` renews a token. So with `userClaim: "email"`, the token's
+       `email` is the user id, and not the provider's.
      - **Another `{ error }`:** its cookie is cleared, and that code.
      - **A throw,** `signIn`'s included, as for a claim it sets itself: its
        cookie is cleared, and `failed`, logged as
@@ -577,7 +580,10 @@ its `email`, only when `email_verified` is `true`. Anyone can type an
 address into a provider's sign-up form, so an email the provider hasn't
 verified says nothing about who the user is. `sub` is the provider's id for
 the user, which it never reuses, and keeps when their email changes. That's
-why it, and not the email, is the default user id.
+why it, and not the email, is the default user id. With `jwt.userClaim`
+set to `email` or `name`, that claim holds the user id instead (see
+[Signing in, there and back](#signing-in-there-and-back)): to sign users in
+by their email, return it from `user`.
 
 **`start()`:**
 

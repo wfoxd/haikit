@@ -626,8 +626,11 @@ export function createAuth(options: AuthOptions): Auth {
       // one way or another this sign-in is over, and its flow with it
       clear();
       if ("error" in outcome) return failed(res, provider, outcome.error === "access_denied" ? "access_denied" : "refused");
+      // The user id goes in userClaim: a claim of that name, such as the email
+      // when that's the user claim, gives way to it, as when /auth/me renews.
+      const { [userClaim]: _, ...claims } = outcome.claims ?? {};
       try {
-        await signIn(res, outcome.userId, outcome.claims ?? {});
+        await signIn(res, outcome.userId, claims);
       } catch (err) {
         console.error(`[haikit] auth: a sign-in with ${provider.name} failed:`, err);
         return failed(res, provider, "failed");
