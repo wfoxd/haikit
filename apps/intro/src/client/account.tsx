@@ -12,6 +12,15 @@ export const SIGN_IN_ERRORS: Record<string, string> = {
   failed: "Signing in with Google didn't work. Try again in a moment.",
 };
 
+/** What to say about a sign-in that came back with this `sign_in_error`, if it did: a code not listed as `failed`. */
+export function signInError(code: string | null): string | undefined {
+  if (code === null) return undefined;
+  // the code is the address's: only the map's own, never one it inherits
+  return Object.hasOwn(SIGN_IN_ERRORS, code) ? SIGN_IN_ERRORS[code] : SIGN_IN_ERRORS.failed;
+}
+
+const SIGN_OUT_FAILED = "Signing out didn't work. Try again in a moment.";
+
 // as the header's own buttons look, its label hidden on a narrow screen
 const BUTTON =
   "inline-flex h-[34px] flex-none cursor-pointer items-center gap-[7px] border-2 border-transparent px-2 text-[13px] font-semibold text-hai-dim hover:border-hai-line hover:bg-hai-hover hover:text-hai-fg disabled:cursor-default disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-hai-accent";
@@ -25,6 +34,7 @@ const BUTTON =
 export function Account({ reader, error }: { reader: Reader; error?: string }) {
   const [leaving, setLeaving] = useState(false);
   const [note, setNote] = useState(error);
+  const said = note && <Note text={note} dismiss={() => setNote(undefined)} />;
   if (!reader) {
     return (
       <span className="relative inline-flex flex-none">
@@ -32,35 +42,46 @@ export function Account({ reader, error }: { reader: Reader; error?: string }) {
           <GoogleLogoIcon className="size-[18px]" />
           <span className="max-[900px]:sr-only">Sign in</span>
         </a>
-        {/* why a sign-in didn't happen, under the link: the header has no room for it on a phone */}
-        {note && (
-          <span className="absolute top-full right-0 z-20 mt-1 flex w-max max-w-[min(32ch,calc(100vw-24px))] items-start gap-2 border-2 border-hai-line bg-hai-panel py-1.5 pr-1.5 pl-2.5">
-            <span role="alert" className="text-xs/snug text-hai-bad">
-              {note}
-            </span>
-            <button type="button" aria-label="Dismiss" className="flex-none cursor-pointer text-hai-dim hover:text-hai-fg" onClick={() => setNote(undefined)}>
-              <XIcon className="size-3.5" />
-            </button>
-          </span>
-        )}
+        {said}
       </span>
     );
   }
   const name = typeof reader.claims.name === "string" ? reader.claims.name : "Signed in";
+  // leaves only once the cookie's gone: until then the reader is still signed in, and is told so
   const signOut = async () => {
     setLeaving(true);
-    await fetch("/auth/sign-out", { method: "POST" }).catch(() => {});
-    location.assign("/");
+    setNote(undefined);
+    const ok = await fetch("/auth/sign-out", { method: "POST" }).then((res) => res.ok, () => false);
+    if (ok) return location.assign("/");
+    setLeaving(false);
+    setNote(SIGN_OUT_FAILED);
   };
   return (
     <>
       <span className="max-w-[16ch] truncate text-[13px] text-hai-dim max-[560px]:hidden" title={`Signed in with Google as ${name}`}>
         {name}
       </span>
-      <button type="button" className={BUTTON} disabled={leaving} onClick={signOut}>
-        <SignOutIcon className="size-[18px]" />
-        <span className="max-[900px]:sr-only">Sign out</span>
-      </button>
+      <span className="relative inline-flex flex-none">
+        <button type="button" className={BUTTON} disabled={leaving} onClick={signOut}>
+          <SignOutIcon className="size-[18px]" />
+          <span className="max-[900px]:sr-only">Sign out</span>
+        </button>
+        {said}
+      </span>
     </>
+  );
+}
+
+/** Why signing in or out didn't happen, under its control: the header has no room for it on a phone. */
+function Note({ text, dismiss }: { text: string; dismiss: () => void }) {
+  return (
+    <span className="absolute top-full right-0 z-20 mt-1 flex w-max max-w-[min(32ch,calc(100vw-24px))] items-start gap-2 border-2 border-hai-line bg-hai-panel py-1.5 pr-1.5 pl-2.5">
+      <span role="alert" className="text-xs/snug text-hai-bad">
+        {text}
+      </span>
+      <button type="button" aria-label="Dismiss" className="flex-none cursor-pointer text-hai-dim hover:text-hai-fg" onClick={dismiss}>
+        <XIcon className="size-3.5" />
+      </button>
+    </span>
   );
 }

@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { Gate } from "@haikit/core";
-import { type Auth, createAuth, memoryAuthStore } from "@haikit/auth";
+import { type Auth, type AuthStore, createAuth, memoryAuthStore } from "@haikit/auth";
 import { google } from "@haikit/auth/oidc";
 import type { Queryable } from "@haikit/auth/postgres";
 
@@ -8,7 +8,6 @@ import type { Queryable } from "@haikit/auth/postgres";
 // with. It's optional for the reader: signed out, anyone reads the
 // introduction, as without it. Signed in, the conversations they start are
 // theirs alone, and the welcome greets them by name.
-const { GOOGLE_CLIENT_ID: clientId, GOOGLE_CLIENT_SECRET: clientSecret } = process.env;
 const PRODUCTION = process.env.NODE_ENV === "production";
 
 // The token's cookie, named here because the gate looks for it: auth's
@@ -26,9 +25,27 @@ const names = new Map<string, string>();
 
 let auth: Auth | null = null;
 
-/** The sign-in routes and the gate, or null without a Google client. */
-export async function googleSignIn(db: Queryable | null, port: number): Promise<{ auth: Auth; gate: Gate } | null> {
-  if (!clientId || !clientSecret) return null;
+/**
+ * The sign-in routes, where there's a Google client, and the gate. Without a
+ * client or a database there's no gate: no conversation is anyone's alone.
+ */
+export async function signingIn(db: Queryable | null, port: number): Promise<{ auth: Auth | null; gate?: Gate }> {
+  const { GOOGLE_CLIENT_ID: clientId, GOOGLE_CLIENT_SECRET: clientSecret } = process.env;
+  if (!clientId || !clientSecret) {
+    if (!db) return { auth: null };
+    // No one signs in now, but a conversation started signed in while someone
+    // could is still in the database: it stays closed, until there's a Google
+    // client again for its reader to sign in with.
+    const store = await owners(db);
+    return {
+      auth: null,
+      gate: {
+        admit: async () => ({ ok: true, principal: ANYONE }),
+        allows: async (_principal, conversationId) => (await store.getOwner(conversationId)) === null,
+        created: async () => {},
+      },
+    };
+  }
 
   // The secret tokens are signed with. Without one, a random secret for this
   // run only: every sign-in ends when the server stops.
@@ -38,15 +55,7 @@ export async function googleSignIn(db: Queryable | null, port: number): Promise<
   const redirectUri = process.env.GOOGLE_REDIRECT_URI ?? (PRODUCTION ? undefined : `http://localhost:${port}/auth/google/callback`);
   if (!redirectUri) throw new Error("set GOOGLE_REDIRECT_URI to sign in with Google: this site's /auth/google/callback, as registered with Google");
 
-  // Owners kept beside the conversations: in memory, they'd be gone on a
-  // restart, and a conversation still in the database would be anyone's.
-  let store = memoryAuthStore();
-  if (db) {
-    const { migrate, pgAuthStore } = await import("@haikit/auth/postgres");
-    await migrate(db); // creates auth's two tables if they don't exist
-    store = pgAuthStore(db);
-  }
-
+  const store = db ? await owners(db) : memoryAuthStore();
   const signedIn = createAuth({
     store,
     jwt: { secret },
@@ -81,6 +90,17 @@ export async function googleSignIn(db: Queryable | null, port: number): Promise<
       },
     },
   };
+}
+
+/**
+ * Who owns which conversation, kept beside the conversations: in memory,
+ * they'd be gone on a restart, and a conversation still in the database
+ * would be anyone's.
+ */
+async function owners(db: Queryable): Promise<AuthStore> {
+  const { migrate, pgAuthStore } = await import("@haikit/auth/postgres");
+  await migrate(db); // creates auth's two tables if they don't exist
+  return pgAuthStore(db);
 }
 
 /** The name of the reader who started a conversation signed in, if this server has it. */

@@ -530,7 +530,10 @@ try {
   {
     const { createElement } = await import("react");
     const { createRoot } = await import("react-dom/client");
-    const { Account, SIGN_IN_ERRORS } = await vite.ssrLoadModule("/src/client/account.tsx");
+    const { Account, SIGN_IN_ERRORS, signInError } = await vite.ssrLoadModule("/src/client/account.tsx");
+    check("a sign_in_error says why, and one it doesn't know, the map's inherited names included, says it failed",
+      signInError(null) === undefined && signInError("access_denied") === SIGN_IN_ERRORS.access_denied &&
+      ["__proto__", "constructor", "toString", "nonsense"].every((code) => signInError(code) === SIGN_IN_ERRORS.failed));
     async function account(props) {
       const el = document.createElement("div");
       document.body.append(el);
@@ -560,6 +563,20 @@ try {
     delete globalThis.location;
     check("Sign out posts to /auth/sign-out, then opens the introduction afresh", posted.join() === "POST /auth/sign-out" && opened.join() === "/");
     await ada.unmount();
+    // a sign-out that fails leaves the reader signed in: it stays, and says so
+    for (const [how, answer] of [["refused", async () => new Response(null, { status: 500 })], ["unreachable", async () => { throw new TypeError("offline"); }]]) {
+      const stays = await account({ reader: { id: "google:1", claims: { name: "Ada" } } });
+      const left = [];
+      globalThis.fetch = answer;
+      Object.defineProperty(globalThis, "location", { value: { assign: (url) => left.push(url) }, configurable: true });
+      await click(button(stays.el, "Sign out"));
+      await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+      globalThis.fetch = realFetch;
+      delete globalThis.location;
+      const said = stays.el.querySelector('[role="alert"]')?.textContent ?? "";
+      check(`a sign-out ${how} stays, says so, and can be tried again`, left.length === 0 && said.includes("Signing out didn't work") && !button(stays.el, "Sign out")?.disabled);
+      await stays.unmount();
+    }
   }
 } finally {
   await vite.close();

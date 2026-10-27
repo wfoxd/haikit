@@ -1,7 +1,7 @@
 import "./globals.css";
 import { createRoot } from "react-dom/client";
 import { mountChat } from "@haikit/client/app.js";
-import { Account, type Reader, SIGN_IN_ERRORS } from "./account.tsx";
+import { Account, type Reader, signInError } from "./account.tsx";
 import { registry } from "./components.tsx";
 import { Contents, type MenuData } from "./contents.tsx";
 import { Online } from "./online.tsx";
@@ -80,5 +80,5 @@ if (actions && about?.signIn?.includes("google")) {
   const account = document.createElement("span");
   account.className = "contents";
   actions.append(account);
-  createRoot(account).render(<Account reader={user} error={code === null ? undefined : (SIGN_IN_ERRORS[code] ?? SIGN_IN_ERRORS.failed)} />);
+  createRoot(account).render(<Account reader={user} error={signInError(code)} />);
 }

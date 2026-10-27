@@ -89,7 +89,8 @@ try {
 }
 const child = spawn(process.execPath, ["src/server/main.ts"], {
   cwd: APP,
-  env: { ...process.env, HAI_SCRIPTED: "1", NODE_ENV: "production", PORT: String(PORT), DATABASE_URL: "" },
+  // nothing from the shell: no database, and no Google client to sign in with
+  env: { ...process.env, HAI_SCRIPTED: "1", NODE_ENV: "production", PORT: String(PORT), DATABASE_URL: "", GOOGLE_CLIENT_ID: "", GOOGLE_CLIENT_SECRET: "" },
   stdio: ["ignore", "ignore", "pipe"],
 });
 let stderr = "";
@@ -958,6 +959,29 @@ console.log("\nsigning in with Google");
   } finally {
     signed.kill("SIGKILL");
   }
+}
+
+// Without a Google client no one signs in. With a database, though, a
+// conversation started signed in, while someone could, is still there: it
+// stays closed. In this process, with a database that has one owner.
+{
+  const { signingIn } = await import("../src/server/auth.ts");
+  const shell = { id: process.env.GOOGLE_CLIENT_ID, secret: process.env.GOOGLE_CLIENT_SECRET };
+  delete process.env.GOOGLE_CLIENT_ID;
+  delete process.env.GOOGLE_CLIENT_SECRET;
+  const db = { query: async (_sql, params) => ({ rows: params?.[0] === "owned" ? [{ user_id: "google:ada" }] : [] }) };
+  const open = await signingIn(null, PORT);
+  const kept = await signingIn(db, PORT);
+  if (shell.id !== undefined) process.env.GOOGLE_CLIENT_ID = shell.id;
+  if (shell.secret !== undefined) process.env.GOOGLE_CLIENT_SECRET = shell.secret;
+
+  !open.auth && !open.gate ? ok("without a Google client or a database, no sign-in and no gate") : bad("without a Google client or a database, there's sign-in or a gate");
+  const who = await kept.gate?.admit({ route: "chat", method: "POST", headers: { "content-type": "application/json" } });
+  const owned = who?.ok && (await kept.gate.allows(who.principal, "owned"));
+  const anyones = who?.ok && (await kept.gate.allows(who.principal, "anyones"));
+  !kept.auth && who?.ok && !owned && anyones
+    ? ok("without a Google client but with a database, a conversation started signed in stays closed, and the rest are anyone's")
+    : bad(`without a Google client but with a database: sign-in ${!!kept.auth}, admitted ${who?.ok}, the owned one ${owned}, the rest ${anyones}`);
 }
 
 console.log(failures ? `\n${failures} check(s) failed\n` : "\nsmoke: all checks passed\n");

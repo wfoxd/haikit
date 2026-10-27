@@ -130,7 +130,9 @@ sees it: the welcome's digest leaves it out.
 With `DATABASE_URL`, who owns which conversation is kept in Postgres beside
 the conversations, with `@haikit/auth/postgres`. In memory, a restart would
 forget the owners and leave the conversations in the database open to anyone
-with their ids. The variables are in [Deploy](#deploy). Locally, a Google
+with their ids. A deployment with a database that loses its Google client
+keeps those conversations closed, until there's a client again for their
+readers to sign in with. The variables are in [Deploy](#deploy). Locally, a Google
 client whose redirect URI is `http://localhost:5180/auth/google/callback`
 is all it takes:
 

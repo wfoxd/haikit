@@ -6,7 +6,7 @@ import type { Pool } from "pg";
 import type { StoreAdapter } from "@haikit/core";
 import { DEFAULT_SCOPE, createHai, memoryStore, nodeHandler } from "@haikit/server";
 import { anthropic } from "@haikit/anthropic";
-import { googleSignIn } from "./auth.ts";
+import { signingIn } from "./auth.ts";
 import { menu } from "./course/index.ts";
 import { packageVersion } from "./excerpts.ts";
 import { scripted } from "./scripted.ts";
@@ -100,7 +100,7 @@ async function postgres(pool: Pool): Promise<StoreAdapter> {
 }
 
 // Sign in with Google, once there's a Google client: optional for the reader.
-const signIn = await googleSignIn(db, PORT);
+const { auth, gate } = await signingIn(db, PORT);
 
 // #region create-hai
 const hai = createHai({
@@ -125,9 +125,9 @@ const hai = createHai({
 });
 
 // signed in with Google, a reader's conversations are theirs alone (auth.ts)
-const handleHai = nodeHandler(hai, "/hai", { gate: signIn?.gate });
+const handleHai = nodeHandler(hai, "/hai", { gate });
 // #endregion create-hai
-const handleAuth = signIn?.auth.handler("/auth"); // /auth/google, its callback, /auth/me, /auth/sign-out
+const handleAuth = auth?.handler("/auth"); // /auth/google, its callback, /auth/me, /auth/sign-out
 
 // People reading now, for the header. Presence counts each open tab, on every
 // server sharing the store; the header hears it at most every few seconds,
@@ -178,7 +178,7 @@ const VERSION = JSON.stringify({
   packages: PACKAGES,
   model: hai.config.model.id,
   store: DATABASE_URL ? "postgres" : "memory",
-  signIn: signIn ? ["google"] : [], // the header offers what's here
+  signIn: auth ? ["google"] : [], // the header offers what's here
 });
 
 const MENU = JSON.stringify(menu());
@@ -228,7 +228,7 @@ server.listen(PORT, () => {
   const model = SCRIPTED ? "scripted guide" : hai.config.model.id;
   const store = DATABASE_URL ? "postgres" : "memory (development only)";
   const page = PRODUCTION ? "built" : "vite dev";
-  const signing = signIn ? "google" : "off";
+  const signing = auth ? "google" : "off";
   console.log(`haikit intro  http://localhost:${PORT}   haikit ${PACKAGES[0].version}   ${page}   model=${model}   store=${store}   sign-in=${signing}`);
 });
 
