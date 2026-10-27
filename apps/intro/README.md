@@ -107,7 +107,7 @@ HaiKIT's three tutorials are built in:
 | --- | --- | --- |
 | *Build a haikit app* | `intro`, `01`–`10`, `next-steps` | Hello, World! in whichever language the world picks |
 | *Tell them later* | `2-intro`, `2-01`–`2-09`, `2-next-steps` | the same app, speaking up after the request is over: progress, notices, wake turns and live updates |
-| *Who's asking* | `3-intro`, `3-01`–`3-09`, `3-next-steps` | the same app, signed in with `@haikit/auth`: a login, a gate that keeps each person to their own conversations, and sign out everywhere |
+| *Who's asking* | `3-intro`, `3-01`–`3-10`, `3-next-steps` | the same app, signed in with `@haikit/auth`: a login, a gate that keeps each person to their own conversations, sign out everywhere, and sign in with Google |
 
 Each page is one the visitor reads in the app, with the tutorial's code (each
 file labelled, numbered lines linked to their notes), callouts, and Previous /

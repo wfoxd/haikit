@@ -123,7 +123,7 @@ try {
     );
     check(
       "the tutorials are numbered in order, each with its steps beside its title",
-      text(w.el).includes(`1${current.tutorial.title} 10 steps`) && current.tutorial.more.every((t, i) => text(w.el).includes(`${i + 2}${t.title} ${t.steps} steps`)) && text(w.el).includes("3 tutorials, 28 steps"),
+      text(w.el).includes(`1${current.tutorial.title} 10 steps`) && current.tutorial.more.every((t, i) => text(w.el).includes(`${i + 2}${t.title} ${t.steps} steps`)) && text(w.el).includes("3 tutorials, 29 steps"),
     );
     await click(button(w.el, current.tutorial.title));
     check("the first tutorial's title sends tutorial: intro", JSON.stringify(w.sent.at(-1)) === '["tutorial","intro"]');
@@ -421,7 +421,7 @@ try {
       "it lists Welcome, the course map, the parts, the tutorials, the manual and the demos",
       ["Welcome", "Course map"].every((l) => row(nav(), l)) &&
         ["Part 1: ", "Part 2: ", "Build your first HaiKIT app", "Tell them later", "Who's asking", "HaiKIT reference manual"].every((t) => group(nav(), t)) &&
-        text(nav()).includes("67 pages"),
+        text(nav()).includes("68 pages"),
     );
     check("its groups start closed", buttons(nav()).filter((b) => b.hasAttribute("aria-expanded")).every((b) => b.getAttribute("aria-expanded") === "false"));
     const demos = [...nav().querySelectorAll("a")];
@@ -432,7 +432,7 @@ try {
     await r.chat.show("tutorial_step", "3-04");
     const third = group(nav(), "Who's asking");
     check("a tutorial page on screen opens its group and is marked, and Welcome isn't", third.getAttribute("aria-expanded") === "true" && row(nav(), "Sign in")?.getAttribute("aria-current") === "page" && !row(nav(), "Welcome").hasAttribute("aria-current"));
-    check("it has its tick, its group counts it, and so does the head", row(nav(), "Sign in").textContent.endsWith(", opened") && third.textContent.includes("1 of 11 opened") && text(nav()).includes("1 of 67 pages opened"));
+    check("it has its tick, its group counts it, and so does the head", row(nav(), "Sign in").textContent.endsWith(", opened") && third.textContent.includes("1 of 12 opened") && text(nav()).includes("1 of 68 pages opened"));
     await r.chat.tell("text_delta");
     check("an event that shows no page changes nothing", row(nav(), "Sign in")?.getAttribute("aria-current") === "page");
 
@@ -475,13 +475,13 @@ try {
       "a lesson opens its part and is marked, and the tutorial keeps both its ticks",
       group(nav(), "Part 2: ").getAttribute("aria-expanded") === "true" &&
         !!nav().querySelector('[aria-current="page"]')?.textContent.startsWith("2.1") &&
-        group(nav(), "Who's asking").textContent.includes("2 of 11 opened"),
+        group(nav(), "Who's asking").textContent.includes("2 of 12 opened"),
     );
 
     r.chat.state.blocks = [];
     r.chat.state.surfaces = new Map();
     await r.chat.tell("reset");
-    check("a new chat starts with nothing marked and no ticks", !nav().querySelector("[aria-current]") && !text(nav()).includes(", opened") && text(nav()).includes("67 pages"));
+    check("a new chat starts with nothing marked and no ticks", !nav().querySelector("[aria-current]") && !text(nav()).includes(", opened") && text(nav()).includes("68 pages"));
 
     await click(r.slot.querySelector('button[aria-label="Close the contents"]'));
     check(

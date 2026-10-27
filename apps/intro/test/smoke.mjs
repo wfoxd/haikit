@@ -143,8 +143,8 @@ try {
     const [second, third] = tutorial?.more ?? [];
     tutorial?.more?.length === 2 &&
     second.first.id === "2-intro" && second.steps === 9 && second.title === "Tell them later" &&
-    third.first.id === "3-intro" && third.steps === 9 && third.title === "Who's asking"
-      ? ok("…and the second and third tutorials after it, nine steps each, from 2-intro and 3-intro")
+    third.first.id === "3-intro" && third.steps === 10 && third.title === "Who's asking"
+      ? ok("…and the second and third tutorials after it, nine and ten steps, from 2-intro and 3-intro")
       : bad(`welcome's later tutorials: ${JSON.stringify(tutorial?.more)}`);
     const { today, versus, example, tokens, values } = welcomeProps ?? {};
     welcomeProps?.summary?.length > 40 ? ok("welcome says what HaiKIT is under the lede") : bad("welcome has no summary");
@@ -321,8 +321,8 @@ try {
       const map = await sse("/hai/chat", { conversationId: id, message: "contents" });
       const mapUi = opened(map).find((e) => e.component === "course_map");
       const tutorials = propsOf(map, mapUi?.handle)?.tutorials ?? [];
-      tutorials.length === 3 && tutorials[0].pages.length === 12 && tutorials[1].pages.length === 11 && tutorials[2].pages.length === 11
-        ? ok("the course map lists all three tutorials: 12 pages, then 11, then 11")
+      tutorials.length === 3 && tutorials[0].pages.length === 12 && tutorials[1].pages.length === 11 && tutorials[2].pages.length === 12
+        ? ok("the course map lists all three tutorials: 12 pages, then 11, then 12")
         : bad(`the course map's tutorials: ${JSON.stringify(tutorials.map((t) => t.pages.length))}`);
       const fromMap = await sse("/hai/interact", { conversationId: id, handle: mapUi?.handle, action: "open", value: "07" });
       propsOf(fromMap, opened(fromMap).find((e) => e.component === "tutorial_step")?.handle)?.id === "07"
@@ -428,8 +428,8 @@ try {
       const into = await sse("/hai/interact", { conversationId: id, handle: screen?.handle, action: "tutorial", value: "3-intro" });
       const intro = pageOf(into);
       intro.props?.id === "3-intro" && intro.props.tutorial === "Who's asking" && intro.props.prev?.id === "2-next-steps" &&
-        intro.props.next?.id === "3-01" && intro.props.position?.index === 1 && intro.props.position?.total === 11
-        ? ok("the welcome opens the third tutorial, page 1 of 11, after the second tutorial's last page")
+        intro.props.next?.id === "3-01" && intro.props.position?.index === 1 && intro.props.position?.total === 12
+        ? ok("the welcome opens the third tutorial, page 1 of 12, after the second tutorial's last page")
         : bad(`the third tutorial's intro: ${JSON.stringify({ ...intro.props, blocks: undefined })}`);
 
       const signIn = await sse("/hai/chat", { conversationId: id, message: "Open tutorial step 3-04" });
@@ -448,18 +448,18 @@ try {
       pageOf(fromMap).props?.id === "3-07" ? ok("the course map opens tutorial step 3-07") : bad("the map did not open step 3-07");
 
       const broken = [];
-      for (let n = 1; n <= 9; n++) {
-        const want = `3-0${n}`;
+      for (let n = 1; n <= 10; n++) {
+        const want = `3-${String(n).padStart(2, "0")}`;
         const evs = await sse("/hai/chat", { conversationId: id, message: `step ${want}` });
         const got = pageOf(evs);
         if (got.props?.id !== want || !got.props.blocks?.length) broken.push(want);
-        if (n === 9) {
+        if (n === 10) {
           const last = await sse("/hai/interact", { conversationId: id, handle: got.ui?.handle, action: "go", value: "3-next-steps" });
           const end = pageOf(last).props;
           if (end?.id !== "3-next-steps" || end.next !== null) broken.push("3-next-steps");
         }
       }
-      broken.length ? bad(`third tutorial pages that did not render: ${broken.join(", ")}`) : ok("all 11 pages of the third tutorial render, its last with nothing after it");
+      broken.length ? bad(`third tutorial pages that did not render: ${broken.join(", ")}`) : ok("all 12 pages of the third tutorial render, its last with nothing after it");
     }
 
     // 7b4 · a conversation saved before the second tutorial: its welcome digest
@@ -496,8 +496,8 @@ try {
       const pages = (menu.tutorials ?? []).map((t) => t.pages.map((p) => p.id));
       const each = (t, prefix, steps) =>
         t?.length === steps + 2 && t[0] === `${prefix}intro` && t[1] === `${prefix}01` && t.at(-1) === `${prefix}next-steps`;
-      menu.lessons.length === 2 && lessons.length === 14 && pages.length === 3 && each(pages[0], "", 10) && each(pages[1], "2-", 9) && each(pages[2], "3-", 9)
-        ? ok("the rail lists 14 lessons in 2 parts, and every page of the three tutorials: 12, 11 and 11")
+      menu.lessons.length === 2 && lessons.length === 14 && pages.length === 3 && each(pages[0], "", 10) && each(pages[1], "2-", 9) && each(pages[2], "3-", 10)
+        ? ok("the rail lists 14 lessons in 2 parts, and every page of the three tutorials: 12, 11 and 12")
         : bad(`menu.json: ${menu.lessons.length} parts, ${lessons.length} lessons, ${JSON.stringify(pages)}`);
       const manual = menu.reference?.pages ?? [];
       manual.length === 19 && manual[0].id === "index" && manual[0].title === "Contents" && manual[18].id === "limits"
