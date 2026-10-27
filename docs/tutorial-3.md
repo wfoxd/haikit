@@ -286,21 +286,21 @@ The page can ask who's signed in, and tell the chat where to send someone whose 
 const { user } = await fetch("/auth/me").then((r) => r.json());                   // 1
 
 mountChat({
-  root: document.querySelector<HTMLElement>("#app")!,
-  registry,
+  // ...root, registry, suggestions and anything else unchanged            // 2
   title: "hello-auth",
   subtitle: user ? `signed in as ${user.id}` : "signed out",
   emptyText:
     "Only you can open this conversation: the server checks your sign-in on every request, and another user who has its id is told it doesn't exist.",
-  suggestions: ["greet me", "which ones are right-to-left?"],
   // shown when the server turns the chat away, such as once the sign-in has expired
-  signIn: { href: "/sign-in" },                                                     // 2
+  signIn: { href: "/sign-in" },                                                     // 3
 });
 ```
 
 **1** `{ user: { id, claims } }`, or `{ user: null }`. A token lasts a week, and nothing renews it by itself: asking `/auth/me` after half its life issues a fresh one, for the same sign-in. A page that asks as it opens stays signed in for as long as it's opened at least every three and a half days.
 
-**2** When the server turns the chat away, because the sign-in has expired or been revoked, the status line says why, followed by this link. Whatever was typed stays in the message box, and the chat picks up again once a request goes through.
+**2** Keep every option you already pass. If you did the second tutorial, that includes `notices`: without it, the notices it sends have no component to show them.
+
+**3** When the server turns the chat away, because the sign-in has expired or been revoked, the status line says why, followed by this link. Whatever was typed stays in the message box, and the chat picks up again once a request goes through.
 
 > [!TIP]
 > **Checkpoint**
@@ -483,7 +483,7 @@ The hello app now knows who everyone is: it signs them in, keeps them to their o
 
 - **Serve it over https.** In production the cookie is `Secure` and named `__Host-haikit_token`, so the browser sends it only over https, and only to the host that set it.
 - **Put your real login where step 04 checks the name.** And call `auth.revoke(userId)` whenever a user changes their password, or tells you a device is lost.
-- **Behind a proxy that rewrites the `Host` header,** list your public origin, such as `origins: ["https://hello.example.com"]`, so cookie requests from your own pages aren't mistaken for another site's.
+- **Behind a proxy that rewrites the `Host` header,** list your public origin, such as `origins: ["https://hello.example.com"]`, so cookie requests from your own pages aren't mistaken for another site's. Step 04's sign-in page checks the origin itself, against `Host` too: have its `sameHost` accept that origin as well, or signing in and out will be refused.
 
 ### Use your identity provider instead
 
@@ -510,7 +510,11 @@ mountChat({
 });
 ```
 
-`getToken()` is your provider's call for a current access token. The gate, `ownerOf` and the 404 for someone else's conversation all work as before. `signIn` and *sign out everywhere* are your provider's to do.
+`getToken()` is your provider's call for a current access token. The gate, `ownerOf` and the 404 for someone else's conversation all work as before. `signIn` and *sign out everywhere* are your provider's to do. A few pieces of this app assumed the cookie, and change with it:
+
+- **Step 04's sign-in page goes,** and so does its guard on `/`: loading the page carries no `Authorization` header, so `auth.user(req)` there would always send the visitor to `/sign-in`. Let your provider's SDK decide whether to show its login instead.
+- **Step 05's `/auth/me` call** needs the token too, through the same `fetch`, or take the user's name from your provider's SDK.
+- **`mountChat`'s `signIn` link** points at your provider's login.
 
 ### Conversations from before sign-in
 
