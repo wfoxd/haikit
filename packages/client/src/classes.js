@@ -205,6 +205,9 @@ export const dockedIcon = ICON_14_BOLD;
 // ── status + composer ─────────────────────────────────────────────────
 export const status =
   "hai-status hai:box-content hai:flex hai:min-h-22 hai:items-center hai:gap-8 hai:px-[var(--hai-gutter)] hai:pb-8 hai:font-mono hai:text-[12.5px] hai:font-bold hai:leading-[normal] hai:max-[900px]:[.window-open>&]:opacity-40";
+// signed out: the link to sign in, after why
+export const signIn =
+  "hai-signin hai:rounded-[2px] hai:text-fg hai:underline hai:decoration-2 hai:underline-offset-3 hai:hover:text-accent " + RING;
 // thinking: one accent dot, blinking
 export const dots = "hai-dots hai:inline-flex";
 export const dot =

@@ -111,6 +111,55 @@ try {
     chat.close();
   }
 
+  // signed out: the status line says why, and links to signIn; a request the
+  // server takes again puts it back. Through the fetch passed to mountChat.
+  {
+    let signedIn = false;
+    const asked = [];
+    const own = async (url) => {
+      asked.push(String(url));
+      if (!signedIn) return new Response(JSON.stringify({ error: "sign in to continue" }), { status: 401 });
+      return sse([{ type: "hello", conversationId: "c1", model: "m" }, { type: "status", status: "idle" }]);
+    };
+    globalThis.fetch = async () => {
+      throw new Error("the page's fetch was used");
+    };
+    const root = document.getElementById("app");
+    const chat = mountChat({ root, registry: {}, fetch: own, signIn: { href: "/login?next=/", label: "Log in" } });
+    await wait(30);
+    const status = root.querySelector(".hai-status");
+    const link = status.querySelector("a.hai-signin");
+    check("mountChat's fetch is the one used", asked.length === 1 && asked[0].endsWith("/hai/start"));
+    check(
+      "turned away as not signed in, the status line says why and links to signIn",
+      status.dataset.status === "unauthorized" &&
+        status.textContent.startsWith("sign in to continue") &&
+        link?.getAttribute("href") === "/login?next=/" &&
+        link.textContent === "Log in",
+    );
+    const input = root.querySelector(".hai-input");
+    input.value = "hello";
+    root.querySelector(".hai-send").click();
+    await wait(30);
+    check("…a message turned away comes back to the box", input.value === "hello");
+    signedIn = true;
+    root.querySelector(".hai-send").click();
+    await wait(30);
+    check(
+      "…and once a request is taken, the status line is the chat's again",
+      status.dataset.status === "idle" && !status.querySelector(".hai-signin") && input.value === "",
+    );
+    chat.close();
+
+    // without signIn, just why
+    signedIn = false;
+    const plain = mountChat({ root, registry: {}, fetch: own });
+    await wait(30);
+    const line = root.querySelector(".hai-status");
+    check("without signIn, the status line says why, with no link", line.dataset.status === "unauthorized" && !line.querySelector("a"));
+    plain.close();
+  }
+
   // the dock: a surface moves to the shelf and the window and back, mounted once
   {
     // init asks a question and shows a card; a message brings the card new props

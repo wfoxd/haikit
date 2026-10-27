@@ -1023,6 +1023,50 @@ export interface StoreAdapter {
   subscribe?(conversationId: string, onMessage: (message: string) => void, signal: AbortSignal): Promise<void>;
 }
 
+// ── gate ─────────────────────────────────────────────────────────────
+
+/** The route a request is for, as a `Gate` sees it. */
+export type GateRoute = "chat" | "start" | "interact" | "events";
+
+/** A request to the routes, as a `Gate` sees it: before its body is read. */
+export interface GateRequest {
+  route: GateRoute;
+  method: string;
+  /** Lower-cased names, as Node's `IncomingHttpHeaders` has them. */
+  headers: Record<string, string | string[] | undefined>;
+}
+
+/**
+ * A gate's answer to a request: who is asking, and until when (epoch ms) the
+ * answer holds; or the status and reason it is refused with.
+ */
+export type Admission =
+  | { ok: true; principal: string; until?: number }
+  | { ok: false; status: 401 | 403 | 415; error: string };
+
+/**
+ * Who may use the routes, and which conversations each may use. Without one,
+ * a conversation id is all a request needs. `@haikit/auth` makes one; an app
+ * can write its own.
+ *
+ * `nodeHandler` asks `admit` before it reads a request's body, then `allows`
+ * for the conversation the request names, before loading it: a request that
+ * fails either takes no lease and learns nothing, a conversation it may not
+ * use being answered as one that doesn't exist. A conversation a request
+ * creates is passed to `created` before its id is sent to the browser.
+ */
+export interface Gate {
+  /** Who is asking. Its `principal` is what `allows` and `created` are given. */
+  admit(request: GateRequest): Promise<Admission>;
+  /** Whether `principal` may use this conversation. */
+  allows(principal: string, conversationId: string): Promise<boolean>;
+  /**
+   * A conversation was just created for `principal`. If this throws, the
+   * request fails and the browser is never told the conversation's id.
+   */
+  created(principal: string, conversationId: string): Promise<void>;
+}
+
 /** Rough token estimate. Only used to surface the economics in the UI. */
 export const estTokens = (value: unknown): number =>
   Math.ceil((typeof value === "string" ? value : JSON.stringify(value ?? "")).length / 4);

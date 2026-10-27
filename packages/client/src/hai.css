@@ -671,6 +671,10 @@
   overflow-y: auto;
 }
 
+.hai\:rounded-\[2px\] {
+  border-radius: 2px;
+}
+
 .hai\:rounded-\[50\%\] {
   border-radius: 50%;
 }
@@ -1186,6 +1190,18 @@
   font-variant-numeric: var(--tw-ordinal, ) var(--tw-slashed-zero, ) var(--tw-numeric-figure, ) var(--tw-numeric-spacing, ) var(--tw-numeric-fraction, );
 }
 
+.hai\:underline {
+  text-decoration-line: underline;
+}
+
+.hai\:decoration-2 {
+  text-decoration-thickness: 2px;
+}
+
+.hai\:underline-offset-3 {
+  text-underline-offset: 3px;
+}
+
 .hai\:antialiased {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -1460,6 +1476,10 @@
 
 .hai\:hover\:bg-\[linear-gradient\(var\(--hai-hover\)_0_0\)\]:hover {
   background-image: linear-gradient(var(--hai-hover) 0 0);
+}
+
+.hai\:hover\:text-accent:hover {
+  color: var(--hai-accent);
 }
 
 .hai\:hover\:text-fg:hover {

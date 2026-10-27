@@ -191,6 +191,13 @@ export interface ChatState {
   notices: NoticeRecord[];
   /** Each signal's latest payload, by name, since the events stream opened. */
   signals: Record<string, unknown>;
+  /**
+   * Set when the server turned a request away as not signed in (401) or not
+   * allowed (403), with its reason. The events stream stops until `resume()`.
+   * Cleared by `resume()`, and by the next request answered 200. Kept by
+   * `reset()`: a new conversation doesn't sign anyone in.
+   */
+  unauthorized: { status: 401 | 403; message: string } | null;
 }
 
 export interface Chat {
@@ -239,6 +246,14 @@ export interface Chat {
    */
   reset(): void;
   /**
+   * Try again after the server turned this chat away (`state.unauthorized`),
+   * as once the user has signed in: clears it, and reopens the events stream
+   * if the conversation has one. Subscribers are notified with
+   * `{ type: "resumed" }` if it was set. A request answered 200 does this
+   * by itself.
+   */
+  resume(): void;
+  /**
    * Done with this chat for good, as when the page showing it goes away.
    * Anything queued is never sent, a request still open is aborted, and every
    * surface is unmounted. A message whose request was out is taken out of
@@ -250,7 +265,9 @@ export interface Chat {
   /**
    * Called after every event the chat applies, and with `{ type: "sending" }`
    * when a `send` or `interact` request goes out, `{ type: "settled" }` when
-   * its response has ended or failed, `{ type: "reset" }` and
+   * its response has ended or failed, `{ type: "reset" }`,
+   * `{ type: "unauthorized", status, message }` when the server turns a
+   * request away as not signed in or not allowed, `{ type: "resumed" }` and
    * `{ type: "closed" }`. Returns an unsubscribe function.
    */
   subscribe(fn: (state: ChatState, event: WireEvent) => void): () => void;
@@ -277,4 +294,11 @@ export function createChat(options: {
    * has come (the server allows at most 15 s). Default 15000 ms.
    */
   pollHoldMs?: number;
+  /**
+   * What every request goes through, the events stream's included. Default
+   * the page's `fetch`, looked up at each request. Pass one to add a header,
+   * such as `authorization: Bearer <token>` with a token fetched fresh each
+   * time, or `credentials: "include"` for a server on another origin.
+   */
+  fetch?: (input: string, init: RequestInit) => Promise<Response>;
 }): Chat;

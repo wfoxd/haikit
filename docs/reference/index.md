@@ -101,6 +101,7 @@ Every export of every package, with the page that documents it.
 | Symbol | Kind | Page |
 | --- | --- | --- |
 | `ActionCtx` | interface | [Surfaces](surfaces.md) |
+| `Admission` | type | [HTTP routes and the wire](http.md) |
 | `ActionKind` | type | [Surfaces](surfaces.md) |
 | `ActionMap` | type | [Surfaces](surfaces.md) |
 | `ActionSpec` | interface | [Surfaces](surfaces.md) |
@@ -120,6 +121,9 @@ Every export of every package, with the page that documents it.
 | `DigestCtx` | interface | [Surfaces](surfaces.md) |
 | `ElicitOptions` | type | [Surfaces](surfaces.md) |
 | `Emit` | type | [HTTP routes and the wire](http.md) |
+| `Gate` | interface | [HTTP routes and the wire](http.md) |
+| `GateRequest` | interface | [HTTP routes and the wire](http.md) |
+| `GateRoute` | type | [HTTP routes and the wire](http.md) |
 | `estTokens` | function | [Tools](tools.md) |
 | `HasResolve` | type | [Surfaces](surfaces.md) |
 | `Infer` | type | [Surfaces](surfaces.md) |

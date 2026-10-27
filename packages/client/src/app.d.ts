@@ -39,6 +39,14 @@ export interface MountChatOptions {
   eventsFallbackMs?: number;
   /** Passed to `createChat`: how long each poll asks the server to hold. Default 15000 ms. */
   pollHoldMs?: number;
+  /** Passed to `createChat`: what every request goes through. Default the page's `fetch`. */
+  fetch?: (input: string, init: RequestInit) => Promise<Response>;
+  /**
+   * Where to sign in. While the server turns the chat away as not signed in or
+   * not allowed (`state.unauthorized`), the status line says why, followed by
+   * a link here, labelled `label` (default "Sign in"). Without it, only why.
+   */
+  signIn?: { href: string; label?: string };
 }
 
 /**

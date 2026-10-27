@@ -60,6 +60,7 @@ Checked against `@haikit/*` 0.20.0. Durations are in milliseconds.
 | --- | --- | --- |
 | `basePath` | `"/hai"`, with no trailing `/` | [HTTP routes and the wire](http.md#nodehandler) |
 | `options.maxBodyBytes` | `1048576` (1 MiB): a longer POST body is answered 413 | [HTTP routes and the wire](http.md#requests) |
+| `options.gate` | none: a conversation id is all a request needs | [HTTP routes and the wire](http.md#gates) |
 
 ### Stores
 
@@ -100,6 +101,7 @@ Checked against `@haikit/*` 0.20.0. Durations are in milliseconds.
 | `signals` | `{}` | [The browser client](client.md#createchat) |
 | `eventsFallbackMs` | `8000` | [The browser client](client.md#polling) |
 | `pollHoldMs` | `15000` (the server clamps it to 0–15000) | [The browser client](client.md#polling) |
+| `fetch` | the page's `fetch`, looked up at each request | [The browser client](client.md#createchat) |
 
 ### `mountChat` (`@haikit/client/app.js`)
 
@@ -116,7 +118,8 @@ Checked against `@haikit/*` 0.20.0. Durations are in milliseconds.
 | `emptyText` | `""` | [The default UI](ui.md#mountchatoptions) |
 | `theme` | follows the system, or a `data-hai-theme` already on `<html>`. Only `"light"` or `"dark"` pins | [The default UI](ui.md#mountchatoptions) |
 | `dock` | `true` | [The default UI](ui.md#the-dock) |
-| `eventsFallbackMs`, `pollHoldMs` | as `createChat` | [The default UI](ui.md#mountchatoptions) |
+| `eventsFallbackMs`, `pollHoldMs`, `fetch` | as `createChat` | [The default UI](ui.md#mountchatoptions) |
+| `signIn` | none: signed out, the status line says only why | [The default UI](ui.md#mountchatoptions) |
 
 ### `hai.css`
 
@@ -162,6 +165,7 @@ None of these can be changed without changing HaiKIT's code.
 | How long a server keeps listening for a conversation's wake turns after its last stream closes | at least 60,000 (longer while a turn runs, or an ended one is kept) | [HTTP routes and the wire](http.md#wake-turns-on-the-stream) |
 | How long an ended wake turn is kept for polls | 60,000 | [HTTP routes and the wire](http.md#wake-turns-on-the-stream) |
 | Ended wake turns kept per conversation | 5 | [HTTP routes and the wire](http.md#wake-turns-on-the-stream) |
+| How often an open events stream asks its gate again | 60,000, and at its admission's `until` | [HTTP routes and the wire](http.md#gates) |
 
 ### Presence
 
@@ -257,7 +261,7 @@ with the parameters `conversationId`, `after`, `poll`, `wait`, `turn` and
 | `data-handle`, `data-component` | a surface's element in the default transcript | [The default UI](ui.md#rendertranscript) |
 | `data-notice` | a notice's element in the default transcript | [The default UI](ui.md#rendertranscript) |
 | `data-pending` | a message's element in the default transcript, while its request is out and the server's copy hasn't arrived | [The default UI](ui.md#rendertranscript) |
-| `data-status` | the default UI's status line | [The default UI](ui.md#mountchat) |
+| `data-status` | the default UI's status line: the conversation's status, or `unauthorized` while the server turns the chat away | [The default UI](ui.md#mountchat) |
 
 ### Tables
 

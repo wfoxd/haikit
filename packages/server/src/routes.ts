@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { isConversationBusy, isStaleLease } from "@haikit/core";
-import type { Emit, NoticeRecord, WireEvent } from "@haikit/core";
+import type { Emit, Gate, GateRoute, NoticeRecord, WireEvent } from "@haikit/core";
 import type { Hai, WakeOutcome } from "./runtime.js";
 
 /**
@@ -16,9 +16,13 @@ import type { Hai, WakeOutcome } from "./runtime.js";
  * `GET /events` streams a conversation's notices, and the turns `wake`
  * notices start. It accepts nothing from the browser beyond which
  * conversation, and where to resume.
+ *
+ * With a `gate`, every route asks it who is asking, and whether they may use
+ * the conversation named, before anything else happens (see `Gate`).
  */
 export function nodeHandler(hai: Hai, basePath = "/hai", options: NodeHandlerOptions = {}) {
   const maxBodyBytes = options.maxBodyBytes ?? MAX_BODY_BYTES;
+  const gate = options.gate ?? null;
   return async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
     let url: URL;
     try {
@@ -33,7 +37,7 @@ export function nodeHandler(hai: Hai, basePath = "/hai", options: NodeHandlerOpt
 
     if (req.method === "GET" && route === "/events" && hai.streamsEvents) {
       try {
-        await streamNotices(hai, req, res, url);
+        await streamNotices(hai, req, res, url, gate);
       } catch (err) {
         failed(res, err);
       }
@@ -44,7 +48,7 @@ export function nodeHandler(hai: Hai, basePath = "/hai", options: NodeHandlerOpt
     if (route !== "/chat" && route !== "/interact" && route !== "/start") return false;
 
     try {
-      await respond(hai, route, req, res, maxBodyBytes);
+      await respond(hai, route, req, res, maxBodyBytes, gate);
     } catch (err) {
       failed(res, err);
     }
@@ -59,6 +63,22 @@ export interface NodeHandlerOptions {
    * Default 1 MiB.
    */
   maxBodyBytes?: number;
+  /**
+   * Who may use the routes, and which conversations each may use. Without
+   * one, a conversation id is all a request needs.
+   */
+  gate?: Gate;
+}
+
+/** How often an open events stream asks its gate again, so a revoked one ends. */
+const GATE_RECHECK_MS = 60_000;
+/** The longest delay a Node timer keeps; past it, one fires after about a millisecond. */
+const MAX_TIMER_MS = 2_147_483_647;
+
+/** A request turned away before any stream opens: the status, and why. */
+function refuse(res: ServerResponse, status: number, error: string) {
+  res.writeHead(status, { "content-type": "application/json" });
+  res.end(JSON.stringify({ error }));
 }
 
 /** The default `maxBodyBytes`: far past any message or click, and nowhere near harm. */
@@ -83,7 +103,24 @@ function failed(res: ServerResponse, err: unknown) {
 }
 
 /** One of the three POST routes, once the request is known to be one. */
-async function respond(hai: Hai, route: string, req: IncomingMessage, res: ServerResponse, maxBodyBytes: number) {
+async function respond(
+  hai: Hai,
+  route: string,
+  req: IncomingMessage,
+  res: ServerResponse,
+  maxBodyBytes: number,
+  gate: Gate | null,
+) {
+  // Who is asking, before the body is read: a request turned away here costs
+  // nothing more. Before `/start`'s empty answer too, so a page whose user
+  // isn't signed in learns it as it opens, not at its first message.
+  let principal = "";
+  if (gate) {
+    const admission = await gate.admit({ route: route.slice(1) as GateRoute, method: "POST", headers: req.headers });
+    if (!admission.ok) return refuse(res, admission.status, admission.error);
+    principal = admission.principal;
+  }
+
   let body: Record<string, any>;
   try {
     body = await readJson(req, maxBodyBytes);
@@ -95,19 +132,24 @@ async function respond(hai: Hai, route: string, req: IncomingMessage, res: Serve
       res.end(JSON.stringify({ error: "the request body is too large" }));
       return;
     }
-    res.writeHead(400, { "content-type": "application/json" });
-    res.end(JSON.stringify({ error: "the request body must be a JSON object" }));
-    return;
+    return refuse(res, 400, "the request body must be a JSON object");
+  }
+
+  // Behind a gate, an id is a string or there is none; and a conversation
+  // this principal may not use is answered as one that doesn't exist, before
+  // it is loaded, so a stranger never holds its lease nor learns it's there.
+  let requested: unknown = body.conversationId;
+  if (gate) {
+    requested = typeof requested === "string" && requested !== "" ? requested : undefined;
+    if (requested !== undefined && !(await gate.allows(principal, requested as string))) {
+      return refuse(res, 404, "unknown conversation");
+    }
   }
 
   // A click names a conversation it was shown in. Loading an unknown id would
   // start an empty conversation whose id nobody is ever told (no `hello` goes
   // out here), so make sure it exists first, as `hai.wake` does.
-  if (route === "/interact" && !(await exists(hai, body.conversationId))) {
-    res.writeHead(404, { "content-type": "application/json" });
-    res.end(JSON.stringify({ error: "unknown conversation" }));
-    return;
-  }
+  if (route === "/interact" && !(await exists(hai, requested))) return refuse(res, 404, "unknown conversation");
 
   // Nothing to run before the first message: answer with an empty stream and
   // create no conversation, so an app without init doesn't get one for every
@@ -122,26 +164,28 @@ async function respond(hai: Hai, route: string, req: IncomingMessage, res: Serve
   // report into: busy is a 409, and anything else a 500 (see `failed`).
   let conversation;
   try {
-    conversation = await hai.config.store.loadConversation(body.conversationId);
+    conversation = await hai.config.store.loadConversation(requested as string | undefined);
   } catch (err) {
     if (!isConversationBusy(err)) throw err;
-    res.writeHead(409, { "content-type": "application/json" });
-    res.end(JSON.stringify({ error: (err as Error).message }));
-    return;
+    return refuse(res, 409, (err as Error).message);
   }
 
   const emit = openSSE(res);
-  if (route === "/chat" || route === "/start") {
-    emit({
-      type: "hello",
-      conversationId: conversation.id,
-      model: hai.config.model.id,
-      ...(hai.streamsEvents ? { events: true as const } : {}),
-    });
-  }
-
   let superseded = false;
   try {
+    // A conversation made for this request is the principal's before its id
+    // goes out: the events stream the browser opens on `hello` is let in. If
+    // that fails, the browser is told why and never learns the id, and the
+    // lease is let go below.
+    if (gate && conversation.id !== requested) await gate.created(principal, conversation.id);
+    if (route === "/chat" || route === "/start") {
+      emit({
+        type: "hello",
+        conversationId: conversation.id,
+        model: hai.config.model.id,
+        ...(hai.streamsEvents ? { events: true as const } : {}),
+      });
+    }
     if (route === "/chat") {
       await hai.send(conversation, String(body.message ?? ""), emit);
     } else if (route === "/start") {
@@ -227,9 +271,24 @@ const PAGE = 100;
  * written while the socket is still taking what was, so a reader that is slow
  * cannot make the server buffer every notice for it.
  */
-async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse, url: URL) {
+async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse, url: URL, gate: Gate | null) {
   const { store } = hai.config;
   const conversationId = url.searchParams.get("conversationId") ?? "";
+
+  // Behind a gate: who is asking, and whether this conversation is theirs,
+  // before anything is read. One they may not use is unknown to them.
+  const ask = async () => {
+    if (!gate) return { ok: true as const, principal: "" };
+    const admission = await gate.admit({ route: "events", method: "GET", headers: req.headers });
+    if (!admission.ok) return admission;
+    if (!conversationId || !(await gate.allows(admission.principal, conversationId))) {
+      return { ok: false as const, status: 404, error: "unknown conversation" };
+    }
+    return admission;
+  };
+  const admitted = await ask();
+  if (!admitted.ok) return refuse(res, admitted.status, admitted.error);
+  let until = "until" in admitted ? admitted.until : undefined;
   // A poll, for a browser behind a proxy that holds a stream back until it
   // ends: what's waiting, then the response ends, which any proxy delivers.
   // `poll=now` answers at once; `poll=1` holds until something new arrives,
@@ -264,6 +323,23 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
   } finally {
     watchers.pending--;
   }
+  // An admission that lapsed while that was set up is asked again before
+  // anything is sent, and a refusal now is answered as the first would have been.
+  if (until !== undefined && Date.now() >= until) {
+    let again;
+    try {
+      again = await ask();
+    } catch (err) {
+      // a gate that fails here is answered as one that fails first, and lets go too
+      forgetWatchers(hai, conversationId, watchers);
+      throw err;
+    }
+    if (!again.ok) {
+      forgetWatchers(hai, conversationId, watchers);
+      return refuse(res, again.status, again.error);
+    }
+    until = "until" in again ? again.until : undefined;
+  }
   // gone while that was set up: its close has already been and gone
   if (req.destroyed || res.destroyed) return forgetWatchers(hai, conversationId, watchers);
 
@@ -287,7 +363,10 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
   res.on("close", () => aborter.abort());
 
   // Resolves once the socket has taken what is queued, or the browser has gone.
+  // Writes nothing once the stream is over: a revision's second frame waiting
+  // behind its first must not go out after the admission has run out.
   const write = async (chunk: string) => {
+    if (signal.aborted || res.writableEnded) return;
     if (res.write(chunk)) return;
     await new Promise<void>((resolve) => {
       const done = () => {
@@ -499,6 +578,43 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
 
   // a heartbeat is only for a stream gone quiet, never one already backed up
   const heartbeat = setInterval(() => res.writableNeedDrain || res.write(": ping\n\n"), HEARTBEAT_MS);
+  // Behind a gate, a stream stays open only while its admission holds. It
+  // ends when that runs out, on a timer that stays armed while the gate is
+  // asked again, so a gate slow to answer can't hold it open past then; a
+  // poll ends then too, rather than hold for the rest of its wait. And a
+  // stream asks again every GATE_RECHECK_MS, ending when refused, so a sign-in
+  // revoked meanwhile stops hearing; a poll isn't asked again, since each is
+  // admitted afresh and holds 15 s at most. Timers of their own, since the
+  // heartbeat is skipped on a backed-up stream.
+  let expiry: ReturnType<typeof setTimeout> | undefined;
+  let recheck: ReturnType<typeof setTimeout> | undefined;
+  const armExpiry = () => {
+    clearTimeout(expiry);
+    const at = until;
+    if (at === undefined || signal.aborted) return;
+    // a deadline further off than a timer can wait is waited for in steps
+    const wait = Math.min(Math.max(0, at - Date.now()), MAX_TIMER_MS);
+    expiry = setTimeout(() => (Date.now() >= at ? aborter.abort() : armExpiry()), wait);
+  };
+  const recheckGate = () => {
+    ask().then(
+      (admission) => {
+        if (!admission.ok) return aborter.abort();
+        until = "until" in admission ? admission.until : undefined;
+        armExpiry();
+        if (!signal.aborted) recheck = setTimeout(recheckGate, GATE_RECHECK_MS);
+      },
+      (err) => {
+        // a gate that can't answer lets no one in, here as on a new request
+        console.error("[haikit] an events stream's gate failed:", err);
+        aborter.abort();
+      },
+    );
+  };
+  if (gate) {
+    armExpiry();
+    if (!polling) recheck = setTimeout(recheckGate, GATE_RECHECK_MS);
+  }
   // An app that sends no notices has nothing stored to read: the stream is only
   // for signals, and stays open, reading nothing, until the browser leaves.
   const wakes = hai.sendsNotices ? wakeups(store.watch?.(conversationId, signal), signal)[Symbol.asyncIterator]() : null;
@@ -523,7 +639,14 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
     }
   };
   try {
-    if (!polling) return await run();
+    if (!polling) {
+      // Over when the stream is: a store read still out then isn't waited
+      // for, so an admission that runs out ends the response at once, and the
+      // browser reconnects to hear why. A read that fails first still fails it.
+      const running = run();
+      running.catch(() => {});
+      return await Promise.race([running, left]);
+    }
     // A poll: the same reading, until something new has gone out and what
     // came with it has had a moment to follow, or the hold runs out.
     if (poll === "now") markFresh();
@@ -539,6 +662,8 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
     clearTimeout(hold);
   } finally {
     clearInterval(heartbeat);
+    clearTimeout(expiry);
+    clearTimeout(recheck);
     aborter.abort();
     closeStream();
     watchers.streams.delete(emit);
