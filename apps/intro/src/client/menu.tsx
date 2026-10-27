@@ -45,7 +45,7 @@ const sectionsOf = (data: MenuData): Section[] => [
   {
     label: "Tutorial",
     icon: CodeIcon,
-    // one group per tutorial; a step's number drops the second tutorial's prefix
+    // one group per tutorial; a step's number drops a later tutorial's prefix
     groups: data.tutorials.map((t) => ({
       heading: t.title,
       items: t.steps.map((s) => ({ n: s.id.replace(/^\d+-/, ""), label: s.title, message: `Open tutorial step ${s.id}` })),

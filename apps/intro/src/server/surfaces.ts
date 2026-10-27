@@ -1,11 +1,13 @@
 import { estTokens, type Cap } from "@haikit/core";
-import type { Block, CourseMapProps, Term } from "../shared/surfaces.ts";
+import type { Block, CourseMapProps, Term, WelcomeProps } from "../shared/surfaces.ts";
 import { checkpoint, courseMap, lesson, nextLesson, referencePage, tutorialStep, welcomeScreen } from "../shared/surfaces.ts";
 import { CHECKS, OPTION_IDS, lessonProps } from "./course/index.ts";
 import { REFERENCE_TITLE, plain, referencePageOf } from "./reference.ts";
 import { tutorialPage } from "./tutorial.ts";
 
 const quote = (s: string) => `"${s}"`;
+/** The tutorials after the first, as the welcome digest names them. */
+const ORDINALS = ["second", "third", "fourth", "fifth"];
 const letter = (id: string) => id.toUpperCase();
 
 /** Glossary entries matching a term, best match first; no term matches all. */
@@ -57,10 +59,17 @@ export const welcomeServer = welcomeScreen.implement({
       `Beside the place to start, HaiKIT's tutorial, built into this app: ${quote(props.tutorial.title)}, ` +
       `steps ${props.tutorial.steps[0]?.id}–${props.tutorial.steps.at(-1)?.id}; show_tutorial_step opens a page ` +
       `(intro, a step, or next-steps). ` +
-      (props.tutorial.next
-        ? `Then the second tutorial: ${quote(props.tutorial.next.title)}, pages ${props.tutorial.next.first.id} and ` +
-          `steps 2-01–2-${String(props.tutorial.next.steps).padStart(2, "0")}, then 2-next-steps. `
-        : "") +
+      // each tutorial that carries on, by its first page's prefix; one stored
+      // before version 15 has at most one, as `next`
+      (props.tutorial.more ?? [(props.tutorial as { next?: WelcomeProps["tutorial"]["more"][number] }).next].filter((t) => t !== undefined))
+        .map((t, i) => {
+          const prefix = t.first.id.replace(/intro$/, "");
+          return (
+            `Then the ${ORDINALS[i]} tutorial: ${quote(t.title)}, pages ${t.first.id} and ` +
+            `steps ${prefix}01–${prefix}${String(t.steps).padStart(2, "0")}, then ${prefix}next-steps. `
+          );
+        })
+        .join("") +
       // a welcome stored before version 10 has no reference
       (props.reference
         ? `Under them, ${quote(props.reference.title)}, built into this app: ${props.reference.pages.length} pages, ` +

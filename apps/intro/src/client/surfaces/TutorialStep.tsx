@@ -6,7 +6,7 @@ import { scrollTranscript } from "@/lib/scroll";
 import { blocks } from "../blocks/Blocks.tsx";
 import { BODY, Choice, Choices, Closed, PAGE, PageTitle, useShowTop, Where } from "./parts.tsx";
 
-/** A step's number, without the second tutorial's prefix; the pages around the steps have none. */
+/** A step's number, without a later tutorial's prefix; the pages around the steps have none. */
 const numberOf = (id: string) => id.match(/^(?:\d+-)?(\d+)$/)?.[1];
 
 /** A step is named with its number; the pages around the steps by their title alone. */

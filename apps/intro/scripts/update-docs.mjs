@@ -1,9 +1,9 @@
 /**
- * Refresh content/ from HaiKIT's repository: both tutorials, and every page of
- * the reference manual.
+ * Refresh content/ from HaiKIT's repository: the three tutorials, and every
+ * page of the reference manual.
  *
- * The app carries its own copies of docs/tutorial.md, docs/tutorial-2.md and
- * docs/reference/ so it stays self-contained (none of them are in the npm
+ * The app carries its own copies of docs/tutorial.md, docs/tutorial-2.md,
+ * docs/tutorial-3.md and docs/reference/ so it stays self-contained (none of them are in the npm
  * packages). Run this to pick up the latest, then `npm test`: the server parses
  * them when it starts, so anything the parsers can't read, or a reference link
  * that leads nowhere, fails there, with the line or the link.
@@ -39,7 +39,7 @@ async function save(file, { url, text }) {
   console.log(`content/${file} updated: ${text.split("\n").length} lines from ${url}`);
 }
 
-for (const file of ["tutorial.md", "tutorial-2.md"]) await save(file, await fetchDoc(file));
+for (const file of ["tutorial.md", "tutorial-2.md", "tutorial-3.md"]) await save(file, await fetchDoc(file));
 
 // The index first: the pages it links to are the manual.
 const index = await fetchDoc("reference/index.md");

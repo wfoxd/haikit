@@ -114,6 +114,13 @@ try {
     await click(buttons(w.el).find((b) => b.textContent.startsWith("01")));
     check("a tutorial step sends tutorial: its id", JSON.stringify(w.sent.at(-1)) === '["tutorial","01"]');
     await w.release();
+    // each tutorial that carries on is offered after the first, and opens at its introduction
+    await click(buttons(w.el).find((b) => b.textContent.includes("Who's asking")));
+    check(
+      "the tutorials after the first are offered in turn, and the third opens at its introduction",
+      text(w.el).indexOf("Tell them later") < text(w.el).indexOf("Who's asking") && JSON.stringify(w.sent.at(-1)) === '["tutorial","3-intro"]',
+    );
+    await w.release();
     await click(button(w.el, "Contents"));
     check("a page of the manual sends reference: its id", JSON.stringify(w.sent.at(-1)) === '["reference","index"]');
     await w.freeze("index");
@@ -138,6 +145,9 @@ try {
     example: { ...current.example, steps: current.example.steps.map((s) => ({ ...s, scene: s.scene.filter((line) => !("ui" in line)) })) },
   };
   const v13 = { ...v12, tokens: current.tokens };
+  // 14: one later tutorial, as `next`, before `more` listed every one
+  const { more: _more, ...firstTutorial } = current.tutorial;
+  const v14 = { ...current, tutorial: { ...firstTutorial, next: current.tutorial.more[0] } };
   const { versus: _versus, ...v11 } = v12;
   const architecture = current.example.underneath.architecture;
   const point = (title) => ({ title, text: `${title}, in a **sentence**.` });
@@ -157,6 +167,7 @@ try {
     11: v11,
     12: v12,
     13: v13,
+    14: v14,
   };
   for (const [version, props] of Object.entries(saved)) {
     const w = await mount("welcome", props);
@@ -172,6 +183,7 @@ try {
       Number(version) < 10 || !!button(w.el, "Contents"),
       Number(version) !== 12 || !text(w.el).includes(current.tokens.title),
       Number(version) !== 11 || !text(w.el).includes(current.versus.title),
+      Number(version) !== 14 || (text(w.el).includes(current.tutorial.more[0].title) && !text(w.el).includes(current.tutorial.more[1].title)),
     ];
     check(`a welcome saved at version ${version} still renders, as it was`, parts.every(Boolean));
     await w.unmount();

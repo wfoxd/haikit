@@ -89,6 +89,7 @@ function parsePage(file: string, markdown: string) {
     const doc = href.match(/^\.\.\/([\w-]+\.md)$/)?.[1];
     if (doc === "tutorial.md") return "tutorial:intro";
     if (doc === "tutorial-2.md") return "tutorial:2-intro";
+    if (doc === "tutorial-3.md") return "tutorial:3-intro";
     if (doc) return DOCS + doc;
     if (/^https:\/\/[^\s]+$/.test(href)) return href;
     throw new ManualError(`a link it can't follow: ${href}`, file, n);

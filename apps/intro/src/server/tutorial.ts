@@ -1,12 +1,13 @@
 /**
  * HaiKIT's tutorials, built into this app.
  *
- * content/tutorial.md and content/tutorial-2.md are copies of docs/tutorial.md
- * and docs/tutorial-2.md from the haikit repository; `npm run docs:update`
- * refreshes them. Each is parsed here once, when the server starts, into the
- * pages the browser shows: its introduction, its steps, and where to go next.
- * The second tutorial's page ids carry a `2-` prefix ("2-intro", "2-01"), so
- * every page has an id of its own.
+ * content/tutorial.md, content/tutorial-2.md and content/tutorial-3.md are
+ * copies of docs/tutorial.md, docs/tutorial-2.md and docs/tutorial-3.md from
+ * the haikit repository; `npm run docs:update` refreshes them. Each is parsed
+ * here once, when the server starts, into the pages the browser shows: its
+ * introduction, its steps, and where to go next. A later tutorial's page ids
+ * carry its number as a prefix ("2-intro", "3-01"), so every page has an id
+ * of its own.
  *
  * The parser knows the Markdown the tutorial actually uses: headings,
  * paragraphs, lists, tables, fenced code under a **`file`** — *action* label,
@@ -25,7 +26,7 @@ type Prose = { kind: "p"; text: string } | { kind: "list"; items: string[] };
 type CodeBlock = Extract<Block, { kind: "code" }>;
 
 export interface TutorialPage {
-  /** "intro", "01" … "10", or "next-steps"; in the second tutorial, "2-intro", "2-01" … */
+  /** "intro", "01" … "10", or "next-steps"; in a later tutorial, "2-intro", "3-01" … */
   id: string;
   /** "Introduction", "Step 01", "Where to go next". */
   label: string;
@@ -38,7 +39,7 @@ export interface TutorialPage {
 }
 
 export interface Tutorial {
-  /** 1 or 2. */
+  /** 1, 2 or 3. */
   n: number;
   title: string;
   lead: string;
@@ -51,6 +52,7 @@ const CONTENT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.
 const SOURCES = [
   { n: 1, file: "tutorial.md", prefix: "" },
   { n: 2, file: "tutorial-2.md", prefix: "2-" },
+  { n: 3, file: "tutorial-3.md", prefix: "3-" },
 ];
 
 /**

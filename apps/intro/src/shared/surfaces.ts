@@ -125,7 +125,7 @@ export const LessonRef = z.object({
 });
 export type LessonRef = z.infer<typeof LessonRef>;
 
-/** A page of a tutorial: "intro", "01" … "10", "next-steps", or the second's "2-intro", "2-01" … */
+/** A page of a tutorial: "intro", "01" … "10", "next-steps", or a later one's "2-intro", "3-01" … */
 export const TutorialRef = z.object({ id: z.string(), label: z.string(), title: z.string() });
 export type TutorialRef = z.infer<typeof TutorialRef>;
 
@@ -284,8 +284,9 @@ export const welcomeScreen = defineSurface({
   // 11 the story in place of the sections: today, how, and what you get,
   // 12 a chatbot beside the app against an app the AI runs, after today,
   // 13 how HaiKIT saves tokens, after how it works, 14 the demo's components
-  // in its steps' scenes
-  version: 14,
+  // in its steps' scenes, 15 every tutorial that carries on, the third with
+  // the second
+  version: 15,
   props: z.object({
     /** A short introduction, one paragraph per entry. The first is the lede; the rest close the screen. */
     intro: z.array(z.string()),
@@ -338,8 +339,8 @@ export const welcomeScreen = defineSurface({
       title: z.string(),
       lead: z.string(),
       steps: z.array(TutorialRef),
-      /** The tutorial that carries on from this one: its first page, and how many steps it has. */
-      next: z.object({ title: z.string(), lead: z.string(), first: TutorialRef, steps: z.number() }).optional(),
+      /** The tutorials that carry on from this one, in order: each one's first page, and how many steps it has. */
+      more: z.array(z.object({ title: z.string(), lead: z.string(), first: TutorialRef, steps: z.number() })),
     }),
     /** HaiKIT's reference manual, built into this app: every page, its contents first. */
     reference: z.object({ title: z.string(), lead: z.string(), pages: z.array(ReferenceRef) }),
