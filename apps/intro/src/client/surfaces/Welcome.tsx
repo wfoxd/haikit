@@ -143,7 +143,8 @@ function ReferenceDoor({ reference, open, picked, choose, className }: Panel & {
       <p className={LEAD}>
         <Inline text={reference.lead} />
       </p>
-      <ul className="flex list-none flex-wrap gap-1.5">
+      {/* its buttons, at its foot like the other doors' */}
+      <ul className="mt-auto flex list-none flex-wrap gap-1.5">
         {reference.pages.map((page) => (
           <li key={page.id}>
             <Button
