@@ -243,11 +243,15 @@ None of these can be changed without changing HaiKIT's code.
 
 ### Limits that don't exist
 
-- **Request bodies** have no size limit, and their content type isn't
-  checked (see [HTTP routes and the wire](http.md#requests)).
+- **A request body's content type** isn't checked by `nodeHandler` (see
+  [HTTP routes and the wire](http.md#requests)). A gate may check it, as
+  `@haikit/auth`'s does, refusing a POST that isn't JSON with 415 (see
+  [Sign-in and ownership](auth.md#the-gate)). Its size is limited, by
+  `maxBodyBytes` (see [`nodeHandler`](#nodehandler-haikitserver) above).
 - **`memoryStore`'s `publish`** has no message size limit.
-- **Conversations** aren't limited in number: any request can create one
-  (see [HTTP routes and the wire](http.md#security-and-proxies)).
+- **Conversations** aren't limited in number: any request can create one,
+  or behind a gate, any request it admits (see
+  [HTTP routes and the wire](http.md#security-and-proxies)).
 - **Nothing removes** old conversations, or `memoryStore`'s orphaned
   payloads (see [Stores](stores.md#cleaning-up)).
 
