@@ -90,12 +90,12 @@ interface CookieOptions {
 | `jwt.issuer` | none | When set, a token must carry this `iss`, and `signIn`'s tokens do |
 | `jwt.audience` | none | When set, a token's `aud` must include this, or one of these, and `signIn`'s tokens carry it |
 | `jwt.algorithms` | `["HS256"]` with a secret, plus `["RS256", "ES256", "EdDSA"]` with a JWKS | The algorithms a token may be signed with |
-| `jwt.userClaim` | `"sub"` | The claim that names the user. `signIn`'s tokens carry the user in `sub`, and in this claim too when it's another |
+| `jwt.userClaim` | `"sub"` | The claim that names the user. `signIn`'s tokens carry the user in `sub`, and in this claim too when it's another. It can't be one every token sets for itself, such as `iss`, which would name every user the same |
 | `jwt.ttlMs` | `604_800_000` (7 days) | How long a token `signIn` issues lasts, rounded down to whole seconds, and its cookie's `Max-Age` |
 | `jwt.clockToleranceMs` | `5_000` | How far the issuer's clock and this server's may differ when `exp` and `nbf` are checked. A finite number, at least 0 |
 | `cookie.name` | `"__Host-haikit_token"`, or `"haikit_token"` when `secure` is `false` | The cookie the token is set in and read from |
 | `cookie.secure` | `true` | `false` sends the cookie without `Secure`, so it works over plain http, as on `http://localhost` in Safari, which keeps no `Secure` cookie there. Never set it for production. It's never inferred from a request, such as from `x-forwarded-proto` |
-| `origins` | `[]` | Origins a POST that carries the cookie may come from, besides the request's own host, such as `"https://admin.example.com"` (see [The gate](#the-gate)) |
+| `origins` | `[]` | Origins a POST that carries the cookie may come from, besides the request's own host, such as `"https://admin.example.com"` (see [The gate](#the-gate)). Behind a proxy that rewrites `Host`, put the public origin here |
 
 An HS algorithm is only ever checked against the secrets, and any other
 algorithm only against the JWKS. So a token signed with HS256 using the
@@ -114,6 +114,7 @@ provider's public key as the secret, a classic forgery, is refused.
 | A secret, but no HS algorithm allowed | `createAuth: jwt.secret is given, but jwt.algorithms allows no HS algorithm` |
 | A `jwks` that isn't a URL | `createAuth: jwt.jwks must be a URL` |
 | A `ttlMs` under 1000, or not finite | `createAuth: jwt.ttlMs must be at least 1000` |
+| A `userClaim` that's `iss`, `aud`, `exp`, `nbf`, `iat`, `jti` or `auth_time` | `createAuth: jwt.userClaim can't be "<name>", a claim every token sets for itself` |
 | A `clockToleranceMs` that's negative, `NaN` or infinite, which would stop `exp` and `nbf` being checked | `createAuth: jwt.clockToleranceMs must be a finite number, at least 0` |
 | A cookie name with a character a cookie name can't have | `createAuth: cookie.name isn't a valid cookie name` |
 | A `__Host-` name with `secure: false` | `createAuth: a __Host- cookie must be secure` |
@@ -277,7 +278,8 @@ asks `/auth/me` as it opens stays signed in for as long as it's opened at
 least once every `ttlMs`. A provider's tokens are renewed by the provider.
 A client that sends them as Bearer tokens should fetch a fresh one for each
 request (see [`createChat`'s `fetch`](client.md#createchat)): an events
-stream ends at its token's `exp`, and its reconnect then takes the new one.
+stream ends when its token stops being accepted, `clockToleranceMs` after its
+`exp`, and its reconnect then takes the new one.
 
 ## The gate
 
@@ -294,8 +296,10 @@ stream ends at its token's `exp`, and its reconnect then takes the new one.
 3. **On a POST that carries the cookie, where it came from.** Refused with
    **403** `this request came from another site` when:
    - its `Origin` header is present and is neither listed in `origins` nor
-     names the request's own `Host`, or the first `x-forwarded-host`. A page
-     can't forge any of these headers;
+     names the request's own `Host`. A page can't forge either header.
+     `x-forwarded-host` isn't trusted, since a page's script can set it where
+     the app's CORS lets it: behind a proxy that rewrites `Host`, list the
+     public origin in `origins`;
    - its `Origin` is `null`, as from a sandboxed frame or a file;
    - it has no `Origin`, and a `sec-fetch-site` other than `same-origin` or
      `none`.
@@ -304,7 +308,8 @@ stream ends at its token's `exp`, and its reconnect then takes the new one.
    a browser sends, passes. A Bearer token is never sent by a browser on its
    own, so a request carrying one skips this check, and may come from
    another origin, where the app's own CORS allows it.
-4. **Admitted,** as the user's id, until the token's `exp`, in epoch ms.
+4. **Admitted,** as the user's id, until the token stops being accepted:
+   its `exp` plus `clockToleranceMs`, in epoch ms.
 
 `gate.allows(principal, id)` is whether `ownerOf(id)` is `principal`.
 `gate.created(principal, id)` is `claim(id, principal)`.

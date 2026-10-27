@@ -72,6 +72,12 @@ console.log("\ncreateAuth");
   check("a jwks that isn't a URL", throws(() => createAuth({ store, jwt: { jwks: "not a url" } }), "createAuth: jwt.jwks must be a URL"));
   check("a ttlMs under a second", throws(() => createAuth({ store, jwt: { secret: SECRET, ttlMs: 999 } }), "createAuth: jwt.ttlMs must be at least 1000"));
   check(
+    "a userClaim that every token sets for itself, which would name every user the same",
+    ["iss", "aud", "exp", "nbf", "iat", "jti", "auth_time"].every((userClaim) =>
+      throws(() => createAuth({ store, jwt: { secret: SECRET, issuer: "https://app.test", userClaim } }), `createAuth: jwt.userClaim can't be "${userClaim}", a claim every token sets for itself`),
+    ),
+  );
+  check(
     "a clock tolerance that's negative, NaN or infinite, which would stop exp and nbf being checked",
     [-1, NaN, Infinity].every((clockToleranceMs) =>
       throws(() => createAuth({ store, jwt: { secret: SECRET, clockToleranceMs } }), "createAuth: jwt.clockToleranceMs must be a finite number, at least 0"),
@@ -278,14 +284,18 @@ console.log("\ngate");
   check("no token: 401 sign in to continue", cases.nothing.ok === false && cases.nothing.status === 401 && cases.nothing.error === "sign in to continue");
   check("a bad token: 401, without saying why", cases.invalid.status === 401 && cases.invalid.error === "your sign-in has expired or is invalid");
   check("an empty cookie counts as none", cases.empty.status === 401 && cases.empty.error === "sign in to continue");
-  check("a JSON POST from this site, with the cookie: admitted as its user, until its exp", cases.sameSite.ok && cases.sameSite.principal === "ada" && cases.sameSite.until === exp * 1000);
+  check(
+    "a JSON POST from this site, with the cookie: admitted as its user, until its exp plus the clock tolerance, when it stops being accepted",
+    cases.sameSite.ok && cases.sameSite.principal === "ada" && cases.sameSite.until === exp * 1000 + 5_000,
+  );
   check("…and one with no Origin, as a client that isn't a browser sends", cases.noOrigin.ok);
   check("a POST that isn't JSON: 415", [cases.textPlain, cases.noType].every((c) => c.status === 415 && c.error === "the request body must be sent as application/json"));
   check(
     "the cookie from another site, a null origin, or a cross-site fetch: 403",
     [cases.crossSite, cases.nullOrigin, cases.fetchSite].every((c) => c.status === 403 && c.error === "this request came from another site"),
   );
-  check("an origin listed in origins, or matching x-forwarded-host, is this site", cases.listed.ok && cases.forwarded.ok);
+  check("an origin listed in origins is this site", cases.listed.ok);
+  check("x-forwarded-host isn't trusted, since a page's script can set it: list the public origin instead", cases.forwarded.status === 403);
   check("a Bearer token may come from another origin", cases.bearerElsewhere.ok && cases.bearerElsewhere.principal === "ada");
   check("a Bearer header is used before the cookie", cases.bearerFirst.status === 401);
   check("a GET needs no content type", cases.events.ok);

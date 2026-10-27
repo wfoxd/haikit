@@ -57,7 +57,7 @@ export interface JwtOptions {
    * JWKS, so neither key can stand in for the other.
    */
   algorithms?: string[];
-  /** The claim that names the user. Default `"sub"`. */
+  /** The claim that names the user. Default `"sub"`. Not one every token sets for itself, such as `iss`. */
   userClaim?: string;
   /** How long a token `signIn` issues lasts, and its cookie. Default 7 days. */
   ttlMs?: number;
@@ -82,7 +82,8 @@ export interface AuthOptions {
   cookie?: CookieOptions;
   /**
    * Origins a POST carrying the cookie may come from, besides the request's
-   * own host, such as `"https://app.example.com"`.
+   * own host, such as `"https://app.example.com"`. Behind a proxy that
+   * rewrites `Host`, the public origin goes here.
    */
   origins?: string[];
 }
@@ -188,6 +189,10 @@ export function createAuth(options: AuthOptions): Auth {
   const ttlMs = jwt.ttlMs ?? TTL_MS;
   if (!Number.isFinite(ttlMs) || ttlMs < 1_000) throw new Error("createAuth: jwt.ttlMs must be at least 1000");
   const userClaim = jwt.userClaim ?? "sub";
+  // one every token sets for itself, such as iss, would name every user the same
+  if (userClaim !== "sub" && REGISTERED.includes(userClaim)) {
+    throw new Error(`createAuth: jwt.userClaim can't be "${userClaim}", a claim every token sets for itself`);
+  }
   // NaN or Infinity here would quietly stop exp and nbf being checked at all
   const clockToleranceMs = jwt.clockToleranceMs ?? CLOCK_TOLERANCE_MS;
   if (!Number.isFinite(clockToleranceMs) || clockToleranceMs < 0) {
@@ -339,8 +344,11 @@ export function createAuth(options: AuthOptions): Auth {
 
   /**
    * Whether a request came from a page of this site. A browser always sends
-   * `Origin` on a POST from a page, and a page can't forge it, nor `Host` or
-   * `x-forwarded-host`. A client that isn't a browser sends none, and passes.
+   * `Origin` on a POST from a page, and a page can't forge it, nor `Host`.
+   * `x-forwarded-host` isn't trusted: a page's script can set it, where the
+   * app's CORS lets it. Behind a proxy that rewrites `Host`, the public
+   * origin goes in `origins`. A client that isn't a browser sends no
+   * `Origin`, and passes.
    */
   function fromThisSite(headers: Headers): boolean {
     const origin = first(headers.origin);
@@ -355,8 +363,7 @@ export function createAuth(options: AuthOptions): Auth {
     } catch {
       return false; // "null", from a sandboxed frame or a file
     }
-    const forwarded = first(headers["x-forwarded-host"])?.split(",")[0].trim();
-    return host === first(headers.host) || (forwarded !== undefined && host === forwarded);
+    return host === first(headers.host);
   }
 
   const isJson = (headers: Headers) => first(headers["content-type"])?.split(";")[0].trim().toLowerCase() === "application/json";
@@ -375,7 +382,8 @@ export function createAuth(options: AuthOptions): Auth {
         if (!isJson(headers)) return { ok: false, status: 415, error: NOT_JSON };
         if (found.from === "cookie" && !fromThisSite(headers)) return { ok: false, status: 403, error: CROSS_SITE };
       }
-      return { ok: true, principal: who.id, ...(typeof who.payload.exp === "number" ? { until: who.payload.exp * 1000 } : {}) };
+      // until the token stops being accepted: its exp, give or take the clock tolerance
+      return { ok: true, principal: who.id, ...(typeof who.payload.exp === "number" ? { until: who.payload.exp * 1000 + clockToleranceMs } : {}) };
     },
     async allows(principal, conversationId) {
       return (await ownerOf(conversationId)) === principal;
