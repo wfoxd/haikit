@@ -32,9 +32,10 @@ software. You steer.":
 5. **Why it matters.** What you get, for the people who use the software and for
    the team that builds it.
 
-It ends with the place to start, beside a Tutorial panel whose steps open
-HaiKIT's tutorials right here, and under them a Reference panel whose buttons
-open each page of HaiKIT's reference manual. The text lives in
+It ends with **Start here**: three ways in, side by side where there's room.
+**Course** names its two parts and starts lesson 1.1 or opens the course map;
+**Tutorials** lists HaiKIT's three tutorials in order, each opening right
+here; **Reference** has a button for each page of HaiKIT's reference manual. The text lives in
 `src/server/course/index.ts`, and the drawings are SVG, drawn by React
 components in `src/client/drawings/`: the illustrations, the architecture
 diagram, and Rebook's components, drawn small. A welcome saved before this
@@ -112,9 +113,8 @@ Each page is one the visitor reads in the app, with the tutorial's code (each
 file labelled, numbered lines linked to their notes), callouts, and Previous /
 Next buttons; each tutorial's last page leads on to the next. Each page is a
 HaiKIT surface: the browser holds the whole page, and the model gets a short
-digest of it. The welcome screen's Tutorial panel lists the first tutorial's
-steps and offers the second and third after it, and the course map lists all
-three.
+digest of it. The welcome screen lists the three tutorials, and the course
+map and the contents rail list every page of each.
 
 `content/tutorial.md`, `content/tutorial-2.md` and `content/tutorial-3.md` are
 copies of `docs/tutorial.md`, `docs/tutorial-2.md` and `docs/tutorial-3.md`
@@ -143,8 +143,8 @@ the same page scrolls there in the browser. A link to another page, or
 Previous, Next or Contents at its foot, is the page's answer: the guide shows
 the page it names, opened at the section the link points to. A page goes only
 where its own links and buttons lead, and once the reader has moved on, its
-links to other pages are plain text again. The welcome screen's Reference
-panel, the contents rail, and typing “reference” or “reference page tools” open a page
+links to other pages are plain text again. The welcome screen's Reference,
+the contents rail, and typing “reference” or “reference page tools” open a page
 too.
 
 `content/reference/` is a copy of `docs/reference/`, refreshed by

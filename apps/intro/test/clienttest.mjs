@@ -113,11 +113,23 @@ try {
     check("while it's on its way, nothing else can be chosen", buttons(w.el).every((b) => b.disabled));
     await w.release();
     check("refused, the screen stays live and the pick is let go", !button(w.el, "See the course map").disabled && !w.el.querySelector("[data-picked]"));
-    await click(buttons(w.el).find((b) => b.textContent.startsWith("01")));
-    check("a tutorial step sends tutorial: its id", JSON.stringify(w.sent.at(-1)) === '["tutorial","01"]');
+    const start = [...w.el.querySelectorAll("p")].find((k) => k.textContent === "Start here")?.parentElement;
+    const doors = [...(start?.querySelectorAll("section > header > h3") ?? [])].map((h) => h.textContent);
+    check("Start here has three ways in, side by side with room: the course, the tutorials and the manual", JSON.stringify(doors) === '["Course","Tutorials","Reference"]');
+    check(
+      "the course names its parts by their lessons, and how long each takes",
+      current.parts.every((part) => text(w.el).includes(`${part.first}–${part.last}${part.title}${part.minutes} min`)) &&
+        text(w.el).includes(`${current.parts.length} parts, 14 lessons, about`),
+    );
+    check(
+      "the tutorials are numbered in order, each with its steps beside its title",
+      text(w.el).includes(`1${current.tutorial.title} 10 steps`) && current.tutorial.more.every((t, i) => text(w.el).includes(`${i + 2}${t.title} ${t.steps} steps`)) && text(w.el).includes("3 tutorials, 28 steps"),
+    );
+    await click(button(w.el, current.tutorial.title));
+    check("the first tutorial's title sends tutorial: intro", JSON.stringify(w.sent.at(-1)) === '["tutorial","intro"]');
     await w.release();
     // each tutorial that carries on is offered after the first, and opens at its introduction
-    await click(buttons(w.el).find((b) => b.textContent.includes("Who's asking")));
+    await click(button(w.el, "Who's asking"));
     check(
       "the tutorials after the first are offered in turn, and the third opens at its introduction",
       text(w.el).indexOf("Tell them later") < text(w.el).indexOf("Who's asking") && JSON.stringify(w.sent.at(-1)) === '["tutorial","3-intro"]',
