@@ -51,7 +51,8 @@ createServer(async (req, res) => {
 ```
 
 [`examples/hello-auth`](https://github.com/wfoxd/haikit/tree/main/examples/hello-auth) is a whole app built this
-way, with a name-only sign-in page.
+way, with a name-only sign-in page, and the third tutorial,
+[Who's asking](../tutorial-3.md), builds it step by step.
 
 ## `createAuth`
 

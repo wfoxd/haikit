@@ -131,10 +131,13 @@ export function scripted(): ModelAdapter {
 
       // The elicit path. Parks the turn until the user clicks a row.
       if (/greet|hello|hi\b|hey|language|world|start/.test(text)) {
-        onTextDelta("Pick a language.");
+        // the name welcome found, as any model would read it from the history
+        const name = JSON.stringify(messages).match(/Signed in as (.+?)\."/)?.[1];
+        const line = name ? `Hi ${name}! Pick a language.` : "Pick a language.";
+        onTextDelta(line);
         return {
           content: [
-            { type: "text", text: "Pick a language." },
+            { type: "text", text: line },
             toolUse("list_greetings", {}),
           ],
           stop_reason: "tool_use",
