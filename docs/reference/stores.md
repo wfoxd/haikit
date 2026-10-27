@@ -104,7 +104,7 @@ lease**: sets `leaseUntil` to now plus the lease time, and issues a new
 
 Both built-in stores also create a new conversation, with a new id, when
 `id` names one that doesn't exist. The runtime relies on that only for
-`/chat`, `/start` and `/interact`; `hai.update` and `hai.wake` check that a
+`/chat` and `/start`; `/interact`, `hai.update` and `hai.wake` check that a
 conversation exists before loading it.
 
 ### `saveConversation`

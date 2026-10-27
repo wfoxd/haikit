@@ -704,6 +704,48 @@ async function routeChecks() {
       );
       const empty = await post(`${url}/start`, "");
       check("an empty body still counts as {}", empty.status === 200);
+      // past the default 1 MiB: by its declared length, and as a stream that never declared one
+      const big = JSON.stringify({ message: "x".repeat(1_048_576) });
+      const declared = await post(`${url}/chat`, big);
+      const chunks = new ReadableStream({
+        start(c) {
+          for (let i = 0; i < 120; i++) c.enqueue(new TextEncoder().encode("x".repeat(10_000)));
+          c.close();
+        },
+      });
+      const streamed = await fetch(`${url}/chat`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: chunks,
+        duplex: "half",
+        signal: AbortSignal.timeout(5000),
+      });
+      const tooLarge = await Promise.all([declared, streamed].map((r) => r.json().catch(() => ({}))));
+      check(
+        "a body past maxBodyBytes is a 413, saying so, declared or streamed",
+        declared.status === 413 && streamed.status === 413 && tooLarge.every((b) => b.error === "the request body is too large"),
+      );
+      const fits = await post(`${url}/chat`, JSON.stringify({ message: "x".repeat(1_000_000) }));
+      await fits.text();
+      check("a body within maxBodyBytes is read as usual", fits.status === 200);
+      // A click on a conversation that doesn't exist creates none. Counted at
+      // the load, since a conversation made for an unknown id gets an id of
+      // its own, so looking for the one asked for afterwards finds nothing.
+      const load = base.loadConversation;
+      const loads = [];
+      base.loadConversation = (id) => (loads.push(id), load(id));
+      const clicks = await Promise.all(
+        [{ conversationId: "conv_none" }, {}, { conversationId: 7 }].map((ids) =>
+          post(`${url}/interact`, JSON.stringify({ ...ids, handle: "ui_01", action: "choose", value: "x" })),
+        ),
+      );
+      base.loadConversation = load;
+      const unknown = await Promise.all(clicks.map((r) => r.json().catch(() => ({}))));
+      check(
+        "a click on an unknown, missing or non-string conversation id is a 404, saying so",
+        clicks.every((r) => r.status === 404) && unknown.every((b) => b.error === "unknown conversation"),
+      );
+      check("…and loads nothing, so creates nothing", loads.length === 0);
       // a target a URL can't parse, which Node still accepts: raw, since fetch won't send one
       const raw = (target) =>
         new Promise((resolve) => {

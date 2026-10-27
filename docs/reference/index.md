@@ -172,6 +172,7 @@ Every export of every package, with the page that documents it.
 | `HaiConfig` | interface | [The server](server.md) |
 | `memoryStore` | function | [Stores](stores.md) |
 | `nodeHandler` | function | [HTTP routes and the wire](http.md) |
+| `NodeHandlerOptions` | interface | [HTTP routes and the wire](http.md) |
 | `WakeOutcome` | type | [Notices](notices.md) |
 
 `Hai`'s public members are each documented on the page for what they do:
