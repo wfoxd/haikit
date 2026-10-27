@@ -326,7 +326,14 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
   // An admission that lapsed while that was set up is asked again before
   // anything is sent, and a refusal now is answered as the first would have been.
   if (until !== undefined && Date.now() >= until) {
-    const again = await ask();
+    let again;
+    try {
+      again = await ask();
+    } catch (err) {
+      // a gate that fails here is answered as one that fails first, and lets go too
+      forgetWatchers(hai, conversationId, watchers);
+      throw err;
+    }
     if (!again.ok) {
       forgetWatchers(hai, conversationId, watchers);
       return refuse(res, again.status, again.error);
@@ -356,7 +363,10 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
   res.on("close", () => aborter.abort());
 
   // Resolves once the socket has taken what is queued, or the browser has gone.
+  // Writes nothing once the stream is over: a revision's second frame waiting
+  // behind its first must not go out after the admission has run out.
   const write = async (chunk: string) => {
+    if (signal.aborted || res.writableEnded) return;
     if (res.write(chunk)) return;
     await new Promise<void>((resolve) => {
       const done = () => {
