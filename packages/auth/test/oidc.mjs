@@ -259,7 +259,7 @@ console.log("\nthere and back");
         p.code_challenge_method === "S256" &&
         /^[\w-]{43}$/.test(p.code_challenge),
     );
-    check("…and the flow in a cookie of its own: HttpOnly, Lax, 10 minutes", /^haikit_sign_in-[\w-]{8}=[^;]+; Max-Age=600; Path=\/; HttpOnly; SameSite=Lax$/.test(flowLine ?? ""));
+    check("…and the flow in a cookie of its own: HttpOnly, Lax, 10 minutes", /^haikit_sign_in-0=[^;]+; Max-Age=600; Path=\/; HttpOnly; SameSite=Lax$/.test(flowLine ?? ""));
     check("…sealed: nothing in it can be read", !flowLine.includes(p.state) && flowLine.split(".").length === 5);
     check("the provider's settings were read once", idp.discoveries === 1);
 
@@ -277,16 +277,16 @@ console.log("\nthere and back");
     check("an unverified email isn't passed on", bob.sub === "fake:5678" && bob.name === "Bob" && !("email" in bob));
     check("the settings are kept: read once still", idp.discoveries === 1);
 
-    for (const returnTo of ["//evil.example", "https://evil.example", "/\\evil.example", "/%09/evil.example".replace("%09", "\t"), "/" + "a".repeat(2_048)]) {
+    for (const returnTo of ["//evil.example", "https://evil.example", "/\\evil.example", "/%09/evil.example".replace("%09", "\t"), "/" + "a".repeat(512)]) {
       const c = browser();
       const s = await c.get(`/auth/fake?return_to=${encodeURIComponent(returnTo)}`);
       const done = await c.get(pathOf(idp.signIn(s.location)));
       check(`return_to ${JSON.stringify(returnTo.slice(0, 20))}${returnTo.length > 20 ? "…" : ""} goes to /`, done.location === "/");
     }
     const longest = browser();
-    const ok = "/" + "a".repeat(2_047);
+    const ok = "/" + "a".repeat(511);
     const s = await longest.get(`/auth/fake?return_to=${ok}`);
-    check("a return_to of 2,048 characters is kept", (await longest.get(pathOf(idp.signIn(s.location)))).location === ok);
+    check("a return_to of 512 characters is kept", (await longest.get(pathOf(idp.signIn(s.location)))).location === ok);
   } finally {
     server.close();
   }
@@ -310,7 +310,7 @@ console.log("\nfailures");
   try {
     let b = browser();
     let s = await b.get("/auth/fake");
-    check("a secure flow cookie is __Host-haikit_sign_in-{id}, and Secure", s.cookies.some((c) => /^__Host-haikit_sign_in-[\w-]{8}=[^;]+; Max-Age=600; Path=\/; HttpOnly; SameSite=Lax; Secure$/.test(c)));
+    check("a secure flow cookie is __Host-haikit_sign_in-0, and Secure", s.cookies.some((c) => /^__Host-haikit_sign_in-0=[^;]+; Max-Age=600; Path=\/; HttpOnly; SameSite=Lax; Secure$/.test(c)));
     let r = await b.get(pathOf(idp.deny(s.location)));
     check("the user says no: access_denied, at the failureUrl", why(r) === "access_denied" && r.location === "/sign-in?from=fake&sign_in_error=access_denied");
     check("…and no one is signed in", !b.jar.has("__Host-haikit_token") && !b.flows().length);
@@ -577,25 +577,43 @@ console.log("\nedges");
     r = await b.get(pathOf(idp.signIn(s.location)));
     check("…and an escape already there is kept as it is", r.location === "/%E6%97%A5");
     b = browser();
-    s = await b.get(`/auth/fake?return_to=${encodeURIComponent("/" + '"'.repeat(2_047))}`);
-    check("a return_to past 2,048 characters once encoded goes to /, and its cookie fits", s.cookies.every((c) => Buffer.byteLength(c.split(";")[0]) <= 4_096));
+    s = await b.get(`/auth/fake?return_to=${encodeURIComponent("/" + '"'.repeat(200))}`);
+    check("a return_to past 512 characters once encoded goes to /", s.cookies.every((c) => Buffer.byteLength(c.split(";")[0]) <= 1_365));
     r = await b.get(pathOf(idp.signIn(s.location)));
     check("…and the sign-in completes", r.location === "/" && b.jar.has("__Host-haikit_token"));
 
     b = browser();
     for (let i = 0; i < 3; i++) await b.get("/auth/fake");
     check("three sign-ins on their way at once keep a cookie each", b.flows().length === 3);
+    const together = (c) => c.flows().reduce((n, name) => n + Buffer.byteLength(`${name}=${c.jar.get(name)}`), 0);
+    const long = "/" + "a".repeat(511);
     b = browser();
-    const long = "/" + "a".repeat(1_500);
-    const one = await b.get(`/auth/fake?return_to=${long}`);
-    const [oneName] = b.flows();
-    const two = await b.get(`/auth/fake?return_to=${long}`);
-    const together = b.flows().reduce((n, name) => n + Buffer.byteLength(`${name}=${b.jar.get(name)}`), 0);
-    check("two that don't fit in 4,096 bytes together: the earlier one is cleared", two.cookies.some((c) => c.startsWith(`${oneName}=; Max-Age=0;`)) && b.flows().length === 1 && together <= 4_096);
-    r = await b.get(pathOf(idp.signIn(one.location)));
-    check("…so its way back is expired", r.location === "/?sign_in_error=expired");
-    r = await b.get(pathOf(idp.signIn(two.location)));
-    check("…and the later one signs in", r.location === long);
+    const four = [];
+    for (let i = 0; i < 4; i++) four.push(await b.get(`/auth/fake?return_to=${long}`));
+    check("a fourth takes the cookie of the earliest", four[3].cookies.some((c) => c.startsWith("__Host-haikit_sign_in-0=") && !c.includes("Max-Age=0;")) && b.flows().length === 3 && together(b) <= 4_096);
+    r = await b.get(pathOf(idp.signIn(four[0].location)));
+    check("…so the earliest's way back is expired", r.location === "/?sign_in_error=expired");
+    let signedIn = 0;
+    for (const started of four.slice(1)) signedIn += (await b.get(pathOf(idp.signIn(started.location)))).location === long ? 1 : 0;
+    check("…and the other three sign in", signedIn === 3 && !b.flows().length);
+
+    // which is earliest, by when each expires: the cookie that was overwritten last keeps its place in the order
+    const key = new Uint8Array(hkdfSync("sha256", new TextEncoder().encode(SECRET), new Uint8Array(0), "haikit/auth sign-in flow", 32));
+    const sealedAt = (seconds) =>
+      new EncryptJWT({ p: "fake", f: { state: "s", nonce: "n", verifier: "v" }, r: "/" })
+        .setProtectedHeader({ alg: "dir", enc: "A256GCM" })
+        .setExpirationTime(Math.floor(Date.now() / 1000) + seconds)
+        .encrypt(key);
+    b = browser();
+    for (const [slot, seconds] of [[0, 590], [1, 300], [2, 450]]) b.jar.set(`__Host-haikit_sign_in-${slot}`, await sealedAt(seconds));
+    s = await b.get("/auth/fake");
+    check("…the earliest by when it expires, not by where the browser sends it", s.cookies.some((c) => c.startsWith("__Host-haikit_sign_in-1=")) && b.flows().length === 3);
+
+    b = browser();
+    const seven = await Promise.all(Array.from({ length: 7 }, () => b.get(`/auth/fake?return_to=${long}`)));
+    check("seven starts at once, from no cookies: one cookie, within 4,096 bytes", seven.every((x) => x.status === 303) && b.flows().length === 1 && together(b) <= 4_096);
+    for (let i = 0; i < 7; i++) await Promise.all(Array.from({ length: 7 }, () => b.get(`/auth/fake?return_to=${long}`)));
+    check("…and however many more race, never more than three, within 4,096 bytes", b.flows().length === 3 && together(b) <= 4_096);
 
     let logged = await quietly(async () => (r = await browser().get("/auth/huge")));
     check("a flow too large for a cookie: failed, logged, and no cookie", r.location === "/?sign_in_error=failed" && r.cookies.length === 0 && logged.some((l) => l.includes("its flow is too large for a cookie")));

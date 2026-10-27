@@ -434,28 +434,28 @@ for a provider that doesn't speak OpenID Connect.
      `\` as `/` and drops a tab, so either could make a path into another
      site. Then whatever isn't printable ASCII, and `"`, is percent-encoded,
      so a `Location` header can carry it, and the result must be at most
-     2,048 characters. Escapes already there are kept as they are. Anything
+     512 characters. Escapes already there are kept as they are. Anything
      else, or none, is `/`.
    - `start()` is called. The answer is **303** to the URL it returned, with
-     `cache-control: no-store`, and a new flow cookie holding the provider's
+     `cache-control: no-store`, and a flow cookie holding the provider's
      name, its flow and `return_to`.
-   - A flow cookie whose name and value come to more than 4,096 bytes would
-     be dropped by a browser. Sealed again with `return_to` as `/`, it's set
-     if it then fits. If it still doesn't, it's **303** to `failureUrl` with
+   - The flow cookie is one of three (see [The flow cookie](#the-flow-cookie)):
+     the first the request didn't carry, or, when it carried all three, the
+     one whose sign-in started earliest, by its `exp`. That sign-in's way back
+     is then `expired`. A browser that overwrites a cookie keeps its place
+     in the order it sends them (RFC 6265, 5.3), so that order can't say.
+   - A flow cookie whose name and value come to more than 1,365 bytes, a
+     third of the 4,096 a browser keeps for one cookie, would let the three
+     together pass it. Sealed again with `return_to` as `/`, it's set if it
+     then fits. If it still doesn't, it's **303** to `failureUrl` with
      `sign_in_error=failed`, and logged as
      `[haikit] auth: a sign-in with <name> couldn't start: its flow is too large for a cookie`.
-   - The browser's other flow cookies are kept while they all, the new one
-     included, come to at most 4,096 bytes. Past that, the earliest started
-     are cleared, and their way back is `expired`. Browsers send cookies of
-     one path in the order they were set (RFC 6265, 5.4), and that order is
-     the one used.
    - If `start()` throws, as when the provider's settings can't be read: a
      **303** to `failureUrl` with `sign_in_error=failed`, and no cookie. It's
      logged as `[haikit] auth: a sign-in with <name> couldn't start:`.
 2. **`GET` the path of `redirectUri`**, where the provider sends the browser
    back:
-   - The browser's flow cookies are tried, the newest first. One that
-     doesn't open (sealed with no secret of this server's, altered, or past
+   - The browser's flow cookies are tried in turn. One that doesn't open (sealed with no secret of this server's, altered, or past
      its 10 minutes), or is another provider's, is passed over and left as
      it is.
    - For each of this provider's, `finish(url, flow)`:
@@ -485,9 +485,9 @@ throws outside these steps is answered **500**, as `/auth/me` is.
 What a sign-in needs to finish travels with the browser, so any of several
 servers can finish what another started:
 
-- **Name:** `__Host-haikit_sign_in-<id>`, or `haikit_sign_in-<id>` when
-  `cookie.secure` is `false`. `<id>` is 8 random base64url characters, new
-  for each sign-in, so each has a cookie of its own. It isn't configurable.
+- **Name:** `__Host-haikit_sign_in-0`, `-1` or `-2`, or `haikit_sign_in-0`,
+  `-1` or `-2` when `cookie.secure` is `false`: one for each sign-in on its
+  way, and three at most. It isn't configurable.
 - **Attributes:** `<name>=<sealed>; Max-Age=600; Path=/; HttpOnly;
   SameSite=Lax; Secure`, without `Secure` when `cookie.secure` is `false`.
   Cleared with `Max-Age=0`.
@@ -506,11 +506,13 @@ how a provider sends the browser back. A provider that sent it back by POST
 default, `query`.
 
 **Several sign-ins at once.** Each tab's sign-in has its own cookie, and
-each way back finds and clears only its own, so they finish in any order.
-Together they stay within 4,096 bytes: a sign-in that doesn't fit beside the
-earlier ones clears the earliest (see
-[Signing in, there and back](#signing-in-there-and-back)). A few with short
-`return_to`s fit easily.
+each way back finds and clears only its own, so up to three finish in any
+order. A fourth takes the earliest one's cookie. Two started at the same
+moment, before either's cookie is set, see the same free one, and the later
+answer's flow is the one kept: the other's way back is `expired`. However
+many race, a browser holds at most three flow cookies of at most 1,365 bytes
+each, so they never come to more than 4,096 bytes together, and can't push
+its requests past a server's header limit.
 
 ### When it fails
 
@@ -525,7 +527,7 @@ code:
 | --- | --- |
 | `access_denied` | The user said no at the provider |
 | `refused` | The app's `user` returned `null`, or `google`'s `hostedDomain` didn't match. A custom provider's `{ error }` that isn't one of the three is `refused` too |
-| `expired` | No flow cookie of this provider's that this is the answer to: none, one that doesn't open or is past its 10 minutes, one cleared to make room for a later sign-in, or one already ended, as when the way back is opened again |
+| `expired` | No flow cookie of this provider's that this is the answer to: none, one that doesn't open or is past its 10 minutes, one a later sign-in has taken (a fourth at once, or one started at the same moment), or one already ended, as when the way back is opened again |
 | `failed` | Anything else: the provider's settings or its token endpoint unreachable, an ID token that doesn't check out, `user` or `signIn` throwing. Logged, with the reason |
 
 ### `oidc`
@@ -802,7 +804,8 @@ leaves its row, which no request can reach: its id was the conversation's.
 | Revocation granularity | 1 s: a sign-in in the second `revoke` ran in still counts |
 | JWKS: refetched once older than / for an unknown key id at most every / fetch timeout | 600,000 / 30,000 / 5000 (`jose`'s defaults) |
 | How long a sign-in through a provider may take, and its flow cookie's `Max-Age` | 600,000 |
-| Longest `return_to` kept | 2,048 characters, percent-encoded |
-| Largest flow cookie, name and value; and a browser's flow cookies, together | 4,096 bytes |
+| Longest `return_to` kept | 512 characters, percent-encoded |
+| Sign-ins a browser may have on their way at once | 3: a fourth takes the earliest's flow cookie |
+| Largest flow cookie, name and value | 1,365 bytes, so three come to at most 4,096 |
 | `oidc`: reading the provider's settings, and exchanging the code, each give up after | 10,000 |
 | `oidc`: the provider's settings are kept | for the process's life, once read |
