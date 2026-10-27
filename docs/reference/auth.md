@@ -136,6 +136,7 @@ provider's public key as the secret, a classic forgery, is refused.
 | Two providers of one `name` | `createAuth: two providers are named "<name>"` |
 | A provider `redirectUri` that isn't a URL | `createAuth: provider "<name>"'s redirectUri isn't a URL` |
 | Two providers whose `redirectUri` has the same path | `createAuth: providers "<first>" and "<second>" both come back to <path>` |
+| A `cookie.name` that's the flow cookie's, `__Host-haikit_sign_in` (or `haikit_sign_in` when not `secure`), with `providers` | `createAuth: cookie.name can't be <name>, the cookie a sign-in through a provider is kept in` |
 | A provider `failureUrl` that isn't a path on this site (see [Signing in, there and back](#signing-in-there-and-back)) | `createAuth: provider "<name>"'s failureUrl must be a path on this site, such as /sign-in` |
 
 ## `Auth`
@@ -518,6 +519,8 @@ interface OidcOptions {
   redirectUri: string;
   scopes?: string[];
   params?: Record<string, string>;
+  tokenEndpointAuthMethod?: "client_secret_basic" | "client_secret_post";
+  maxAgeMs?: number;
   user?(profile: OidcProfile): SignInAs | null | Promise<SignInAs | null>;
   failureUrl?: string;
   fetch?: typeof globalThis.fetch;
@@ -544,6 +547,8 @@ the authorization code flow, with PKCE, `state` and `nonce`, on
 | `redirectUri` | required | Where the provider sends the browser back, exactly as registered: https, or http on `localhost`, `127.0.0.1` or `[::1]`, and no `#fragment`. It's never worked out from the request, whose `Host` header can say anything |
 | `scopes` | `["openid", "email", "profile"]` | What to ask for. `openid` is always asked for |
 | `params` | none | More parameters for the provider's sign-in page, such as `{ prompt: "consent" }` |
+| `tokenEndpointAuthMethod` | `"client_secret_basic"`, unless the provider's settings list `"client_secret_post"` and not it | How the client proves itself when it exchanges the code, as registered with the provider. A provider's settings say what it supports, not what the client was registered for |
+| `maxAgeMs` | none: no limit | How long ago the user may have last signed in at the provider. Sent as `max_age`, in whole seconds (rounded down), and an ID token whose `auth_time` is older than that, or missing, is refused |
 | `user` | `{name}:{sub}`, with the default claims | Whom the user signs in as. A string: that user id, with the default claims. An object: that user id, and exactly those claims. `null`: refused |
 | `failureUrl` | `"/"` | A path on this site a failed sign-in is sent to |
 | `fetch` | the global `fetch` | Reads the provider's settings and exchanges the code: for a proxy, or a test's stand-in provider |
@@ -563,7 +568,8 @@ why it, and not the email, is the default user id.
    as base64url, and the verifier's `S256` challenge.
 3. Send the browser to the provider's `authorization_endpoint` with `params`,
    then `client_id`, `redirect_uri`, `response_type=code`, `scope`, `state`,
-   `nonce`, `code_challenge` and `code_challenge_method=S256`.
+   `nonce`, `code_challenge`, `code_challenge_method=S256`, and `max_age`
+   with `maxAgeMs`.
 4. Keep `{ state, nonce, verifier }` in the flow.
 
 **`finish()`:**
@@ -572,14 +578,15 @@ why it, and not the email, is the default user id.
 2. An `error=access_denied`: `access_denied`. Any other error, or a response
    that doesn't check out: thrown, so `failed`.
 3. Exchange the code at the `token_endpoint`, with the verifier and
-   `redirect_uri`. The client authenticates with `client_secret_basic`,
-   unless the provider's settings list `client_secret_post` and not it.
+   `redirect_uri`. The client authenticates as `tokenEndpointAuthMethod`
+   says.
 4. Check the ID token, which must be there:
    - its `iss` is the issuer;
    - its `aud` includes `clientId`, and if it names several, its `azp` is
      `clientId`;
    - it hasn't expired;
    - its `nonce` is the flow's;
+   - with `maxAgeMs`, it has an `auth_time` no older than `max_age`;
    - its `alg` is one the provider's settings list.
 
    Its signature isn't checked. It came straight from the token endpoint,
@@ -600,7 +607,9 @@ Reading the settings and exchanging the code each give up after 10,000 ms.
 | An empty `clientSecret` | `oidc: clientSecret must be a non-empty string` |
 | A `redirectUri` that isn't a URL | `oidc: redirectUri must be a URL, such as https://app.example.com/auth/google/callback` |
 | A `redirectUri` that's http anywhere but on `localhost`, `127.0.0.1` or `[::1]`, any other scheme, or one with a `#fragment` | `oidc: redirectUri must be https, or http on localhost, with no #fragment` |
-| `params` that set `client_id`, `redirect_uri`, `response_type`, `response_mode`, `scope`, `state`, `nonce`, `code_challenge` or `code_challenge_method` | `oidc: params can't set <param>: the sign-in sets it` |
+| `params` that set `client_id`, `redirect_uri`, `response_type`, `response_mode`, `scope`, `state`, `nonce`, `code_challenge`, `code_challenge_method` or `max_age` (which `maxAgeMs` sets, and checks) | `oidc: params can't set <param>: the sign-in sets it` |
+| A `tokenEndpointAuthMethod` that's neither | `oidc: tokenEndpointAuthMethod must be client_secret_basic or client_secret_post` |
+| A `maxAgeMs` that's negative, `NaN` or infinite | `oidc: maxAgeMs must be a finite number, at least 0` |
 
 A bad `failureUrl` is refused by `createAuth`, which uses it.
 

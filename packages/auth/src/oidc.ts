@@ -47,6 +47,18 @@ export interface OidcOptions {
   /** More parameters for the provider's sign-in page, such as `{ prompt: "consent" }`. */
   params?: Record<string, string>;
   /**
+   * How the client proves itself when it exchanges the code, as registered
+   * with the provider. Default `"client_secret_basic"`, unless the provider's
+   * settings list `"client_secret_post"` and not it.
+   */
+  tokenEndpointAuthMethod?: "client_secret_basic" | "client_secret_post";
+  /**
+   * How long ago the user may have last signed in at the provider. Sent as
+   * `max_age`, in whole seconds, and an ID token whose `auth_time` is older,
+   * or missing, is refused. Default: no limit.
+   */
+  maxAgeMs?: number;
+  /**
    * Whom the user signs in as, or null to refuse them. Default: the user id
    * `{name}:{sub}`, with their `name`, and their `email` if the provider has
    * verified it.
@@ -74,7 +86,8 @@ const GOOGLE = "https://accounts.google.com";
 const REQUEST_TIMEOUT_MS = 10_000;
 const NAME = /^[a-z][a-z0-9-]{0,31}$/;
 /** The parameters the flow sets itself. */
-const FLOW_PARAMS = ["client_id", "redirect_uri", "response_type", "response_mode", "scope", "state", "nonce", "code_challenge", "code_challenge_method"];
+const FLOW_PARAMS = ["client_id", "redirect_uri", "response_type", "response_mode", "scope", "state", "nonce", "code_challenge", "code_challenge_method", "max_age"];
+const AUTH_METHODS = ["client_secret_basic", "client_secret_post"];
 const LOOPBACK = ["localhost", "127.0.0.1", "[::1]"];
 
 /** Sign in with an OpenID Connect provider. */
@@ -103,6 +116,13 @@ export function oidc(options: OidcOptions): SignInProvider {
   for (const param of Object.keys(options.params ?? {})) {
     if (FLOW_PARAMS.includes(param)) throw new Error(`oidc: params can't set ${param}: the sign-in sets it`);
   }
+  const { tokenEndpointAuthMethod, maxAgeMs } = options;
+  if (tokenEndpointAuthMethod !== undefined && !AUTH_METHODS.includes(tokenEndpointAuthMethod)) {
+    throw new Error("oidc: tokenEndpointAuthMethod must be client_secret_basic or client_secret_post");
+  }
+  if (maxAgeMs !== undefined && !(Number.isFinite(maxAgeMs) && maxAgeMs >= 0)) throw new Error("oidc: maxAgeMs must be a finite number, at least 0");
+  // max_age is in whole seconds; it's sent, and checked against auth_time, as that
+  const maxAge = maxAgeMs === undefined ? undefined : Math.floor(maxAgeMs / 1000);
   const scope = [...new Set(["openid", ...(options.scopes ?? ["openid", "email", "profile"])])].join(" ");
   const user = options.user ?? defaultUser;
   const client: oauth.Client = { client_id: clientId };
@@ -145,6 +165,7 @@ export function oidc(options: OidcOptions): SignInProvider {
         nonce,
         code_challenge: await oauth.calculatePKCECodeChallenge(verifier),
         code_challenge_method: "S256",
+        ...(maxAge === undefined ? {} : { max_age: String(maxAge) }),
       })) {
         url.searchParams.set(param, value);
       }
@@ -162,13 +183,16 @@ export function oidc(options: OidcOptions): SignInProvider {
         if (err instanceof oauth.AuthorizationResponseError && err.error === "access_denied") return { error: "access_denied" };
         throw err;
       }
-      // client_secret_basic is what a provider that names none takes
+      // as registered; else client_secret_basic, what a provider that names none takes
       const methods = as.token_endpoint_auth_methods_supported;
-      const clientAuth = methods && !methods.includes("client_secret_basic") && methods.includes("client_secret_post")
-        ? oauth.ClientSecretPost(clientSecret)
-        : oauth.ClientSecretBasic(clientSecret);
+      const method = tokenEndpointAuthMethod ?? (methods && !methods.includes("client_secret_basic") && methods.includes("client_secret_post") ? "client_secret_post" : "client_secret_basic");
+      const clientAuth = method === "client_secret_post" ? oauth.ClientSecretPost(clientSecret) : oauth.ClientSecretBasic(clientSecret);
       const response = await oauth.authorizationCodeGrantRequest(as, client, clientAuth, params, redirectUri, flow.verifier, http);
-      const result = await oauth.processAuthorizationCodeResponse(as, client, response, { expectedNonce: flow.nonce, requireIdToken: true });
+      const result = await oauth.processAuthorizationCodeResponse(as, client, response, {
+        expectedNonce: flow.nonce,
+        requireIdToken: true,
+        ...(maxAge === undefined ? {} : { maxAge }),
+      });
       const claims = { ...oauth.getValidatedIdTokenClaims(result)! };
       const profile: OidcProfile = { provider: name, sub: claims.sub, claims };
       const chosen = await user(profile);

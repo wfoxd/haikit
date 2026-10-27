@@ -314,6 +314,10 @@ export function createAuth(options: AuthOptions): Auth {
   // A key of its own, from each secret, so a flow cookie can never pass for a token, nor a token for one
   const flowKeys = secrets.map((s) => new Uint8Array(hkdfSync("sha256", s, new Uint8Array(0), "haikit/auth sign-in flow", 32)));
   const flowCookie = secure ? "__Host-haikit_sign_in" : "haikit_sign_in";
+  // one cookie for both, and a sign-in would overwrite the token it's on its way to
+  if (providers.size && cookieName === flowCookie) {
+    throw new Error(`createAuth: cookie.name can't be ${flowCookie}, the cookie a sign-in through a provider is kept in`);
+  }
 
   // ── tokens ─────────────────────────────────────────────────────────
 

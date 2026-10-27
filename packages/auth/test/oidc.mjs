@@ -51,7 +51,14 @@ const REDIRECT = "http://localhost/auth/fake/callback";
  * Answers discovery for its issuer, and its token endpoint, as an OpenID
  * provider does; `authorize` stands in for the user signing in on its page.
  */
-async function fakeProvider({ issuer = "https://fake.test", authorize = `${issuer}/authorize`, token = `${issuer}/token` } = {}) {
+async function fakeProvider({
+  issuer = "https://fake.test",
+  authorize = `${issuer}/authorize`,
+  token = `${issuer}/token`,
+  methods = ["client_secret_basic", "client_secret_post"],
+  // how this client is registered to prove itself
+  accept = "client_secret_basic",
+} = {}) {
   const { privateKey } = await generateKeyPair("RS256");
   const codes = new Map();
   const provider = {
@@ -73,14 +80,17 @@ async function fakeProvider({ issuer = "https://fake.test", authorize = `${issue
           subject_types_supported: ["public"],
           id_token_signing_alg_values_supported: ["RS256"],
           code_challenge_methods_supported: ["S256"],
-          token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post"],
+          token_endpoint_auth_methods_supported: methods,
         });
       }
       if (url === token && init.method === "POST") {
         const form = new URLSearchParams(String(init.body));
-        // client_secret_basic: each half form-urlencoded, then base64 (RFC 6749 §2.3.1)
+        // client_secret_basic: each half form-urlencoded, then base64 (RFC 6749 §2.3.1); client_secret_post: in the form
         const basic = new Headers(init.headers).get("authorization")?.match(/^Basic (.+)$/)?.[1];
-        const [id, secret] = Buffer.from(basic ?? "", "base64").toString().split(":").map((s) => decodeURIComponent(s.replace(/\+/g, " ")));
+        const [id, secret] =
+          accept === "client_secret_post"
+            ? [form.get("client_id"), form.get("client_secret")]
+            : Buffer.from(basic ?? "", "base64").toString().split(":").map((s) => decodeURIComponent(s.replace(/\+/g, " ")));
         const grant = codes.get(form.get("code"));
         codes.delete(form.get("code"));
         if (id !== CLIENT.clientId || secret !== CLIENT.clientSecret) return json(401, { error: "invalid_client" });
@@ -194,6 +204,19 @@ console.log("\nrefusals");
   check("a redirectUri that isn't a URL", throws(() => fake({ redirectUri: "/cb" }), "oidc: redirectUri must be a URL, such as https://app.example.com/auth/google/callback"));
   check("http on 127.0.0.1 is allowed", fake({ redirectUri: "http://127.0.0.1:5176/cb" }).redirectUri === "http://127.0.0.1:5176/cb");
   check("params that set the flow's own", throws(() => fake({ params: { state: "x" } }), "oidc: params can't set state: the sign-in sets it"));
+  check("params that set max_age, which maxAgeMs sets and checks", throws(() => fake({ params: { max_age: "300" } }), "oidc: params can't set max_age: the sign-in sets it"));
+  check("an unknown tokenEndpointAuthMethod", throws(() => fake({ tokenEndpointAuthMethod: "private_key_jwt" }), "oidc: tokenEndpointAuthMethod must be client_secret_basic or client_secret_post"));
+  for (const maxAgeMs of [-1, NaN, Infinity]) {
+    check(`a maxAgeMs of ${maxAgeMs}`, throws(() => fake({ maxAgeMs }), "oidc: maxAgeMs must be a finite number, at least 0"));
+  }
+  check(
+    "a cookie.name that's the flow cookie's",
+    throws(
+      () => createAuth({ store: memoryAuthStore(), jwt: { secret: SECRET }, cookie: { name: "__Host-haikit_sign_in" }, providers: [fake()] }),
+      "createAuth: cookie.name can't be __Host-haikit_sign_in, the cookie a sign-in through a provider is kept in",
+    ),
+  );
+  check("…which is fine with no providers", typeof createAuth({ store: memoryAuthStore(), jwt: { secret: SECRET }, cookie: { name: "__Host-haikit_sign_in" } }).gate === "object");
   check("a bad name", throws(() => fake({ name: "Fake" }), "oidc: name must be 1 to 32 lowercase letters, digits or dashes, starting with a letter"));
   check("google: an empty hostedDomain", throws(() => google({ ...CLIENT, redirectUri: REDIRECT, hostedDomain: "" }), "google: hostedDomain must be a domain, such as example.com"));
 }
@@ -399,6 +422,46 @@ console.log("\nsettings");
   } finally {
     server.close();
   }
+}
+
+// ── how the client proves itself, and how recent a sign-in must be ──────
+console.log("\nclient authentication and max age");
+{
+  /** Signs in through a provider made with these, and says how it ended. */
+  const trip = async (idp, over, claims) => {
+    const auth = createAuth({
+      store: memoryAuthStore(),
+      jwt: { secret: SECRET },
+      providers: [oidc({ name: "fake", issuer: "https://fake.test", ...CLIENT, redirectUri: REDIRECT, fetch: idp.fetch, ...over })],
+    });
+    const { server, browser } = await serve(auth);
+    try {
+      const b = browser();
+      const s = await b.get("/auth/fake");
+      let r;
+      await quietly(async () => (r = await b.get(pathOf(idp.signIn(s.location, "1234", claims)))));
+      return { start: new URL(s.location), location: r.location };
+    } finally {
+      server.close();
+    }
+  };
+  const postOnly = await fakeProvider({ accept: "client_secret_post" });
+  check("a client registered for client_secret_post, at a provider that offers both: Basic by default, refused", (await trip(postOnly, {})).location === "/?sign_in_error=failed");
+  check("…and with tokenEndpointAuthMethod: client_secret_post, signed in", (await trip(postOnly, { tokenEndpointAuthMethod: "client_secret_post" })).location === "/");
+  const offersPost = await fakeProvider({ methods: ["client_secret_post"], accept: "client_secret_post" });
+  check("a provider that offers only client_secret_post gets it by default", (await trip(offersPost, {})).location === "/");
+
+  const idp = await fakeProvider();
+  const now = Math.floor(Date.now() / 1000);
+  let t = await trip(idp, { maxAgeMs: 300_000 }, { name: "Ada", auth_time: now - 10 });
+  check("maxAgeMs: sent as max_age, in seconds", t.start.searchParams.get("max_age") === "300");
+  check("…a sign-in at the provider 10 s ago is accepted", t.location === "/");
+  t = await trip(idp, { maxAgeMs: 300_000 }, { name: "Ada", auth_time: now - 3_600 });
+  check("…one an hour ago is refused: failed", t.location === "/?sign_in_error=failed");
+  t = await trip(idp, { maxAgeMs: 300_000 }, { name: "Ada" });
+  check("…and one that doesn't say when: failed", t.location === "/?sign_in_error=failed");
+  t = await trip(idp, {}, { name: "Ada" });
+  check("without maxAgeMs, no max_age, and no auth_time needed", !t.start.searchParams.has("max_age") && t.location === "/");
 }
 
 // ── what a Location, a cookie and the routes can hold ───────────────────

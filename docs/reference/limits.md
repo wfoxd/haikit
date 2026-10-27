@@ -145,6 +145,8 @@ Checked against `@haikit/*` 0.20.0. Durations are in milliseconds.
 | --- | --- | --- |
 | `scopes` | `["openid", "email", "profile"]`; `openid` always | [Sign-in and ownership](auth.md#oidc) |
 | `user` | `{name}:{sub}`, with `name` and a verified `email` as claims | [Sign-in and ownership](auth.md#oidc) |
+| `tokenEndpointAuthMethod` | `"client_secret_basic"`, unless the provider lists only `"client_secret_post"` | [Sign-in and ownership](auth.md#oidc) |
+| `maxAgeMs` | none: no limit on how long ago the user signed in at the provider | [Sign-in and ownership](auth.md#oidc) |
 | `failureUrl` | `"/"` | [Sign-in and ownership](auth.md#when-it-fails) |
 | `fetch` | the global `fetch` | [Sign-in and ownership](auth.md#oidc) |
 | `google`'s `prompt` | `"select_account"`; `""` sends none | [Sign-in and ownership](auth.md#google) |
