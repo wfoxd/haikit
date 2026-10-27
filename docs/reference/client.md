@@ -20,7 +20,7 @@ and `packages/client/src/index.d.ts`.
 
 - [`createChat`](#createchat)
 - [`Chat`](#chat): `start`, `send`, `interact`, `mount`, `mountNotice`,
-  `reset`, `close`, `subscribe`
+  `reset`, `resume`, `close`, `subscribe`
 - [`ChatState`](#chatstate), [`SurfaceRecord`](#surfacerecord),
   [`Block`](#block)
 - [Surfaces in the browser](#surfaces-in-the-browser): `Registry`,
@@ -47,6 +47,7 @@ function createChat(options: {
   signals?: SignalRegistry;
   eventsFallbackMs?: number;
   pollHoldMs?: number;
+  fetch?: (input: string, init: RequestInit) => Promise<Response>;
 }): Chat;
 ```
 
@@ -60,9 +61,19 @@ Makes a chat. Nothing is sent until `start`, `send` or `interact` is called.
 | `signals` | `SignalRegistry` | `{}` | The handlers for signals, by signal name |
 | `eventsFallbackMs` | `number` | `8000` | How long the events stream may send nothing at all as it opens before the client polls instead (see [Polling](#polling)) |
 | `pollHoldMs` | `number` | `15000` | When polling, how long each poll asks the server to hold if nothing new has come. The server allows at most 15,000. Set it lower behind a proxy that drops requests sooner |
+| `fetch` | `(input, init) => Promise<Response>` | the page's `fetch`, looked up at each request | What every request goes through: the POST routes and the events stream. Pass one to add a header to each, such as `authorization: Bearer <token>` with a token fetched fresh each time, or `credentials: "include"` for routes on another origin |
 
-None of the options is validated. `mountChat` takes `eventsFallbackMs` and
-`pollHoldMs` too, and passes them through.
+None of the options is validated. `mountChat` takes `eventsFallbackMs`,
+`pollHoldMs` and `fetch` too, and passes them through.
+
+```js
+// a token from the app's identity provider, fresh on every request
+const chat = createChat({
+  registry,
+  fetch: async (url, init) =>
+    fetch(url, { ...init, headers: { ...init.headers, authorization: `Bearer ${await getToken()}` } }),
+});
+```
 
 ```js
 import { createChat } from "@haikit/client";
@@ -86,6 +97,7 @@ interface Chat {
   mount(handle: string, element: HTMLElement): SurfaceInstance | null;
   mountNotice(seq: number, element: HTMLElement): NoticeInstance | null;
   reset(): void;
+  resume(): void;
   close(): void;
   subscribe(fn: (state: ChatState, event: WireEvent) => void): () => void;
 }
@@ -264,7 +276,21 @@ Starts over: the next `send` or `start` begins a new conversation.
 - Subscribers hear `{ type: "reset" }`. If one throws, `reset()` throws, after
   the state has been cleared.
 
-It does nothing once the chat is closed.
+It does nothing once the chat is closed. It keeps `unauthorized`: a new
+conversation doesn't sign anyone in.
+
+### `resume`
+
+```ts
+resume(): void;
+```
+
+Tries again after the server turned the chat away as not signed in or not
+allowed (`state.unauthorized`), as once the user has signed in: clears
+`unauthorized`, and opens the events stream again if the conversation has
+one. Subscribers hear `{ type: "resumed" }`, only if `unauthorized` was set.
+A request answered 200 does the same by itself (see
+[Requests](#requests)). It does nothing once the chat is closed.
 
 ### `close`
 
@@ -287,7 +313,7 @@ subscribe(fn: (state: ChatState, event: WireEvent) => void): () => void;
 ```
 
 Calls `fn` after every event the chat applies, with the state and the event,
-and with five of the chat's own:
+and with seven of the chat's own:
 
 | Event | When |
 | --- | --- |
@@ -295,6 +321,8 @@ and with five of the chat's own:
 | `{ type: "status", status: "streaming" }` | That request tries again after a 409, and a wake turn set the status while it waited. Only then: the server's `status` events come as they are |
 | `{ type: "settled" }` | That request's response has ended, or failed. Not after a `reset()` or `close()` |
 | `{ type: "reset" }` | `reset()` |
+| `{ type: "unauthorized", status, message }` | The server turned a request or the events stream away with 401 or 403. `state.unauthorized` is set |
+| `{ type: "resumed" }` | `unauthorized` was cleared, by `resume()` or a request answered 200 |
 | `{ type: "closed" }` | `close()` |
 
 `start` hears neither `sending` nor `settled`. Returns a function that
@@ -326,6 +354,7 @@ interface ChatState {
   expired: string | null;
   notices: NoticeRecord[];
   signals: Record<string, unknown>;
+  unauthorized: { status: 401 | 403; message: string } | null;
 }
 ```
 
@@ -341,6 +370,7 @@ interface ChatState {
 | `expired` | The out-of-date message once the conversation has expired, else `null`. Final until `reset()` |
 | `notices` | Every notice received, in `seq` order |
 | `signals` | Each signal's latest payload, by name, since the conversation began. An object with no prototype, so a signal may be called anything, `__proto__` included |
+| `unauthorized` | Set when the server turned a request or the events stream away as not signed in (401) or not allowed (403): the status, and the response's `{ error }` text or `request failed (<status>)`. Else `null`. Cleared by `resume()` and by the next request answered 200; kept by `reset()` |
 
 ## `SurfaceRecord`
 
@@ -602,6 +632,15 @@ read the response as server-sent events.
   2,000 ms, for up to 120,000 ms, the default lease time.
 - **Other error statuses** become an `error` block: the response's
   `{ error }` text, or `request failed (<status>)`.
+- **Turned away unread:** a 409 that stays one, a 401 or 403 (not signed in,
+  not allowed, from a [gate](http.md#gates)), and a 404 (no such
+  conversation, or not this user's) mean the server never took the request
+  up. `send` resolves `false` for them, so the default UI gives the text back
+  to the message box.
+- **401 and 403** also set `state.unauthorized`, stop the events stream, and
+  tell subscribers `{ type: "unauthorized", status, message }`.
+- **A request answered 200,** while `unauthorized` is set, clears it as
+  `resume()` does.
 - **`reset()` and `close()`** abort the request open and drop the ones
   queued.
 
@@ -620,8 +659,11 @@ conversation expires: a notice such as a confirmation is still true then.
   1,000 ms after a connection that delivered an event, or stayed open for
   30,000 ms.
 - **404 stops it.** The server has no such conversation, or serves no events
-  stream. It isn't tried again for that conversation. Any other error status
-  is retried, with the same backoff, for as long as the chat lasts.
+  stream. It isn't tried again for that conversation.
+- **401 and 403 stop it** until `resume()`, or a request answered 200, says
+  to try again. They set `state.unauthorized`, as on a request.
+- **Any other error status** is retried, with the same backoff, for as long
+  as the chat lasts.
 - **Wake turns.** A `status: streaming` on the stream starts a wake turn.
   Requests wait until its `released`, which the server sends only once it has
   saved and let go of the conversation. If the connection drops part way, the
@@ -649,7 +691,8 @@ never does. The chat then polls instead: requests whose responses end.
   stream does. A poll that ends normally resets that backoff, so the next
   failure waits 1,000 ms again.
 - **A 404** stops polling as it stops a stream, and ends the wait on any wake
-  turn the browser was following, so requests aren't left waiting.
+  turn the browser was following, so requests aren't left waiting. So do a
+  401 and a 403, until `resume()`.
 
 Notices, revisions, signals and wake turns all arrive by polling, a little
 later than they would stream. A turn's reply on `/chat` or `/interact` isn't

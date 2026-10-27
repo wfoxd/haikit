@@ -21,6 +21,8 @@ export function createChat({
   signals = {},
   eventsFallbackMs = EVENTS_FALLBACK_MS,
   pollHoldMs = POLL_HOLD_MS,
+  // looked up at each request, not once here, so a page may swap it
+  fetch: request = (input, init) => fetch(input, init),
 }) {
   const listeners = new Set();
   const state = {
@@ -47,6 +49,12 @@ export function createChat({
      * No prototype, so a signal can be named anything, `__proto__` included.
      */
     signals: Object.create(null),
+    /**
+     * Set when the server turned a request away as not signed in (401) or not
+     * allowed (403): its status and reason. Cleared by `resume()`, and by the
+     * next request answered 200.
+     */
+    unauthorized: null,
   };
 
   const notify = (event) => listeners.forEach((fn) => fn(state, event));
@@ -88,6 +96,8 @@ export function createChat({
   /** Set by close(): this chat is done for good, and does nothing more. */
   let shutDown = false;
 
+  /** Whether the server said, in `hello`, that this conversation has an events stream. */
+  let hasEvents = false;
   /** The events stream's conversation while it is open, and how to stop it. */
   let listening = null;
   let listenAborter = null;
@@ -157,7 +167,7 @@ export function createChat({
   }
 
   const post = (path, body, signal) =>
-    fetch(endpoint + path, {
+    request(endpoint + path, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ conversationId: state.conversationId, ...body }),
@@ -225,8 +235,9 @@ export function createChat({
     if (res.status !== 409) cutOff = false;
     // Anything but a second 409 means the server took the request up itself —
     // even an error — unless the stream says `expired` below. A 409 means it
-    // turned the message away unread.
-    outcome.sent = res.status !== 409;
+    // turned the message away unread, and so do a 401 or 403 (not signed in,
+    // not allowed) and a 404 (no such conversation, or not this user's).
+    outcome.sent = !TURNED_AWAY.has(res.status);
 
     // A non-SSE response carries no `data:` frames, so parsing it as a stream
     // would fail silently and the UI would just sit there.
@@ -234,14 +245,14 @@ export function createChat({
       const detail = await res.json().catch(() => ({}));
       // an abort during that read is swallowed by the catch, so check here
       if (gen !== generation) return;
-      apply({
-        type: "error",
-        message:
-          detail.error ??
-          (res.status === 409 ? "another turn is already in flight" : `request failed (${res.status})`),
-      });
+      const message =
+        detail.error ?? (res.status === 409 ? "another turn is already in flight" : `request failed (${res.status})`);
+      apply({ type: "error", message });
+      if (res.status === 401 || res.status === 403) unauthorized(res.status, message);
       return;
     }
+    // taken up: whatever turned this browser away before no longer does
+    if (state.unauthorized) resume();
 
     const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
     let buffer = "";
@@ -333,6 +344,7 @@ export function createChat({
       case "hello":
         state.conversationId = event.conversationId;
         state.model = event.model;
+        hasEvents = event.events === true;
         if (event.events) listen(event.conversationId);
         break;
 
@@ -583,13 +595,20 @@ export function createChat({
         const query = polling
           ? `&poll=${firstPoll ? "now" : "1"}&wait=${pollHoldMs}&turn=${turnSeen}&signals=${signalsDigest(Object.entries(state.signals))}`
           : "";
-        const res = await fetch(`${endpoint}/events?conversationId=${encodeURIComponent(conversationId)}${query}`, {
+        const res = await request(`${endpoint}/events?conversationId=${encodeURIComponent(conversationId)}${query}`, {
           headers: last ? { "last-event-id": String(last) } : {},
           signal: attempt.signal,
         });
         // the server has no such conversation, or sends no notices: stop,
         // and stop waiting for a wake turn this stream was following
         if (res.status === 404) return finishRemote();
+        // not signed in, or not allowed: trying again won't change that, so
+        // stop until resume(), or a request answered 200, says it has
+        if (res.status === 401 || res.status === 403) {
+          const detail = await res.json().catch(() => ({}));
+          if (gen !== generation || signal.aborted) return;
+          return unauthorized(res.status, detail.error ?? `request failed (${res.status})`);
+        }
         if (res.ok) {
           const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
           let buffer = "";
@@ -694,6 +713,26 @@ export function createChat({
     listenAborter?.abort();
     listenAborter = null;
     listening = null;
+  }
+
+  /** Turned away as not signed in, or not allowed: no more events until that changes. */
+  function unauthorized(status, message) {
+    stopListening();
+    state.unauthorized = { status, message };
+    notify({ type: "unauthorized", status, message });
+  }
+
+  /**
+   * Try again after being turned away, as once the user has signed in: the
+   * events stream reopens, if the conversation has one. A request the server
+   * takes does this by itself.
+   */
+  function resume() {
+    if (shutDown) return;
+    const was = state.unauthorized;
+    state.unauthorized = null;
+    if (hasEvents && state.conversationId) listen(state.conversationId);
+    if (was) notify({ type: "resumed" });
   }
 
   /**
@@ -904,6 +943,7 @@ export function createChat({
     aborter.abort();
     aborter = new AbortController();
     stopListening();
+    hasEvents = false;
     cutOff = false;
     resumeAfter = 0;
     // the request it belonged to is aborted, and its pending message goes with the old blocks
@@ -962,6 +1002,7 @@ export function createChat({
     mount,
     mountNotice,
     reset,
+    resume,
     close,
     subscribe(fn) {
       // a closed chat tells no one anything again, so it keeps no one either
@@ -978,6 +1019,9 @@ export function createChat({
  * hold it.
  */
 const CUT_OFF_MS = 120_000;
+
+/** Statuses that mean the server turned a request away unread: busy, not signed in, not allowed, unknown. */
+const TURNED_AWAY = new Set([401, 403, 404, 409]);
 
 /** An events connection that stays up this long was healthy, whatever it delivered. */
 const HEALTHY_MS = 30_000;

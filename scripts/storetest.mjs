@@ -583,6 +583,248 @@ export async function integration(label, make) {
 
 export const failureCount = () => failures;
 
+// ── a gate in front of the routes ───────────────────────────────────────
+// A gate that knows users by an `x-user` header, in front of real routes and
+// a real store, and a real client going through it. What it checks is the
+// order: who is asking before anything is read or loaded, whose conversation
+// before its lease is taken, and a new one claimed before its id goes out.
+async function gateChecks() {
+  console.log("\ngate");
+  const { createHai, nodeHandler } = await import("../packages/server/dist/index.js");
+  const { createChat } = await import("../packages/client/src/index.js");
+  const http = await import("node:http");
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  const store = memoryStore();
+  const loads = [];
+  const made = [];
+  const counted = {
+    ...store,
+    async loadConversation(id) {
+      loads.push(id);
+      const c = await store.loadConversation(id);
+      if (c.id !== id) made.push(c.id);
+      return c;
+    },
+  };
+  const owners = new Map();
+  const asked = [];
+  const lasting = {}; // user → how long an admission of theirs holds, in ms
+  let claimFails = false;
+  const gate = {
+    async admit({ route, method, headers }) {
+      asked.push(`${method} ${route}`);
+      const who = headers["x-user"];
+      if (!who) return { ok: false, status: 401, error: "sign in to continue" };
+      if (who === "blocked") return { ok: false, status: 403, error: "not allowed here" };
+      return { ok: true, principal: who, ...(lasting[who] ? { until: Date.now() + lasting[who] } : {}) };
+    },
+    async allows(principal, id) {
+      return owners.get(id) === principal;
+    },
+    async created(principal, id) {
+      if (claimFails) throw new Error("the owner couldn't be recorded");
+      await wait(30); // slow enough that a hello sent before it would be seen first
+      owners.set(id, principal);
+    },
+  };
+  const hai = createHai({
+    model: { id: "stub", async generate() { return { content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" }; } },
+    store: counted,
+    tools: [],
+    surfaces: [],
+    system: "x",
+    updates: true,
+  });
+  const handle = nodeHandler(hai, "/hai", { gate });
+  const server = http.createServer(async (req, res) => (await handle(req, res)) || res.writeHead(404).end());
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const base = `http://127.0.0.1:${server.address().port}/hai`;
+  const as = (user) => (user ? { "x-user": user } : {});
+  const post = (path, body, user) =>
+    fetch(`${base}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...as(user) },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(5000),
+    });
+  const events = (text) =>
+    text
+      .split("\n\n")
+      .map((f) => f.split("\n").find((l) => l.startsWith("data: ")))
+      .filter(Boolean)
+      .map((l) => JSON.parse(l.slice(6)));
+
+  try {
+    // nobody signed in: every route says so, and nothing is read or loaded
+    {
+      const answers = await Promise.all([
+        post("/chat", { message: "hi" }),
+        post("/start", {}),
+        post("/interact", { conversationId: "x", handle: "ui_01", action: "a", value: 1 }),
+        fetch(`${base}/events?conversationId=x`, { signal: AbortSignal.timeout(5000) }),
+        fetch(`${base}/events?conversationId=x&poll=1`, { signal: AbortSignal.timeout(5000) }),
+      ]);
+      const bodies = await Promise.all(answers.map((r) => r.json().catch(() => ({}))));
+      check(
+        "a request the gate turns away gets its status and reason, on every route, polls included",
+        answers.every((r) => r.status === 401) && bodies.every((b) => b.error === "sign in to continue"),
+      );
+      check(
+        "…before /start's empty answer, and with the route and method named",
+        ["POST chat", "POST start", "POST interact", "GET events"].every((a) => asked.includes(a)),
+      );
+      check("…and nothing is loaded for it", loads.length === 0);
+      const blocked = await post("/chat", { message: "hi" }, "blocked");
+      check("a 403 from the gate is passed on", blocked.status === 403 && (await blocked.json()).error === "not allowed here");
+    }
+
+    // a new conversation is its creator's before its id goes out
+    let adas;
+    {
+      const res = await post("/chat", { message: "hi" }, "ada");
+      const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+      let text = "";
+      while (!text.includes("\n\n")) text += (await reader.read()).value ?? "";
+      const hello = events(text)[0];
+      adas = hello?.conversationId;
+      const claimedFirst = owners.get(adas) === "ada";
+      while (!(await reader.read()).done);
+      check("a conversation a request creates is claimed before hello names it", hello?.type === "hello" && claimedFirst);
+      const stream = await fetch(`${base}/events?conversationId=${adas}&poll=now`, { headers: as("ada"), signal: AbortSignal.timeout(5000) });
+      await stream.text();
+      check("…so its owner's events stream is let in", stream.status === 200);
+    }
+
+    // a stranger is told it doesn't exist, and never holds its lease
+    {
+      const before = loads.length;
+      const tries = await Promise.all([
+        post("/chat", { conversationId: adas, message: "mine now" }, "bob"),
+        post("/start", { conversationId: adas }, "bob"),
+        post("/interact", { conversationId: adas, handle: "ui_01", action: "a", value: 1 }, "bob"),
+        fetch(`${base}/events?conversationId=${adas}`, { headers: as("bob"), signal: AbortSignal.timeout(5000) }),
+        fetch(`${base}/events?conversationId=${adas}&poll=1`, { headers: as("bob"), signal: AbortSignal.timeout(5000) }),
+        fetch(`${base}/events`, { headers: as("bob"), signal: AbortSignal.timeout(5000) }),
+      ]);
+      const bodies = await Promise.all(tries.map((r) => r.json().catch(() => ({}))));
+      check(
+        "another user's conversation is a 404 unknown conversation, on every route",
+        tries.every((r) => r.status === 404) && bodies.every((b) => b.error === "unknown conversation"),
+      );
+      check("…and is never loaded, so its lease is never taken", loads.length === before);
+      const mine = await post("/chat", { conversationId: adas, message: "still mine" }, "ada");
+      const text = await mine.text();
+      check("…so its owner carries on, not told it's busy", mine.status === 200 && events(text)[0]?.conversationId === adas);
+    }
+
+    // an id that isn't a string is no id at all
+    {
+      const res = await post("/chat", { conversationId: 7, message: "hi" }, "ada");
+      const hello = events(await res.text())[0];
+      check(
+        "behind a gate, an id that isn't a string starts a new conversation, claimed as usual",
+        hello?.type === "hello" && hello.conversationId !== adas && owners.get(hello.conversationId) === "ada",
+      );
+    }
+
+    // a claim that fails: the browser is told, never learns the id, and the lease goes
+    {
+      claimFails = true;
+      const res = await post("/chat", { message: "hi" }, "ada");
+      const got = events(await res.text());
+      claimFails = false;
+      const id = made.at(-1);
+      let free = true;
+      try {
+        const again = await store.loadConversation(id);
+        again.leaseUntil = null;
+        await store.saveConversation(again);
+      } catch {
+        free = false;
+      }
+      check(
+        "a conversation whose claim fails is an error event, with no hello",
+        res.status === 200 && got.some((e) => e.type === "error" && e.message === "the owner couldn't be recorded") && !got.some((e) => e.type === "hello"),
+      );
+      check("…and its lease is let go", free && !owners.has(id));
+    }
+
+    // an events stream ends when its admission runs out
+    {
+      lasting.ada = 400;
+      const started = Date.now();
+      const res = await fetch(`${base}/events?conversationId=${adas}`, { headers: as("ada"), signal: AbortSignal.timeout(5000) });
+      await res.text();
+      const took = Date.now() - started;
+      delete lasting.ada;
+      check(`an events stream ends when its admission's until passes (${took} ms)`, res.status === 200 && took >= 350 && took < 2500);
+    }
+
+    // the client: through its own fetch, stopped by a 401, started again by resume()
+    {
+      let user = "cleo";
+      const sent = [];
+      const chat = createChat({
+        endpoint: base,
+        registry: {},
+        fetch: (url, init) => {
+          sent.push(new URL(url).pathname);
+          return fetch(url, { ...init, headers: { ...init.headers, ...as(user) } });
+        },
+      });
+      const heard = [];
+      chat.subscribe((_, e) => heard.push(e.type));
+      const opened = () => sent.filter((p) => p === "/hai/events").length;
+
+      // admitted for 300 ms: the stream ends then, and its reconnect is turned away
+      lasting.cleo = 300;
+      check("the client sends through the fetch it was given", (await chat.send("hi")) && sent.includes("/hai/chat"));
+      await wait(100);
+      check("…its events stream too", opened() === 1);
+      chat.resume(); // nothing turned away yet
+      check("resume() with nothing turned away says nothing", !heard.includes("resumed"));
+      user = undefined;
+      await wait(1700);
+      check(
+        "an events stream turned away as it reconnects stops, and says why",
+        opened() === 2 && chat.state.unauthorized?.status === 401 && chat.state.unauthorized.message === "sign in to continue" && heard.includes("unauthorized"),
+      );
+      await wait(1500);
+      check("…and isn't tried again while it stays so", opened() === 2);
+
+      delete lasting.cleo;
+      user = "cleo";
+      chat.resume();
+      await wait(100);
+      check(
+        "resume() clears it, says so, and reopens the events stream",
+        chat.state.unauthorized === null && heard.includes("resumed") && opened() === 3,
+      );
+
+      user = undefined;
+      const typed = await chat.send("are you there?");
+      check(
+        "a message turned away as not signed in isn't sent, says why, and stops the events stream",
+        typed === false && chat.state.unauthorized?.status === 401 && chat.state.blocks.at(-1)?.kind === "error",
+      );
+      user = "cleo";
+      const recovered = await chat.send("hello again");
+      await wait(100);
+      check(
+        "a request the server takes clears it by itself, and the stream comes back",
+        recovered === true && chat.state.unauthorized === null && opened() === 4,
+      );
+      chat.reset();
+      check("reset() keeps no events stream, and starts nothing", opened() === 4);
+      chat.close();
+    }
+  } finally {
+    server.close();
+    server.closeAllConnections?.();
+  }
+}
+
 // ── the route turns a refused lease into a status code ──────────────────
 // Driven with a store that always refuses, rather than by racing two real
 // turns: a scripted turn finishes in tens of milliseconds, so a timing-based
@@ -7354,6 +7596,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   await conform("memoryStore", (opts) => memoryStore(opts));
   await integration("memoryStore", (opts) => memoryStore(opts));
   await routeChecks();
+  await gateChecks();
   await actionKindChecks();
   await scopeChecks();
   await windowChecks();

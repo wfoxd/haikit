@@ -99,6 +99,8 @@ function dropFavicon() {
  *   dock?: boolean,
  *   eventsFallbackMs?: number,
  *   pollHoldMs?: number,
+ *   fetch?: (input: string, init: RequestInit) => Promise<Response>,
+ *   signIn?: { href: string, label?: string },
  * }} options
  */
 export function mountChat({
@@ -117,9 +119,11 @@ export function mountChat({
   dock = true,
   eventsFallbackMs,
   pollHoldMs,
+  fetch,
+  signIn,
 }) {
   // undefined leaves createChat's defaults
-  const chat = createChat({ endpoint, registry, notices, signals, eventsFallbackMs, pollHoldMs });
+  const chat = createChat({ endpoint, registry, notices, signals, eventsFallbackMs, pollHoldMs, fetch });
   const id = `hai-${++shells}`;
 
   // Unset, the page follows the system. A pin goes on the root, where hai.css
@@ -346,11 +350,20 @@ export function mountChat({
   let shownStatus = null;
   function showStatus(status) {
     const where = status === "awaiting" && docked?.waiting() ? "in the dock" : "above";
-    if (`${status} ${where}` === shownStatus) return;
-    shownStatus = `${status} ${where}`;
+    const why = status === "unauthorized" ? chat.state.unauthorized?.message ?? "" : "";
+    if (`${status} ${where} ${why}` === shownStatus) return;
+    shownStatus = `${status} ${where} ${why}`;
     statusEl.dataset.status = status;
     statusEl.replaceChildren();
-    if (status === "streaming") {
+    if (status === "unauthorized") {
+      // why the server turned the chat away, and where to sign in, if the page said
+      statusEl.append(why);
+      if (signIn?.href) {
+        const link = h("a", cls.signIn, signIn.label ?? "Sign in");
+        link.href = signIn.href;
+        statusEl.append(link);
+      }
+    } else if (status === "streaming") {
       const dots = h("span", cls.dots);
       dots.setAttribute("aria-hidden", "true");
       dots.append(h("i", cls.dot), h("i", cls.dot), h("i", cls.dot));
@@ -364,7 +377,9 @@ export function mountChat({
   // reader is: above, or in the dock.
   function showWaiting() {
     const { state } = chat;
-    showStatus(state.expired ? "idle" : state.status);
+    showStatus(
+      state.unauthorized && state.status !== "streaming" ? "unauthorized" : state.expired ? "idle" : state.status,
+    );
     input.placeholder =
       state.expired ? "start a new conversation to continue"
       : state.status === "awaiting" ? `pick an option ${docked?.waiting() ? "in the dock" : "above"} — or type to override`

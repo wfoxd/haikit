@@ -49,7 +49,7 @@ mountChat({ root: document.querySelector("#app"), registry, suggestions: ["Say h
 **What it does, in order:**
 
 1. Makes a chat with `createChat({ endpoint, registry, notices, signals,
-   eventsFallbackMs, pollHoldMs })`. Options left out get `createChat`'s
+   eventsFallbackMs, pollHoldMs, fetch })`. Options left out get `createChat`'s
    defaults.
 2. Pins the colour scheme, if `theme` is set (see [Themes](#themes)).
 3. Adds HaiKIT's icon as the page's favicon, if the page has no link whose
@@ -76,7 +76,7 @@ mountChat({ root: document.querySelector("#app"), registry, suggestions: ["Say h
 | Main | `div.hai-main` | Holds the chat and the drawer. Has `.has-inspector` with `inspector`, and `.inspector-open` while the drawer is open |
 | Chat | `section.hai-chat` | Holds the transcript, the status line and the composer (`div.hai-composer` > `div.hai-composer-box`), and with `dock`, the dock's window. Has `.window-open` while the window is open |
 | Transcript | `div.hai-transcript` | Drawn by `renderTranscript` on every event, with `onDock` when `dock` is on |
-| Status line | `div.hai-status`, `role="status"` | `Thinking` while streaming, which starts as a message or a click goes out, `Waiting on your selection above` while awaiting, or `Waiting on your selection in the dock` while the question is docked, empty otherwise. It changes only when the status does, or where the question is, so a screen reader hears it once per turn. Its `data-status` is the status, or `idle` once the conversation has expired. It's absent until the first event |
+| Status line | `div.hai-status`, `role="status"` | `Thinking` while streaming, which starts as a message or a click goes out, `Waiting on your selection above` while awaiting, or `Waiting on your selection in the dock` while the question is docked, empty otherwise. It changes only when the status does, or where the question is, so a screen reader hears it once per turn. Its `data-status` is the status, or `idle` once the conversation has expired. While the server turns the chat away (`state.unauthorized`) and nothing is streaming, it says why instead, followed with `signIn` by a link, `a.hai-signin`, and its `data-status` is `unauthorized`. It's absent until the first event |
 | Dock shelf | `div.hai-dock`, `role="toolbar"`, `aria-label="Docked surfaces"` | The composer's first child, above `div.hai-composer-box`. Hidden while nothing is docked. Only with `dock` (see [The dock](#the-dock)) |
 | Window | `section.hai-window`, `role="dialog"` | A docked surface, opened. Hidden while none is open. Only with `dock` |
 | Message box | `textarea.hai-input`, `aria-label="Message"` | Grows with what's typed, up to 200 px |
@@ -157,6 +157,8 @@ interface MountChatOptions {
   dock?: boolean;
   eventsFallbackMs?: number;
   pollHoldMs?: number;
+  fetch?: (input: string, init: RequestInit) => Promise<Response>;
+  signIn?: { href: string; label?: string };
 }
 ```
 
@@ -177,6 +179,8 @@ interface MountChatOptions {
 | `dock` | `true` | Let the reader dock surfaces (see [The dock](#the-dock)). `false` draws surfaces as `renderTranscript` does without `onDock`, and builds no shelf or window |
 | `eventsFallbackMs` | `8000` | Passed to `createChat`: how long the events stream may send nothing as it opens before the chat polls (see [The browser client](client.md#polling)) |
 | `pollHoldMs` | `15000` | Passed to `createChat`: how long each poll asks the server to hold |
+| `fetch` | the page's `fetch` | Passed to `createChat`: what every request goes through (see [The browser client](client.md#createchat)) |
+| `signIn` | none | Where to sign in. While the server turns the chat away as not signed in or not allowed (`state.unauthorized`), the status line says why, then links to `href`, labelled `label` (default `"Sign in"`). Without it, the status line says only why |
 
 ## The model context debug drawer
 
@@ -619,7 +623,9 @@ in `--hai-line`, with the label under them. A `data-expired` surface is at
 45% opacity and 70% greyscale, without its shadow.
 
 The status line is bold `--hai-mono`. Thinking shows one blinking
-`--hai-accent` dot; waiting shows a pulsing `--hai-warn` one. With
+`--hai-accent` dot; waiting shows a pulsing `--hai-warn` one. The sign-in
+link is `--hai-fg`, underlined 2px thick and 3px below, and `--hai-accent`
+on hover. With
 `prefers-reduced-motion: reduce`, nothing blinks, pulses or moves: the
 running dot, the pulse, the thinking dot and the skeleton's hatching stand
 still, and the drawer, the chevron, the message box and the dock's shelf

@@ -7,12 +7,14 @@ page covers the routes' requests, responses and errors, the events stream and
 its polling mode, and every wire event.
 
 Exported by `@haikit/server`: `nodeHandler`, `NodeHandlerOptions`. By
-`@haikit/core`: `WireEvent`, `Emit`, `Block`.
+`@haikit/core`: `WireEvent`, `Emit`, `Block`, `Gate`, `GateRequest`,
+`GateRoute`, `Admission`.
 
 Checked against `@haikit/*` 0.20.0. Source: `packages/server/src/routes.ts`,
 `packages/server/src/runtime.ts` and `packages/core/src/index.ts`.
 
 - [`nodeHandler`](#nodehandler)
+- [Gates](#gates): `Gate`, `GateRequest`, `GateRoute`, `Admission`
 - [The POST routes](#the-post-routes): `/chat`, `/start`, `/interact`
 - [The events stream](#the-events-stream): `GET /events`
 - [Polling](#polling)
@@ -31,6 +33,7 @@ function nodeHandler(
 
 interface NodeHandlerOptions {
   maxBodyBytes?: number;
+  gate?: Gate;
 }
 ```
 
@@ -41,6 +44,7 @@ so the app can serve it instead.
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `maxBodyBytes` | `1_048_576` (1 MiB) | The largest POST body read, in bytes. A longer one is answered 413 (see [Requests](#requests)) |
+| `gate` | none | Who may use the routes, and which conversations each may use (see [Gates](#gates)). Without one, a conversation id is all a request needs |
 
 | Method and path | Served when | Purpose |
 | --- | --- | --- |
@@ -80,6 +84,76 @@ route answers itself is answered, ended and logged with `console.error`:
   the browser reconnects. On a poll, it's logged, and the poll ends when its
   hold runs out.
 
+## Gates
+
+```ts
+type GateRoute = "chat" | "start" | "interact" | "events";
+
+interface GateRequest {
+  route: GateRoute;
+  method: string;
+  headers: Record<string, string | string[] | undefined>;
+}
+
+type Admission =
+  | { ok: true; principal: string; until?: number }
+  | { ok: false; status: 401 | 403 | 415; error: string };
+
+interface Gate {
+  admit(request: GateRequest): Promise<Admission>;
+  allows(principal: string, conversationId: string): Promise<boolean>;
+  created(principal: string, conversationId: string): Promise<void>;
+}
+```
+
+A gate decides who may use the routes, and which conversations each may use.
+Pass one as `nodeHandler`'s `gate`. `@haikit/auth` makes one from a signed-in
+user's token; an app can write its own. All four types are exported by
+`@haikit/core`.
+
+| Member | Called | Returns |
+| --- | --- | --- |
+| `admit` | First, on every request, with the route, the method and the request's headers (lower-cased names, as Node has them) | Who is asking, as a `principal`, and `until`, the epoch ms the answer holds until; or the status and reason to refuse with |
+| `allows` | When the request names a conversation, before it's loaded | Whether `principal` may use it |
+| `created` | When a POST route has created a conversation, before its id is sent | Resolves once the conversation is the principal's. If it rejects, the request fails |
+
+**On a POST route,** in this order:
+
+1. `admit`, before the body is read, and before `/start`'s empty answer
+   without an init tool. A refusal is answered with its `status` and
+   `{ "error": "<error>" }`.
+2. The body is read (see [Requests](#requests)). A `conversationId` that
+   isn't a non-empty string counts as none.
+3. If it names one, `allows`. `false` is answered **HTTP 404** with
+   `{ "error": "unknown conversation" }`, the same as an id that doesn't
+   exist, so a request learns nothing of another user's conversation, and
+   never takes its lease.
+4. The conversation is loaded, which takes its lease. With no id, that
+   creates one.
+5. A conversation created there is passed to `created`, then the stream
+   opens with `hello`. So the events stream the browser opens when `hello`
+   arrives is let in. If `created` rejects, the stream has an `error` event
+   with its message instead of `hello`, the browser never learns the id,
+   and the conversation is saved and let go as at the end of any request.
+
+**On the events stream:** `admit`, then `allows` for `conversationId`, before
+anything is read. A refusal from `admit` is answered with its status; a
+missing `conversationId`, or `allows` saying `false`, with **HTTP 404**
+`{ "error": "unknown conversation" }`.
+
+**An open stream** stays open only while its admission holds. It ends when
+`until` passes, and the gate is asked again, `admit` then `allows`, every
+60,000 ms: a refusal, or either rejecting, ends it, and the browser's
+reconnect is answered as above. A poll is admitted afresh each time, and
+holds at most 15,000 ms, so it isn't asked again.
+
+**What isn't gated:** `hai.notify`, `hai.update`, `hai.wake` and
+`hai.signal` are app code, not requests. Signals still go to every events
+stream, whoever's (see [Security and proxies](#security-and-proxies)).
+
+A gate that rejects, rather than answering, fails the request as a store
+error does (see [`nodeHandler`](#nodehandler)).
+
 ## The POST routes
 
 ### Requests
@@ -109,6 +183,9 @@ name one that exists. `/interact` takes no tool name, handler or target: what
 an action means is decided on the server, from the surface's contract.
 
 ### Responses
+
+With a [gate](#gates), it's asked first, and again before the conversation
+is loaded, as that section says. Then:
 
 1. **`/start` without an init tool** answers at once with an empty event
    stream (status 200, the headers below, no frames) and creates no
@@ -208,6 +285,8 @@ every notice. A missing `conversationId` gets the 404 below.
 
 ### Responses
 
+- **With a [gate](#gates),** a request it refuses gets the gate's status, or
+  404 as below for a conversation it may not use.
 - **An unknown conversation** gets **HTTP 404** with
   `{ "error": "unknown conversation" }`.
 - **Otherwise,** once this server is listening for other servers' wake turns
@@ -471,21 +550,23 @@ the latest of each signal while the socket is backed up.
 
 ## Security and proxies
 
-**A conversation id is a bearer token.** `nodeHandler` does no
-authentication. Anyone with a conversation's id can send to it, click in it,
-read its notices and payloads as they arrive, and start its wake turns. The
-built-in stores make unguessable ids. Before handing a request to
-`nodeHandler`, check that the signed-in user owns that conversation, as for
-any record. The events stream's `conversationId` is a query parameter, so
-keep it out of logs that others can read.
+**Without a gate, a conversation id is a bearer token.** `nodeHandler` then
+does no authentication. Anyone with a conversation's id can send to it,
+click in it, read its notices and payloads as they arrive, and start its
+wake turns. The built-in stores make unguessable ids. Pass a
+[gate](#gates), or check before handing a request to `nodeHandler` that the
+signed-in user owns that conversation, as for any record. Either way, the
+events stream's `conversationId` is a query parameter, so keep it out of
+logs that others can read.
 
-**Anyone can create conversations.** A POST to `/chat`, or to `/start` with
-an init tool, with a missing or unknown id creates and saves a new
-conversation. Limit who can reach the routes, and how often.
+**Without a gate, anyone can create conversations.** A POST to `/chat`, or
+to `/start` with an init tool, with a missing or unknown id creates and
+saves a new conversation. With one, only those it admits can. Limit how
+often, either way.
 
 **Signals go to everyone.** A signal goes to every events stream of the
-`Hai`, whatever its conversation, and anyone can make a conversation. So a
-signal must never carry one user's data.
+`Hai`, whatever its conversation, a gate's or not. So a signal must never
+carry one user's data.
 
 **A click can only name a declared action.** `/interact` takes
 `{ handle, action, value }`. The server decides what the action means, from
