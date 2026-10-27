@@ -892,7 +892,8 @@ console.log("\nsigning in with Google");
     const body = `${part({ alg: "HS256", typ: "JWT" })}.${part({ sub, iat: now, auth_time: now, exp: now + 600, jti: randomUUID(), ...claims })}`;
     return `__Host-haikit_token=${body}.${createHmac("sha256", secret).update(body).digest("base64url")}`;
   };
-  const ada = cookie("google:ada", { name: "Ada" });
+  const PICTURE = "https://lh3.googleusercontent.com/a/ada=s96-c";
+  const ada = cookie("google:ada", { name: "Ada", picture: PICTURE });
   const grace = cookie("google:grace", { name: "Grace" });
 
   /** A POST, as one reader or none: its status, and its events or its error. */
@@ -922,8 +923,8 @@ console.log("\nsigning in with Google");
       JSON.stringify(about.signIn) === '["google"]' ? ok("with a Google client, it offers to sign in with Google") : bad(`version.json's signIn is ${JSON.stringify(about.signIn)}`);
       const me = (reader) => fetch(`${SIGNED}/auth/me`, { headers: reader ? { cookie: reader } : {} }).then((r) => r.json());
       const [nobody, someone] = [await me(null), await me(ada)];
-      nobody.user === null && someone.user?.id === "google:ada" && someone.user.claims.name === "Ada"
-        ? ok("/auth/me says who's signed in, by their Google id and name, or no one")
+      nobody.user === null && someone.user?.id === "google:ada" && someone.user.claims.name === "Ada" && someone.user.claims.picture === PICTURE
+        ? ok("/auth/me says who's signed in, by their Google id, name and picture, or no one")
         : bad(`/auth/me says ${JSON.stringify(nobody)} signed out, ${JSON.stringify(someone)} signed in`);
 
       const open = await as(null, "/hai/start", {});
@@ -965,7 +966,7 @@ console.log("\nsigning in with Google");
 // conversation started signed in, while someone could, is still there: it
 // stays closed. In this process, with a database that has one owner.
 {
-  const { signingIn } = await import("../src/server/auth.ts");
+  const { signingIn, asReader } = await import("../src/server/auth.ts");
   const shell = { id: process.env.GOOGLE_CLIENT_ID, secret: process.env.GOOGLE_CLIENT_SECRET };
   delete process.env.GOOGLE_CLIENT_ID;
   delete process.env.GOOGLE_CLIENT_SECRET;
@@ -982,6 +983,16 @@ console.log("\nsigning in with Google");
   !kept.auth && who?.ok && !owned && anyones
     ? ok("without a Google client but with a database, a conversation started signed in stays closed, and the rest are anyone's")
     : bad(`without a Google client but with a database: sign-in ${!!kept.auth}, admitted ${who?.ok}, the owned one ${owned}, the rest ${anyones}`);
+
+  // who a sign-in names, from what Google says: its id as auth's default
+  // names them, so owners from before stay theirs, and only name and picture
+  const as = (claims) => asReader({ provider: "google", sub: "123", claims });
+  const full = as({ name: "Ada", picture: "https://lh3.googleusercontent.com/a/ada=s96-c", email: "ada@example.com", email_verified: true });
+  const odd = [as({ name: 7, picture: "http://example.com/ada.png" }), as({ picture: "javascript:alert(1)" }), as({})];
+  JSON.stringify(full) === JSON.stringify({ userId: "google:123", claims: { name: "Ada", picture: "https://lh3.googleusercontent.com/a/ada=s96-c" } }) &&
+  odd.every((r) => r.userId === "google:123" && JSON.stringify(r.claims) === "{}")
+    ? ok("a sign-in names the reader google:<sub>, with their name and a picture from https, and nothing else")
+    : bad(`a sign-in names ${JSON.stringify(full)}, and with odd claims ${JSON.stringify(odd)}`);
 }
 
 console.log(failures ? `\n${failures} check(s) failed\n` : "\nsmoke: all checks passed\n");

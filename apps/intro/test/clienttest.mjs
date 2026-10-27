@@ -26,6 +26,9 @@ for (const name of Object.getOwnPropertyNames(window)) {
     globalThis[name] = window[name];
   }
 }
+// Node has its own: Radix's popover announces focus and dismissal with these,
+// and jsdom dispatches only its own
+globalThis.CustomEvent = window.CustomEvent;
 window.matchMedia = globalThis.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
 window.ResizeObserver = globalThis.ResizeObserver = class {
   observe() {}
@@ -550,8 +553,17 @@ try {
     await click(denied.el.querySelector('button[aria-label="Dismiss"]'));
     check("…until it's dismissed", !denied.el.querySelector('[role="alert"]') && !!denied.el.querySelector('a[href="/auth/google"]'));
     await denied.unmount();
+    // signed in: their picture, and on it who's signed in
+    const face = (el) => el.querySelector('button[aria-label$="signed in with Google"]');
+    const card = () => document.querySelector(`[role="dialog"][aria-label="Who's signed in"]`);
+    const wait = (ms) => act(() => new Promise((resolve) => setTimeout(resolve, ms)));
+    const pointer = (node, type, pointerType) => fire(node, new window.PointerEvent(type, { bubbles: true, pointerType, relatedTarget: document.body }));
     const ada = await account({ reader: { id: "google:1", claims: { name: "Ada <b>Lovelace</b>" } } });
-    check("signed in, it names them, as text, and offers to sign out", text(ada.el).includes("Ada <b>Lovelace</b>") && !ada.el.querySelector("b") && !!button(ada.el, "Sign out") && !ada.el.querySelector("a"));
+    check("signed in, it shows who's signed in, as text, and offers to sign out", face(ada.el)?.getAttribute("aria-label") === "Ada <b>Lovelace</b>, signed in with Google" && !ada.el.querySelector("b") && !!button(ada.el, "Sign out") && !ada.el.querySelector("a"));
+    await click(face(ada.el));
+    check("a click on the picture shows who's signed in, by name, as text", text(card() ?? document.createElement("div")).includes("Ada <b>Lovelace</b>Signed in with Google") && !card().querySelector("b") && face(ada.el).getAttribute("aria-expanded") === "true");
+    await key(document.body, "Escape");
+    check("…and Escape puts it away", !card() && face(ada.el).getAttribute("aria-expanded") === "false");
     const posted = [];
     const opened = [];
     const realFetch = globalThis.fetch;
@@ -563,6 +575,31 @@ try {
     delete globalThis.location;
     check("Sign out posts to /auth/sign-out, then opens the introduction afresh", posted.join() === "POST /auth/sign-out" && opened.join() === "/");
     await ada.unmount();
+    const PICTURE = "https://lh3.googleusercontent.com/a/grace=s96-c";
+    const grace = await account({ reader: { id: "google:2", claims: { name: " Grace  Brewster Hopper ", picture: PICTURE } } });
+    const img = face(grace.el)?.querySelector("img");
+    check("the picture is their Google picture, sent no referrer, over their initials", img?.getAttribute("src") === PICTURE && img.getAttribute("referrerpolicy") === "no-referrer" && img.getAttribute("alt") === "" && text(face(grace.el)).trim() === "GH");
+    await pointer(face(grace.el), "pointerover", "touch");
+    await wait(250);
+    check("a finger passing over it doesn't open it", !card());
+    await pointer(face(grace.el), "pointerover", "mouse");
+    await wait(250);
+    check("a mouse resting on it shows who's signed in, with the same picture", !!card()?.querySelector(`img[src="${PICTURE}"]`) && text(card()).includes("Grace Brewster Hopper"));
+    await click(face(grace.el));
+    check("…which a click there keeps open", !!card());
+    await pointer(face(grace.el), "pointerout", "mouse");
+    await wait(300);
+    check("…and leaving puts it away", !card());
+    await fire(img, new window.Event("error"));
+    check("a picture that won't load leaves their initials", !face(grace.el).querySelector("img") && text(face(grace.el)).trim() === "GH");
+    await grace.unmount();
+    const nameless = await account({ reader: { id: "google:3", claims: { picture: "http://example.com/me.png" } } });
+    check("no name, and a picture not from https: a figure, and no picture", face(nameless.el)?.getAttribute("aria-label") === "Signed in with Google" && !!face(nameless.el).querySelector("svg") && !face(nameless.el).querySelector("img") && text(face(nameless.el)).trim() === "");
+    await nameless.unmount();
+    const tanaka = await account({ reader: { id: "google:4", claims: { name: "田中 太郎" } } });
+    check("initials a letter at a time, from the first name and the last", text(face(tanaka.el)).trim() === "田太");
+    await tanaka.unmount();
+
     // a sign-out that fails leaves the reader signed in: it stays, and says so
     for (const [how, answer] of [["refused", async () => new Response(null, { status: 500 })], ["unreachable", async () => { throw new TypeError("offline"); }]]) {
       const stays = await account({ reader: { id: "google:1", claims: { name: "Ada" } } });
