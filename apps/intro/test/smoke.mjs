@@ -143,8 +143,8 @@ try {
     const [second, third] = tutorial?.more ?? [];
     tutorial?.more?.length === 2 &&
     second.first.id === "2-intro" && second.steps === 9 && second.title === "Tell them later" &&
-    third.first.id === "3-intro" && third.steps === 9 && third.title === "Who's asking"
-      ? ok("…and the second and third tutorials after it, nine steps each, from 2-intro and 3-intro")
+    third.first.id === "3-intro" && third.steps === 10 && third.title === "Who's asking"
+      ? ok("…and the second and third tutorials after it, nine and ten steps, from 2-intro and 3-intro")
       : bad(`welcome's later tutorials: ${JSON.stringify(tutorial?.more)}`);
     const { today, versus, example, tokens, values } = welcomeProps ?? {};
     welcomeProps?.summary?.length > 40 ? ok("welcome says what HaiKIT is under the lede") : bad("welcome has no summary");
@@ -321,8 +321,8 @@ try {
       const map = await sse("/hai/chat", { conversationId: id, message: "contents" });
       const mapUi = opened(map).find((e) => e.component === "course_map");
       const tutorials = propsOf(map, mapUi?.handle)?.tutorials ?? [];
-      tutorials.length === 3 && tutorials[0].pages.length === 12 && tutorials[1].pages.length === 11 && tutorials[2].pages.length === 11
-        ? ok("the course map lists all three tutorials: 12 pages, then 11, then 11")
+      tutorials.length === 3 && tutorials[0].pages.length === 12 && tutorials[1].pages.length === 11 && tutorials[2].pages.length === 12
+        ? ok("the course map lists all three tutorials: 12 pages, then 11, then 12")
         : bad(`the course map's tutorials: ${JSON.stringify(tutorials.map((t) => t.pages.length))}`);
       const fromMap = await sse("/hai/interact", { conversationId: id, handle: mapUi?.handle, action: "open", value: "07" });
       propsOf(fromMap, opened(fromMap).find((e) => e.component === "tutorial_step")?.handle)?.id === "07"
@@ -428,8 +428,8 @@ try {
       const into = await sse("/hai/interact", { conversationId: id, handle: screen?.handle, action: "tutorial", value: "3-intro" });
       const intro = pageOf(into);
       intro.props?.id === "3-intro" && intro.props.tutorial === "Who's asking" && intro.props.prev?.id === "2-next-steps" &&
-        intro.props.next?.id === "3-01" && intro.props.position?.index === 1 && intro.props.position?.total === 11
-        ? ok("the welcome opens the third tutorial, page 1 of 11, after the second tutorial's last page")
+        intro.props.next?.id === "3-01" && intro.props.position?.index === 1 && intro.props.position?.total === 12
+        ? ok("the welcome opens the third tutorial, page 1 of 12, after the second tutorial's last page")
         : bad(`the third tutorial's intro: ${JSON.stringify({ ...intro.props, blocks: undefined })}`);
 
       const signIn = await sse("/hai/chat", { conversationId: id, message: "Open tutorial step 3-04" });
@@ -448,18 +448,18 @@ try {
       pageOf(fromMap).props?.id === "3-07" ? ok("the course map opens tutorial step 3-07") : bad("the map did not open step 3-07");
 
       const broken = [];
-      for (let n = 1; n <= 9; n++) {
-        const want = `3-0${n}`;
+      for (let n = 1; n <= 10; n++) {
+        const want = `3-${String(n).padStart(2, "0")}`;
         const evs = await sse("/hai/chat", { conversationId: id, message: `step ${want}` });
         const got = pageOf(evs);
         if (got.props?.id !== want || !got.props.blocks?.length) broken.push(want);
-        if (n === 9) {
+        if (n === 10) {
           const last = await sse("/hai/interact", { conversationId: id, handle: got.ui?.handle, action: "go", value: "3-next-steps" });
           const end = pageOf(last).props;
           if (end?.id !== "3-next-steps" || end.next !== null) broken.push("3-next-steps");
         }
       }
-      broken.length ? bad(`third tutorial pages that did not render: ${broken.join(", ")}`) : ok("all 11 pages of the third tutorial render, its last with nothing after it");
+      broken.length ? bad(`third tutorial pages that did not render: ${broken.join(", ")}`) : ok("all 12 pages of the third tutorial render, its last with nothing after it");
     }
 
     // 7b4 · a conversation saved before the second tutorial: its welcome digest
@@ -487,6 +487,49 @@ try {
       third?.name === "show_tutorial_step" && third.input?.id === "3-03"
         ? ok("…and the third tutorial's too")
         : bad(`an old conversation's "Open tutorial step 3-03": ${JSON.stringify(third)}`);
+
+      // one saved when the third tutorial had nine steps: its digest stops at 3-09, today's prompt doesn't
+      const nineSteps = oldWelcome.replace(
+        "The course: …",
+        'Then the second tutorial: "Tell them later", pages 2-intro and steps 2-01–2-09, then 2-next-steps. ' +
+          'Then the third tutorial: "Who\'s asking", pages 3-intro and steps 3-01–3-09, then 3-next-steps. The course: …',
+      );
+      const resumed = [...messages.slice(0, 2), { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: nineSteps }] }, messages[3]];
+      const ask = async (...turns) =>
+        (await scripted().generate({ system, tools: [], messages: [...resumed, ...turns], onTextDelta() {} })).content.find((b) => b.type === "tool_use");
+      const ten = await ask({ role: "user", content: "Open tutorial step 3-10" });
+      ten?.name === "show_tutorial_step" && ten.input?.id === "3-10"
+        ? ok("a conversation from when the third tutorial had nine steps opens step 3-10, from today's prompt")
+        : bad(`a nine-step conversation's "Open tutorial step 3-10": ${JSON.stringify(ten)}`);
+      const after = await ask(
+        { role: "user", content: "Open tutorial step 3-09" },
+        { role: "assistant", content: [{ type: "tool_use", id: "t2", name: "show_tutorial_step", input: { id: "3-09" } }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "t2", content: "Tutorial page 3-09 on display as ui_02: …" }] },
+        { role: "assistant", content: [{ type: "text", text: "Step 09." }] },
+        { role: "user", content: "next" },
+      );
+      after?.name === "show_tutorial_step" && after.input?.id === "3-10"
+        ? ok("…and “next” from 3-09 is 3-10, not 3-next-steps")
+        : bad(`a nine-step conversation's "next" from 3-09: ${JSON.stringify(after)}`);
+
+      // what the model is told it can show, against the tutorials themselves
+      const { tutorialRefs } = await import("../src/server/tutorial.ts");
+      const { showTutorialStep } = await import("../src/server/tools.ts");
+      const stale = [1, 2, 3].flatMap((n) => {
+        const ids = tutorialRefs(n).map((p) => p.id);
+        const steps = ids.filter((id) => /^(\d+-)?\d+$/.test(id));
+        const [intro, first, last, end] = [ids[0], steps[0], steps.at(-1), ids.at(-1)];
+        return [
+          [system, `(${intro}, ${first} to ${last}, ${end})`],
+          [showTutorialStep.description, `${intro}, a step from ${first} to ${last}, or ${end}`],
+          [showTutorialStep.inputJsonSchema.properties.id.description, `${intro}, ${first} … ${last}, ${end}`],
+        ]
+          .filter(([told, want]) => !told.includes(want))
+          .map(([, want]) => want);
+      });
+      stale.length
+        ? bad(`the model isn't told of every tutorial page; missing: ${stale.join("; ")}`)
+        : ok("the prompt and show_tutorial_step give each tutorial's pages as the tutorials have them");
     }
 
     // 7c · the contents rail: what it lists, and what each kind of choice opens
@@ -496,8 +539,8 @@ try {
       const pages = (menu.tutorials ?? []).map((t) => t.pages.map((p) => p.id));
       const each = (t, prefix, steps) =>
         t?.length === steps + 2 && t[0] === `${prefix}intro` && t[1] === `${prefix}01` && t.at(-1) === `${prefix}next-steps`;
-      menu.lessons.length === 2 && lessons.length === 14 && pages.length === 3 && each(pages[0], "", 10) && each(pages[1], "2-", 9) && each(pages[2], "3-", 9)
-        ? ok("the rail lists 14 lessons in 2 parts, and every page of the three tutorials: 12, 11 and 11")
+      menu.lessons.length === 2 && lessons.length === 14 && pages.length === 3 && each(pages[0], "", 10) && each(pages[1], "2-", 9) && each(pages[2], "3-", 10)
+        ? ok("the rail lists 14 lessons in 2 parts, and every page of the three tutorials: 12, 11 and 12")
         : bad(`menu.json: ${menu.lessons.length} parts, ${lessons.length} lessons, ${JSON.stringify(pages)}`);
       const manual = menu.reference?.pages ?? [];
       manual.length === 19 && manual[0].id === "index" && manual[0].title === "Contents" && manual[18].id === "limits"
