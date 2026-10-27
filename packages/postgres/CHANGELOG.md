@@ -1,5 +1,11 @@
 # @haikit/postgres
 
+## 0.30.0
+
+### Patch Changes
+
+- @haikit/core@0.30.0
+
 ## 0.29.0
 
 ### Patch Changes
