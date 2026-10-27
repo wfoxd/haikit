@@ -166,8 +166,10 @@ const NOT_BEFORE_CACHE_MS = 30_000;
 const CACHE_ENTRIES = 10_000;
 /** How long a browser has to come back from a provider, and its flow cookie's life. */
 const SIGN_IN_FLOW_MS = 600_000;
-/** The longest `return_to` kept. */
+/** The longest `return_to` kept, percent-encoded. */
 const RETURN_TO_LENGTH = 2_048;
+/** The most a cookie's name and value may come to: what every browser keeps. */
+const COOKIE_BYTES = 4_096;
 
 const SIGNED_OUT = "sign in to continue";
 const INVALID = "your sign-in has expired or is invalid";
@@ -202,6 +204,20 @@ const first = (value: string | string[] | undefined) => (Array.isArray(value) ? 
  */
 const isLocalPath = (value: unknown): value is string =>
   typeof value === "string" && value.length <= RETURN_TO_LENGTH && /^\/(?![/\\])[^\\\x00-\x1f\x7f]*$/.test(value);
+
+/**
+ * A local path as a `Location` header can carry it: anything outside
+ * printable ASCII, which Node refuses in a header, and `"`, which JSON would
+ * escape, percent-encoded. Escapes already there are kept as they are.
+ */
+const forLocation = (path: string) =>
+  path.replace(/[^\x21-\x7e]|"/gu, (c) => {
+    try {
+      return encodeURIComponent(c);
+    } catch {
+      return "%EF%BF%BD"; // a lone surrogate: U+FFFD, as a URL parser would make it
+    }
+  });
 
 export function createAuth(options: AuthOptions): Auth {
   const { store, jwt } = options;
@@ -530,14 +546,27 @@ export function createAuth(options: AuthOptions): Auth {
       console.error(`[haikit] auth: a sign-in with ${provider.name} couldn't start:`, err);
       return failed(res, provider, "failed");
     }
-    const flow: Flow = { p: provider.name, f: started.flow, r: isLocalPath(returnTo) ? returnTo : "/" };
-    const sealed = await new EncryptJWT(flow)
-      .setProtectedHeader({ alg: "dir", enc: "A256GCM" })
-      .setExpirationTime(Math.floor((Date.now() + SIGN_IN_FLOW_MS) / 1000))
-      .encrypt(flowKeys[0]);
+    // encoded first, so the limit is on what the Location will carry
+    const wanted = isLocalPath(returnTo) ? forLocation(returnTo) : "/";
+    const flow: Flow = { p: provider.name, f: started.flow, r: isLocalPath(wanted) ? wanted : "/" };
+    let sealed = await seal(flow);
+    // A browser drops a cookie past its size, and the way back would find
+    // none: rather lose return_to than the sign-in.
+    if (tooBig(sealed) && flow.r !== "/") sealed = await seal({ ...flow, r: "/" });
+    if (tooBig(sealed)) {
+      console.error(`[haikit] auth: a sign-in with ${provider.name} couldn't start: its flow is too large for a cookie`);
+      return failed(res, provider, "failed");
+    }
     addCookie(res, `${flowCookie}=${sealed}; Max-Age=${SIGN_IN_FLOW_MS / 1000}; ${cookieAttributes}`);
     redirect(res, started.url.href);
   }
+
+  const seal = (flow: Flow) =>
+    new EncryptJWT(flow)
+      .setProtectedHeader({ alg: "dir", enc: "A256GCM" })
+      .setExpirationTime(Math.floor((Date.now() + SIGN_IN_FLOW_MS) / 1000))
+      .encrypt(flowKeys[0]);
+  const tooBig = (sealed: string) => Buffer.byteLength(`${flowCookie}=${sealed}`) > COOKIE_BYTES;
 
   /** The flow a cookie carries, if one of the secrets sealed it and it hasn't expired. */
   async function openFlow(sealed: string): Promise<Flow | null> {
@@ -578,10 +607,17 @@ export function createAuth(options: AuthOptions): Auth {
   function failed(res: ServerResponse, provider: SignInProvider, why: "access_denied" | "refused" | "expired" | "failed") {
     const to = new URL(provider.failureUrl, "http://localhost");
     to.searchParams.set("sign_in_error", why);
-    redirect(res, to.pathname + to.search + to.hash);
+    // The path as configured, not as URL normalizes it: /a/..//b would become
+    // //b, which a browser reads as another host.
+    redirect(res, forLocation(provider.failureUrl.split(/[?#]/)[0]) + to.search + to.hash);
   }
 
   function handler(basePath = "/auth") {
+    // a provider's way back on a route this handler answers would take it over
+    const answered = [...ROUTES, ...providers.keys()].map((route) => `${basePath}/${route}`);
+    for (const [path, provider] of callbacks) {
+      if (answered.includes(path)) throw new Error(`auth.handler: provider "${provider.name}"'s redirectUri comes back to ${path}, a route the handler answers already`);
+    }
     return async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
       let url: URL;
       try {

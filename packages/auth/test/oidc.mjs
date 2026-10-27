@@ -401,6 +401,62 @@ console.log("\nsettings");
   }
 }
 
+// ── what a Location, a cookie and the routes can hold ───────────────────
+console.log("\nedges");
+{
+  const idp = await fakeProvider();
+  /** A provider of the app's own: start as given, and back as ada. */
+  const custom = (name, over = {}) => ({
+    name,
+    redirectUri: `http://localhost/auth/${name}/callback`,
+    failureUrl: "/",
+    start: async () => ({ url: new URL("https://custom.test/"), flow: {} }),
+    finish: async () => ({ userId: "ada" }),
+    ...over,
+  });
+  const auth = createAuth({
+    store: memoryAuthStore(),
+    jwt: { secret: SECRET },
+    providers: [
+      oidc({ name: "fake", issuer: "https://fake.test", ...CLIENT, redirectUri: REDIRECT, fetch: idp.fetch }),
+      custom("dotted", { failureUrl: "/a/..//evil.example", start: async () => Promise.reject(new Error("down")) }),
+      custom("unicode", { failureUrl: "/登录?from=x#top", start: async () => Promise.reject(new Error("down")) }),
+      custom("huge", { start: async () => ({ url: new URL("https://custom.test/"), flow: { big: "x".repeat(5_000) } }) }),
+    ],
+  });
+  const { server, browser } = await serve(auth);
+  try {
+    let b = browser();
+    let s = await b.get(`/auth/fake?return_to=${encodeURIComponent('/日本語?q=ä b&x="y"')}`);
+    let r = await b.get(pathOf(idp.signIn(s.location)));
+    check("a return_to beyond ASCII is percent-encoded for the Location, and the sign-in completes", r.status === 303 && r.location === "/%E6%97%A5%E6%9C%AC%E8%AA%9E?q=%C3%A4%20b&x=%22y%22" && b.jar.has("__Host-haikit_token"));
+    b = browser();
+    s = await b.get(`/auth/fake?return_to=${encodeURIComponent("/%E6%97%A5")}`);
+    r = await b.get(pathOf(idp.signIn(s.location)));
+    check("…and an escape already there is kept as it is", r.location === "/%E6%97%A5");
+    b = browser();
+    s = await b.get(`/auth/fake?return_to=${encodeURIComponent("/" + '"'.repeat(2_047))}`);
+    check("a return_to past 2,048 characters once encoded goes to /, and its cookie fits", s.cookies.every((c) => Buffer.byteLength(c.split(";")[0]) <= 4_096));
+    r = await b.get(pathOf(idp.signIn(s.location)));
+    check("…and the sign-in completes", r.location === "/" && b.jar.has("__Host-haikit_token"));
+
+    let logged = await quietly(async () => (r = await browser().get("/auth/huge")));
+    check("a flow too large for a cookie: failed, logged, and no cookie", r.location === "/?sign_in_error=failed" && r.cookies.length === 0 && logged.some((l) => l.includes("its flow is too large for a cookie")));
+    logged = await quietly(async () => (r = await browser().get("/auth/dotted")));
+    check("a failureUrl with dot segments is sent as configured, never as //another-host", r.location === "/a/..//evil.example?sign_in_error=failed");
+    logged = await quietly(async () => (r = await browser().get("/auth/unicode")));
+    check("a failureUrl beyond ASCII is percent-encoded, its query and fragment kept", r.location === "/%E7%99%BB%E5%BD%95?from=x&sign_in_error=failed#top");
+  } finally {
+    server.close();
+  }
+
+  const on = (path) => createAuth({ store: memoryAuthStore(), jwt: { secret: SECRET }, providers: [custom("one"), custom("two", { redirectUri: `http://localhost${path}` })] });
+  for (const path of ["/auth/one", "/auth/me", "/auth/sign-out"]) {
+    check(`a redirectUri that comes back to ${path}`, throws(() => on(path).handler("/auth"), `auth.handler: provider "two"'s redirectUri comes back to ${path}, a route the handler answers already`));
+  }
+  check("…which is fine under another basePath", typeof on("/auth/me").handler("/account") === "function");
+}
+
 // ── rotation ────────────────────────────────────────────────────────────
 console.log("\nrotation");
 {

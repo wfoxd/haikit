@@ -46,7 +46,8 @@ const CASES = [
     entry: "examples/hello-auth/src/server/main.ts",
     build: "examples/hello-auth",
     appCss: ["bg-primary", "data-hai-theme=dark"],
-    env: { NODE_ENV: "production", HAIKIT_AUTH_SECRET: "a-smoke-test-secret-of-at-least-32-bytes" },
+    // without Google, whatever this shell has: the check below needs it off, and no network
+    env: { NODE_ENV: "production", HAIKIT_AUTH_SECRET: "a-smoke-test-secret-of-at-least-32-bytes", GOOGLE_CLIENT_ID: "", GOOGLE_CLIENT_SECRET: "" },
     port: 5276,
     signIn: { as: "ada", stranger: "bob", cookie: "__Host-haikit_token", welcome: "Signed in as ada." },
     message: "greet me",

@@ -173,6 +173,12 @@ Returns a request handler for `GET {basePath}/me` and
 answered, and `false` for any other method or path, which the app serves.
 It never rejects. See [Routes](#routes).
 
+**Throws** an `Error`, at once, when a provider's `redirectUri` comes back
+to a route the handler answers already, `{basePath}/me`,
+`{basePath}/sign-out` or `{basePath}/{name}` of any provider, which it would
+take over: `auth.handler: provider "<name>"'s redirectUri comes back to
+<path>, a route the handler answers already`.
+
 ### `signIn`
 
 Once the app's own login has checked the user: issues a token naming
@@ -423,12 +429,20 @@ for a provider that doesn't speak OpenID Connect.
 
 1. **`GET {basePath}/{name}`**, such as `/auth/google?return_to=/chats`:
    - `return_to` is kept if it's a path on this site: it starts with one
-     `/`, not two, has no `\` and no control character, and is at most
-     2,048 characters. A browser reads `\` as `/` and drops a tab, so either
-     could make a path into another site. Anything else, or none, is `/`.
+     `/`, not two, and has no `\` and no control character. A browser reads
+     `\` as `/` and drops a tab, so either could make a path into another
+     site. Then whatever isn't printable ASCII, and `"`, is percent-encoded,
+     so a `Location` header can carry it, and the result must be at most
+     2,048 characters. Escapes already there are kept as they are. Anything
+     else, or none, is `/`.
    - `start()` is called. The answer is **303** to the URL it returned, with
      `cache-control: no-store`, and the flow cookie holding the provider's
      name, its flow and `return_to`.
+   - A flow cookie whose name and value come to more than 4,096 bytes would
+     be dropped by a browser. Sealed again with `return_to` as `/`, it's set
+     if it then fits. If it still doesn't, it's **303** to `failureUrl` with
+     `sign_in_error=failed`, and logged as
+     `[haikit] auth: a sign-in with <name> couldn't start: its flow is too large for a cookie`.
    - If `start()` throws, as when the provider's settings can't be read: a
      **303** to `failureUrl` with `sign_in_error=failed`, and no cookie. It's
      logged as `[haikit] auth: a sign-in with <name> couldn't start:`.
@@ -478,8 +492,11 @@ replaces the cookie, so the first one's way back is `expired`.
 ### When it fails
 
 A sign-in that fails is answered **303** to the provider's `failureUrl`,
-with `sign_in_error` added to its query. Nobody is signed in, and the
-browser is never told more than the code:
+with `sign_in_error` added to its query. Its path is sent as configured,
+percent-encoded where it isn't printable ASCII, and never normalized:
+`/a/..//b` would otherwise become `//b`, which a browser reads as another
+host. Nobody is signed in, and the browser is never told more than the
+code:
 
 | `sign_in_error` | When |
 | --- | --- |
@@ -737,6 +754,7 @@ leaves its row, which no request can reach: its id was the conversation's.
 | Revocation granularity | 1 s: a sign-in in the second `revoke` ran in still counts |
 | JWKS: refetched once older than / for an unknown key id at most every / fetch timeout | 600,000 / 30,000 / 5000 (`jose`'s defaults) |
 | How long a sign-in through a provider may take, and its flow cookie's `Max-Age` | 600,000 |
-| Longest `return_to` kept | 2,048 characters |
+| Longest `return_to` kept | 2,048 characters, percent-encoded |
+| Largest flow cookie, name and value | 4,096 bytes |
 | `oidc`: reading the provider's settings, and exchanging the code, each give up after | 10,000 |
 | `oidc`: the provider's settings are kept | for the process's life, once read |

@@ -253,7 +253,8 @@ None of these can be changed without changing HaiKIT's code.
 | Longest an open events stream outlives a revocation | 60,000 on the server that revoked; about 90,000 on another | [Sign-in and ownership](auth.md#revoke) |
 | JWKS refetched once older than; for an unknown key id, at most every; fetch timeout | 600,000; 30,000; 5000 (`jose`'s defaults) | [Sign-in and ownership](auth.md#createauth) |
 | How long a sign-in through a provider may take, and its flow cookie's `Max-Age` | 600,000 | [Sign-in and ownership](auth.md#the-flow-cookie) |
-| Longest `return_to` kept | 2,048 characters | [Sign-in and ownership](auth.md#signing-in-there-and-back) |
+| Longest `return_to` kept | 2,048 characters, percent-encoded | [Sign-in and ownership](auth.md#signing-in-there-and-back) |
+| Largest flow cookie, name and value; past it, `return_to` is `/` | 4,096 bytes | [Sign-in and ownership](auth.md#signing-in-there-and-back) |
 | `oidc`: reading the provider's settings, and exchanging the code, each give up after | 10,000 | [Sign-in and ownership](auth.md#oidc) |
 | `oidc`: the provider's settings are kept | for the process's life, once read; a failed read is tried again | [Sign-in and ownership](auth.md#oidc) |
 
