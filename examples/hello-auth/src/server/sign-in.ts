@@ -9,15 +9,16 @@ import type { Auth } from "@haikit/auth";
  *   GET  /sign-in                  the form, or who is signed in
  *   POST /sign-in   name=…          sign in as that name
  *   POST /sign-in   action=out      sign out of this browser
- *   POST /sign-in   action=revoke   sign out everywhere: every token issued before now is refused
+ *   POST /sign-in   action=revoke   sign out everywhere: every sign-in before now is refused
  */
 export async function signInPage(req: IncomingMessage, res: ServerResponse, auth: Auth) {
   if (req.method === "GET") return page(res, await auth.user(req));
   if (req.method !== "POST") return void res.writeHead(405, { allow: "GET, POST" }).end();
 
-  // A form from another site must not sign anyone in or out here.
+  // A form from another site must not sign anyone in or out here, nor one
+  // from a sandboxed frame or a file, whose origin is "null".
   const origin = req.headers.origin;
-  if (origin !== undefined && new URL(origin).host !== req.headers.host) return void res.writeHead(403).end("forbidden");
+  if (origin !== undefined && !sameHost(origin, req.headers.host)) return void res.writeHead(403).end("forbidden");
   const form = new URLSearchParams(await body(req));
 
   const action = form.get("action");
@@ -31,6 +32,14 @@ export async function signInPage(req: IncomingMessage, res: ServerResponse, auth
   if (!/^[\p{L}\p{N} ._-]{1,40}$/u.test(name)) return page(res, null, "A name of 1 to 40 letters, digits, spaces, dots, dashes or underscores.");
   await auth.signIn(res, name);
   res.writeHead(303, { location: "/" }).end();
+}
+
+function sameHost(origin: string, host: string | undefined): boolean {
+  try {
+    return new URL(origin).host === host;
+  } catch {
+    return false;
+  }
 }
 
 async function body(req: IncomingMessage): Promise<string> {

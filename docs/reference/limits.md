@@ -132,7 +132,7 @@ Checked against `@haikit/*` 0.20.0. Durations are in milliseconds.
 | `jwt.algorithms` | `["HS256"]` with a secret, plus `["RS256", "ES256", "EdDSA"]` with a JWKS | [Sign-in and ownership](auth.md#createauth) |
 | `jwt.userClaim` | `"sub"` | [Sign-in and ownership](auth.md#createauth) |
 | `jwt.ttlMs` | `604800000` (7 days), at least 1000 | [Sign-in and ownership](auth.md#tokens) |
-| `jwt.clockToleranceMs` | `5000` | [Sign-in and ownership](auth.md#tokens) |
+| `jwt.clockToleranceMs` | `5000`, finite and at least 0 | [Sign-in and ownership](auth.md#tokens) |
 | `cookie.name` | `"__Host-haikit_token"`, or `"haikit_token"` when not `secure` | [Sign-in and ownership](auth.md#createauth) |
 | `cookie.secure` | `true` | [Sign-in and ownership](auth.md#createauth) |
 | `origins` | `[]`: only the request's own host | [Sign-in and ownership](auth.md#the-gate) |
@@ -234,7 +234,7 @@ None of these can be changed without changing HaiKIT's code.
 | What | Value | Page |
 | --- | --- | --- |
 | How long a server keeps a user's revocation time before reading it again | 30,000 | [Sign-in and ownership](auth.md#revoke) |
-| Revocation granularity | 1 s: a token issued in the second `revoke` ran in still counts | [Sign-in and ownership](auth.md#revoke) |
+| Revocation granularity | 1 s: a sign-in in the second `revoke` ran in still counts | [Sign-in and ownership](auth.md#revoke) |
 | Owners, and revocation times, kept in memory per server | the 10,000 most recent of each | [Sign-in and ownership](auth.md#ownerof) |
 | When `GET /auth/me` issues a cookie token again | past half its life | [Sign-in and ownership](auth.md#tokens) |
 | JWKS refetched once older than; for an unknown key id, at most every; fetch timeout | 600,000; 30,000; 5000 (`jose`'s defaults) | [Sign-in and ownership](auth.md#createauth) |

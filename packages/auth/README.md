@@ -63,6 +63,6 @@ const auth = createAuth({ store: pgAuthStore(pool), jwt: { secret } });
 
 Tokens are stateless: the store holds only who owns which conversation, and
 when `revoke` was last called for a user, which refuses every token they were
-issued before it.
+issued before it, renewals of an earlier sign-in included.
 
 The whole reference is [Sign-in and ownership](../../docs/reference/auth.md).

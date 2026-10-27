@@ -71,6 +71,12 @@ console.log("\ncreateAuth");
   );
   check("a jwks that isn't a URL", throws(() => createAuth({ store, jwt: { jwks: "not a url" } }), "createAuth: jwt.jwks must be a URL"));
   check("a ttlMs under a second", throws(() => createAuth({ store, jwt: { secret: SECRET, ttlMs: 999 } }), "createAuth: jwt.ttlMs must be at least 1000"));
+  check(
+    "a clock tolerance that's negative, NaN or infinite, which would stop exp and nbf being checked",
+    [-1, NaN, Infinity].every((clockToleranceMs) =>
+      throws(() => createAuth({ store, jwt: { secret: SECRET, clockToleranceMs } }), "createAuth: jwt.clockToleranceMs must be a finite number, at least 0"),
+    ),
+  );
   check("a __Host- cookie that isn't secure", throws(() => createAuth({ store, jwt: { secret: SECRET }, cookie: { secure: false, name: "__Host-x" } }), "createAuth: a __Host- cookie must be secure"));
   check("a cookie name with a space", throws(() => createAuth({ store, jwt: { secret: SECRET }, cookie: { name: "my token" } }), "createAuth: cookie.name isn't a valid cookie name"));
   check("an origin that isn't one", throws(() => createAuth({ store, jwt: { secret: SECRET }, origins: ["app.example.com"] }), "createAuth: app.example.com isn't an origin such as https://app.example.com"));
@@ -195,6 +201,52 @@ console.log("\nrevocation");
   check("other users are untouched", (await auth.verify(await auth.signIn(fakeRes(), "bob")))?.id === "bob");
   const noIat = await new SignJWT({}).setProtectedHeader({ alg: "HS256" }).setSubject("ada").setExpirationTime("1h").sign(key(SECRET));
   check("a revoked user's token with no iat is refused: it can't show it came after", (await auth.verify(noIat)) === null);
+}
+{
+  // A read of the revocation time that was already out when revoke ran here
+  // comes back with the time before it. It must not be kept as the latest.
+  const base = memoryAuthStore();
+  let hold = null;
+  const slow = { ...base, async getNotBefore(userId) { const at = await base.getNotBefore(userId); await hold; return at; } };
+  const auth = createAuth({ store: slow, jwt: { secret: SECRET } });
+  const old = await new SignJWT({}).setProtectedHeader({ alg: "HS256" }).setSubject("ada").setIssuedAt(Math.floor(Date.now() / 1000) - 5).setExpirationTime("1h").sign(key(SECRET));
+  let release;
+  hold = new Promise((r) => (release = r));
+  const reading = auth.verify(old); // its read has the time before the revoke, and waits
+  await wait(20);
+  await auth.revoke("ada");
+  release();
+  await reading;
+  check("a read out while revoke ran isn't kept: the revoked token is still refused on this server", (await auth.verify(old)) === null);
+}
+{
+  // Renewed on a server that hasn't heard of the revocation yet, a cookie
+  // keeps the time its user signed in, so the renewal can't outlive it.
+  const shared = memoryAuthStore();
+  const revoking = createAuth({ store: shared, jwt: { secret: SECRET } });
+  const behind = createAuth({ store: shared, jwt: { secret: SECRET, ttlMs: 4_000 }, cookie: { secure: false } });
+  const token = await behind.signIn(fakeRes(), "ada");
+  const signedInAt = (await behind.verify(token)).claims.auth_time; // and remembers that ada isn't revoked
+  check("a token signIn issues says when its user signed in, as auth_time", typeof signedInAt === "number" && signedInAt === (await behind.verify(token)).claims.iat);
+  check("auth_time can't be set by claims", await rejects(() => behind.signIn(fakeRes(), "ada", { auth_time: 1 }), 'signIn: "auth_time" is set by signIn, not by claims'));
+  await wait(1_100); // into the next second, so the revocation is after the sign-in
+  await revoking.revoke("ada");
+  await wait(1_100); // past half the 4 s
+  const handle = behind.handler();
+  const server = http.createServer(async (req, res) => (await handle(req, res)) || res.writeHead(404).end());
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  try {
+    const me = await fetch(`http://127.0.0.1:${server.address().port}/auth/me`, { headers: { cookie: `haikit_token=${token}` } });
+    const renewed = tokenIn(me.headers.get("set-cookie") ?? "=");
+    const claims = renewed ? (await createAuth({ store: memoryAuthStore(), jwt: { secret: SECRET } }).verify(renewed))?.claims : null;
+    check("a renewal keeps the sign-in time, with a new iat", claims?.auth_time === signedInAt && claims.iat > signedInAt);
+    check(
+      "…so a cookie renewed by a server that hadn't heard of a revocation is refused once it has",
+      renewed !== "" && (await createAuth({ store: shared, jwt: { secret: SECRET } }).verify(renewed)) === null,
+    );
+  } finally {
+    server.close();
+  }
 }
 
 // ── the gate ────────────────────────────────────────────────────────────

@@ -49,10 +49,16 @@ const MIME: Record<string, string> = {
   ".svg": "image/svg+xml",
 };
 
-const server = http.createServer(async (req, res) => {
+async function serve(req: http.IncomingMessage, res: http.ServerResponse) {
   if (await handleHai(req, res)) return;
   if (await handleAuth(req, res)) return;
-  const url = new URL(req.url ?? "/", "http://localhost");
+  // Node accepts targets a URL can't parse, such as `//[`; both handlers above leave them here
+  let url: URL;
+  try {
+    url = new URL(req.url ?? "/", "http://localhost");
+  } catch {
+    return void res.writeHead(400).end("bad request");
+  }
   if (url.pathname === "/sign-in") return signInPage(req, res, auth);
   // The chat page itself, to someone signed out: the sign-in page instead.
   if (url.pathname === "/" && !(await auth.user(req))) return void res.writeHead(303, { location: "/sign-in" }).end();
@@ -67,7 +73,16 @@ const server = http.createServer(async (req, res) => {
   } catch {
     res.writeHead(404).end(PRODUCTION && url.pathname === "/" ? "not built — run `npm run build` first" : "not found");
   }
-});
+}
+
+// Whatever a request throws is answered and logged, never left to take the server down.
+const server = http.createServer((req, res) =>
+  serve(req, res).catch((err) => {
+    console.error("[hello-auth] request failed:", err);
+    if (!res.headersSent) res.writeHead(500);
+    res.end();
+  }),
+);
 
 const vite = PRODUCTION
   ? null

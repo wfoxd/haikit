@@ -281,6 +281,20 @@ for (const c of CASES) {
         : bad(`init said ${started.find((e) => e.type === "block_update")?.result}`);
       const crossSite = await fetch(`${base}/hai/chat`, { method: "POST", headers: { "content-type": "application/json", cookie, origin: "https://evil.example" }, body: "{}" });
       crossSite.status === 403 ? ok("the cookie from another site is a 403") : bad(`from another site: ${crossSite.status}`);
+      // what a URL can't parse is refused, not thrown: a sandboxed frame's origin, and a target such as //[
+      const sandboxed = await fetch(`${base}/sign-in`, { method: "POST", headers: { origin: "null", "content-type": "application/x-www-form-urlencoded" }, body: "name=eve", redirect: "manual" });
+      const net = await import("node:net");
+      const raw = await new Promise((resolve) => {
+        let text = "";
+        const sock = net.connect(c.port, "127.0.0.1", () => sock.end("GET //[ HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"));
+        sock.on("data", (d) => (text += d));
+        sock.on("close", () => resolve(text));
+        sock.on("error", () => resolve(text));
+      });
+      const alive = await fetch(`${base}/sign-in`).then((r) => r.status).catch(() => 0);
+      sandboxed.status === 403 && raw.startsWith("HTTP/1.1 400") && alive === 200
+        ? ok("a null origin is a 403 and an unparsable target a 400, and the server stays up")
+        : bad(`null origin: ${sandboxed.status}, //[: ${raw.split("\r\n")[0]}, then: ${alive}`);
     }
 
     // one stylesheet: the default UI's, through @haikit/client/tailwind.css,

@@ -92,7 +92,7 @@ interface CookieOptions {
 | `jwt.algorithms` | `["HS256"]` with a secret, plus `["RS256", "ES256", "EdDSA"]` with a JWKS | The algorithms a token may be signed with |
 | `jwt.userClaim` | `"sub"` | The claim that names the user. `signIn`'s tokens carry the user in `sub`, and in this claim too when it's another |
 | `jwt.ttlMs` | `604_800_000` (7 days) | How long a token `signIn` issues lasts, rounded down to whole seconds, and its cookie's `Max-Age` |
-| `jwt.clockToleranceMs` | `5_000` | How far the issuer's clock and this server's may differ when `exp` and `nbf` are checked |
+| `jwt.clockToleranceMs` | `5_000` | How far the issuer's clock and this server's may differ when `exp` and `nbf` are checked. A finite number, at least 0 |
 | `cookie.name` | `"__Host-haikit_token"`, or `"haikit_token"` when `secure` is `false` | The cookie the token is set in and read from |
 | `cookie.secure` | `true` | `false` sends the cookie without `Secure`, so it works over plain http, as on `http://localhost` in Safari, which keeps no `Secure` cookie there. Never set it for production. It's never inferred from a request, such as from `x-forwarded-proto` |
 | `origins` | `[]` | Origins a POST that carries the cookie may come from, besides the request's own host, such as `"https://admin.example.com"` (see [The gate](#the-gate)) |
@@ -114,6 +114,7 @@ provider's public key as the secret, a classic forgery, is refused.
 | A secret, but no HS algorithm allowed | `createAuth: jwt.secret is given, but jwt.algorithms allows no HS algorithm` |
 | A `jwks` that isn't a URL | `createAuth: jwt.jwks must be a URL` |
 | A `ttlMs` under 1000, or not finite | `createAuth: jwt.ttlMs must be at least 1000` |
+| A `clockToleranceMs` that's negative, `NaN` or infinite, which would stop `exp` and `nbf` being checked | `createAuth: jwt.clockToleranceMs must be a finite number, at least 0` |
 | A cookie name with a character a cookie name can't have | `createAuth: cookie.name isn't a valid cookie name` |
 | A `__Host-` name with `secure: false` | `createAuth: a __Host- cookie must be secure` |
 | An entry in `origins` that isn't a URL | `createAuth: <entry> isn't an origin such as https://app.example.com` |
@@ -166,7 +167,8 @@ SameSite=Lax; Secure`, without `Secure` when `cookie.secure` is `false`.
 `signIn needs jwt.secret: an identity provider's tokens are issued by the
 provider`. With a `TypeError` for an empty or non-string `userId`,
 `signIn: userId must be a non-empty string`, and for a claim it sets itself
-(`iss`, `sub`, `aud`, `exp`, `nbf`, `iat`, `jti`, or `userClaim`):
+(`iss`, `sub`, `aud`, `exp`, `nbf`, `iat`, `jti`, `auth_time`, or
+`userClaim`):
 `signIn: "<name>" is set by signIn, not by claims`.
 
 ### `signOut`
@@ -215,16 +217,21 @@ whoever asks first: a conversation id may have been seen by others (see
 
 ### `revoke`
 
-Refuses every token `userId` was issued before now: "sign out everywhere".
-It stores the time in the store, and this server refuses those tokens at
-once. Other servers keep each user's time for up to 30,000 ms before reading
-it again, so they refuse them within that. An events stream already open
-ends at its gate's next check, every 60,000 ms (see
-[HTTP routes](http.md#gates)).
+Refuses every sign-in of `userId`'s before now: "sign out everywhere". It
+stores the time in the store, and this server refuses those tokens at once,
+a check already reading the store included. Other servers keep each user's
+time for up to 30,000 ms before reading it again, so they refuse them within
+that. An events stream already open ends at its gate's next check, every
+60,000 ms (see [HTTP routes](http.md#gates)).
 
-It is by the second: a token is refused when its `iat` is before the second
-`revoke` ran in, and one with no `iat` is refused once its user has a
-revocation time. So a token issued in that same second, just before, still
+A token's sign-in time is its `auth_time` for a token `signIn` issued, which
+a renewal keeps (see [Tokens](#tokens)). So a cookie renewed by a server that
+hadn't yet read the revocation is refused too, once it has. For a provider's
+token it is its `iat`: the provider decides when its user signs in again.
+
+It is by the second: a token is refused when its sign-in time is before the
+second `revoke` ran in, and one without one is refused once its user has a
+revocation time. So a sign-in in that same second, just before, still
 counts, and a sign-in straight after is never refused.
 
 ## Tokens
@@ -237,6 +244,7 @@ HS algorithm allowed, header `{ alg, typ: "JWT" }`, carrying:
 | `sub` | The user's id |
 | `userClaim` | The user's id again, when `userClaim` isn't `sub` |
 | `iat` | Now, in whole seconds |
+| `auth_time` | When the user signed in, in whole seconds: `iat`, on a token `signIn` issued; the first token's, on a renewal |
 | `exp` | `iat` plus `ttlMs`, in whole seconds |
 | `jti` | A random UUID |
 | `iss`, `aud` | `jwt.issuer` and `jwt.audience`, when set |
@@ -249,7 +257,8 @@ HS algorithm allowed, header `{ alg, typ: "JWT" }`, carrying:
 - `exp` hasn't passed, and `nbf` has, give or take `clockToleranceMs`;
 - `iss` and `aud` match, when `issuer` and `audience` are set;
 - `userClaim` is a non-empty string;
-- `iat` isn't before its user's revocation time, if they have one.
+- sign-in time (`auth_time` on a token `signIn` issued, `iat` on a
+  provider's) isn't before its user's revocation time, if they have one.
 
 Anything else is refused. The reason isn't sent to the browser. A JWKS that
 can't be fetched or read refuses every token that needs it, and is logged
@@ -261,7 +270,8 @@ request has one, else the cookie. A Bearer header is used even when its
 token is refused: the cookie isn't tried.
 
 **Renewal.** Nothing renews a token by itself. `GET /auth/me` issues the
-cookie again, with the same claims and a new `iat`, `exp` and `jti`, once a
+cookie again, with the same claims and sign-in time (`auth_time`) and a new
+`iat`, `exp` and `jti`, once a
 token `signIn` issued, sent as the cookie, is past half its life. A page that
 asks `/auth/me` as it opens stays signed in for as long as it's opened at
 least once every `ttlMs`. A provider's tokens are renewed by the provider.
@@ -418,5 +428,5 @@ leaves its row, which no request can reach: its id was the conversation's.
 | How long a server keeps a user's revocation time before reading it again | 30,000 |
 | Owners and revocation times kept in memory, each | 10,000 most recent |
 | When `/auth/me` renews a cookie token | past half its life |
-| Revocation granularity | 1 s: tokens issued in the second `revoke` ran in still count |
+| Revocation granularity | 1 s: a sign-in in the second `revoke` ran in still counts |
 | JWKS: refetched once older than / for an unknown key id at most every / fetch timeout | 600,000 / 30,000 / 5000 (`jose`'s defaults) |
