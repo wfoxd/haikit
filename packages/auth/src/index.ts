@@ -17,7 +17,7 @@
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { hkdfSync, randomUUID } from "node:crypto";
+import { hkdfSync, randomBytes, randomUUID } from "node:crypto";
 import type { Gate } from "@haikit/core";
 import { EncryptJWT, SignJWT, createRemoteJWKSet, decodeProtectedHeader, errors, jwtDecrypt, jwtVerify, type JWTPayload } from "jose";
 
@@ -99,9 +99,9 @@ export interface SignInProvider {
    * The browser back at `redirectUri`, with what `start` kept: the user who
    * signed in, or why no one did. `access_denied`: the user said no at the
    * provider. `refused`: the app said no to who they are. `expired`: this
-   * isn't the answer the flow waits for, such as one to a sign-in another tab
-   * has replaced since, and the flow is kept for its own. Throws for anything
-   * else, which is logged.
+   * isn't the answer the flow waits for, such as one to a sign-in in another
+   * tab, and the flow is kept for its own. Throws for anything else, which is
+   * logged.
    */
   finish(
     callback: URL,
@@ -169,7 +169,7 @@ const CACHE_ENTRIES = 10_000;
 const SIGN_IN_FLOW_MS = 600_000;
 /** The longest `return_to` kept, percent-encoded. */
 const RETURN_TO_LENGTH = 2_048;
-/** The most a cookie's name and value may come to: what every browser keeps. */
+/** The most a cookie's name and value may come to: what every browser keeps. A browser's flow cookies stay within it together. */
 const COOKIE_BYTES = 4_096;
 
 const SIGNED_OUT = "sign in to continue";
@@ -314,10 +314,11 @@ export function createAuth(options: AuthOptions): Auth {
   }
   // A key of its own, from each secret, so a flow cookie can never pass for a token, nor a token for one
   const flowKeys = secrets.map((s) => new Uint8Array(hkdfSync("sha256", s, new Uint8Array(0), "haikit/auth sign-in flow", 32)));
-  const flowCookie = secure ? "__Host-haikit_sign_in" : "haikit_sign_in";
-  // one cookie for both, and a sign-in would overwrite the token it's on its way to
-  if (providers.size && cookieName === flowCookie) {
-    throw new Error(`createAuth: cookie.name can't be ${flowCookie}, the cookie a sign-in through a provider is kept in`);
+  // each sign-in on its way has a cookie of its own, named this and an id
+  const flowPrefix = secure ? "__Host-haikit_sign_in-" : "haikit_sign_in-";
+  // a token under such a name would be taken for a sign-in's, and cleared to make room for one
+  if (providers.size && cookieName.startsWith(flowPrefix)) {
+    throw new Error(`createAuth: cookie.name can't start with ${flowPrefix}: sign-ins through a provider keep their cookies under those names`);
   }
 
   // ── tokens ─────────────────────────────────────────────────────────
@@ -541,8 +542,8 @@ export function createAuth(options: AuthOptions): Auth {
   /** What the browser carries to the provider and back: which one, what its finish needs, and where to go after. */
   type Flow = { p: string; f: Record<string, string>; r: string };
 
-  /** `GET {basePath}/{name}`: off to the provider, with the flow in a cookie. */
-  async function startSignIn(provider: SignInProvider, url: URL, res: ServerResponse) {
+  /** `GET {basePath}/{name}`: off to the provider, with the flow in a cookie of its own. */
+  async function startSignIn(provider: SignInProvider, url: URL, req: IncomingMessage, res: ServerResponse) {
     const returnTo = url.searchParams.get("return_to");
     let started: Awaited<ReturnType<SignInProvider["start"]>>;
     try {
@@ -554,15 +555,25 @@ export function createAuth(options: AuthOptions): Auth {
     // encoded first, so the limit is on what the Location will carry
     const wanted = isLocalPath(returnTo) ? forLocation(returnTo) : "/";
     const flow: Flow = { p: provider.name, f: started.flow, r: isLocalPath(wanted) ? wanted : "/" };
+    // so a sign-in in another tab, and its way back, never touch this one's
+    const name = flowPrefix + randomBytes(6).toString("base64url");
     let sealed = await seal(flow);
     // A browser drops a cookie past its size, and the way back would find
     // none: rather lose return_to than the sign-in.
-    if (tooBig(sealed) && flow.r !== "/") sealed = await seal({ ...flow, r: "/" });
-    if (tooBig(sealed)) {
+    if (bytes(name, sealed) > COOKIE_BYTES && flow.r !== "/") sealed = await seal({ ...flow, r: "/" });
+    if (bytes(name, sealed) > COOKIE_BYTES) {
       console.error(`[haikit] auth: a sign-in with ${provider.name} couldn't start: its flow is too large for a cookie`);
       return failed(res, provider, "failed");
     }
-    addCookie(res, `${flowCookie}=${sealed}; Max-Age=${SIGN_IN_FLOW_MS / 1000}; ${cookieAttributes}`);
+    // The others on their way keep theirs while they all fit in one cookie's
+    // room. Past that, the earliest started go: browsers send cookies of one
+    // path in the order they were set (RFC 6265, 5.4).
+    let room = COOKIE_BYTES - bytes(name, sealed);
+    for (const [other, value] of flowCookies(req.headers).reverse()) {
+      room -= bytes(other, value);
+      if (room < 0) addCookie(res, `${other}=; Max-Age=0; ${cookieAttributes}`);
+    }
+    addCookie(res, `${name}=${sealed}; Max-Age=${SIGN_IN_FLOW_MS / 1000}; ${cookieAttributes}`);
     redirect(res, started.url.href);
   }
 
@@ -571,7 +582,9 @@ export function createAuth(options: AuthOptions): Auth {
       .setProtectedHeader({ alg: "dir", enc: "A256GCM" })
       .setExpirationTime(Math.floor((Date.now() + SIGN_IN_FLOW_MS) / 1000))
       .encrypt(flowKeys[0]);
-  const tooBig = (sealed: string) => Buffer.byteLength(`${flowCookie}=${sealed}`) > COOKIE_BYTES;
+  const bytes = (name: string, value: string) => Buffer.byteLength(`${name}=${value}`);
+  /** The browser's flow cookies, name and value, as it sent them: the earliest started first. */
+  const flowCookies = (headers: Headers) => cookiesOf(headers).filter(([name]) => name.startsWith(flowPrefix));
 
   /** The flow a cookie carries, if one of the secrets sealed it and it hasn't expired. */
   async function openFlow(sealed: string): Promise<Flow | null> {
@@ -592,36 +605,36 @@ export function createAuth(options: AuthOptions): Auth {
 
   /** The browser back from the provider: whoever it names is signed in, or the failure page says why not. */
   async function finishSignIn(provider: SignInProvider, url: URL, req: IncomingMessage, res: ServerResponse) {
-    const sealed = cookieOf(req.headers, flowCookie);
-    const flow = sealed ? await openFlow(sealed) : null;
-    const clear = () => addCookie(res, `${flowCookie}=; Max-Age=0; ${cookieAttributes}`);
-    // none, or one past its time or altered: nothing worth keeping
-    if (!flow) {
-      if (sealed !== null) clear();
-      return failed(res, provider, "expired");
-    }
-    // The answer to an earlier sign-in, in another tab, that this one has
-    // replaced since: this one may still come back, so it keeps its cookie.
-    if (flow.p !== provider.name) return failed(res, provider, "expired");
-    let outcome: Awaited<ReturnType<SignInProvider["finish"]>>;
-    try {
-      outcome = await provider.finish(url, flow.f);
-    } catch (err) {
+    // This answers one of the sign-ins on their way: the one whose finish
+    // takes it, the newest tried first. Only its cookie is cleared, so a
+    // sign-in another tab starts meanwhile still finishes.
+    for (const [name, sealed] of flowCookies(req.headers).reverse()) {
+      const flow = await openFlow(sealed);
+      // past its time, altered, or another provider's: left to its Max-Age
+      if (!flow || flow.p !== provider.name) continue;
+      const clear = () => addCookie(res, `${name}=; Max-Age=0; ${cookieAttributes}`);
+      let outcome: Awaited<ReturnType<SignInProvider["finish"]>>;
+      try {
+        outcome = await provider.finish(url, flow.f);
+      } catch (err) {
+        clear();
+        console.error(`[haikit] auth: a sign-in with ${provider.name} failed:`, err);
+        return failed(res, provider, "failed");
+      }
+      // the answer to another of them
+      if ("error" in outcome && outcome.error === "expired") continue;
+      // one way or another this sign-in is over, and its flow with it
       clear();
-      console.error(`[haikit] auth: a sign-in with ${provider.name} failed:`, err);
-      return failed(res, provider, "failed");
+      if ("error" in outcome) return failed(res, provider, outcome.error === "access_denied" ? "access_denied" : "refused");
+      try {
+        await signIn(res, outcome.userId, outcome.claims ?? {});
+      } catch (err) {
+        console.error(`[haikit] auth: a sign-in with ${provider.name} failed:`, err);
+        return failed(res, provider, "failed");
+      }
+      return redirect(res, flow.r);
     }
-    if ("error" in outcome && outcome.error === "expired") return failed(res, provider, "expired");
-    // one way or another this sign-in is over, and its flow with it
-    clear();
-    if ("error" in outcome) return failed(res, provider, outcome.error === "access_denied" ? "access_denied" : "refused");
-    try {
-      await signIn(res, outcome.userId, outcome.claims ?? {});
-    } catch (err) {
-      console.error(`[haikit] auth: a sign-in with ${provider.name} failed:`, err);
-      return failed(res, provider, "failed");
-    }
-    redirect(res, flow.r);
+    failed(res, provider, "expired");
   }
 
   function failed(res: ServerResponse, provider: SignInProvider, why: "access_denied" | "refused" | "expired" | "failed") {
@@ -650,7 +663,7 @@ export function createAuth(options: AuthOptions): Auth {
       if ((callback || starting) && req.method === "GET") {
         try {
           if (callback) await finishSignIn(callback, url, req, res);
-          else await startSignIn(starting!, url, res);
+          else await startSignIn(starting!, url, req, res);
         } catch (err) {
           console.error("[haikit] auth request failed:", err);
           if (!res.headersSent) send(res, 500, { error: err instanceof Error ? err.message : String(err) });
@@ -699,13 +712,19 @@ function redirect(res: ServerResponse, location: string) {
   res.writeHead(303, { location, "cache-control": "no-store" }).end();
 }
 
-/** A cookie's value, from the first of that name; null if there's none. */
-function cookieOf(headers: Headers, name: string): string | null {
+/** Every cookie a request carries, name and value, in the order it sent them. */
+function cookiesOf(headers: Headers): [string, string][] {
+  const found: [string, string][] = [];
   for (const part of (first(headers.cookie) ?? "").split(";")) {
     const at = part.indexOf("=");
-    if (at > 0 && part.slice(0, at).trim() === name) return part.slice(at + 1).trim();
+    if (at > 0) found.push([part.slice(0, at).trim(), part.slice(at + 1).trim()]);
   }
-  return null;
+  return found;
+}
+
+/** A cookie's value, from the first of that name; null if there's none. */
+function cookieOf(headers: Headers, name: string): string | null {
+  return cookiesOf(headers).find(([n]) => n === name)?.[1] ?? null;
 }
 
 /** The later of two times, either of which may be missing. */

@@ -66,6 +66,8 @@ async function fakeProvider({
     down: false,
     /** The next token response's ID token claims are changed by these. */
     tamper: {},
+    /** The next token exchange waits for this promise. */
+    hold: null,
     fetch: async (url, init = {}) => {
       if (provider.down) throw new TypeError("fetch failed");
       const json = (status, body) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -84,6 +86,9 @@ async function fakeProvider({
         });
       }
       if (url === token && init.method === "POST") {
+        const held = provider.hold;
+        provider.hold = null;
+        await held;
         const form = new URLSearchParams(String(init.body));
         // client_secret_basic: each half form-urlencoded, then base64 (RFC 6749 §2.3.1); client_secret_post: in the form
         const basic = new Headers(init.headers).get("authorization")?.match(/^Basic (.+)$/)?.[1];
@@ -166,6 +171,8 @@ async function serve(auth) {
         await res.arrayBuffer();
         return { status: res.status, location: res.headers.get("location"), cookies };
       },
+      /** The names of the flow cookies it holds, the earliest set first, as a browser sends them. */
+      flows: () => [...jar.keys()].filter((name) => /^(__Host-)?haikit_sign_in-/.test(name)),
     };
   };
   return { server, browser };
@@ -210,13 +217,13 @@ console.log("\nrefusals");
     check(`a maxAgeMs of ${maxAgeMs}`, throws(() => fake({ maxAgeMs }), "oidc: maxAgeMs must be a finite number, at least 0"));
   }
   check(
-    "a cookie.name that's the flow cookie's",
+    "a cookie.name a flow cookie's might have",
     throws(
-      () => createAuth({ store: memoryAuthStore(), jwt: { secret: SECRET }, cookie: { name: "__Host-haikit_sign_in" }, providers: [fake()] }),
-      "createAuth: cookie.name can't be __Host-haikit_sign_in, the cookie a sign-in through a provider is kept in",
+      () => createAuth({ store: memoryAuthStore(), jwt: { secret: SECRET }, cookie: { name: "__Host-haikit_sign_in-x" }, providers: [fake()] }),
+      "createAuth: cookie.name can't start with __Host-haikit_sign_in-: sign-ins through a provider keep their cookies under those names",
     ),
   );
-  check("…which is fine with no providers", typeof createAuth({ store: memoryAuthStore(), jwt: { secret: SECRET }, cookie: { name: "__Host-haikit_sign_in" } }).gate === "object");
+  check("…which is fine with no providers", typeof createAuth({ store: memoryAuthStore(), jwt: { secret: SECRET }, cookie: { name: "__Host-haikit_sign_in-x" } }).gate === "object");
   check("a bad name", throws(() => fake({ name: "Fake" }), "oidc: name must be 1 to 32 lowercase letters, digits or dashes, starting with a letter"));
   check("google: an empty hostedDomain", throws(() => google({ ...CLIENT, redirectUri: REDIRECT, hostedDomain: "" }), "google: hostedDomain must be a domain, such as example.com"));
 }
@@ -236,7 +243,7 @@ console.log("\nthere and back");
     const b = browser();
     const started = await b.get("/auth/fake?return_to=/chats/7%3Fx=1");
     const to = new URL(started.location);
-    const flowLine = started.cookies.find((c) => c.startsWith("haikit_sign_in="));
+    const flowLine = started.cookies.find((c) => c.startsWith("haikit_sign_in-"));
     check("start: a 303 to the provider's sign-in page", started.status === 303 && to.origin + to.pathname === "https://fake.test/authorize");
     const p = Object.fromEntries(to.searchParams);
     check(
@@ -250,7 +257,7 @@ console.log("\nthere and back");
         p.code_challenge_method === "S256" &&
         /^[\w-]{43}$/.test(p.code_challenge),
     );
-    check("…and the flow in a cookie: HttpOnly, Lax, 10 minutes", /^haikit_sign_in=[^;]+; Max-Age=600; Path=\/; HttpOnly; SameSite=Lax$/.test(flowLine ?? ""));
+    check("…and the flow in a cookie of its own: HttpOnly, Lax, 10 minutes", /^haikit_sign_in-[\w-]{8}=[^;]+; Max-Age=600; Path=\/; HttpOnly; SameSite=Lax$/.test(flowLine ?? ""));
     check("…sealed: nothing in it can be read", !flowLine.includes(p.state) && flowLine.split(".").length === 5);
     check("the provider's settings were read once", idp.discoveries === 1);
 
@@ -259,7 +266,7 @@ console.log("\nthere and back");
     const claims = token && decodeJwt(token);
     check("back: a 303 to return_to", back.status === 303 && back.location === "/chats/7?x=1");
     check("…signed in as {name}:{sub}, with the name and the verified email", claims?.sub === "fake:1234" && claims.name === "Ada Lovelace" && claims.email === "ada@example.com");
-    check("…and the flow cookie is cleared", !b.jar.has("haikit_sign_in") && back.cookies.some((c) => /^haikit_sign_in=; Max-Age=0/.test(c)));
+    check("…and the flow cookie is cleared", !b.flows().length && back.cookies.some((c) => c.startsWith(`${flowLine.split("=")[0]}=; Max-Age=0;`)));
     check("…the user is who the gate admits", (await auth.verify(token))?.id === "fake:1234");
 
     const again = await b.get("/auth/fake");
@@ -301,10 +308,10 @@ console.log("\nfailures");
   try {
     let b = browser();
     let s = await b.get("/auth/fake");
-    check("a secure flow cookie is __Host-haikit_sign_in, and Secure", s.cookies.some((c) => /^__Host-haikit_sign_in=[^;]+; Max-Age=600; Path=\/; HttpOnly; SameSite=Lax; Secure$/.test(c)));
+    check("a secure flow cookie is __Host-haikit_sign_in-{id}, and Secure", s.cookies.some((c) => /^__Host-haikit_sign_in-[\w-]{8}=[^;]+; Max-Age=600; Path=\/; HttpOnly; SameSite=Lax; Secure$/.test(c)));
     let r = await b.get(pathOf(idp.deny(s.location)));
     check("the user says no: access_denied, at the failureUrl", why(r) === "access_denied" && r.location === "/sign-in?from=fake&sign_in_error=access_denied");
-    check("…and no one is signed in", !b.jar.has("__Host-haikit_token") && !b.jar.has("__Host-haikit_sign_in"));
+    check("…and no one is signed in", !b.jar.has("__Host-haikit_token") && !b.flows().length);
 
     b = browser();
     s = await b.get("/auth/fake");
@@ -312,25 +319,44 @@ console.log("\nfailures");
     r = await browser().get(pathOf(callback));
     check("no flow cookie: expired", why(r) === "expired" && !r.cookies.length);
     // the first character of the ciphertext: every bit of it counts
-    const parts = b.jar.get("__Host-haikit_sign_in").split(".");
+    const [sealed] = b.flows();
+    const parts = b.jar.get(sealed).split(".");
     parts[3] = (parts[3][0] === "A" ? "B" : "A") + parts[3].slice(1);
-    b.jar.set("__Host-haikit_sign_in", parts.join("."));
+    b.jar.set(sealed, parts.join("."));
     r = await b.get(pathOf(callback));
-    check("a flow cookie changed by a byte: expired, and cleared", why(r) === "expired" && !b.jar.has("__Host-haikit_sign_in"));
+    check("a flow cookie changed by a byte: expired, and left to its Max-Age", why(r) === "expired" && !r.cookies.length && !b.jar.has("__Host-haikit_token"));
 
     b = browser();
     const first = await b.get("/auth/fake");
     const second = await b.get("/auth/fake"); // another tab, started since
+    const [early, late] = b.flows();
     r = await b.get(pathOf(idp.signIn(first.location)));
-    check("the answer to a sign-in another tab has replaced: expired", why(r) === "expired");
-    check("…and the newer one keeps its flow cookie", b.jar.has("__Host-haikit_sign_in") && !r.cookies.length);
+    check("two tabs: the earlier one's way back signs in", r.location === "/" && b.jar.has("__Host-haikit_token"));
+    check("…clearing its own flow cookie, and not the other's", r.cookies.some((c) => c.startsWith(`${early}=; Max-Age=0;`)) && b.flows().join() === late);
     r = await b.get(pathOf(idp.signIn(second.location)));
-    check("…so it still signs in when it comes back", r.location === "/" && b.jar.has("__Host-haikit_token") && !b.jar.has("__Host-haikit_sign_in"));
+    check("…so the later one signs in too", r.location === "/" && !b.flows().length);
+    r = await b.get(pathOf(idp.signIn(first.location)));
+    check("…and a way back to a sign-in that's over: expired", why(r) === "expired");
+
+    // tab A back, its code exchanged slowly; meanwhile tab B starts
+    b = browser();
+    const a = await b.get("/auth/fake");
+    let release;
+    idp.hold = new Promise((r) => (release = r));
+    const aBack = b.get(pathOf(idp.signIn(a.location)));
+    const bStart = await b.get("/auth/fake");
+    release();
+    r = await aBack;
+    check("a way back that ends after another tab started: signed in", r.location === "/" && b.jar.has("__Host-haikit_token"));
+    check("…and the newer tab's flow cookie is still there", b.flows().length === 1);
+    b.jar.delete("__Host-haikit_token");
+    r = await b.get(pathOf(idp.signIn(bStart.location, "5678")));
+    check("…so the newer tab signs in when it comes back", r.location === "/" && decodeJwt(b.jar.get("__Host-haikit_token")).sub === "fake:5678");
 
     b = browser();
     s = await b.get("/auth/other");
     r = await b.get(pathOf(idp.signIn(s.location)).replace("/auth/other/", "/auth/fake/"));
-    check("a flow cookie for another provider: expired, and kept for it", why(r) === "expired" && b.jar.has("__Host-haikit_sign_in"));
+    check("a flow cookie for another provider: expired, and kept for it", why(r) === "expired" && b.flows().length === 1 && !r.cookies.length);
 
     // sealed as the server seals one, by the documented derivation, but ten minutes ago
     const key = new Uint8Array(hkdfSync("sha256", new TextEncoder().encode(SECRET), new Uint8Array(0), "haikit/auth sign-in flow", 32));
@@ -341,7 +367,7 @@ console.log("\nfailures");
       .setProtectedHeader({ alg: "dir", enc: "A256GCM" })
       .setExpirationTime(Math.floor(Date.now() / 1000) - 1)
       .encrypt(key);
-    b.jar.set("__Host-haikit_sign_in", stale);
+    b.jar.set(b.flows()[0], stale);
     r = await b.get(pathOf(idp.signIn(s.location)));
     check("a flow cookie past its 10 minutes: expired", why(r) === "expired");
 
@@ -523,6 +549,21 @@ console.log("\nedges");
     r = await b.get(pathOf(idp.signIn(s.location)));
     check("…and the sign-in completes", r.location === "/" && b.jar.has("__Host-haikit_token"));
 
+    b = browser();
+    for (let i = 0; i < 3; i++) await b.get("/auth/fake");
+    check("three sign-ins on their way at once keep a cookie each", b.flows().length === 3);
+    b = browser();
+    const long = "/" + "a".repeat(1_500);
+    const one = await b.get(`/auth/fake?return_to=${long}`);
+    const [oneName] = b.flows();
+    const two = await b.get(`/auth/fake?return_to=${long}`);
+    const together = b.flows().reduce((n, name) => n + Buffer.byteLength(`${name}=${b.jar.get(name)}`), 0);
+    check("two that don't fit in 4,096 bytes together: the earlier one is cleared", two.cookies.some((c) => c.startsWith(`${oneName}=; Max-Age=0;`)) && b.flows().length === 1 && together <= 4_096);
+    r = await b.get(pathOf(idp.signIn(one.location)));
+    check("…so its way back is expired", r.location === "/?sign_in_error=expired");
+    r = await b.get(pathOf(idp.signIn(two.location)));
+    check("…and the later one signs in", r.location === long);
+
     let logged = await quietly(async () => (r = await browser().get("/auth/huge")));
     check("a flow too large for a cookie: failed, logged, and no cookie", r.location === "/?sign_in_error=failed" && r.cookies.length === 0 && logged.some((l) => l.includes("its flow is too large for a cookie")));
     logged = await quietly(async () => (r = await browser().get("/auth/dotted")));
@@ -552,7 +593,7 @@ console.log("\nrotation");
     const b = before.browser();
     const s = await b.get("/auth/fake");
     const a = after.browser();
-    a.jar.set("__Host-haikit_sign_in", b.jar.get("__Host-haikit_sign_in"));
+    for (const name of b.flows()) a.jar.set(name, b.jar.get(name));
     const r = await a.get(pathOf(idp.signIn(s.location)));
     check("a flow begun under the old secret ends under the new ones", r.status === 303 && r.location === "/" && a.jar.has("__Host-haikit_token"));
   } finally {

@@ -136,7 +136,7 @@ provider's public key as the secret, a classic forgery, is refused.
 | Two providers of one `name` | `createAuth: two providers are named "<name>"` |
 | A provider `redirectUri` that isn't a URL | `createAuth: provider "<name>"'s redirectUri isn't a URL` |
 | Two providers whose `redirectUri` has the same path | `createAuth: providers "<first>" and "<second>" both come back to <path>` |
-| A `cookie.name` that's the flow cookie's, `__Host-haikit_sign_in` (or `haikit_sign_in` when not `secure`), with `providers` | `createAuth: cookie.name can't be <name>, the cookie a sign-in through a provider is kept in` |
+| A `cookie.name` that starts as a flow cookie's does, `__Host-haikit_sign_in-` (or `haikit_sign_in-` when not `secure`), with `providers` | `createAuth: cookie.name can't start with <prefix>: sign-ins through a provider keep their cookies under those names` |
 | A provider `failureUrl` that isn't a path on this site (see [Signing in, there and back](#signing-in-there-and-back)) | `createAuth: provider "<name>"'s failureUrl must be a path on this site, such as /sign-in` |
 
 ## `Auth`
@@ -437,34 +437,42 @@ for a provider that doesn't speak OpenID Connect.
      2,048 characters. Escapes already there are kept as they are. Anything
      else, or none, is `/`.
    - `start()` is called. The answer is **303** to the URL it returned, with
-     `cache-control: no-store`, and the flow cookie holding the provider's
+     `cache-control: no-store`, and a new flow cookie holding the provider's
      name, its flow and `return_to`.
    - A flow cookie whose name and value come to more than 4,096 bytes would
      be dropped by a browser. Sealed again with `return_to` as `/`, it's set
      if it then fits. If it still doesn't, it's **303** to `failureUrl` with
      `sign_in_error=failed`, and logged as
      `[haikit] auth: a sign-in with <name> couldn't start: its flow is too large for a cookie`.
+   - The browser's other flow cookies are kept while they all, the new one
+     included, come to at most 4,096 bytes. Past that, the earliest started
+     are cleared, and their way back is `expired`. Browsers send cookies of
+     one path in the order they were set (RFC 6265, 5.4), and that order is
+     the one used.
    - If `start()` throws, as when the provider's settings can't be read: a
      **303** to `failureUrl` with `sign_in_error=failed`, and no cookie. It's
      logged as `[haikit] auth: a sign-in with <name> couldn't start:`.
 2. **`GET` the path of `redirectUri`**, where the provider sends the browser
    back:
-   - The flow cookie is read.
-   - No flow cookie, or one that doesn't open (sealed with no secret of this
-     server's, altered, or past its 10 minutes): `expired`, and the answer
-     clears any there is.
-   - One for another provider: `expired`, and the cookie is kept, for that
-     provider's way back.
-   - Otherwise `finish(url, flow)`:
+   - The browser's flow cookies are tried, the newest first. One that
+     doesn't open (sealed with no secret of this server's, altered, or past
+     its 10 minutes), or is another provider's, is passed over and left as
+     it is.
+   - For each of this provider's, `finish(url, flow)`:
      - **`{ error: "expired" }`,** the answer to another sign-in than this
-       flow's: `expired`, and the cookie is kept, for this flow's own way
-       back.
-     - **A user:** the cookie is cleared, `signIn(res, userId, claims ?? {})`,
+       flow's: the next is tried, and this one's cookie is kept, for its own
+       way back.
+     - **A user:** its cookie is cleared, `signIn(res, userId, claims ?? {})`,
        then **303** to `return_to`.
-     - **Another `{ error }`:** the cookie is cleared, and that code.
-     - **A throw,** `signIn`'s included, as for a claim it sets itself: the
+     - **Another `{ error }`:** its cookie is cleared, and that code.
+     - **A throw,** `signIn`'s included, as for a claim it sets itself: its
        cookie is cleared, and `failed`, logged as
        `[haikit] auth: a sign-in with <name> failed:`.
+   - None left, or none at all: `expired`, and no cookie is cleared.
+
+   Only the cookie of the sign-in that ends is ever cleared, so a sign-in
+   started in another tab meanwhile, even while this one's code is being
+   exchanged, still finishes.
 
 Both routes answer GET only; another method resolves `false`. A request that
 throws outside these steps is answered **500**, as `/auth/me` is.
@@ -474,8 +482,9 @@ throws outside these steps is answered **500**, as `/auth/me` is.
 What a sign-in needs to finish travels with the browser, so any of several
 servers can finish what another started:
 
-- **Name:** `__Host-haikit_sign_in`, or `haikit_sign_in` when
-  `cookie.secure` is `false`. It isn't configurable.
+- **Name:** `__Host-haikit_sign_in-<id>`, or `haikit_sign_in-<id>` when
+  `cookie.secure` is `false`. `<id>` is 8 random base64url characters, new
+  for each sign-in, so each has a cookie of its own. It isn't configurable.
 - **Attributes:** `<name>=<sealed>; Max-Age=600; Path=/; HttpOnly;
   SameSite=Lax; Secure`, without `Secure` when `cookie.secure` is `false`.
   Cleared with `Max-Age=0`.
@@ -493,9 +502,12 @@ how a provider sends the browser back. A provider that sent it back by POST
 (`response_mode=form_post`) would arrive without it. `oidc()` asks for the
 default, `query`.
 
-**One sign-in at a time per browser.** Starting another, in another tab,
-replaces the cookie, so the first one's way back is `expired`. It leaves the
-cookie alone, so the newer sign-in still finishes when it comes back.
+**Several sign-ins at once.** Each tab's sign-in has its own cookie, and
+each way back finds and clears only its own, so they finish in any order.
+Together they stay within 4,096 bytes: a sign-in that doesn't fit beside the
+earlier ones clears the earliest (see
+[Signing in, there and back](#signing-in-there-and-back)). A few with short
+`return_to`s fit easily.
 
 ### When it fails
 
@@ -510,7 +522,7 @@ code:
 | --- | --- |
 | `access_denied` | The user said no at the provider |
 | `refused` | The app's `user` returned `null`, or `google`'s `hostedDomain` didn't match. A custom provider's `{ error }` that isn't one of the three is `refused` too |
-| `expired` | No flow cookie, one that doesn't open or has expired, one for another provider, or a `state` that isn't the flow's: as when another tab started a sign-in since |
+| `expired` | No flow cookie of this provider's that this is the answer to: none, one that doesn't open or is past its 10 minutes, one cleared to make room for a later sign-in, or one already ended, as when the way back is opened again |
 | `failed` | Anything else: the provider's settings or its token endpoint unreachable, an ID token that doesn't check out, `user` or `signIn` throwing. Logged, with the reason |
 
 ### `oidc`
@@ -778,6 +790,6 @@ leaves its row, which no request can reach: its id was the conversation's.
 | JWKS: refetched once older than / for an unknown key id at most every / fetch timeout | 600,000 / 30,000 / 5000 (`jose`'s defaults) |
 | How long a sign-in through a provider may take, and its flow cookie's `Max-Age` | 600,000 |
 | Longest `return_to` kept | 2,048 characters, percent-encoded |
-| Largest flow cookie, name and value | 4,096 bytes |
+| Largest flow cookie, name and value; and a browser's flow cookies, together | 4,096 bytes |
 | `oidc`: reading the provider's settings, and exchanging the code, each give up after | 10,000 |
 | `oidc`: the provider's settings are kept | for the process's life, once read |

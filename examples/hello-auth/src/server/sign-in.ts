@@ -61,7 +61,7 @@ const escape = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)}
 const SIGN_IN_ERRORS = new Map([
   ["access_denied", "Signing in with Google was cancelled."],
   ["refused", "That Google account can't sign in here."],
-  ["expired", "That sign-in took too long, or another one started since. Try again."],
+  ["expired", "That sign-in took too long, or had ended already. Try again."],
   ["failed", "Signing in with Google didn't work. Try again in a moment."],
 ]);
 

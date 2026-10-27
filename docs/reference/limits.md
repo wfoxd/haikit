@@ -257,6 +257,7 @@ None of these can be changed without changing HaiKIT's code.
 | How long a sign-in through a provider may take, and its flow cookie's `Max-Age` | 600,000 | [Sign-in and ownership](auth.md#the-flow-cookie) |
 | Longest `return_to` kept | 2,048 characters, percent-encoded | [Sign-in and ownership](auth.md#signing-in-there-and-back) |
 | Largest flow cookie, name and value; past it, `return_to` is `/` | 4,096 bytes | [Sign-in and ownership](auth.md#signing-in-there-and-back) |
+| A browser's flow cookies, together; past it, the earliest started are cleared | 4,096 bytes | [Sign-in and ownership](auth.md#signing-in-there-and-back) |
 | `oidc`: reading the provider's settings, and exchanging the code, each give up after | 10,000 | [Sign-in and ownership](auth.md#oidc) |
 | `oidc`: the provider's settings are kept | for the process's life, once read; a failed read is tried again | [Sign-in and ownership](auth.md#oidc) |
 
@@ -324,7 +325,7 @@ index `haikit_payloads_created_at`: see
 | Name | Holds | Page |
 | --- | --- | --- |
 | `__Host-haikit_token`, or `haikit_token` when not `secure` | The token `@haikit/auth`'s `signIn` issues | [Sign-in and ownership](auth.md#signin) |
-| `__Host-haikit_sign_in`, or `haikit_sign_in` when not `secure` | A sign-in through a provider, while it's on its way: 10 minutes at most | [Sign-in and ownership](auth.md#the-flow-cookie) |
+| `__Host-haikit_sign_in-<id>`, or `haikit_sign_in-<id>` when not `secure` | A sign-in through a provider, while it's on its way: one cookie each, 10 minutes at most | [Sign-in and ownership](auth.md#the-flow-cookie) |
 
 ### Framework text in the history
 

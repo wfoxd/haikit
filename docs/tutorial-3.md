@@ -577,7 +577,7 @@ export async function signInPage(req: IncomingMessage, res: ServerResponse, auth
 const SIGN_IN_ERRORS = new Map([                                                         // 2
   ["access_denied", "Signing in with Google was cancelled."],
   ["refused", "That Google account can't sign in here."],
-  ["expired", "That sign-in took too long, or another one started since. Try again."],
+  ["expired", "That sign-in took too long, or had ended already. Try again."],
   ["failed", "Signing in with Google didn't work. Try again in a moment."],
 ]);
 
@@ -594,7 +594,7 @@ function page(res: ServerResponse, user: { id: string } | null, problem = "", st
 **2** `sign_in_error` is one of these four:
 - `access_denied`: they said no on Google's page.
 - `refused`: your `user` returned `null`.
-- `expired`: they took more than 10 minutes, or started another sign-in in another tab since.
+- `expired`: they took more than 10 minutes, or came back to a sign-in that had ended already.
 - `failed`: anything else. The server logs why, and never tells the browser.
 
 **3** A plain link: a sign-in starts with a GET. Add `?return_to=/somewhere` to send them back there instead of `/`.
@@ -623,7 +623,7 @@ import { names } from "./names.ts";                     // with the other import
 > [!TIP]
 > **Checkpoint**
 >
-> Restart, and open `/sign-in`: under the form there's a **Sign in with Google** link. Follow it, and pick your account. You're back in the chat, and the header says *signed in as* your name. The welcome row says it too, and *“greet me”* greets you by it. On `/sign-in`, your user id is `google:` and a long number. Now click **Sign out** there, and open `http://localhost:5175/auth/google/callback?code=x&state=y` yourself. It's a way back from Google that no sign-in of yours started, so it's turned away: the sign-in page says *That sign-in took too long, or another one started since.*
+> Restart, and open `/sign-in`: under the form there's a **Sign in with Google** link. Follow it, and pick your account. You're back in the chat, and the header says *signed in as* your name. The welcome row says it too, and *“greet me”* greets you by it. On `/sign-in`, your user id is `google:` and a long number. Now click **Sign out** there, and open `http://localhost:5175/auth/google/callback?code=x&state=y` yourself. It's a way back from Google that no sign-in of yours started, so it's turned away: the sign-in page says *That sign-in took too long, or had ended already.*
 
 Behind the link, `@haikit/auth` does what a sign-in like this needs:
 
