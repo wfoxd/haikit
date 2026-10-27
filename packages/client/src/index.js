@@ -718,6 +718,9 @@ export function createChat({
   /** Turned away as not signed in, or not allowed: no more events until that changes. */
   function unauthorized(status, message) {
     stopListening();
+    // A wake turn the stream was showing is given up: nothing will say it
+    // ended. A request of this chat's that is out sets the status itself.
+    if (!outgoing && state.status === "streaming") state.status = "idle";
     state.unauthorized = { status, message };
     notify({ type: "unauthorized", status, message });
   }

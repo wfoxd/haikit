@@ -819,6 +819,32 @@ async function gateChecks() {
       check("reset() keeps no events stream, and starts nothing", opened() === 4);
       chat.close();
     }
+
+    // A wake turn showing when the events stream is turned away: nothing will
+    // say it ended, so it is given up, rather than leave the chat streaming.
+    {
+      let streams = 0;
+      const frames = (...events) => events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join("");
+      const chat = createChat({
+        endpoint: "http://gate.test/hai",
+        registry: {},
+        fetch: async (url) => {
+          if (url.endsWith("/chat")) {
+            return new Response(frames({ type: "hello", conversationId: "c1", model: "m", events: true }, { type: "status", status: "idle" }));
+          }
+          // the first stream shows a wake turn starting, then drops; its reconnect is refused
+          if (++streams === 1) return new Response(`: open\n\n${frames({ type: "status", status: "streaming", wake: 1 })}`);
+          return new Response(JSON.stringify({ error: "sign in to continue" }), { status: 401 });
+        },
+      });
+      await chat.send("hi");
+      await wait(1600);
+      check(
+        "a wake turn showing when the events stream is turned away is given up: the chat isn't left streaming",
+        streams === 2 && chat.state.unauthorized?.status === 401 && chat.state.status === "idle",
+      );
+      chat.close();
+    }
   } finally {
     server.close();
     server.closeAllConnections?.();
