@@ -285,9 +285,11 @@ export const welcomeScreen = defineSurface({
   // 12 a chatbot beside the app against an app the AI runs, after today,
   // 13 how HaiKIT saves tokens, after how it works, 14 the demo's components
   // in its steps' scenes, 15 every tutorial that carries on, the third with
-  // the second
-  version: 15,
+  // the second, 16 the reader's name, once they've signed in
+  version: 16,
   props: z.object({
+    /** The reader's name, when they've signed in: the screen greets them by it. */
+    reader: z.string().optional(),
     /** A short introduction, one paragraph per entry. The first is the lede; the rest close the screen. */
     intro: z.array(z.string()),
     /** Under the lede: what HaiKIT is, in a sentence or two. */
