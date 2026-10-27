@@ -337,5 +337,5 @@ export const tutorialRefs = (n?: number) =>
     .flatMap((t) => t.pages)
     .map(({ id, label, title }) => ({ id, label, title }));
 
-/** A tutorial's numbered steps, as the welcome screen and the menu list them. */
+/** A tutorial's numbered steps, as the welcome screen lists them. */
 export const tutorialSteps = (n: number) => tutorialRefs(n).filter((page) => /^(\d+-)?\d+$/.test(page.id));

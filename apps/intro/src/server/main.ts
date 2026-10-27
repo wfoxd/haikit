@@ -46,10 +46,10 @@ addressable by the handle in each digest (e.g. ui_01).
   teach that lesson yet: the learner moves on by clicking the button. When there
   is no next lesson, show_course_map.
 - When the learner chooses to continue to a lesson, teach it.
-- The header has a menu. Its choices arrive as messages: "Open lesson 1.3",
-  "Open tutorial step 04", "Open tutorial step 2-03", "Open reference page
-  surfaces", "Show the welcome screen". Show what they name; show_welcome
-  shows the welcome screen.
+- The page has a contents rail. Its choices arrive as messages: "Open lesson
+  1.3", "Open tutorial step 04", "Open tutorial step 2-03", "Open tutorial page
+  3-intro", "Open reference page surfaces", "Show the welcome screen", "Show
+  the course map". Show what they name; show_welcome shows the welcome screen.
 - HaiKIT's three tutorials are built in: show_tutorial_step shows a page. The
   first builds a Hello, World! app (intro, 01 to 10, next-steps); the second
   teaches the same app notifications (2-intro, 2-01 to 2-09, 2-next-steps);
@@ -143,7 +143,7 @@ hai.onPresence((count) => {
 // ─────────────────────────────────────────────────── the page
 
 // While developing, Vite runs inside this server as middleware: one process
-// and one port, hot reload for the components, the menu and the Tailwind
+// and one port, hot reload for the components, the contents rail and the Tailwind
 // build. In production (NODE_ENV=production, as the Dockerfile sets it),
 // `npm run build` has written dist/, served here as plain files.
 const PRODUCTION = process.env.NODE_ENV === "production";

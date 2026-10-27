@@ -2,7 +2,7 @@ import "./globals.css";
 import { createRoot } from "react-dom/client";
 import { mountChat } from "@haikit/client/app.js";
 import { registry } from "./components.tsx";
-import { Menu, type MenuData } from "./menu.tsx";
+import { Contents, type MenuData } from "./contents.tsx";
 import { Online } from "./online.tsx";
 
 const root = document.querySelector<HTMLElement>("#app")!;
@@ -40,19 +40,22 @@ if (actions) {
   createRoot(chip).render(<Online chat={chat} />);
 }
 
-// The menu bar under the header: Home, Tutorial, Lesson, Reference and Demo.
-// Its choices are chat messages, so it needs only the chat and the list of
-// what to offer.
+// The contents rail beside the chat: the welcome screen, the course map,
+// every lesson, tutorial page and reference page, and the demos. Its choices
+// are chat messages, so it needs only the chat and the list of what to offer.
+// mountChat draws the shell, so the rail takes a slot at the start of its main
+// grid, and its button a place at the start of the header.
 const menu: MenuData | null = await fetch("/menu.json")
   .then((r) => r.json())
   .catch(() => null);
-if (menu) {
-  const nav = document.createElement("nav");
-  nav.setAttribute("aria-label", "Introduction");
-  nav.className = "relative z-20 flex h-[42px] flex-none items-center gap-0.5 border-b border-hai-line bg-hai-panel pr-2.5 pl-1.5";
-  // just under the header; at the top if a later mountChat draws no header
-  const top = root.querySelector(".hai-top");
-  if (top) top.after(nav);
-  else root.prepend(nav);
-  createRoot(nav).render(<Menu chat={chat} data={menu} />);
+const grid = root.querySelector<HTMLElement>(".hai-main");
+if (menu && grid) {
+  const slot = document.createElement("div");
+  slot.className = "intro-rail";
+  grid.prepend(slot);
+  const button = document.createElement("span");
+  button.className = "contents";
+  // a later mountChat that draws no header leaves the rail its column alone
+  root.querySelector(".hai-top")?.prepend(button);
+  createRoot(slot).render(<Contents chat={chat} data={menu} main={grid} button={button} />);
 }

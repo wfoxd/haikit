@@ -136,6 +136,22 @@
   }
 }
 
+/* The contents rail (contents.tsx): a column at the start of the default UI's
+   main grid, on a screen as wide as its WIDE while the rail is open. On a
+   narrower one it's a sheet over the chat, and the grid keeps one column. */
+.intro-rail {
+  display: none;
+}
+@media (min-width: 1100px) {
+  .hai-main.contents-open {
+    grid-template-columns: 280px minmax(0, 1fr);
+  }
+  .hai-main.contents-open > .intro-rail {
+    display: flex;
+    min-height: 0;
+  }
+}
+
 /* A line or a section a link brought into view, marked for a moment. */
 @keyframes flash {
   0%,
