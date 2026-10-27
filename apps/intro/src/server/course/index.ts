@@ -611,7 +611,8 @@ const REFERENCE_PANEL: WelcomeProps["reference"] = {
   pages: referenceRefs(),
 };
 
-export const welcomeProps = (): WelcomeProps => ({
+export const welcomeProps = (reader?: string): WelcomeProps => ({
+  ...(reader ? { reader } : {}),
   intro: INTRO,
   summary: SUMMARY,
   links: LINKS,

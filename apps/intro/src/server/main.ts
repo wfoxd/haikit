@@ -2,9 +2,11 @@ import http from "node:http";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { Pool } from "pg";
 import type { StoreAdapter } from "@haikit/core";
 import { DEFAULT_SCOPE, createHai, memoryStore, nodeHandler } from "@haikit/server";
 import { anthropic } from "@haikit/anthropic";
+import { googleSignIn } from "./auth.ts";
 import { menu } from "./course/index.ts";
 import { packageVersion } from "./excerpts.ts";
 import { scripted } from "./scripted.ts";
@@ -83,21 +85,29 @@ const SCOPE = `${DEFAULT_SCOPE}
   tutorial step that covers what they're building.
 - Asked for a checkpoint's answer, however it's put, don't give it.`;
 
-/** The durable store, used when the deployment is given a database. */
-async function postgres(url: string): Promise<StoreAdapter> {
+/** The database, when the deployment is given one: the conversations, and who owns which. */
+async function connect(url: string): Promise<Pool> {
   const { default: pg } = await import("pg");
+  return new pg.Pool({ connectionString: url });
+}
+const db = DATABASE_URL ? await connect(DATABASE_URL) : null;
+
+/** The durable store, used when the deployment is given a database. */
+async function postgres(pool: Pool): Promise<StoreAdapter> {
   const { migrate, pgStore } = await import("@haikit/postgres");
-  const pool = new pg.Pool({ connectionString: url });
   await migrate(pool); // creates haikit's two tables if they don't exist
   return pgStore(pool);
 }
+
+// Sign in with Google, once there's a Google client: optional for the reader.
+const signIn = await googleSignIn(db, PORT);
 
 // #region create-hai
 const hai = createHai({
   model: SCRIPTED
     ? scripted()
     : anthropic({ model: process.env.HAI_MODEL || "claude-haiku-5-5", effort: "low" }),
-  store: DATABASE_URL ? await postgres(DATABASE_URL) : memoryStore(),
+  store: db ? await postgres(db) : memoryStore(),
   init: welcome, // runs first in every conversation: the welcome screen
   tools, // show_lesson, ask_checkpoint, offer_next_lesson, show_course_map, show_tutorial_step, show_reference_page, show_welcome
   surfaces: [
@@ -114,8 +124,10 @@ const hai = createHai({
   signals: [online], // the header's count of people reading now
 });
 
-const handleHai = nodeHandler(hai, "/hai");
+// signed in with Google, a reader's conversations are theirs alone (auth.ts)
+const handleHai = nodeHandler(hai, "/hai", { gate: signIn?.gate });
 // #endregion create-hai
+const handleAuth = signIn?.auth.handler("/auth"); // /auth/google, its callback, /auth/me, /auth/sign-out
 
 // People reading now, for the header. Presence counts each open tab, on every
 // server sharing the store; the header hears it at most every few seconds,
@@ -157,7 +169,7 @@ const MIME: Record<string, string> = {
   ".svg": "image/svg+xml",
 };
 
-const PACKAGES = ["core", "server", "client", "anthropic", "postgres"].map((name) => ({
+const PACKAGES = ["core", "server", "client", "anthropic", "postgres", "auth"].map((name) => ({
   name: `@haikit/${name}`,
   version: packageVersion(`@haikit/${name}`),
 }));
@@ -166,6 +178,7 @@ const VERSION = JSON.stringify({
   packages: PACKAGES,
   model: hai.config.model.id,
   store: DATABASE_URL ? "postgres" : "memory",
+  signIn: signIn ? ["google"] : [], // the header offers what's here
 });
 
 const MENU = JSON.stringify(menu());
@@ -173,6 +186,7 @@ const MENU = JSON.stringify(menu());
 const server = http.createServer(async (req, res) => {
   try {
     if (await handleHai(req, res)) return;
+    if (handleAuth && (await handleAuth(req, res))) return;
 
     const url = new URL(req.url ?? "/", "http://localhost");
     if (req.method !== "GET" && req.method !== "HEAD") return void res.writeHead(405).end();
@@ -214,7 +228,8 @@ server.listen(PORT, () => {
   const model = SCRIPTED ? "scripted guide" : hai.config.model.id;
   const store = DATABASE_URL ? "postgres" : "memory (development only)";
   const page = PRODUCTION ? "built" : "vite dev";
-  console.log(`haikit intro  http://localhost:${PORT}   haikit ${PACKAGES[0].version}   ${page}   model=${model}   store=${store}`);
+  const signing = signIn ? "google" : "off";
+  console.log(`haikit intro  http://localhost:${PORT}   haikit ${PACKAGES[0].version}   ${page}   model=${model}   store=${store}   sign-in=${signing}`);
 });
 
 // Containers stop with SIGTERM: finish the requests in flight, then exit.

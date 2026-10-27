@@ -146,6 +146,11 @@ try {
   {
     const w = await mount("welcome", current, { mode: "display" });
     check("shown for display, it asks nothing", buttons(w.el).every((b) => b.disabled));
+    const greeted = await mount("welcome", welcomeProps("Ada <b>Lovelace</b>"), { mode: "display" });
+    check(
+      "signed in, it greets the reader by name, as text; signed out, it doesn't",
+      text(greeted.el).includes("Welcome, Ada <b>Lovelace</b>.") && !greeted.el.querySelector("b") && !text(w.el).includes("Welcome, "),
+    );
   }
   {
     const w = await mount("welcome", current, { state: "frozen", selection: "first-lesson" });
@@ -518,6 +523,43 @@ try {
     await n.unmount();
     globalThis.CustomEvent = nodeCustomEvent;
     window.matchMedia = globalThis.matchMedia = narrow;
+  }
+
+  // ── signing in with Google, at the end of the header
+  console.log("\naccount");
+  {
+    const { createElement } = await import("react");
+    const { createRoot } = await import("react-dom/client");
+    const { Account, SIGN_IN_ERRORS } = await vite.ssrLoadModule("/src/client/account.tsx");
+    async function account(props) {
+      const el = document.createElement("div");
+      document.body.append(el);
+      const root = createRoot(el);
+      await act(async () => root.render(createElement(Account, props)));
+      return { el, unmount: () => act(async () => root.unmount()) };
+    }
+    const out = await account({ reader: null });
+    const link = out.el.querySelector('a[href="/auth/google"]');
+    check("signed out, it links to sign in with Google, and says nothing else", text(link ?? out.el).includes("Sign in") && !out.el.querySelector('[role="alert"]'));
+    await out.unmount();
+    const denied = await account({ reader: null, error: SIGN_IN_ERRORS.access_denied });
+    check("a sign-in that came back without one says why, under the link", denied.el.querySelector('[role="alert"]')?.textContent === SIGN_IN_ERRORS.access_denied && !!denied.el.querySelector('a[href="/auth/google"]'));
+    await click(denied.el.querySelector('button[aria-label="Dismiss"]'));
+    check("…until it's dismissed", !denied.el.querySelector('[role="alert"]') && !!denied.el.querySelector('a[href="/auth/google"]'));
+    await denied.unmount();
+    const ada = await account({ reader: { id: "google:1", claims: { name: "Ada <b>Lovelace</b>" } } });
+    check("signed in, it names them, as text, and offers to sign out", text(ada.el).includes("Ada <b>Lovelace</b>") && !ada.el.querySelector("b") && !!button(ada.el, "Sign out") && !ada.el.querySelector("a"));
+    const posted = [];
+    const opened = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async (url, init) => (posted.push(`${init?.method} ${url}`), new Response(null, { status: 204 }));
+    Object.defineProperty(globalThis, "location", { value: { assign: (url) => opened.push(url) }, configurable: true });
+    await click(button(ada.el, "Sign out"));
+    await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+    globalThis.fetch = realFetch;
+    delete globalThis.location;
+    check("Sign out posts to /auth/sign-out, then opens the introduction afresh", posted.join() === "POST /auth/sign-out" && opened.join() === "/");
+    await ada.unmount();
   }
 } finally {
   await vite.close();

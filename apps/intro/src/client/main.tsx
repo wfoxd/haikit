@@ -1,14 +1,16 @@
 import "./globals.css";
 import { createRoot } from "react-dom/client";
 import { mountChat } from "@haikit/client/app.js";
+import { Account, type Reader, SIGN_IN_ERRORS } from "./account.tsx";
 import { registry } from "./components.tsx";
 import { Contents, type MenuData } from "./contents.tsx";
 import { Online } from "./online.tsx";
 
 const root = document.querySelector<HTMLElement>("#app")!;
 
-// Which HaiKIT this server runs, read from its packages at startup.
-const about: { haikit: string } | null = await fetch("/version.json")
+// Which HaiKIT this server runs, read from its packages at startup, and
+// where a reader can sign in: ["google"], or none.
+const about: { haikit: string; signIn?: string[] } | null = await fetch("/version.json")
   .then((r) => r.json())
   .catch(() => null);
 
@@ -27,6 +29,8 @@ const chat = mountChat({
   title: "Introducing HaiKIT",
   subtitle: about ? `built with HaiKIT ${about.haikit}` : "built with HaiKIT",
   placeholder: "a lesson number, “next”, or “what is a digest?”",
+  // shown if the server turns the chat away, as once a sign-in has expired
+  signIn: { href: "/auth/google", label: "Sign in with Google" },
 });
 // #endregion mount
 
@@ -58,4 +62,23 @@ if (menu && grid) {
   // a later mountChat that draws no header leaves the rail its column alone
   root.querySelector(".hai-top")?.prepend(button);
   createRoot(slot).render(<Contents chat={chat} data={menu} main={grid} button={button} />);
+}
+
+// Signing in with Google, at the end of the header, where the server has a
+// Google client. A sign-in that came back without one says why, once: the
+// reason leaves the address, so a reload doesn't say it again.
+if (actions && about?.signIn?.includes("google")) {
+  const { user }: { user: Reader } = await fetch("/auth/me")
+    .then((r) => r.json())
+    .catch(() => ({ user: null }));
+  const url = new URL(location.href);
+  const code = url.searchParams.get("sign_in_error");
+  if (code !== null) {
+    url.searchParams.delete("sign_in_error");
+    history.replaceState(history.state, "", url);
+  }
+  const account = document.createElement("span");
+  account.className = "contents";
+  actions.append(account);
+  createRoot(account).render(<Account reader={user} error={code === null ? undefined : (SIGN_IN_ERRORS[code] ?? SIGN_IN_ERRORS.failed)} />);
 }

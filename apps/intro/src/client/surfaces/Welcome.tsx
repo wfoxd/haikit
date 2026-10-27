@@ -268,6 +268,8 @@ export function Welcome({ props: current, send, mode, state, selection }: Surfac
 
         {story ? (
           <>
+            {/* Signed in, the reader by name. */}
+            {props.reader && <p className="mb-3 font-heading text-[15px] font-medium text-muted-foreground">Welcome, {props.reader}.</p>}
             {/* The lede and what HaiKIT is. With room, side by side: the lede large on the left, a sentence to a line. */}
             <div className="mt-1 grid gap-3.5 @min-[860px]/page:grid-cols-[minmax(0,6fr)_minmax(0,5fr)] @min-[860px]/page:items-end @min-[860px]/page:gap-12">
               {ledeOf("max-w-[20ch] text-[clamp(28px,4.2cqi,50px)]/[1.08] tracking-[-0.03em] @min-[860px]/page:max-w-none", "@min-[860px]/page:block")}

@@ -15,6 +15,7 @@
  */
 
 import { execFileSync, spawn } from "node:child_process";
+import { createHmac, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -105,6 +106,11 @@ try {
     const manifest = fileURLToPath(import.meta.resolve("@haikit/core/package.json", `file://${APP}/`));
     const installed = JSON.parse(readFileSync(manifest, "utf8")).version;
     about.haikit === installed ? ok(`reports the installed haikit (${installed})`) : bad(`version.json says ${about.haikit}, installed is ${installed}`);
+    // without a Google client, no one signs in, and there's nowhere to
+    const me = await get(`${BASE}/auth/me`);
+    JSON.stringify(about.signIn) === "[]" && me.status === 404
+      ? ok("without a Google client, it offers no sign-in, and has no /auth routes")
+      : bad(`without a Google client, version.json's signIn is ${JSON.stringify(about.signIn)} and /auth/me is ${me.status}`);
 
     // the page and what it loads, built into dist/
     const page = await get(`${BASE}/`).then((r) => r.text());
@@ -850,6 +856,108 @@ try {
   }
 } finally {
   child.kill("SIGKILL");
+}
+
+// ── signing in with Google, optional: a second server, with a Google client
+// to sign in with. Its tokens are made here, with its secret, as a sign-in
+// would end; nothing reaches Google.
+console.log("\nsigning in with Google");
+{
+  const SIGNED_PORT = PORT + 1;
+  const SIGNED = `http://127.0.0.1:${SIGNED_PORT}`;
+  const SECRET = "the smoke test's secret, at least 32 bytes long";
+  const signed = spawn(process.execPath, ["src/server/main.ts"], {
+    cwd: APP,
+    env: {
+      ...process.env,
+      HAI_SCRIPTED: "1",
+      NODE_ENV: "production",
+      PORT: String(SIGNED_PORT),
+      DATABASE_URL: "",
+      GOOGLE_CLIENT_ID: "smoke.apps.googleusercontent.com",
+      GOOGLE_CLIENT_SECRET: "smoke",
+      GOOGLE_REDIRECT_URI: `${SIGNED}/auth/google/callback`,
+      HAIKIT_AUTH_SECRET: SECRET,
+    },
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  let errors = "";
+  signed.stderr.on("data", (d) => (errors += d));
+
+  /** A token as signing in issues one, as its cookie. */
+  const cookie = (sub, claims = {}, secret = SECRET) => {
+    const now = Math.floor(Date.now() / 1000);
+    const part = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
+    const body = `${part({ alg: "HS256", typ: "JWT" })}.${part({ sub, iat: now, auth_time: now, exp: now + 600, jti: randomUUID(), ...claims })}`;
+    return `__Host-haikit_token=${body}.${createHmac("sha256", secret).update(body).digest("base64url")}`;
+  };
+  const ada = cookie("google:ada", { name: "Ada" });
+  const grace = cookie("google:grace", { name: "Grace" });
+
+  /** A POST, as one reader or none: its status, and its events or its error. */
+  async function as(reader, route, body, headers = {}) {
+    const res = await fetch(`${SIGNED}${route}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...(reader ? { cookie: reader } : {}), ...headers },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(DEADLINE),
+    });
+    const text = await res.text();
+    if (!res.headers.get("content-type")?.startsWith("text/event-stream")) return { status: res.status, error: JSON.parse(text || "{}").error, events: [] };
+    const events = text
+      .split("\n\n")
+      .map((chunk) => chunk.split("\n").find((l) => l.startsWith("data: ")))
+      .filter(Boolean)
+      .map((l) => JSON.parse(l.slice(6)));
+    return { status: res.status, events };
+  }
+  const idOf = (r) => r.events.find((e) => e.type === "hello")?.conversationId;
+
+  try {
+    if (!(await waitFor(`${SIGNED}/healthz`))) {
+      bad(`with a Google client, the server did not start\n${errors}`);
+    } else {
+      const about = await get(`${SIGNED}/version.json`).then((r) => r.json());
+      JSON.stringify(about.signIn) === '["google"]' ? ok("with a Google client, it offers to sign in with Google") : bad(`version.json's signIn is ${JSON.stringify(about.signIn)}`);
+      const me = (reader) => fetch(`${SIGNED}/auth/me`, { headers: reader ? { cookie: reader } : {} }).then((r) => r.json());
+      const [nobody, someone] = [await me(null), await me(ada)];
+      nobody.user === null && someone.user?.id === "google:ada" && someone.user.claims.name === "Ada"
+        ? ok("/auth/me says who's signed in, by their Google id and name, or no one")
+        : bad(`/auth/me says ${JSON.stringify(nobody)} signed out, ${JSON.stringify(someone)} signed in`);
+
+      const open = await as(null, "/hai/start", {});
+      const opens = idOf(open);
+      const [anyone] = opened(open.events);
+      open.status === 200 && anyone?.component === "welcome" && propsOf(open.events, anyone.handle)?.intro && propsOf(open.events, anyone.handle).reader === undefined
+        ? ok("signed out, anyone reads it, as without a Google client, and the welcome greets no one")
+        : bad(`signed out, /hai/start is ${open.status} ${open.error ?? ""}`);
+      const own = await as(ada, "/hai/start", {});
+      const owns = idOf(own);
+      const greeted = propsOf(own.events, opened(own.events)[0]?.handle)?.reader;
+      greeted === "Ada" ? ok("signed in, the welcome greets the reader by name") : bad(`signed in, the welcome's reader is ${greeted}`);
+
+      const peek = await as(null, "/hai/chat", { conversationId: owns, message: "Show the course map" });
+      const other = await as(grace, "/hai/chat", { conversationId: owns, message: "Show the course map" });
+      const stream = await get(`${SIGNED}/hai/events?conversationId=${owns}`);
+      peek.status === 404 && other.status === 404 && stream.status === 404 && peek.error === "unknown conversation"
+        ? ok("a conversation started signed in is no one else's: signed out or as someone else, it doesn't exist")
+        : bad(`someone else's conversation: signed out ${peek.status}, as another ${other.status}, its events ${stream.status}`);
+      const back = await as(ada, "/hai/chat", { conversationId: owns, message: "Show the course map" });
+      back.status === 200 && opened(back.events).some((e) => e.component === "course_map")
+        ? ok("…and its reader carries on in it")
+        : bad(`its reader, carrying on: ${back.status} ${back.error ?? ""}`);
+      const shared = await as(grace, "/hai/chat", { conversationId: opens, message: "Show the course map" });
+      shared.status === 200 ? ok("a conversation started signed out is anyone's, signed in or not") : bad(`signed in, in one started signed out: ${shared.status} ${shared.error ?? ""}`);
+
+      const forged = await as(cookie("google:ada", { name: "Ada" }, "another secret, at least 32 bytes long"), "/hai/start", {});
+      const away = await as(ada, "/hai/chat", { conversationId: owns, message: "next" }, { origin: "https://elsewhere.example" });
+      forged.status === 401 && forged.error === "your sign-in has expired or is invalid" && away.status === 403
+        ? ok("a token it didn't sign is refused, as is the cookie sent from another site")
+        : bad(`a token it didn't sign: ${forged.status} ${forged.error ?? ""}; from another site: ${away.status}`);
+    }
+  } finally {
+    signed.kill("SIGKILL");
+  }
 }
 
 console.log(failures ? `\n${failures} check(s) failed\n` : "\nsmoke: all checks passed\n");

@@ -1,5 +1,6 @@
 import { defineTool } from "@haikit/core";
 import { z } from "zod";
+import { readerOf } from "./auth.ts";
 import { checkpointProps, courseMapProps, lessonIds, lessonProps, lessonRef, welcomeProps } from "./course/index.ts";
 import { REFERENCE, referencePageOf, referenceRefs } from "./reference.ts";
 import {
@@ -69,7 +70,9 @@ export const welcome = defineTool({
   inputJsonSchema: noInputSchema,
 
   async run(_input, ctx) {
-    return ctx.render(welcomeServer, welcomeProps(), { mode: "elicit" });
+    // signed in, by name: who started the conversation, from auth.ts
+    const reader = await readerOf(ctx.conversationId);
+    return ctx.render(welcomeServer, welcomeProps(reader), { mode: "elicit" });
   },
 });
 // #endregion welcome
@@ -84,7 +87,7 @@ export const showWelcome = defineTool({
   inputJsonSchema: noInputSchema,
 
   async run(_input, ctx) {
-    return ctx.render(welcomeServer, welcomeProps(), { mode: "elicit" });
+    return ctx.render(welcomeServer, welcomeProps(await readerOf(ctx.conversationId)), { mode: "elicit" });
   },
 });
 
