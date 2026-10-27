@@ -17,7 +17,8 @@ import type { Hai, WakeOutcome } from "./runtime.js";
  * notices start. It accepts nothing from the browser beyond which
  * conversation, and where to resume.
  */
-export function nodeHandler(hai: Hai, basePath = "/hai") {
+export function nodeHandler(hai: Hai, basePath = "/hai", options: NodeHandlerOptions = {}) {
+  const maxBodyBytes = options.maxBodyBytes ?? MAX_BODY_BYTES;
   return async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
     let url: URL;
     try {
@@ -43,13 +44,25 @@ export function nodeHandler(hai: Hai, basePath = "/hai") {
     if (route !== "/chat" && route !== "/interact" && route !== "/start") return false;
 
     try {
-      await respond(hai, route, req, res);
+      await respond(hai, route, req, res, maxBodyBytes);
     } catch (err) {
       failed(res, err);
     }
     return true;
   };
 }
+
+export interface NodeHandlerOptions {
+  /**
+   * The largest POST body read, in bytes. A longer one is answered 413 and not
+   * kept: without a limit, one request could make the server hold any amount.
+   * Default 1 MiB.
+   */
+  maxBodyBytes?: number;
+}
+
+/** The default `maxBodyBytes`: far past any message or click, and nowhere near harm. */
+const MAX_BODY_BYTES = 1_048_576;
 
 /**
  * A request that failed in a way the route has no event for, such as a store
@@ -70,13 +83,29 @@ function failed(res: ServerResponse, err: unknown) {
 }
 
 /** One of the three POST routes, once the request is known to be one. */
-async function respond(hai: Hai, route: string, req: IncomingMessage, res: ServerResponse) {
+async function respond(hai: Hai, route: string, req: IncomingMessage, res: ServerResponse, maxBodyBytes: number) {
   let body: Record<string, any>;
   try {
-    body = await readJson(req);
-  } catch {
+    body = await readJson(req, maxBodyBytes);
+  } catch (err) {
+    if (err instanceof TooLarge) {
+      // The rest of the body is drained, not kept; `close` stops a client
+      // sending another request after it on this connection.
+      res.writeHead(413, { "content-type": "application/json", connection: "close" });
+      res.end(JSON.stringify({ error: "the request body is too large" }));
+      return;
+    }
     res.writeHead(400, { "content-type": "application/json" });
     res.end(JSON.stringify({ error: "the request body must be a JSON object" }));
+    return;
+  }
+
+  // A click names a conversation it was shown in. Loading an unknown id would
+  // start an empty conversation whose id nobody is ever told (no `hello` goes
+  // out here), so make sure it exists first, as `hai.wake` does.
+  if (route === "/interact" && !(await exists(hai, body.conversationId))) {
+    res.writeHead(404, { "content-type": "application/json" });
+    res.end(JSON.stringify({ error: "unknown conversation" }));
     return;
   }
 
@@ -842,11 +871,46 @@ function openSSE(res: ServerResponse): Emit {
   };
 }
 
-/** The request body, as a JSON object; anything else, or a body that fails to arrive, throws. */
-async function readJson(req: IncomingMessage): Promise<Record<string, any>> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(chunk as Buffer);
-  const body: unknown = JSON.parse(Buffer.concat(chunks).toString() || "{}");
-  if (!body || typeof body !== "object" || Array.isArray(body)) throw new TypeError("not a JSON object");
-  return body as Record<string, any>;
+/** Whether the store has a conversation with this id, by the cheapest read there is. */
+async function exists(hai: Hai, id: unknown): Promise<boolean> {
+  return typeof id === "string" && (await hai.config.store.getNotices(id, Number.MAX_SAFE_INTEGER, 1)) !== null;
+}
+
+/** A body longer than `maxBodyBytes`. */
+class TooLarge extends Error {}
+
+/**
+ * The request body, as a JSON object; anything else, or a body that fails to
+ * arrive, throws. One past `maxBytes` throws `TooLarge` as soon as it is, by
+ * its declared length or by what has arrived. What is still to come is drained
+ * and dropped: breaking off the read would destroy the socket, and the answer
+ * with it.
+ */
+function readJson(req: IncomingMessage, maxBytes: number): Promise<Record<string, any>> {
+  return new Promise((resolve, reject) => {
+    if (Number(req.headers["content-length"]) > maxBytes) {
+      req.resume();
+      return reject(new TooLarge());
+    }
+    const chunks: Buffer[] = [];
+    let size = 0;
+    const onData = (chunk: Buffer) => {
+      size += chunk.length;
+      if (size <= maxBytes) return void chunks.push(chunk);
+      req.off("data", onData);
+      req.resume();
+      reject(new TooLarge());
+    };
+    req.on("data", onData);
+    req.on("error", reject);
+    req.on("end", () => {
+      try {
+        const body: unknown = JSON.parse(Buffer.concat(chunks).toString() || "{}");
+        if (!body || typeof body !== "object" || Array.isArray(body)) throw new TypeError("not a JSON object");
+        resolve(body as Record<string, any>);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  });
 }

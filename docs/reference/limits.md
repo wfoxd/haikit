@@ -59,6 +59,7 @@ Checked against `@haikit/*` 0.20.0. Durations are in milliseconds.
 | Parameter | Default | Page |
 | --- | --- | --- |
 | `basePath` | `"/hai"`, with no trailing `/` | [HTTP routes and the wire](http.md#nodehandler) |
+| `options.maxBodyBytes` | `1048576` (1 MiB): a longer POST body is answered 413 | [HTTP routes and the wire](http.md#requests) |
 
 ### Stores
 
@@ -321,7 +322,8 @@ The client adds block ids of its own: `ui:<handle>`, `n:<seq>`, and
 ### Messages the browser shows
 
 The server's and the client's out-of-date messages, `initialisation failed:
-<message>`, the 400 answer `the request body must be a JSON object`, the
+<message>`, the 400 answer `the request body must be a JSON object`, the 413
+answer `the request body is too large`, the 404 answer `unknown conversation`, the
 client's fallbacks (`another turn is already in flight`,
 `request failed (<status>)`), and the error cards (`unknown component:
 <name>`, `unknown notice: <name>`): see

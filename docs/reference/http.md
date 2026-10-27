@@ -6,8 +6,8 @@ route answers with server-sent events, each frame one JSON *wire event*. This
 page covers the routes' requests, responses and errors, the events stream and
 its polling mode, and every wire event.
 
-Exported by `@haikit/server`: `nodeHandler`. By `@haikit/core`: `WireEvent`,
-`Emit`, `Block`.
+Exported by `@haikit/server`: `nodeHandler`, `NodeHandlerOptions`. By
+`@haikit/core`: `WireEvent`, `Emit`, `Block`.
 
 Checked against `@haikit/*` 0.20.0. Source: `packages/server/src/routes.ts`,
 `packages/server/src/runtime.ts` and `packages/core/src/index.ts`.
@@ -26,12 +26,21 @@ Checked against `@haikit/*` 0.20.0. Source: `packages/server/src/routes.ts`,
 function nodeHandler(
   hai: Hai,
   basePath = "/hai",
+  options: NodeHandlerOptions = {},
 ): (req: IncomingMessage, res: ServerResponse) => Promise<boolean>;
+
+interface NodeHandlerOptions {
+  maxBodyBytes?: number;
+}
 ```
 
 Returns a request handler for Node's `http` server. It resolves to `true` when
 it handled the request, and `false` when the request isn't one of its routes,
 so the app can serve it instead.
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `maxBodyBytes` | `1_048_576` (1 MiB) | The largest POST body read, in bytes. A longer one is answered 413 (see [Requests](#requests)) |
 
 | Method and path | Served when | Purpose |
 | --- | --- | --- |
@@ -78,8 +87,14 @@ route answers itself is answered, ended and logged with `console.error`:
 Each POST body is read whole and parsed as JSON. An empty body is `{}`. A
 body that isn't a JSON object (invalid JSON, `null`, an array, a string), or
 that fails while it's read, is answered **HTTP 400** with
-`{ "error": "the request body must be a JSON object" }`. Nothing limits the
-body's size or checks its content type: put that in front of the handler.
+`{ "error": "the request body must be a JSON object" }`.
+
+A body longer than `maxBodyBytes` is answered **HTTP 413** with
+`{ "error": "the request body is too large" }` and the header
+`connection: close`. It's refused as soon as it's known to be too long: at
+once when its `content-length` says so, or when what has arrived passes the
+limit. The rest of it is read and dropped, not kept. Nothing checks the
+content type: put that in front of the handler.
 
 | Route | Body | Fields used |
 | --- | --- | --- |
@@ -87,17 +102,19 @@ body's size or checks its content type: put that in front of the handler.
 | `/start` | `{ conversationId? }` | none beyond the id |
 | `/interact` | `{ conversationId, handle, action, value }` | `handle`, `action`, `value`, and nothing else |
 
-`conversationId` names the conversation. Left out, or naming one that doesn't
-exist, it starts a new conversation (see
-[Conversations](conversations.md#leases-and-fencing)). `/interact` takes no
-tool name, handler or target: what an action means is decided on the server,
-from the surface's contract.
+`conversationId` names the conversation. On `/chat` and `/start`, left out,
+or naming one that doesn't exist, it starts a new conversation (see
+[Conversations](conversations.md#leases-and-fencing)). On `/interact` it must
+name one that exists. `/interact` takes no tool name, handler or target: what
+an action means is decided on the server, from the surface's contract.
 
 ### Responses
 
 1. **`/start` without an init tool** answers at once with an empty event
    stream (status 200, the headers below, no frames) and creates no
-   conversation.
+   conversation. **`/interact` naming no conversation that exists** (missing,
+   not a string, or unknown to the store) is answered **HTTP 404** with
+   `{ "error": "unknown conversation" }`, and creates none.
 2. **The conversation is loaded,** which takes its lease. If another request
    holds it, the answer is **HTTP 409** with a JSON body,
    `{ "error": "conversation <id> is busy — another turn is in flight" }`,
@@ -464,8 +481,7 @@ keep it out of logs that others can read.
 
 **Anyone can create conversations.** A POST to `/chat`, or to `/start` with
 an init tool, with a missing or unknown id creates and saves a new
-conversation. So does `/interact`, which then answers `unknown handle`. Limit
-who can reach the routes, and how often.
+conversation. Limit who can reach the routes, and how often.
 
 **Signals go to everyone.** A signal goes to every events stream of the
 `Hai`, whatever its conversation, and anyone can make a conversation. So a

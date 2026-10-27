@@ -244,11 +244,10 @@ undone.
 `loadConversation` with an id that doesn't exist, or with no id, creates a new
 conversation with a new id. A `/chat` request naming an unknown conversation
 gets a fresh one, whose id is in the `hello` event, and so does a `/start`
-request when there's an init tool. An `/interact` request naming one creates
-an empty conversation too, and then refuses the click with `unknown handle`.
-No `hello` is sent there, so the browser never learns the new id. `hai.update`
-and `hai.wake` check that the conversation exists first, so they never create
-one.
+request when there's an init tool. An `/interact` request, `hai.update` and
+`hai.wake` check that the conversation exists first, so they never create
+one: the click is answered 404 `unknown conversation` (see
+[HTTP routes](http.md#responses)).
 
 **Unfenced writes.** Storing a notice (`putNotice`) takes no token. A notice
 comes from outside any turn, so it must land whoever holds the lease, and it
