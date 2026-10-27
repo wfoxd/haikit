@@ -598,8 +598,14 @@ async function gateChecks() {
   const store = memoryStore();
   const loads = [];
   const made = [];
+  let hanging = null; // a conversation whose notice reads, after the first, never answer
+  let hangingReads = 0;
   const counted = {
     ...store,
+    async getNotices(id, after, limit) {
+      if (id === hanging && hangingReads++ > 0) return new Promise(() => {});
+      return store.getNotices(id, after, limit);
+    },
     async loadConversation(id) {
       loads.push(id);
       const c = await store.loadConversation(id);
@@ -769,6 +775,24 @@ async function gateChecks() {
       const took = Date.now() - started;
       delete lasting.ada;
       check(`an events stream ends when its admission's until passes (${took} ms)`, res.status === 200 && took >= 350 && took < 2500);
+    }
+
+    // …even while a store read is out that will never answer
+    {
+      lasting.ada = 2_500; // past the stream's first timed read, at 2 s, which hangs
+      hanging = adas;
+      hangingReads = 0;
+      const started = Date.now();
+      let ended = false;
+      try {
+        const res = await fetch(`${base}/events?conversationId=${adas}`, { headers: as("ada"), signal: AbortSignal.timeout(6_000) });
+        await res.text();
+        ended = true;
+      } catch {}
+      const took = Date.now() - started;
+      hanging = null;
+      delete lasting.ada;
+      check(`…even while a store read is out that never answers (${took} ms)`, ended && hangingReads >= 2 && took < 4_000);
     }
 
     // a poll too, rather than hold for the rest of its wait
