@@ -236,7 +236,8 @@ export function createChat({
     // Anything but a second 409 means the server took the request up itself —
     // even an error — unless the stream says `expired` below. A 409 means it
     // turned the message away unread, and so do a 401 or 403 (not signed in,
-    // not allowed) and a 404 (no such conversation, or not this user's).
+    // not allowed), a 404 (no such conversation, or not this user's) and a 415
+    // (a gate refusing how it was sent).
     outcome.sent = !TURNED_AWAY.has(res.status);
 
     // A non-SSE response carries no `data:` frames, so parsing it as a stream
@@ -624,7 +625,7 @@ export function createChat({
             buffer += value;
             let i;
             while ((i = buffer.indexOf("\n\n")) >= 0) {
-              if (gen !== generation) return;
+              if (gen !== generation || signal.aborted) return;
               const frame = buffer.slice(0, i);
               buffer = buffer.slice(i + 2);
               const lines = frame.split("\n");
@@ -1025,8 +1026,11 @@ export function createChat({
  */
 const CUT_OFF_MS = 120_000;
 
-/** Statuses that mean the server turned a request away unread: busy, not signed in, not allowed, unknown. */
-const TURNED_AWAY = new Set([401, 403, 404, 409]);
+/**
+ * Statuses that mean the server turned a request away unread: busy, not
+ * signed in, not allowed, unknown, and a gate's refusal of how it was sent.
+ */
+const TURNED_AWAY = new Set([401, 403, 404, 409, 415]);
 
 /** An events connection that stays up this long was healthy, whatever it delivered. */
 const HEALTHY_MS = 30_000;
