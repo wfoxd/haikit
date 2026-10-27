@@ -22,7 +22,7 @@ const APP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const { window } = new JSDOM("<!doctype html><html><body></body></html>", { pretendToBeVisual: true, url: "http://localhost/" });
 globalThis.window = window;
 for (const name of Object.getOwnPropertyNames(window)) {
-  if (/^(?:document|Node|getComputedStyle|requestAnimationFrame|cancelAnimationFrame)$|^(?:HTML|SVG)?\w*Element$|Event$/.test(name) && !(name in globalThis)) {
+  if (/^(?:document|Node|getComputedStyle|requestAnimationFrame|cancelAnimationFrame|MutationObserver|NodeFilter)$|^(?:HTML|SVG)?\w*Element$|Event$/.test(name) && !(name in globalThis)) {
     globalThis[name] = window[name];
   }
 }
@@ -33,6 +33,8 @@ window.ResizeObserver = globalThis.ResizeObserver = class {
   disconnect() {}
 };
 window.Element.prototype.scrollIntoView = function () {};
+// the rail remembers being closed; Node's own localStorage needs a file to work
+Object.defineProperty(globalThis, "localStorage", { value: window.localStorage, configurable: true });
 globalThis.CSS ??= { escape: (s) => String(s).replace(/[^\w-]/g, (c) => `\\${c}`) };
 const copied = [];
 Object.defineProperty(globalThis.navigator, "clipboard", { value: { writeText: async (text) => void copied.push(text) }, configurable: true });
@@ -54,7 +56,7 @@ try {
   const { act } = await import("react");
   const { registry } = await vite.ssrLoadModule("/src/client/components.tsx");
   const server = (file) => import(path.join(APP, "src/server", file));
-  const { welcomeProps, courseMapProps, lessonProps, checkpointProps, lessonRef } = await server("course/index.ts");
+  const { welcomeProps, courseMapProps, lessonProps, checkpointProps, lessonRef, menu } = await server("course/index.ts");
   const { tutorialRefs, tutorialOf } = await server("tutorial.ts");
   const { referencePageOf, referenceRefs } = await server("reference.ts");
 
@@ -352,6 +354,158 @@ try {
     check("Contents sends go: ref:index", JSON.stringify(c.sent) === '[["go","ref:index"]]');
     const index2 = await mount("reference_page", { ...props, id: "index", prev: null });
     check("the contents has no Contents button", !button(index2.el, "Contents"));
+  }
+
+  // ── the contents rail: what it lists, what a choice sends, and where the reader is
+  console.log("\ncontents rail");
+  {
+    const { createElement } = await import("react");
+    const { createRoot } = await import("react-dom/client");
+    const { Contents } = await vite.ssrLoadModule("/src/client/contents.tsx");
+    const data = menu();
+    data.demos = [...data.demos, { title: "Plain", detail: "Not over https.", url: "http://example.com/" }];
+    const narrow = window.matchMedia;
+    const media = (matches) => (window.matchMedia = globalThis.matchMedia = () => ({ matches, addEventListener() {}, removeEventListener() {} }));
+
+    /** A chat that keeps what's sent, and shows a page when told to, as a tool would. */
+    function fakeChat() {
+      const listeners = new Set();
+      const chat = {
+        state: { blocks: [], surfaces: new Map() },
+        sent: [],
+        send: async (message) => void chat.sent.push(message) ?? true,
+        subscribe: (fn) => (listeners.add(fn), () => listeners.delete(fn)),
+        tell: (type) => act(async () => listeners.forEach((fn) => fn(chat.state, { type }))),
+        show: (component, id) => {
+          const handle = `ui_${String(chat.state.blocks.length).padStart(2, "0")}`;
+          chat.state.blocks.push({ kind: "ui", id: handle, handle, toolId: "toolu" });
+          chat.state.surfaces.set(handle, { handle, component, props: id === undefined ? {} : { id } });
+          return chat.tell("ui_open");
+        },
+      };
+      return chat;
+    }
+    async function rail() {
+      const main = document.createElement("div");
+      const slot = document.createElement("div");
+      const host = document.createElement("span");
+      main.append(slot);
+      document.body.append(host, main);
+      const chat = fakeChat();
+      const root = createRoot(slot);
+      await act(async () => root.render(createElement(Contents, { chat, data, main, button: host })));
+      return { chat, main, slot, toggle: host.querySelector("button"), unmount: () => act(async () => root.unmount()) };
+    }
+    const row = (el, label) => buttons(el).find((b) => b.textContent.replace(/, opened$/, "").endsWith(label));
+    const group = (el, title) => buttons(el).find((b) => b.hasAttribute("aria-expanded") && b.textContent.startsWith(title));
+
+    // a wide screen: a column beside the chat
+    media(true);
+    localStorage.removeItem("intro:contents");
+    const r = await rail();
+    const nav = () => r.slot.querySelector('nav[aria-label="Contents"]');
+    check("on a wide screen it's a column beside the chat, open, its button saying so", r.main.classList.contains("contents-open") && !!nav() && r.toggle?.getAttribute("aria-expanded") === "true");
+    check(
+      "it lists Welcome, the course map, the parts, the tutorials, the manual and the demos",
+      ["Welcome", "Course map"].every((l) => row(nav(), l)) &&
+        ["Part 1: ", "Part 2: ", "Build your first HaiKIT app", "Tell them later", "Who's asking", "HaiKIT reference manual"].every((t) => group(nav(), t)) &&
+        text(nav()).includes("67 pages"),
+    );
+    check("its groups start closed", buttons(nav()).filter((b) => b.hasAttribute("aria-expanded")).every((b) => b.getAttribute("aria-expanded") === "false"));
+    const demos = [...nav().querySelectorAll("a")];
+    check("a demo is a link to a new tab, and only an https one", demos.length === 1 && demos[0].href === "https://rebook.haikit.app/" && demos[0].target === "_blank" && demos[0].rel === "noopener noreferrer");
+
+    await r.chat.show("welcome");
+    check("the welcome screen on screen is marked, without a tick", row(nav(), "Welcome").getAttribute("aria-current") === "page" && !text(nav()).includes(", opened"));
+    await r.chat.show("tutorial_step", "3-04");
+    const third = group(nav(), "Who's asking");
+    check("a tutorial page on screen opens its group and is marked, and Welcome isn't", third.getAttribute("aria-expanded") === "true" && row(nav(), "Sign in")?.getAttribute("aria-current") === "page" && !row(nav(), "Welcome").hasAttribute("aria-current"));
+    check("it has its tick, its group counts it, and so does the head", row(nav(), "Sign in").textContent.endsWith(", opened") && third.textContent.includes("1 of 11 opened") && text(nav()).includes("1 of 67 pages opened"));
+    await r.chat.tell("text_delta");
+    check("an event that shows no page changes nothing", row(nav(), "Sign in")?.getAttribute("aria-current") === "page");
+
+    await click(row(nav(), "Introduction"));
+    await click(row(nav(), "Where to go next"));
+    await click(row(nav(), "Sign out everywhere"));
+    await click(group(nav(), "Part 1: "));
+    await click(row(nav(), "The UI is the question"));
+    await click(group(nav(), "HaiKIT reference manual"));
+    await click(row(nav(), "Configuration and limits"));
+    await click(row(nav(), "Course map"));
+    await click(row(nav(), "Welcome"));
+    check(
+      "each choice sends the message the guide answers",
+      JSON.stringify(r.chat.sent) ===
+        JSON.stringify([
+          "Open tutorial page 3-intro",
+          "Open tutorial page 3-next-steps",
+          "Open tutorial step 3-08",
+          "Open lesson 1.2",
+          "Open reference page limits",
+          "Show the course map",
+          "Show the welcome screen",
+        ]),
+    );
+    check("a page's number drops its tutorial's prefix; the manual's pages have none", row(nav(), "Sign in").textContent.startsWith("04") && !/^\d/.test(row(nav(), "Configuration and limits").textContent));
+
+    await click(third);
+    check(
+      "closed by the reader, the group carries the mark for the page in it, and says so",
+      third.getAttribute("aria-expanded") === "false" && !row(nav(), "Sign in") && third.className.includes("bg-hai-selected") && third.textContent.includes("the page on screen among them"),
+    );
+    await r.chat.show("tutorial_step", "3-05");
+    check(
+      "the next page opens it again, and the mark goes back to the page",
+      third.getAttribute("aria-expanded") === "true" && row(nav(), "Say who's signed in")?.getAttribute("aria-current") === "page" && !third.textContent.includes("the page on screen"),
+    );
+    await r.chat.show("lesson", "2.1");
+    check(
+      "a lesson opens its part and is marked, and the tutorial keeps both its ticks",
+      group(nav(), "Part 2: ").getAttribute("aria-expanded") === "true" &&
+        !!nav().querySelector('[aria-current="page"]')?.textContent.startsWith("2.1") &&
+        group(nav(), "Who's asking").textContent.includes("2 of 11 opened"),
+    );
+
+    r.chat.state.blocks = [];
+    r.chat.state.surfaces = new Map();
+    await r.chat.tell("reset");
+    check("a new chat starts with nothing marked and no ticks", !nav().querySelector("[aria-current]") && !text(nav()).includes(", opened") && text(nav()).includes("67 pages"));
+
+    await click(r.slot.querySelector('button[aria-label="Close the contents"]'));
+    check(
+      "closed, the column goes, the browser remembers, and the focus goes to its button",
+      !r.main.classList.contains("contents-open") && !nav() && localStorage.getItem("intro:contents") === "closed" && document.activeElement === r.toggle && r.toggle.getAttribute("aria-expanded") === "false",
+    );
+    await r.unmount();
+    const again = await rail();
+    check("it stays closed the next time", !again.main.classList.contains("contents-open") && !again.slot.querySelector("nav"));
+    await click(again.toggle);
+    check("its button opens it again, and that's remembered too", again.main.classList.contains("contents-open") && !!again.slot.querySelector("nav") && localStorage.getItem("intro:contents") === "open");
+    await again.unmount();
+
+    // a narrow one: a sheet over the chat. Radix's dialog makes its own
+    // events, which jsdom dispatches only if they're jsdom's.
+    media(false);
+    const nodeCustomEvent = globalThis.CustomEvent;
+    globalThis.CustomEvent = window.CustomEvent;
+    const n = await rail();
+    const sheet = () => document.querySelector('[role="dialog"]');
+    check("on a narrow screen there's no column, only the button", !n.main.classList.contains("contents-open") && !n.slot.querySelector("nav") && n.toggle.getAttribute("aria-expanded") === "false");
+    await click(n.toggle);
+    check("its button opens a sheet with the contents", !!sheet() && text(sheet()).includes("Contents") && !!sheet().querySelector('nav[aria-label="Contents"]') && n.toggle.getAttribute("aria-expanded") === "true");
+    // Radix gives the focus back once the sheet has gone, a moment later
+    const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+    await click(row(sheet(), "Course map"));
+    await settle();
+    check("a choice sends its message, closes the sheet, and gives the focus back to its button", n.chat.sent.at(-1) === "Show the course map" && !sheet() && document.activeElement === n.toggle);
+    await click(n.toggle);
+    sheet().querySelector("button")?.focus();
+    await key(sheet(), "Escape");
+    await settle();
+    check("Escape closes it too, the focus back on its button", !sheet() && document.activeElement === n.toggle);
+    await n.unmount();
+    globalThis.CustomEvent = nodeCustomEvent;
+    window.matchMedia = globalThis.matchMedia = narrow;
   }
 } finally {
   await vite.close();

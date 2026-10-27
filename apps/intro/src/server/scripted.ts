@@ -238,7 +238,7 @@ export function scripted(): ModelAdapter {
           : reply(`There's no lesson ${id}. The lessons are ${lessons.map((x) => x.id).join(", ")}.`, onTextDelta);
       }
 
-      // The reference manual, before the keyword rules: the menu says
+      // The reference manual, before the keyword rules: the contents rail says
       // "Open reference page surfaces", and "contents" alone means the course map.
       const asked = text.match(/\breference page ([\w-]+)(?: at #?([\w-]+))?/);
       if (asked) {
@@ -250,6 +250,9 @@ export function scripted(): ModelAdapter {
 
       // The tutorial, before the keyword rules: "start the tutorial" is about
       // the tutorial, and "next" means the next page while one is on screen.
+      // The contents rail names a page around the steps by its id: "tutorial page 3-intro"
+      const pageAsked = text.match(/\btutorial page ((?:[23]-)?(?:intro|next-steps))\b/)?.[1];
+      if (pageAsked && pages.includes(pageAsked)) return tour(pageAsked);
       // "step 4" is the first tutorial's; "step 2-03" the second's, "step 3-03" the third's
       const stepAsked = text.match(/\bstep ([23]-\d{1,2}|\d{1,2})\b/)?.[1];
       if (stepAsked) {
@@ -272,7 +275,7 @@ export function scripted(): ModelAdapter {
         return prev ? tour(prev) : tour(page);
       }
 
-      // the header menu's Home: the welcome screen, shown again
+      // the contents rail's Welcome: the welcome screen, shown again
       if (/\b(welcome|home)\b/.test(text)) {
         return reply("Here's the welcome screen.", onTextDelta, [toolUse("show_welcome", {})]);
       }

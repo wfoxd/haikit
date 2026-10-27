@@ -556,7 +556,7 @@ const VALUES: WelcomeProps["values"] = {
   ],
 };
 
-/** Apps built with HaiKIT, each running on its own site: the menu's Demo list. */
+/** Apps built with HaiKIT, each running on its own site: the contents rail's Demos. */
 const DEMOS = [
   {
     title: "Rebook",
@@ -597,7 +597,7 @@ const TUTORIAL_PANEL: WelcomeProps["tutorial"] = {
   ],
 };
 
-/** How the course map and the menu name each tutorial, and what it builds. */
+/** How the course map and the contents rail name each tutorial, and what it builds. */
 const TUTORIAL_NAMES: Record<number, { title: string; blurb: string }> = {
   1: { title: TUTORIAL_PANEL.title, blurb: "Build a Hello, World! app with HaiKIT, step by step, read right here." },
   2: { title: TUTORIAL_PANEL.more[0]!.title, blurb: "Teach the same app to speak up later: progress, notices, wake turns and live updates." },
@@ -634,18 +634,15 @@ export const welcomeProps = (): WelcomeProps => ({
 });
 
 /**
- * What the header's menu lists: every lesson by part, each tutorial's
- * numbered steps, the reference manual's pages, and the demos. Served as
- * /menu.json; the menu is navigation, not a surface, so it reaches the
+ * What the contents rail lists: every lesson by part, every page of each
+ * tutorial, the reference manual's pages, and the demos. Served as
+ * /menu.json; the rail is navigation, not a surface, so it reaches the
  * conversation the way typing does. A demo is a site of its own, so it's a
  * link instead, and never reaches the conversation.
  */
 export const menu = () => ({
   lessons: PARTS.map((p) => ({ part: p.n, title: p.title, lessons: p.lessons.map((l) => ({ id: l.id, title: l.title })) })),
-  tutorials: TUTORIALS.map((t) => ({
-    title: TUTORIAL_NAMES[t.n]!.title,
-    steps: tutorialSteps(t.n).map(({ id, title }) => ({ id, title })),
-  })),
+  tutorials: TUTORIALS.map((t) => ({ title: TUTORIAL_NAMES[t.n]!.title, pages: tutorialRefs(t.n) })),
   reference: { title: REFERENCE_TITLE, pages: referenceRefs() },
   demos: DEMOS,
 });

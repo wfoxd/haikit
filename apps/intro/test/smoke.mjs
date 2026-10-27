@@ -389,7 +389,7 @@ try {
       const five = pageOf(notices).props;
       const annotated = five?.blocks?.find((b) => b.kind === "code" && b.marks);
       five?.id === "2-05" && annotated?.file === "src/client/components.tsx" && annotated.marks.length === 4 && annotated.notes?.length === 4
-        ? ok("the menu's choice opens step 2-05, its code with its file and its 4 numbered notes")
+        ? ok("the rail's choice opens step 2-05, its code with its file and its 4 numbered notes")
         : bad(`step 2-05: ${five?.id}, ${annotated?.file}, ${annotated?.marks?.length} marks`);
 
       const typed = await sse("/hai/chat", { conversationId: id, message: "show me the second tutorial" });
@@ -415,7 +415,7 @@ try {
       broken.length ? bad(`second tutorial pages that did not render: ${broken.join(", ")}`) : ok("all 11 pages of the second tutorial render");
     }
 
-    // 7b3 · the third tutorial: from the welcome, the menu, typing and the
+    // 7b3 · the third tutorial: from the welcome, the rail, typing and the
     //       course map, after the second's last page, and every page of it
     {
       const fresh = await sse("/hai/start", {});
@@ -436,7 +436,7 @@ try {
       const four = pageOf(signIn).props;
       const annotated = four?.blocks?.find((b) => b.kind === "code" && b.marks);
       four?.id === "3-04" && annotated?.file === "src/server/sign-in.ts" && annotated.marks.length === 8 && annotated.notes?.length === 8
-        ? ok("the menu's choice opens step 3-04, the sign-in page's code with its file and its 8 numbered notes")
+        ? ok("the rail's choice opens step 3-04, the sign-in page's code with its file and its 8 numbered notes")
         : bad(`step 3-04: ${four?.id}, ${annotated?.file}, ${annotated?.marks?.length} marks, ${annotated?.notes?.length} notes`);
 
       const typed = await sse("/hai/chat", { conversationId: id, message: "show me the sign-in tutorial" });
@@ -489,15 +489,16 @@ try {
         : bad(`an old conversation's "Open tutorial step 3-03": ${JSON.stringify(third)}`);
     }
 
-    // 7c · the header menu: what it lists, and what each kind of choice opens
+    // 7c · the contents rail: what it lists, and what each kind of choice opens
     {
       const menu = await get(`${BASE}/menu.json`).then((r) => r.json());
       const lessons = menu.lessons.flatMap((p) => p.lessons);
-      const steps = (menu.tutorials ?? []).map((t) => t.steps);
-      menu.lessons.length === 2 && lessons.length === 14 && steps.length === 3 && steps[0].length === 10 &&
-        steps[0][0].id === "01" && steps[1].length === 9 && steps[1][0].id === "2-01" && steps[2].length === 9 && steps[2][0].id === "3-01"
-        ? ok("the menu lists 14 lessons in 2 parts, and the three tutorials' 10, 9 and 9 steps")
-        : bad(`menu.json: ${menu.lessons.length} parts, ${lessons.length} lessons, ${JSON.stringify(steps.map((s) => s.length))} steps`);
+      const pages = (menu.tutorials ?? []).map((t) => t.pages.map((p) => p.id));
+      const each = (t, prefix, steps) =>
+        t?.length === steps + 2 && t[0] === `${prefix}intro` && t[1] === `${prefix}01` && t.at(-1) === `${prefix}next-steps`;
+      menu.lessons.length === 2 && lessons.length === 14 && pages.length === 3 && each(pages[0], "", 10) && each(pages[1], "2-", 9) && each(pages[2], "3-", 9)
+        ? ok("the rail lists 14 lessons in 2 parts, and every page of the three tutorials: 12, 11 and 11")
+        : bad(`menu.json: ${menu.lessons.length} parts, ${lessons.length} lessons, ${JSON.stringify(pages)}`);
       const manual = menu.reference?.pages ?? [];
       manual.length === 19 && manual[0].id === "index" && manual[0].title === "Contents" && manual[18].id === "limits"
         ? ok("…and the reference manual's 19 pages, its contents first")
@@ -515,21 +516,30 @@ try {
         return ui && check(propsOf(evs, ui.handle));
       };
       (await pick("Open lesson 1.3", "lesson", (p) => p?.id === "1.3"))
-        ? ok("Lesson › 1.3 opens lesson 1.3")
-        : bad("the menu's lesson choice did not open 1.3");
+        ? ok("the rail's 1.3 opens lesson 1.3")
+        : bad("the rail's lesson choice did not open 1.3");
       (await pick("Open tutorial step 04", "tutorial_step", (p) => p?.id === "04"))
-        ? ok("Tutorial › 04 opens tutorial step 04")
-        : bad("the menu's tutorial choice did not open step 04");
+        ? ok("…its 04 opens tutorial step 04")
+        : bad("the rail's tutorial step choice did not open step 04");
+      (await pick("Open tutorial page 3-intro", "tutorial_step", (p) => p?.id === "3-intro"))
+        ? ok("…its Introduction opens the third tutorial's first page")
+        : bad("the rail's tutorial page choice did not open 3-intro");
+      (await pick("Open tutorial page next-steps", "tutorial_step", (p) => p?.id === "next-steps"))
+        ? ok("…its Where to go next opens the first tutorial's last page")
+        : bad("the rail's tutorial page choice did not open next-steps");
       (await pick("Open reference page limits", "reference_page", (p) => p?.id === "limits"))
-        ? ok("Reference › Configuration and limits opens that page")
-        : bad("the menu's reference choice did not open limits");
+        ? ok("…its Configuration and limits opens that page")
+        : bad("the rail's reference choice did not open limits");
+      (await pick("Show the course map", "course_map", (p) => p?.parts?.length === 2))
+        ? ok("…its Course map shows the course map")
+        : bad("the rail's Course map did not show the course map");
       (await pick("Show the welcome screen", "welcome", (p) => p?.intro?.length > 0))
-        ? ok("Home › Welcome shows the welcome screen again")
-        : bad("the menu's Home choice did not show the welcome screen");
+        ? ok("…and its Welcome shows the welcome screen again")
+        : bad("the rail's Welcome did not show the welcome screen");
     }
 
     // 7c2 · the reference manual: from the welcome, between its pages, by its
-    //       links, from the menu and by typing; every page, every link
+    //       links, from the rail and by typing; every page, every link
     {
       const fresh = await sse("/hai/start", {});
       const id = fresh.find((e) => e.type === "hello")?.conversationId;

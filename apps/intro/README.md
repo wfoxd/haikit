@@ -55,21 +55,32 @@ shows what the model received the whole time.
 | 1. The elicitation app, explained | Why asking in prose fails, the parked turn, the dual channel, modes and actions, `query_ui` and `cap`, the life of a parked turn |
 | 2. How haikit implements it | The packages, the contract, the server half, tools, the registry, wiring, the compile-time guarantees, the runtime's pending state |
 
-## The menu
+## The contents
 
-A menu bar under the header has **Home** (the welcome screen), **Tutorial**
-(every tutorial's steps), **Lesson** (every lesson, by part), **Reference**
-(every page of the reference manual) and **Demo** (apps built with HaiKIT).
-The menu isn't a surface, so a choice reaches the server the way typing does:
-it sends a message such as “Open lesson 1.3” or “Open reference page
-surfaces”, and the guide shows what was asked for. A demo is the exception:
-it's a site of its own, such as [Rebook](https://rebook.haikit.app/), so its
-item is a link that opens it in a new tab, and nothing reaches the
-conversation. The menu's contents come from `/menu.json`, built from the
-course, the tutorials, the manual and the list of demos in
-`src/server/course/index.ts` when the server starts. Each menu is a shadcn/ui
-dropdown (`src/client/menu.tsx`): the arrow keys move through it, and Escape
-closes it.
+A rail beside the chat lists the whole introduction: the welcome screen and
+the course map, every lesson by part, every page of each tutorial, every page
+of the reference manual, and apps built with HaiKIT. The page on screen is
+marked, and its group opens with it; every page the conversation has shown
+has a tick, and each group counts them. That comes from the conversation
+itself, from the surfaces it has shown, so a page opened by typing or by a
+button on another page is ticked too, and **New chat** starts with none.
+
+The rail isn't a surface, so a choice reaches the server the way typing does:
+it sends a message such as “Open lesson 1.3”, “Open tutorial page 3-intro” or
+“Open reference page surfaces”, and the guide shows what was asked for. A
+demo is the exception: it's a site of its own, such as
+[Rebook](https://rebook.haikit.app/), so its item is a link that opens it in a
+new tab, and nothing reaches the conversation. The rail's contents come from
+`/menu.json`, built from the course, the tutorials, the manual and the list of
+demos in `src/server/course/index.ts` when the server starts.
+
+mountChat draws the page's shell, so `src/client/main.tsx` gives the rail a
+column at the start of the shell's grid, and its **Contents** button a place
+at the start of the header (`src/client/contents.tsx`). On a screen 1100px or
+wider the rail sits beside the chat, open until the reader closes it, which
+the browser remembers under `intro:contents`. On a narrower one it's a
+shadcn/ui sheet that slides over the chat from the left: a choice, Escape or
+a click outside closes it.
 
 ## Who's reading
 
@@ -133,7 +144,7 @@ Previous, Next or Contents at its foot, is the page's answer: the guide shows
 the page it names, opened at the section the link points to. A page goes only
 where its own links and buttons lead, and once the reader has moved on, its
 links to other pages are plain text again. The welcome screen's Reference
-panel, the menu, and typing “reference” or “reference page tools” open a page
+panel, the contents rail, and typing “reference” or “reference page tools” open a page
 too.
 
 `content/reference/` is a copy of `docs/reference/`, refreshed by
@@ -153,7 +164,7 @@ and the manual are drawn from the same blocks (`src/client/blocks/`), and
 the welcome screen and the rest from `src/client/surfaces/`. Every one of
 them writes the guide's payloads as text, never as HTML.
 
-The buttons, cards, badges, menus, tables, callouts and the compare picker are
+The buttons, cards, badges, the sheet, tables, callouts and the compare picker are
 shadcn/ui components in `src/client/components/ui/`, from
 `npx shadcn@latest init -b radix -p lyra` and `npx shadcn@latest add`, and
 `components.json` is there so `add` works in this folder. They're the app's
@@ -179,7 +190,7 @@ npm start                # http://localhost:5180
 ```
 
 `npm start` runs Vite inside the server, on the same port, so a change to the
-components, the menu or the styles shows at once. To run the built page, as
+components, the contents rail or the styles shows at once. To run the built page, as
 the container does: `npm run build`, then `NODE_ENV=production npm start`.
 
 With no API key it uses a scripted guide, so anyone can take the course at no
@@ -212,12 +223,13 @@ That runs three checks:
   versions saved (welcomes back to version 2, course maps back to 1). It
   checks each click sends its declared action and value, that a frozen
   surface offers nothing, that every kind of block draws, and that markup in
-  a payload stays text.
+  a payload stays text. It mounts the contents rail too, wide and narrow:
+  what it lists, the message each choice sends, and which page it marks.
 - **`npm run smoke`** builds the page, boots the server on it as the container
   does, and drives the course the way a learner does: the welcome screen on start and both of its choices, the course map,
   opening a lesson, answering a checkpoint, typing instead of answering, a
   glossary lookup through `query_ui`, every lesson rendering, and every page
-  of every tutorial, reached from the welcome screen, the map, the menu and by
+  of every tutorial, reached from the welcome screen, the map, the rail and by
   typing. For the reference manual: every page rendering with nothing in its
   Markdown lost, every one of its links leading to a page and a section that
   exist, a page going only where its links lead, and `find` naming the
@@ -364,7 +376,7 @@ src/server/reference.ts    reads content/reference/ into the manual's pages, and
 src/server/main.ts         createHai, routes, the page: through Vite while developing, from dist/
                            in production
 index.html                 the page
-src/client/main.tsx        mounts the chat, the header menu and the reading-now chip
+src/client/main.tsx        mounts the chat, the contents rail and the reading-now chip
 src/client/components.tsx  the registry: a React component for each surface, the checkpoint's here
 src/client/surfaces/       the welcome screen, the course map, a lesson, a tutorial page, a
                            reference page and Up next
@@ -372,7 +384,7 @@ src/client/blocks/         the blocks those pages are made of: text, code, notes
                            compare picker and the sequence diagram
 src/client/drawings/       the HaiKIT logo, the welcome screen's diagram and illustrations, and
                            Rebook's components drawn small
-src/client/menu.tsx        the header menu
+src/client/contents.tsx    the contents rail
 src/client/online.tsx      the reading-now chip
 src/client/components/ui/  shadcn/ui's components
 components.json            where `npx shadcn@latest add` puts a component, and the style it's in
@@ -381,7 +393,7 @@ src/client/globals.css     Tailwind with its preflight; the default UI, through
 public/icon.svg            the icon, copied into dist/ as it is
 vite.config.ts             the page's build
 test/guarantees.ts         what haikit refuses to compile, quoted by lesson 2.7
-test/clienttest.mjs        every surface in a DOM, from today's props and older saved ones
+test/clienttest.mjs        every surface and the contents rail in a DOM, from today's props and older saved ones
 test/smoke.mjs             the end-to-end check
 content/tutorial.md        HaiKIT's tutorials, copied from the haikit repository
 content/tutorial-2.md
