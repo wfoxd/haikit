@@ -7,7 +7,8 @@
  * a state machine that stops parking, a binding table that stops rejecting.
  *
  * Each example is built with Vite first and served from dist/: the production
- * path, not the dev server.
+ * path, not the dev server. One behind @haikit/auth's gate is signed in first,
+ * with a cookie, and checked to refuse anyone who isn't, or isn't its owner.
  */
 
 import { execFileSync, spawn } from "node:child_process";
@@ -31,6 +32,30 @@ const CASES = [
     value: "he",
     expectInResolution: /Chose Hebrew/,
     staleAfterMs: undefined, // greetings never go out of date
+    display: {
+      message: "show the hebrew one",
+      component: "greeting_card",
+      action: "copy",
+      value: { code: "he" },
+      expectInLabel: /Copied the Hebrew greeting/,
+    },
+  },
+  {
+    // hello, signed in: the gate lets each user into their own conversations only
+    name: "hello-auth",
+    entry: "examples/hello-auth/src/server/main.ts",
+    build: "examples/hello-auth",
+    appCss: ["bg-primary", "data-hai-theme=dark"],
+    env: { NODE_ENV: "production", HAIKIT_AUTH_SECRET: "a-smoke-test-secret-of-at-least-32-bytes" },
+    port: 5276,
+    signIn: { as: "ada", stranger: "bob", cookie: "__Host-haikit_token", welcome: "Signed in as ada." },
+    message: "greet me",
+    tool: "list_greetings",
+    component: "greeting_picker",
+    action: "choose",
+    value: "ja",
+    expectInResolution: /Chose Japanese/,
+    staleAfterMs: undefined,
     display: {
       message: "show the hebrew one",
       component: "greeting_card",
@@ -92,10 +117,13 @@ const bad = (m) => {
   failures++;
 };
 
+/** What every request of the case running sends: a signed-in case's cookie, and the page's origin. */
+let signedIn = {};
+
 async function sse(url, body) {
   const res = await fetch(url, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...signedIn },
     body: JSON.stringify(body),
   });
   const events = [];
@@ -179,22 +207,34 @@ async function waitFor(url, tries = 40) {
   return false;
 }
 
+/** Sign in through the example's own form, and return the cookie it sets: `name=value`. */
+async function signInAs(base, name) {
+  const res = await fetch(`${base}/sign-in`, {
+    method: "POST",
+    headers: { origin: base, "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ name }),
+    redirect: "manual",
+  });
+  return { status: res.status, location: res.headers.get("location"), cookie: res.headers.get("set-cookie") ?? "" };
+}
+
 // The page's own module graph: the bundle its index.html loads.
 async function clientCode(base) {
-  const page = await fetch(`${base}/`).then((r) => r.text());
+  const page = await fetch(`${base}/`, { headers: signedIn }).then((r) => r.text());
   const src = page.match(/<script[^>]+src="([^"]+\.js)"/)?.[1];
   return src ? fetch(new URL(src, base)).then((r) => r.text()) : "";
 }
 
 // The page's stylesheet, as Vite built it.
 async function pageCss(base) {
-  const page = await fetch(`${base}/`).then((r) => r.text());
+  const page = await fetch(`${base}/`, { headers: signedIn }).then((r) => r.text());
   const href = page.match(/<link[^>]+href="([^"]+\.css)"/)?.[1];
   return href ? fetch(new URL(href, base)).then((r) => r.text()) : "";
 }
 
 for (const c of CASES) {
   console.log(`\n${c.name}`);
+  signedIn = {};
   if (c.build) {
     try {
       execFileSync("npx", ["vite", "build", "--logLevel", "error"], { cwd: path.join(ROOT, c.build), stdio: "pipe" });
@@ -218,6 +258,45 @@ for (const c of CASES) {
     }
     ok("boots and serves the page");
 
+    // behind the gate: signed out, nothing; signed in, a cookie, then as any other
+    let started;
+    if (c.signIn) {
+      const page = await fetch(`${base}/`, { redirect: "manual" });
+      page.status === 303 && page.headers.get("location") === "/sign-in"
+        ? ok("signed out, the page sends you to sign in")
+        : bad(`signed out, / answered ${page.status}`);
+      const anon = await fetch(`${base}/hai/chat`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message: c.message }) });
+      const why = await anon.json().catch(() => ({}));
+      anon.status === 401 && why.error === "sign in to continue" ? ok("signed out, the routes say 401 sign in to continue") : bad(`signed out, /hai/chat answered ${anon.status}`);
+      const signin = await signInAs(base, c.signIn.as);
+      const cookie = signin.cookie.split(";")[0];
+      signin.status === 303 && cookie.startsWith(`${c.signIn.cookie}=`) && /; Secure/.test(signin.cookie) && /; HttpOnly/.test(signin.cookie)
+        ? ok(`signing in sets ${c.signIn.cookie}, HttpOnly and Secure`)
+        : bad(`signing in answered ${signin.status} with ${signin.cookie}`);
+      signedIn = { cookie, origin: base };
+      // the page opens the conversation, so init runs first, as the client does
+      started = await sse(`${base}/hai/start`, {});
+      started.find((e) => e.type === "block_update")?.result === c.signIn.welcome
+        ? ok("init's tool knows who it runs for, from ownerOf(ctx.conversationId)")
+        : bad(`init said ${started.find((e) => e.type === "block_update")?.result}`);
+      const crossSite = await fetch(`${base}/hai/chat`, { method: "POST", headers: { "content-type": "application/json", cookie, origin: "https://evil.example" }, body: "{}" });
+      crossSite.status === 403 ? ok("the cookie from another site is a 403") : bad(`from another site: ${crossSite.status}`);
+      // what a URL can't parse is refused, not thrown: a sandboxed frame's origin, and a target such as //[
+      const sandboxed = await fetch(`${base}/sign-in`, { method: "POST", headers: { origin: "null", "content-type": "application/x-www-form-urlencoded" }, body: "name=eve", redirect: "manual" });
+      const net = await import("node:net");
+      const raw = await new Promise((resolve) => {
+        let text = "";
+        const sock = net.connect(c.port, "127.0.0.1", () => sock.end("GET //[ HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"));
+        sock.on("data", (d) => (text += d));
+        sock.on("close", () => resolve(text));
+        sock.on("error", () => resolve(text));
+      });
+      const alive = await fetch(`${base}/sign-in`).then((r) => r.status).catch(() => 0);
+      sandboxed.status === 403 && raw.startsWith("HTTP/1.1 400") && alive === 200
+        ? ok("a null origin is a 403 and an unparsable target a 400, and the server stays up")
+        : bad(`null origin: ${sandboxed.status}, //[: ${raw.split("\r\n")[0]}, then: ${alive}`);
+    }
+
     // one stylesheet: the default UI's, through @haikit/client/tailwind.css,
     // its tokens and its hai: utilities, and the Tailwind classes the app's
     // components use
@@ -227,7 +306,8 @@ for (const c of CASES) {
       : bad("the built stylesheet is missing hai.css or the app's classes");
 
     // 1 · elicit parks the turn
-    const turn = await sse(`${base}/hai/chat`, { message: c.message });
+    const startedId = started?.find((e) => e.type === "hello")?.conversationId;
+    const turn = await sse(`${base}/hai/chat`, { ...(startedId ? { conversationId: startedId } : {}), message: c.message });
     const conversationId = turn.find((e) => e.type === "hello")?.conversationId;
     const toolBlock = turn.find((e) => e.type === "block_start" && e.block.kind === "tool");
     const uiOpen = turn.find((e) => e.type === "ui_open");
@@ -295,6 +375,19 @@ for (const c of CASES) {
     c.expectInResolution.test(label) ? ok("click becomes the tool_result") : bad(`resolution was: ${label}`);
     frozen === "frozen" ? ok("surface freezes") : bad("surface not frozen");
     endStatus?.status === "idle" ? ok("turn resumes and completes") : bad(`ended ${endStatus?.status}`);
+
+    // 3a · another user, with the conversation's id, is told it doesn't exist
+    if (c.signIn) {
+      const stranger = (await signInAs(base, c.signIn.stranger)).cookie.split(";")[0];
+      const tries = await Promise.all([
+        fetch(`${base}/hai/chat`, { method: "POST", headers: { "content-type": "application/json", cookie: stranger, origin: base }, body: JSON.stringify({ conversationId, message: "mine now" }) }),
+        fetch(`${base}/hai/interact`, { method: "POST", headers: { "content-type": "application/json", cookie: stranger, origin: base }, body: JSON.stringify({ conversationId, handle: uiOpen.handle, action: c.action, value: c.value }) }),
+      ]);
+      const said = await Promise.all(tries.map((r) => r.json().catch(() => ({}))));
+      tries.every((r) => r.status === 404) && said.every((b) => b.error === "unknown conversation")
+        ? ok(`another user is told it's an unknown conversation`)
+        : bad(`another user got ${tries.map((r) => r.status)}`);
+    }
 
     // 3b · the click set something going that answers later, as a notice
     if (c.notice) {

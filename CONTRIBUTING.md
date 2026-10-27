@@ -2,9 +2,9 @@
 
 ```bash
 npm install
-npm test          # typecheck, typetest, csstest, storetest, reacttest, uitest, pgtest, smoke
+npm test          # typecheck, typetest, csstest, storetest, authtest, reacttest, uitest, pgtest, smoke
 npm run packtest  # pack the tarballs, install them clean, use them
-npm run pgtest    # @haikit/postgres on PGlite; set HAIKIT_PG_URL to add a real server
+npm run pgtest    # @haikit/postgres and @haikit/auth's store on PGlite; set HAIKIT_PG_URL to add a real server
 ```
 
 ## Layout
@@ -16,6 +16,8 @@ packages/client      browser runtime + default UI (plain ESM, no build; see belo
 packages/anthropic   model adapter for Claude
 packages/openai      model adapter for OpenAI models
 packages/postgres    durable store adapter (bring your own driver)
+packages/react       surface components in React
+packages/auth        optional sign-in: a Gate from a JWT, and who owns which conversation
 examples/*           demonstrations. private, never published
 scripts/             typetest.mjs, adaptertest.mjs, storetest.mjs, smoke.mjs, packtest.mjs,
                      build-css.mjs, csstest.mjs
@@ -72,7 +74,7 @@ public signature, run it.
 
 ## Releasing
 
-Changesets, with the seven packages version-locked:
+Changesets, with the eight packages version-locked:
 
 ```bash
 npx changeset          # describe the change
@@ -84,7 +86,7 @@ anything. The PR is made by `npm run version-packages`: `changeset version`,
 then `npm install`, so `package-lock.json` moves with the versions.
 
 Auth is **trusted publishing**: npm verifies the release workflow's OIDC identity
-against a trusted publisher configured on each of the seven packages
+against a trusted publisher configured on each of the eight packages
 (npmjs.com → package → Settings → Trusted Publisher → `wfoxd/haikit`,
 `release.yml`). There is no `NPM_TOKEN` anywhere — nothing to rotate, nothing to
 leak. Provenance comes with it, so published tarballs carry a signed attestation
@@ -92,7 +94,7 @@ tying them to the workflow run that built them.
 
 Two things that quietly break it: removing `id-token: write` from the workflow
 permissions, and renaming `release.yml` without updating the trusted publisher
-config on all seven packages.
+config on all eight packages.
 
 **A new package's first version is published by hand.** npm only lets you
 configure a trusted publisher on a package that already exists, so the release

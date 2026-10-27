@@ -108,7 +108,8 @@ interface Gate {
 
 A gate decides who may use the routes, and which conversations each may use.
 Pass one as `nodeHandler`'s `gate`. `@haikit/auth` makes one from a signed-in
-user's token; an app can write its own. All four types are exported by
+user's token (see [Sign-in and ownership](auth.md)); an app can write its
+own. All four types are exported by
 `@haikit/core`.
 
 | Member | Called | Returns |
@@ -557,7 +558,8 @@ the latest of each signal while the socket is backed up.
 does no authentication. Anyone with a conversation's id can send to it,
 click in it, read its notices and payloads as they arrive, and start its
 wake turns. The built-in stores make unguessable ids. Pass a
-[gate](#gates), or check before handing a request to `nodeHandler` that the
+[gate](#gates), such as [`@haikit/auth`'s](auth.md), or check before handing
+a request to `nodeHandler` that the
 signed-in user owns that conversation, as for any record. Either way, the
 events stream's `conversationId` is a query parameter, so keep it out of
 logs that others can read.

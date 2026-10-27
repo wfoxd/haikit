@@ -7,11 +7,11 @@ too.
 ## Before you open a pull request
 
 ```bash
-npm test          # typecheck, typetest, storetest, reacttest, uitest, pgtest, smoke
+npm test          # typecheck, typetest, storetest, authtest, reacttest, uitest, pgtest, smoke
 npm run packtest  # when you touch files, exports, types or any public signature
 ```
 
-A change to a published package needs a changeset (`npx changeset`). The seven
+A change to a published package needs a changeset (`npx changeset`). The eight
 packages are version-locked (`fixed` in `.changeset/config.json`). A new
 package's first version is published by hand: see Releasing in
 [CONTRIBUTING.md](CONTRIBUTING.md#releasing).

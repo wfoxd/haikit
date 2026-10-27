@@ -130,6 +130,7 @@ finished result, about 150 lines.
 | [`@haikit/openai`](packages/openai) | OpenAI model adapter, over the Responses API. Defaults to `gpt-6-luna` |
 | [`@haikit/postgres`](packages/postgres) | Durable store adapter. Bring your own driver |
 | [`@haikit/react`](packages/react) | Write surface components in React, typed from the surface contract |
+| [`@haikit/auth`](packages/auth) | Optional sign-in: each user, from a verified JWT, sees only their own conversations. A gate for the routes |
 
 Adapters depend on `@haikit/core` only, never on the runtime. That is what
 keeps the model and store seams swappable.
