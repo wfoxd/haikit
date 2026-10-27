@@ -639,7 +639,14 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
     }
   };
   try {
-    if (!polling) return await run();
+    if (!polling) {
+      // Over when the stream is: a store read still out then isn't waited
+      // for, so an admission that runs out ends the response at once, and the
+      // browser reconnects to hear why. A read that fails first still fails it.
+      const running = run();
+      running.catch(() => {});
+      return await Promise.race([running, left]);
+    }
     // A poll: the same reading, until something new has gone out and what
     // came with it has had a moment to follow, or the hold runs out.
     if (poll === "now") markFresh();

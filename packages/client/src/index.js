@@ -345,7 +345,9 @@ export function createChat({
         state.conversationId = event.conversationId;
         state.model = event.model;
         hasEvents = event.events === true;
-        if (event.events) listen(event.conversationId);
+        // not while turned away: a request's hello can land after the events
+        // stream was refused, and only resume() or a request answered 200 starts it again
+        if (event.events && !state.unauthorized) listen(event.conversationId);
         break;
 
       // From the events stream, in seq order. A reconnect resumes after the
