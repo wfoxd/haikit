@@ -256,7 +256,8 @@ HS algorithm allowed, header `{ alg, typ: "JWT" }`, carrying:
 
 - algorithm is in `algorithms`, with its signature checked against the
   secrets for an HS algorithm, or else against the JWKS;
-- `exp` hasn't passed, and `nbf` has, give or take `clockToleranceMs`;
+- has an `exp`, since one without would never expire, and it hasn't passed,
+  and `nbf` has, give or take `clockToleranceMs`;
 - `iss` and `aud` match, when `issuer` and `audience` are set;
 - `userClaim` is a non-empty string;
 - sign-in time (`auth_time` on a token `signIn` issued, `iat` on a

@@ -133,8 +133,9 @@ console.log("\ntokens");
   const strangerAud = await new SignJWT({}).setProtectedHeader({ alg: "HS256" }).setSubject("ada").setIssuedAt().setExpirationTime("1h").setIssuer("https://app.test").setAudience("other").sign(key(SECRET));
   const none = `${Buffer.from('{"alg":"none"}').toString("base64url")}.${Buffer.from(JSON.stringify({ sub: "ada", iss: "https://app.test", aud: "haikit", exp: 9_999_999_999 })).toString("base64url")}.`;
   const noSubject = await new SignJWT({}).setProtectedHeader({ alg: "HS256" }).setIssuedAt().setExpirationTime("1h").setIssuer("https://app.test").setAudience("haikit").sign(key(SECRET));
-  const results = await Promise.all([tampered, forged, expired, strangerIss, strangerAud, none, noSubject, "not.a.jwt", ""].map((t) => auth.verify(t)));
-  check("refused: a changed byte, another secret, expired, another issuer or audience, alg none, no subject, garbage", results.every((r) => r === null));
+  const noExpiry = await new SignJWT({}).setProtectedHeader({ alg: "HS256" }).setSubject("ada").setIssuedAt().setIssuer("https://app.test").setAudience("haikit").sign(key(SECRET));
+  const results = await Promise.all([tampered, forged, expired, strangerIss, strangerAud, none, noSubject, noExpiry, "not.a.jwt", ""].map((t) => auth.verify(t)));
+  check("refused: a changed byte, another secret, expired, another issuer or audience, alg none, no subject, no exp, garbage", results.every((r) => r === null));
 
   // rotation
   const old = await new SignJWT({}).setProtectedHeader({ alg: "HS256" }).setSubject("ada").setIssuedAt().setExpirationTime("1h").sign(key(OLD_SECRET));
@@ -174,6 +175,8 @@ console.log("\nJWKS");
     const foreign = await new SignJWT({ user_id: "u_42" }).setProtectedHeader({ alg: "ES256", kid: "k1" }).setIssuedAt().setExpirationTime("10m").setIssuer("https://idp.test/").setAudience("app").sign(stranger);
     check("a token signed by another key is refused", (await auth.verify(foreign)) === null);
     check("one with no user claim is refused", (await auth.verify(await fromIdp({}))) === null);
+    const lasting = await new SignJWT({ user_id: "u_42" }).setProtectedHeader({ alg: "ES256", kid: "k1" }).setIssuedAt().setIssuer("https://idp.test/").setAudience("app").sign(privateKey);
+    check("one with no exp is refused: it would never expire", (await auth.verify(lasting)) === null);
     const secretOnly = createAuth({ store: memoryAuthStore(), jwt: { secret: SECRET } });
     check("a provider's token is refused where only a secret is configured", (await secretOnly.verify(token)) === null);
 

@@ -199,6 +199,8 @@ export function createAuth(options: AuthOptions): Auth {
     throw new Error("createAuth: jwt.clockToleranceMs must be a finite number, at least 0");
   }
   const checks = {
+    // jose checks exp only when a token has one: one without would never expire
+    requiredClaims: ["exp"],
     clockTolerance: clockToleranceMs / 1000,
     ...(jwt.issuer === undefined ? {} : { issuer: jwt.issuer }),
     ...(jwt.audience === undefined ? {} : { audience: jwt.audience }),
