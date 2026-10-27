@@ -57,18 +57,28 @@ function SiteLink({ link }: { link: WelcomeProps["links"][number] }) {
   );
 }
 
-const LABEL = "font-heading text-[13px] font-semibold text-hai-accent";
-const TITLE = "mt-1 font-heading text-[19px]/[1.25] font-semibold tracking-[-0.01em]";
-const LEAD = "mt-1.5 mb-3.5 font-serif text-[15px]/[1.5] text-muted-foreground";
+const LEAD = "font-serif text-[15px]/[1.5] text-muted-foreground";
+const NUMBER = "font-mono text-[12.5px] font-semibold text-hai-accent tabular-nums";
 
 type Panel = { open: boolean; picked: unknown; choose: (id: string) => void };
 
 /**
- * HaiKIT's tutorial as a panel: a button to start it, and its steps, each a
- * button that opens that step here, then the tutorial that carries on from it.
- * Choosing one answers the welcome screen's question, through its declared
- * `tutorial` action.
+ * One way in, as a panel: its name, how much it holds, what's in it, and the
+ * button that starts it, at its foot. Side by side, the doors are as tall as
+ * the tallest, so their buttons line up.
  */
+function Door({ name, size, className, children }: { name: string; size: string; className?: string; children: ReactNode }) {
+  return (
+    <section className={cn(PANEL, "flex flex-col gap-4 px-6 pt-5 pb-[22px] max-sm:px-4 max-sm:py-[18px]", className)}>
+      <header className="border-b border-hai-line-soft pb-3">
+        <h3 className="font-heading text-[19px]/[1.25] font-semibold tracking-[-0.01em]">{name}</h3>
+        <p className="mt-0.5 text-[13px] text-muted-foreground">{size}</p>
+      </header>
+      {children}
+    </section>
+  );
+}
+
 /** The tutorials after the first: `more`, or, on a welcome saved before version 15, its one `next`. */
 type Later = WelcomeProps["tutorial"]["more"][number];
 const laterOf = (tutorial: WelcomeProps["tutorial"]): Later[] => {
@@ -76,78 +86,65 @@ const laterOf = (tutorial: WelcomeProps["tutorial"]): Later[] => {
   return tutorial.more ?? (next ? [next] : []);
 };
 
-function TutorialPanel({ tutorial, open, picked, choose }: Panel & { tutorial: WelcomeProps["tutorial"] }) {
+/**
+ * HaiKIT's tutorials as a door: each one in order, numbered, with what it
+ * builds and how many steps it takes. Its title opens its first page here,
+ * as the button at the foot does the first tutorial's. Choosing one answers
+ * the welcome screen's question, through its declared `tutorial` action.
+ */
+function TutorialDoor({ tutorial, open, picked, choose }: Panel & { tutorial: WelcomeProps["tutorial"] }) {
+  const all = [
+    { first: "intro", title: tutorial.title, lead: tutorial.lead, steps: tutorial.steps.length },
+    ...laterOf(tutorial).map((t) => ({ first: t.first.id, title: t.title, lead: t.lead, steps: t.steps })),
+  ];
+  const steps = all.reduce((n, t) => n + t.steps, 0);
   return (
-    <section className={cn(PANEL, "flex flex-col px-[26px] pt-6 pb-[22px] max-sm:px-4 max-sm:py-[18px]")}>
-      <p className={LABEL}>Tutorial</p>
-      <h3 className={TITLE}>{tutorial.title}</h3>
-      <p className={LEAD}>
-        <Inline text={tutorial.lead} />
-      </p>
-      <ol className="mb-5 grid list-none gap-px">
-        {tutorial.steps.map((step) => (
-          <li key={step.id}>
-            <button
-              type="button"
-              disabled={!open}
-              onClick={() => choose(step.id)}
-              className={cn(
-                "-mx-2 grid w-[calc(100%+16px)] cursor-pointer grid-cols-[2.3em_minmax(0,1fr)] items-baseline px-2 py-1 text-left font-sans text-[14.5px]/[1.4]",
-                "enabled:hover:bg-hai-hover enabled:hover:[&>span:last-child]:underline enabled:hover:[&>span:last-child]:underline-offset-2 disabled:cursor-default disabled:text-muted-foreground",
-                step.id === picked && "bg-hai-selected disabled:text-foreground",
-              )}
-            >
-              <span className="font-mono text-[12.5px] font-semibold text-hai-accent tabular-nums">{step.id}</span>
-              <span>{step.title}</span>
-            </button>
+    <Door name="Tutorials" size={`${all.length} ${all.length === 1 ? "tutorial" : "tutorials"}, ${steps} steps`}>
+      <ol className="grid list-none gap-3.5">
+        {all.map((t, i) => (
+          <li key={t.first} className="grid grid-cols-[1.5em_minmax(0,1fr)] gap-x-1">
+            <span className={cn(NUMBER, "text-[13px]/[1.6]")}>{i + 1}</span>
+            <div>
+              <button
+                type="button"
+                disabled={!open}
+                onClick={() => choose(t.first)}
+                className={cn(
+                  "-mx-1.5 cursor-pointer px-1.5 text-left font-heading text-base/[1.35] font-semibold disabled:cursor-default",
+                  "enabled:hover:bg-hai-hover enabled:hover:underline enabled:hover:underline-offset-2",
+                  t.first === picked && "bg-hai-selected text-hai-accent",
+                )}
+              >
+                {t.title}
+              </button>{" "}
+              <span className="text-[13px] whitespace-nowrap text-muted-foreground">{t.steps} steps</span>
+              <p className="mt-0.5 font-serif text-sm/[1.5] text-muted-foreground">
+                <Inline text={t.lead} />
+              </p>
+            </div>
           </li>
         ))}
       </ol>
       <Choice className="mt-auto self-start" picked={picked === "intro"} disabled={!open} onClick={() => choose("intro")}>
         Start the tutorial
       </Choice>
-      {/* The tutorials that carry on with the same app, each after the last. */}
-      {laterOf(tutorial).map((next) => (
-        <div key={next.first.id} className="mt-[18px] border-t border-hai-line pt-3.5">
-          <button
-            type="button"
-            disabled={!open}
-            onClick={() => choose(next.first.id)}
-            className="flex w-full cursor-pointer flex-col items-start gap-0.5 text-left disabled:cursor-default enabled:hover:[&>span:last-child]:underline enabled:hover:[&>span:last-child]:underline-offset-2"
-          >
-            <span className={LABEL}>Then</span>
-            <span className={cn("font-heading text-base/[1.25] font-semibold", picked === next.first.id && "text-hai-accent")}>{next.title}</span>
-          </button>
-          <p className="mt-1 font-serif text-sm/[1.5] text-muted-foreground">
-            <Inline text={`${next.lead} ${next.steps} steps.`} />
-          </p>
-        </div>
-      ))}
-    </section>
+    </Door>
   );
 }
 
 /**
- * The reference manual as a panel: each of its pages, a button that opens it
+ * The reference manual as a door: each of its pages, a button that opens it
  * here, the contents first. Choosing one answers the welcome screen's question
- * through its declared `reference` action, as the tutorial panel's steps do.
+ * through its declared `reference` action, as a tutorial's title does.
  */
-function ReferencePanel({ reference, open, picked, choose }: Panel & { reference: WelcomeProps["reference"] }) {
+function ReferenceDoor({ reference, open, picked, choose, className }: Panel & { reference: WelcomeProps["reference"]; className?: string }) {
   return (
-    <section
-      className={cn(
-        PANEL,
-        "col-span-full grid gap-x-7 gap-y-3.5 px-[26px] py-[22px] max-sm:px-4 @min-[620px]/page:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] @min-[620px]/page:items-start",
-      )}
-    >
-      <div>
-        <p className={LABEL}>Reference</p>
-        <h3 className={TITLE}>{reference.title}</h3>
-        <p className={cn(LEAD, "mb-0")}>
-          <Inline text={reference.lead} />
-        </p>
-      </div>
-      <ul className="flex list-none flex-wrap gap-1.5">
+    <Door name="Reference" size={`${reference.title}, ${reference.pages.length} pages`} className={className}>
+      <p className={LEAD}>
+        <Inline text={reference.lead} />
+      </p>
+      {/* its buttons, at its foot like the other doors' */}
+      <ul className="mt-auto flex list-none flex-wrap gap-1.5">
         {reference.pages.map((page) => (
           <li key={page.id}>
             <Button
@@ -166,7 +163,7 @@ function ReferencePanel({ reference, open, picked, choose }: Panel & { reference
           </li>
         ))}
       </ul>
-    </section>
+    </Door>
   );
 }
 
@@ -227,6 +224,11 @@ export function Welcome({ props: current, send, mode, state, selection }: Surfac
     { value: "course-map", label: "See the course map" },
   ] as const;
 
+  // Version 7 linked out to the tutorial, and earlier versions had none; a
+  // welcome stored before version 10 has no reference.
+  const tutorial = props.tutorial?.steps.every((st) => typeof st.id === "string") ? props.tutorial : undefined;
+  const doors = 1 + Number(!!tutorial) + Number(!!props.reference);
+
   const manual = props.reference?.pages.find((p) => p.id === picked);
   // a tutorial that carries on, started from its first page
   const started = props.tutorial ? laterOf(props.tutorial).find((t) => t.first.id === picked) : undefined;
@@ -285,18 +287,39 @@ export function Welcome({ props: current, send, mode, state, selection }: Surfac
           />
         )}
 
-        {/* The close: where to begin here, beside the tutorial for building your own. */}
-        <div className={cn("grid gap-4 @min-[620px]/page:grid-cols-2", story ? "mt-12 border-t border-hai-line-soft pt-10 max-sm:mt-9 max-sm:pt-[30px]" : "mt-9")}>
+        {/*
+          The close: where to begin, three ways in. With room, side by side, as
+          tall as each other; with less, the manual goes under the other two.
+        */}
+        <div
+          className={cn(
+            "grid gap-4",
+            doors > 1 && "@min-[620px]/page:grid-cols-2",
+            doors > 2 && "@min-[980px]/page:grid-cols-3",
+            story ? "mt-12 border-t border-hai-line-soft pt-10 max-sm:mt-9 max-sm:pt-[30px]" : "mt-9",
+          )}
+        >
           {story && <p className={cn(KICKER, "col-span-full -mb-1 text-hai-accent")}>Start here</p>}
-          <div className={cn(PANEL, "flex flex-col px-[26px] pt-6 pb-[22px] max-sm:px-4 max-sm:py-[18px]")}>
+          <Door name="Course" size={`${props.parts.length} parts, ${lessons} lessons, about ${minutes} minutes`}>
             {rest.map((paragraph, i) => (
-              <p key={i} className="mb-3 max-w-[58ch] font-serif text-[17px]/[1.6] max-sm:text-base [&_strong]:font-semibold">
+              <p key={i} className="max-w-[58ch] font-serif text-base/[1.55] [&_strong]:font-semibold">
                 <Inline text={paragraph} />
               </p>
             ))}
-            <p className="mt-[18px] mb-5 text-[13.5px] text-muted-foreground">
-              {props.parts.length} parts, {lessons} lessons, about {minutes} minutes
-            </p>
+            <ol className="list-none border-t border-hai-line-soft">
+              {props.parts.map((part) => (
+                <li
+                  key={part.n}
+                  className="grid grid-cols-[4.4em_minmax(0,1fr)_auto] items-baseline gap-x-2 border-b border-hai-line-soft py-2 font-sans text-[14.5px]/[1.35]"
+                >
+                  <span className={NUMBER}>
+                    {part.first}–{part.last}
+                  </span>
+                  <span>{part.title}</span>
+                  <span className="text-[13px] whitespace-nowrap text-muted-foreground">{part.minutes} min</span>
+                </li>
+              ))}
+            </ol>
             {/* The two buttons are this screen's question. */}
             <Choices className="mt-auto">
               {choices.map((c) => (
@@ -311,15 +334,22 @@ export function Welcome({ props: current, send, mode, state, selection }: Surfac
                 </Choice>
               ))}
             </Choices>
-            {!live && state === "frozen" && <Closed>{done}</Closed>}
-          </div>
-          {/* Version 7 linked out to the tutorial, and earlier versions had none. */}
-          {props.tutorial && props.tutorial.steps.every((st) => typeof st.id === "string") && (
-            <TutorialPanel tutorial={props.tutorial} open={open} picked={picked} choose={(id) => void pick(id, () => send("tutorial", id))} />
-          )}
-          {/* a welcome stored before version 10 has no reference */}
+          </Door>
+          {tutorial && <TutorialDoor tutorial={tutorial} open={open} picked={picked} choose={(id) => void pick(id, () => send("tutorial", id))} />}
           {props.reference && (
-            <ReferencePanel reference={props.reference} open={open} picked={picked} choose={(id) => void pick(id, () => send("reference", id))} />
+            <ReferenceDoor
+              reference={props.reference}
+              open={open}
+              picked={picked}
+              choose={(id) => void pick(id, () => send("reference", id))}
+              // two doors above it, or one beside it
+              className={cn(doors > 2 && "@min-[620px]/page:col-span-2 @min-[980px]/page:col-span-1")}
+            />
+          )}
+          {!live && state === "frozen" && (
+            <div className="col-span-full -mt-2">
+              <Closed>{done}</Closed>
+            </div>
           )}
         </div>
       </div>
