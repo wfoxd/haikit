@@ -877,6 +877,22 @@ async function gateChecks() {
       chat.close();
     }
 
+    // A gate's 415 turns the message away unread too: it isn't sent, so the
+    // default UI gives the text back. It isn't a sign-in problem.
+    {
+      const chat = createChat({
+        endpoint: "http://gate.test/hai",
+        registry: {},
+        fetch: async () => new Response(JSON.stringify({ error: "the request body must be sent as application/json" }), { status: 415 }),
+      });
+      const sent = await chat.send("hi");
+      check(
+        "a message a gate refuses with 415 isn't sent, and says why, without counting as signed out",
+        sent === false && chat.state.blocks.at(-1)?.message === "the request body must be sent as application/json" && chat.state.unauthorized === null,
+      );
+      chat.close();
+    }
+
     // A wake turn showing when the events stream is turned away: nothing will
     // say it ended, so it is given up, rather than leave the chat streaming.
     {

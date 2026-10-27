@@ -633,9 +633,9 @@ read the response as server-sent events.
 - **Other error statuses** become an `error` block: the response's
   `{ error }` text, or `request failed (<status>)`.
 - **Turned away unread:** a 409 that stays one, a 401 or 403 (not signed in,
-  not allowed, from a [gate](http.md#gates)), and a 404 (no such
-  conversation, or not this user's) mean the server never took the request
-  up. `send` resolves `false` for them, so the default UI gives the text back
+  not allowed, from a [gate](http.md#gates)), a 404 (no such conversation,
+  or not this user's), and a 415 (a gate refusing how the request was sent)
+  mean the server never took the request up. `send` resolves `false` for them, so the default UI gives the text back
   to the message box.
 - **401 and 403** also set `state.unauthorized`, stop the events stream, and
   tell subscribers `{ type: "unauthorized", status, message }`.
