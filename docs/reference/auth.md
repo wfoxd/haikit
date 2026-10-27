@@ -475,7 +475,8 @@ for a provider that doesn't speak OpenID Connect.
 
    Only the cookie of the sign-in that ends is ever cleared, so a sign-in
    started in another tab meanwhile, even while this one's code is being
-   exchanged, still finishes.
+   exchanged, still finishes: unless it was a fourth, and took this one's
+   cookie (see [The flow cookie](#the-flow-cookie)).
 
 Both routes answer GET only; another method resolves `false`. A request that
 throws outside these steps is answered **500**, as `/auth/me` is.
@@ -507,7 +508,13 @@ default, `query`.
 
 **Several sign-ins at once.** Each tab's sign-in has its own cookie, and
 each way back finds and clears only its own, so up to three finish in any
-order. A fourth takes the earliest one's cookie. Two started at the same
+order. A fourth takes the earliest one's cookie. Should the earliest come
+back just then, while its code is being exchanged, its answer clears the
+cookie it read, which by then holds the fourth's flow, and the fourth's way
+back is `expired` too. A server can only clear a cookie by name, never only
+if it still holds what it read, so no fixed set of names can rule this out.
+It takes four sign-ins at once in one browser, and that timing, and costs a
+retry. Two started at the same
 moment, before either's cookie is set, see the same free one, and the later
 answer's flow is the one kept: the other's way back is `expired`. However
 many race, a browser holds at most three flow cookies of at most 1,365 bytes

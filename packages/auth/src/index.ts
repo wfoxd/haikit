@@ -623,7 +623,7 @@ export function createAuth(options: AuthOptions): Auth {
   async function finishSignIn(provider: SignInProvider, url: URL, req: IncomingMessage, res: ServerResponse) {
     // This answers one of the sign-ins on their way: the one whose finish
     // takes it. Only its cookie is cleared, so a sign-in another tab starts
-    // meanwhile still finishes.
+    // meanwhile still finishes, unless as a fourth it took this one's.
     for (const [name, sealed] of flowCookies(req.headers)) {
       const flow = await openFlow(sealed);
       // past its time, altered, or another provider's: left to its Max-Age
