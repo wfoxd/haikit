@@ -224,7 +224,11 @@ a check already reading the store included. Other servers keep each user's
 time for up to 30,000 ms, counted from when they asked the store for it,
 before reading it again, so they refuse them within that. An events stream
 already open ends at its gate's next check, every 60,000 ms (see
-[HTTP routes](http.md#gates)).
+[HTTP routes](http.md#gates)): on this server, within 60,000 ms of the
+revocation. On another, that check may still use the time it kept from
+before, so the stream can stay open up to about 90,000 ms after it: up to
+30,000 ms until the server reads the store again, then up to 60,000 ms until
+the next check.
 
 A token's sign-in time is its `auth_time` for a token `signIn` issued, which
 a renewal keeps (see [Tokens](#tokens)). So a cookie renewed by a server that
@@ -275,9 +279,12 @@ token is refused: the cookie isn't tried.
 **Renewal.** Nothing renews a token by itself. `GET /auth/me` issues the
 cookie again, with the same claims and sign-in time (`auth_time`) and a new
 `iat`, `exp` and `jti`, once a
-token `signIn` issued, sent as the cookie, is past half its life. A page that
-asks `/auth/me` as it opens stays signed in for as long as it's opened at
-least once every `ttlMs`. A provider's tokens are renewed by the provider.
+token `signIn` issued, sent as the cookie, is past half its life, and not
+before. So a cookie is renewed only by a visit between half of `ttlMs` and
+`ttlMs` after it was issued: a page that asks `/auth/me` as it opens stays
+signed in while it's opened at least once every half of `ttlMs` (3.5 days by
+default). Opened less often, a visit can fall before the midpoint, renewing
+nothing, and the next after the end. A provider's tokens are renewed by the provider.
 A client that sends them as Bearer tokens should fetch a fresh one for each
 request (see [`createChat`'s `fetch`](client.md#createchat)): an events
 stream ends when its token stops being accepted, `clockToleranceMs` after its
@@ -411,10 +418,14 @@ leaves its row, which no request can reach: its id was the conversation's.
 
 ## Security
 
-- **Same origin, or Bearer tokens.** The cookie is `SameSite=Lax`, so a
-  browser sends it only to the site that set it. A page on another origin
-  calling the routes needs Bearer tokens and the app's own CORS:
-  `nodeHandler` answers no `OPTIONS` preflight.
+- **Same site, or Bearer tokens.** The cookie is `SameSite=Lax`, which a
+  browser applies per site, not per origin. A page on another site never
+  sends it with a request to the routes, so a page there needs Bearer
+  tokens. A page on another origin of the same site, such as
+  `https://app.example.com` calling `https://api.example.com`, can send the
+  cookie, with `credentials: "include"`, wherever the app's own CORS allows
+  credentials from it and its origin is in `origins`. Either way, the CORS
+  is the app's: `nodeHandler` answers no `OPTIONS` preflight.
 - **Signals still reach everyone.** A gate keeps each user to their own
   conversations, but a signal goes to every events stream, every signed-in
   user's (see [Signals](signals.md)). Never put one user's data in a signal.
@@ -434,6 +445,8 @@ leaves its row, which no request can reach: its id was the conversation's.
 | Default clock tolerance | 5000 |
 | How long a server keeps a user's revocation time before reading it again | 30,000 |
 | Owners and revocation times kept in memory, each | 10,000 most recent |
-| When `/auth/me` renews a cookie token | past half its life |
+| When `/auth/me` renews a cookie token | past half its life, not before |
+| How often a page must ask `/auth/me` to stay signed in | at least once every half of `ttlMs`: 3.5 days by default |
+| Longest an open events stream outlives a revocation | 60,000 on the server that revoked; about 90,000 on another |
 | Revocation granularity | 1 s: a sign-in in the second `revoke` ran in still counts |
 | JWKS: refetched once older than / for an unknown key id at most every / fetch timeout | 600,000 / 30,000 / 5000 (`jose`'s defaults) |

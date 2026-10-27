@@ -236,7 +236,9 @@ None of these can be changed without changing HaiKIT's code.
 | How long a server keeps a user's revocation time before reading it again | 30,000 | [Sign-in and ownership](auth.md#revoke) |
 | Revocation granularity | 1 s: a sign-in in the second `revoke` ran in still counts | [Sign-in and ownership](auth.md#revoke) |
 | Owners, and revocation times, kept in memory per server | the 10,000 most recent of each | [Sign-in and ownership](auth.md#ownerof) |
-| When `GET /auth/me` issues a cookie token again | past half its life | [Sign-in and ownership](auth.md#tokens) |
+| When `GET /auth/me` issues a cookie token again | past half its life, not before | [Sign-in and ownership](auth.md#tokens) |
+| How often a page must ask `GET /auth/me` to stay signed in | at least once every half of `ttlMs`: 3.5 days by default | [Sign-in and ownership](auth.md#tokens) |
+| Longest an open events stream outlives a revocation | 60,000 on the server that revoked; about 90,000 on another | [Sign-in and ownership](auth.md#revoke) |
 | JWKS refetched once older than; for an unknown key id, at most every; fetch timeout | 600,000; 30,000; 5000 (`jose`'s defaults) | [Sign-in and ownership](auth.md#createauth) |
 
 ### Limits that don't exist
