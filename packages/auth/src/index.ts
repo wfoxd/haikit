@@ -71,7 +71,7 @@ export interface CookieOptions {
   /**
    * Default true. False sends the cookie over plain http, for Safari on
    * `http://localhost`, which keeps no `Secure` cookie there. Never in
-   * production.
+   * production. A `__Host-` or `__Secure-` name needs it true.
    */
   secure?: boolean;
 }
@@ -207,7 +207,9 @@ export function createAuth(options: AuthOptions): Auth {
   const secure = options.cookie?.secure ?? true;
   const cookieName = options.cookie?.name ?? (secure ? "__Host-haikit_token" : "haikit_token");
   if (!/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(cookieName)) throw new Error("createAuth: cookie.name isn't a valid cookie name");
-  if (!secure && cookieName.startsWith("__Host-")) throw new Error("createAuth: a __Host- cookie must be secure");
+  // a browser drops a cookie with either prefix that isn't Secure, so sign-in would seem to work and not
+  const prefix = cookieName.match(/^__(Host|Secure)-/)?.[0];
+  if (!secure && prefix) throw new Error(`createAuth: a ${prefix} cookie must be secure`);
   const cookieAttributes = `Path=/; HttpOnly; SameSite=Lax${secure ? "; Secure" : ""}`;
 
   const origins = (options.origins ?? []).map((o) => {
@@ -257,11 +259,13 @@ export function createAuth(options: AuthOptions): Auth {
   async function notBeforeOf(userId: string): Promise<number | null> {
     const kept = notBefores.get(userId);
     if (kept && Date.now() - kept.read < NOT_BEFORE_CACHE_MS) return kept.at;
+    // as old as when it was asked for, not answered: a slow read can't stretch the window
+    const asked = Date.now();
     const read = await store.getNotBefore(userId);
     // A revoke here while that read was out has kept a later time than it may
     // have found: the later one stands.
     const at = later(read, notBefores.get(userId)?.at ?? null);
-    keep(notBefores, userId, { at, read: Date.now() });
+    keep(notBefores, userId, { at, read: asked });
     return at;
   }
 

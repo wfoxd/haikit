@@ -117,7 +117,7 @@ provider's public key as the secret, a classic forgery, is refused.
 | A `userClaim` that's `iss`, `aud`, `exp`, `nbf`, `iat`, `jti` or `auth_time` | `createAuth: jwt.userClaim can't be "<name>", a claim every token sets for itself` |
 | A `clockToleranceMs` that's negative, `NaN` or infinite, which would stop `exp` and `nbf` being checked | `createAuth: jwt.clockToleranceMs must be a finite number, at least 0` |
 | A cookie name with a character a cookie name can't have | `createAuth: cookie.name isn't a valid cookie name` |
-| A `__Host-` name with `secure: false` | `createAuth: a __Host- cookie must be secure` |
+| A `__Host-` or `__Secure-` name with `secure: false`, which a browser would drop | `createAuth: a __Host- cookie must be secure`, or `__Secure-` |
 | An entry in `origins` that isn't a URL | `createAuth: <entry> isn't an origin such as https://app.example.com` |
 
 ## `Auth`
@@ -221,9 +221,10 @@ whoever asks first: a conversation id may have been seen by others (see
 Refuses every sign-in of `userId`'s before now: "sign out everywhere". It
 stores the time in the store, and this server refuses those tokens at once,
 a check already reading the store included. Other servers keep each user's
-time for up to 30,000 ms before reading it again, so they refuse them within
-that. An events stream already open ends at its gate's next check, every
-60,000 ms (see [HTTP routes](http.md#gates)).
+time for up to 30,000 ms, counted from when they asked the store for it,
+before reading it again, so they refuse them within that. An events stream
+already open ends at its gate's next check, every 60,000 ms (see
+[HTTP routes](http.md#gates)).
 
 A token's sign-in time is its `auth_time` for a token `signIn` issued, which
 a renewal keeps (see [Tokens](#tokens)). So a cookie renewed by a server that

@@ -84,6 +84,7 @@ console.log("\ncreateAuth");
     ),
   );
   check("a __Host- cookie that isn't secure", throws(() => createAuth({ store, jwt: { secret: SECRET }, cookie: { secure: false, name: "__Host-x" } }), "createAuth: a __Host- cookie must be secure"));
+  check("a __Secure- cookie that isn't secure, which a browser would drop", throws(() => createAuth({ store, jwt: { secret: SECRET }, cookie: { secure: false, name: "__Secure-x" } }), "createAuth: a __Secure- cookie must be secure"));
   check("a cookie name with a space", throws(() => createAuth({ store, jwt: { secret: SECRET }, cookie: { name: "my token" } }), "createAuth: cookie.name isn't a valid cookie name"));
   check("an origin that isn't one", throws(() => createAuth({ store, jwt: { secret: SECRET }, origins: ["app.example.com"] }), "createAuth: app.example.com isn't an origin such as https://app.example.com"));
 }
