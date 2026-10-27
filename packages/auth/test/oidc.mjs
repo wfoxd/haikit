@@ -660,6 +660,8 @@ console.log("\ngoogle");
     issuer: "https://accounts.google.com",
     authorize: "https://accounts.google.com/o/oauth2/v2/auth",
     token: "https://oauth2.googleapis.com/token",
+    // Google's token endpoint refuses the form-encoded Basic header oauth4webapi sends
+    accept: "client_secret_post",
   });
   let asked = 0;
   const auth = createAuth({
@@ -679,6 +681,13 @@ console.log("\ngoogle");
   const { server, browser } = await serve(auth);
   try {
     check("named google", plain.name === "google");
+    const exchange = async (provider) => {
+      const { url, flow } = await provider.start();
+      return provider.finish(idp.signIn(url.href), flow).catch(() => null);
+    };
+    check("the client goes in the body, as Google reads it", (await exchange(plain))?.userId === "google:1234");
+    const asBasic = google({ ...CLIENT, redirectUri: REDIRECT, tokenEndpointAuthMethod: "client_secret_basic", fetch: idp.fetch });
+    check("…unless tokenEndpointAuthMethod says otherwise", (await exchange(asBasic)) === null);
     let b = browser();
     let s = await b.get("/auth/google");
     const p = new URL(s.location).searchParams;

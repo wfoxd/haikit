@@ -578,7 +578,7 @@ the authorization code flow, with PKCE, `state` and `nonce`, on
 | `redirectUri` | required | Where the provider sends the browser back, exactly as registered: https, or http on `localhost`, `127.0.0.1` or `[::1]`, and no `#fragment`. It's never worked out from the request, whose `Host` header can say anything |
 | `scopes` | `["openid", "email", "profile"]` | What to ask for. `openid` is always asked for |
 | `params` | none | More parameters for the provider's sign-in page, such as `{ prompt: "consent" }` |
-| `tokenEndpointAuthMethod` | `"client_secret_basic"`, unless the provider's settings list `"client_secret_post"` and not it | How the client proves itself when it exchanges the code, as registered with the provider. A provider's settings say what it supports, not what the client was registered for |
+| `tokenEndpointAuthMethod` | `"client_secret_basic"`, unless the provider's settings list `"client_secret_post"` and not it | How the client proves itself when it exchanges the code, as registered with the provider. A provider's settings say what it supports, not what the client was registered for. In a Basic header, the id and secret are form-encoded, as RFC 6749 says; a provider that refuses a client it knows with `invalid_client` may not decode them, as Google's doesn't, and `"client_secret_post"` is the way round it |
 | `maxAgeMs` | none: no limit | How long ago the user may have last signed in at the provider. Sent as `max_age`, in whole seconds (rounded down), and an ID token whose `auth_time` is older than that, or missing, is refused |
 | `user` | `{name}:{sub}`, with the default claims | Whom the user signs in as. A string: that user id, with the default claims. An object: that user id, and exactly those claims. `null`: refused |
 | `failureUrl` | `"/"` | A path on this site a failed sign-in is sent to |
@@ -659,6 +659,7 @@ function google(options: GoogleOptions): SignInProvider;
 interface GoogleOptions extends Omit<OidcOptions, "name" | "issuer"> {
   hostedDomain?: string;
   prompt?: string;
+  tokenEndpointAuthMethod?: OidcOptions["tokenEndpointAuthMethod"];
 }
 ```
 
@@ -670,6 +671,7 @@ followed by Google's `sub`, a string of digits.
 | --- | --- | --- |
 | `hostedDomain` | none | A Google Workspace domain, such as `"example.com"`. It's sent as `hd`, so Google's page offers that domain's accounts first. An ID token whose `hd` claim isn't this domain is `refused`, before `user` is called. The `hd` parameter alone is only a hint to Google's page |
 | `prompt` | `"select_account"` | Google's `prompt`, so a user with several accounts picks one. `""` sends none |
+| `tokenEndpointAuthMethod` | `"client_secret_post"` | Google's token endpoint doesn't decode the form-encoding of a Basic header's id and secret, and answers a client id sent that way, with its dots and dashes encoded, `invalid_client`: *The OAuth client was not found.* In the body, it reads them |
 
 Every other option is `oidc`'s. `prompt` and `hd` are added to `params`,
 which can't set either: they're these options'.

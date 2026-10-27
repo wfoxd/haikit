@@ -151,6 +151,7 @@ Checked against `@haikit/*` 0.20.0. Durations are in milliseconds.
 | `fetch` | the global `fetch` | [Sign-in and ownership](auth.md#oidc) |
 | `google`'s `prompt` | `"select_account"`; `""` sends none | [Sign-in and ownership](auth.md#google) |
 | `google`'s `hostedDomain` | none: any Google account | [Sign-in and ownership](auth.md#google) |
+| `google`'s `tokenEndpointAuthMethod` | `"client_secret_post"` | [Sign-in and ownership](auth.md#google) |
 
 ### `hai.css`
 

@@ -79,6 +79,8 @@ export interface GoogleOptions extends Omit<OidcOptions, "name" | "issuer"> {
   hostedDomain?: string;
   /** Google's `prompt`. Default `"select_account"`, so a user with several accounts picks one; `""` sends none. */
   prompt?: string;
+  /** Default `"client_secret_post"`: Google's token endpoint doesn't decode the Basic header RFC 6749 describes. */
+  tokenEndpointAuthMethod?: OidcOptions["tokenEndpointAuthMethod"];
 }
 
 const GOOGLE = "https://accounts.google.com";
@@ -206,7 +208,10 @@ export function oidc(options: OidcOptions): SignInProvider {
 
 /** Sign in with Google. */
 export function google(options: GoogleOptions): SignInProvider {
-  const { hostedDomain, prompt = "select_account", user = defaultUser, params, ...rest } = options;
+  // In a Basic header, the id and secret are form-encoded (RFC 6749, 2.3.1),
+  // and a Google client id is all dots and dashes: Google doesn't decode them,
+  // and answers invalid_client. In the body, as Google's own guide sends them.
+  const { hostedDomain, prompt = "select_account", user = defaultUser, params, tokenEndpointAuthMethod = "client_secret_post", ...rest } = options;
   if (hostedDomain !== undefined && (typeof hostedDomain !== "string" || hostedDomain === "")) {
     throw new Error("google: hostedDomain must be a domain, such as example.com");
   }
@@ -219,6 +224,7 @@ export function google(options: GoogleOptions): SignInProvider {
     ...rest,
     name: "google",
     issuer: GOOGLE,
+    tokenEndpointAuthMethod,
     params: { ...params, ...(prompt ? { prompt } : {}), ...(hostedDomain ? { hd: hostedDomain } : {}) },
     // hd on the sign-in page only picks which accounts are offered first: the ID token says which one signed in
     user: (profile) => (hostedDomain !== undefined && profile.claims.hd !== hostedDomain ? null : user(profile)),
