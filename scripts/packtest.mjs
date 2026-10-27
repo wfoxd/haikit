@@ -19,7 +19,7 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const PACKAGES = ["core", "server", "client", "anthropic", "openai", "postgres", "react"];
+const PACKAGES = ["core", "server", "client", "anthropic", "openai", "postgres", "react", "auth"];
 
 let pass = 0;
 const failures = [];
@@ -156,6 +156,7 @@ try {
           "@haikit/openai": fileDep("openai"),
           "@haikit/postgres": fileDep("postgres"),
           "@haikit/react": fileDep("react"),
+          "@haikit/auth": fileDep("auth"),
           // @haikit/react's peers, and the types its .d.ts is checked against
           react: "^19.0.0",
           "react-dom": "^19.0.0",
@@ -189,6 +190,8 @@ import { createChat } from "@haikit/client";
 import { mountChat } from "@haikit/client/app.js";
 import { renderTranscript, h } from "@haikit/client/transcript.js";
 import { reactSurface } from "@haikit/react";
+import { createAuth, memoryAuthStore } from "@haikit/auth";
+import { pgAuthStore, migrate as migrateAuth, schema as authSchema } from "@haikit/auth/postgres";
 import { z } from "zod";
 
 const out = {};
@@ -204,6 +207,13 @@ const pgShaped = pgStore({ query: async () => ({ rows: [] }) });
 out.postgresIsStore = ["loadConversation", "saveConversation", "putPayload", "getPayload", "getPayloads"].every((m) => typeof pgShaped[m] === "function");
 out.clientExports = [createChat, mountChat, renderTranscript, h].every(f => typeof f === "function");
 out.reactExport = typeof reactSurface === "function" && typeof reactSurface(() => null).mount === "function";
+// a token issued from the tarball verifies, and its gate admits it: jose came with it
+const auth = createAuth({ store: memoryAuthStore(), jwt: { secret: "a-packtest-secret-of-at-least-32-bytes" } });
+const headers = {};
+const token = await auth.signIn({ getHeader: (n) => headers[n], setHeader: (n, v) => (headers[n] = v) }, "ada");
+const admitted = await auth.gate.admit({ route: "events", method: "GET", headers: { authorization: "Bearer " + token } });
+out.authWorks = (await auth.verify(token))?.id === "ada" && admitted.ok === true && admitted.principal === "ada";
+out.authPostgres = typeof pgAuthStore({ query: async () => ({ rows: [] }) }).getOwner === "function" && typeof migrateAuth === "function" && authSchema.length === 3;
 
 // the contract layer does real work, not just re-export shapes
 const surface = defineSurface({
@@ -266,6 +276,8 @@ console.log(JSON.stringify(out));
   check("@haikit/postgres builds a StoreAdapter", () => runtime.postgresIsStore === true);
   check("@haikit/client named exports (incl. subpaths)", () => runtime.clientExports === true);
   check("@haikit/react builds a registry entry", () => runtime.reactExport === true);
+  check("@haikit/auth issues and verifies a token, and its gate admits it", () => runtime.authWorks === true);
+  check("@haikit/auth/postgres resolves via exports", () => runtime.authPostgres === true);
   check("defineSurface builds a surface", () => runtime.surfaceName === "packtest_picker");
   check("cap() caps (3 of 47)", () => runtime.capShown === 3 && runtime.capTotal === 47);
   check("cap() reports the omission", () => runtime.capReportsOmission === true);
@@ -315,6 +327,9 @@ import { createChat, type Registry, type MountCtx } from "@haikit/client";
 import { mountChat } from "@haikit/client/app.js";
 import { h } from "@haikit/client/transcript.js";
 import { reactNotice, reactSurface, type ReactOptions, type SurfaceProps } from "@haikit/react";
+import { createAuth, memoryAuthStore, type Auth, type AuthStore, type AuthUser } from "@haikit/auth";
+import { pgAuthStore } from "@haikit/auth/postgres";
+import type { Gate } from "@haikit/core";
 import { z } from "zod";
 
 const picker = defineSurface({
@@ -375,6 +390,20 @@ void notice; void deadline;
 // the store type-checks as a StoreAdapter, with a structurally-typed driver
 const durable: StoreAdapter = pgStore({ query: async (_text: string, _params?: unknown[]) => ({ rows: [] }) });
 void durable;
+// the auth package's gate is core's Gate, and both stores are AuthStores
+const auth: Auth = createAuth({ store: memoryAuthStore(), jwt: { secret: "x".repeat(32) } });
+const gate: Gate = auth.gate;
+const shared: AuthStore = pgAuthStore({ query: async (_text: string, _params?: unknown[]) => ({ rows: [] }) });
+const someone: Promise<AuthUser | null> = auth.verify("token");
+void nodeHandler(createHai({ model: { id: "m", generate: async () => ({ content: [], stop_reason: "end_turn" }) }, store: memoryStore(), tools: [], surfaces: [], system: "" }), "/hai", { gate, maxBodyBytes: 65_536 });
+void shared; void someone;
+// the client's sign-in surface: fetch, unauthorized, resume, and mountChat's signIn
+declare const signedIn: ReturnType<typeof createChat>;
+const why: { status: 401 | 403; message: string } | null = signedIn.state.unauthorized;
+signedIn.resume();
+void why;
+void createChat({ registry: {}, fetch: (url, init) => fetch(url, init) });
+void ((root: HTMLElement) => mountChat({ root, registry: {}, signIn: { href: "/sign-in" } }));
 // the OpenAI adapter type-checks as a ModelAdapter
 const gpt: ModelAdapter = openai({ model: "gpt-6-luna", effort: "low", promptCacheKey: "packtest" });
 void gpt;

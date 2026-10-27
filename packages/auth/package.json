@@ -1,0 +1,58 @@
+{
+  "name": "@haikit/auth",
+  "version": "0.28.0",
+  "description": "Sign-in for haikit: who is asking, from a verified JWT, and which conversations are theirs. A gate for nodeHandler.",
+  "keywords": [
+    "haikit",
+    "auth",
+    "jwt",
+    "jwks",
+    "llm",
+    "agent",
+    "agentic-ui",
+    "ai"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./postgres": {
+      "types": "./dist/postgres.d.ts",
+      "default": "./dist/postgres.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "prepack": "npm --prefix ../.. run build"
+  },
+  "dependencies": {
+    "@haikit/core": "0.28.0",
+    "@types/node": ">=22",
+    "jose": "^6.2.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/wfoxd/haikit/tree/main/packages/auth#readme",
+  "bugs": {
+    "url": "https://github.com/wfoxd/haikit/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wfoxd/haikit.git",
+    "directory": "packages/auth"
+  }
+}

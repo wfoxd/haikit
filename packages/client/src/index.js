@@ -724,8 +724,8 @@ export function createChat({
 
   /**
    * Try again after being turned away, as once the user has signed in: the
-   * events stream reopens, if the conversation has one. A request the server
-   * takes does this by itself.
+   * events stream reopens, if the conversation has one. A request answered
+   * 200 does this by itself.
    */
   function resume() {
     if (shutDown) return;

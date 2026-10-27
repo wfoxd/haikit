@@ -23,6 +23,7 @@ statement by statement, at the version the page names.
 | `@haikit/openai` | The model adapter for OpenAI models, over the Responses API | Node |
 | `@haikit/client` | The browser runtime, the default chat UI and its stylesheet | browser, no build step |
 | `@haikit/react` | Write surfaces and notices as React components | browser |
+| `@haikit/auth` | Sign-in from a verified JWT, and which conversations are each user's: a gate for `nodeHandler`, with a Postgres store at `@haikit/auth/postgres` | Node |
 
 ## Contents
 
@@ -36,7 +37,8 @@ statement by statement, at the version the page names.
 | [Signals and presence](signals.md) | Broadcasts to every open browser, and counting who is watching | written |
 | [Conversations](conversations.md) | The stored conversation: its fields, statuses and lifecycle, leases, and the errors stores raise | written |
 | [The server](server.md) | `createHai`, the `Hai` class and every `HaiConfig` option | written |
-| [HTTP routes and the wire](http.md) | `nodeHandler`, each route's requests, responses and errors, the events stream and its polling mode, and every wire event | written |
+| [HTTP routes and the wire](http.md) | `nodeHandler`, gates, each route's requests, responses and errors, the events stream and its polling mode, and every wire event | written |
+| [Sign-in and ownership](auth.md) | `@haikit/auth`: `createAuth`, the tokens it issues and accepts, its gate, its routes, revocation, and its stores | written |
 | [Models](models.md) | The model adapter interface, `@haikit/anthropic` and `@haikit/openai` | written |
 | [Stores](stores.md) | The store interface every store implements, `memoryStore`, and `@haikit/postgres`: schema, migration, cross-server channels, cleanup | written |
 | [The browser client](client.md) | `createChat`, the `Chat` object and its state, and the registries for surfaces, notices and signals | written |
@@ -269,3 +271,27 @@ From `@haikit/client/app.js`, `@haikit/client/transcript.js`,
 | `ReactOptions` | interface | [React](react.md) |
 | `reactSurface` | function | [React](react.md) |
 | `SurfaceProps` | interface | [React](react.md) |
+
+### `@haikit/auth`
+
+From `@haikit/auth`:
+
+| Symbol | Kind | Page |
+| --- | --- | --- |
+| `Auth` | interface | [Sign-in and ownership](auth.md) |
+| `AuthOptions` | interface | [Sign-in and ownership](auth.md) |
+| `AuthStore` | interface | [Sign-in and ownership](auth.md) |
+| `AuthUser` | interface | [Sign-in and ownership](auth.md) |
+| `CookieOptions` | interface | [Sign-in and ownership](auth.md) |
+| `createAuth` | function | [Sign-in and ownership](auth.md) |
+| `JwtOptions` | interface | [Sign-in and ownership](auth.md) |
+| `memoryAuthStore` | function | [Sign-in and ownership](auth.md) |
+
+From `@haikit/auth/postgres`:
+
+| Symbol | Kind | Page |
+| --- | --- | --- |
+| `migrate` | function | [Sign-in and ownership](auth.md#migrate-schema) |
+| `pgAuthStore` | function | [Sign-in and ownership](auth.md#pgauthstore) |
+| `Queryable` | interface | [Sign-in and ownership](auth.md#pgauthstore) |
+| `schema` | constant | [Sign-in and ownership](auth.md#migrate-schema) |

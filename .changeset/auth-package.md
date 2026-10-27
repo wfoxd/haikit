@@ -1,0 +1,5 @@
+---
+"@haikit/auth": minor
+---
+
+New, optional package: `@haikit/auth`. `createAuth({ store, jwt })` says who is asking, from a verified JWT, and makes a `gate` for `nodeHandler` that lets each user use only the conversations they started; another user's is answered as one that doesn't exist. Tokens are either issued by `signIn`, after the app's own login, as an HS256 JWT in a `__Host-haikit_token` cookie (`jwt.secret`, rotatable), or issued by the app's identity provider and checked against its JWKS (`jwt.jwks`, `issuer`, `audience`), sent as the cookie or `Authorization: Bearer`. The gate refuses a POST that isn't JSON (415), and one carrying the cookie from another site (403). `auth.handler()` serves `GET /auth/me`, which renews a cookie past half its life, and `POST /auth/sign-out`. A tool learns its user with `auth.ownerOf(ctx.conversationId)`, in a wake turn too. `revoke(userId)` refuses every token issued before it. `memoryAuthStore()` keeps owners and revocations in one process, and `pgAuthStore(db)` from `@haikit/auth/postgres`, with `migrate` and `schema`, in Postgres.

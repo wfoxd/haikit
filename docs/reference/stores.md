@@ -3,7 +3,9 @@
 A store keeps conversations, payloads and notices. Every store implements
 `StoreAdapter`, the interface `@haikit/core` declares. HaiKIT ships two:
 `memoryStore`, for development in one process, and `pgStore` from
-`@haikit/postgres`, for production and for running several servers.
+`@haikit/postgres`, for production and for running several servers. Who
+owns which conversation is kept by `@haikit/auth`'s own store, beside it
+(see [Sign-in and ownership](auth.md#stores)).
 
 Exported by `@haikit/core`: `StoreAdapter`. By `@haikit/server`:
 `memoryStore`. By `@haikit/postgres`: `pgStore`, `PgStoreOptions`,
