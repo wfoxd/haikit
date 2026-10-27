@@ -657,10 +657,17 @@ followed by Google's `sub`, a string of digits.
 | `prompt` | `"select_account"` | Google's `prompt`, so a user with several accounts picks one. `""` sends none |
 
 Every other option is `oidc`'s. `prompt` and `hd` are added to `params`,
-after any there.
+which can't set either: they're these options'.
 
-**Throws** `google: hostedDomain must be a domain, such as example.com` for an
-empty `hostedDomain`, and otherwise what `oidc` throws.
+**Throws:**
+
+| Condition | Message |
+| --- | --- |
+| An empty `hostedDomain` | `google: hostedDomain must be a domain, such as example.com` |
+| `params` that set `prompt` | `google: params can't set prompt: use the prompt option` |
+| `params` that set `hd`: alone, it would only be a hint to Google's page, never checked | `google: params can't set hd: use hostedDomain, which also checks the account's domain` |
+
+Otherwise, what `oidc` throws.
 
 To register the client: in the Google Cloud console, create an OAuth client
 ID of type **Web application**, and add `redirectUri` to its

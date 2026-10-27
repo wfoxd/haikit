@@ -226,6 +226,8 @@ console.log("\nrefusals");
   check("…which is fine with no providers", typeof createAuth({ store: memoryAuthStore(), jwt: { secret: SECRET }, cookie: { name: "__Host-haikit_sign_in-x" } }).gate === "object");
   check("a bad name", throws(() => fake({ name: "Fake" }), "oidc: name must be 1 to 32 lowercase letters, digits or dashes, starting with a letter"));
   check("google: an empty hostedDomain", throws(() => google({ ...CLIENT, redirectUri: REDIRECT, hostedDomain: "" }), "google: hostedDomain must be a domain, such as example.com"));
+  check("google: params that set prompt", throws(() => google({ ...CLIENT, redirectUri: REDIRECT, prompt: "", params: { prompt: "consent" } }), "google: params can't set prompt: use the prompt option"));
+  check("google: params that set hd", throws(() => google({ ...CLIENT, redirectUri: REDIRECT, params: { hd: "example.com" } }), "google: params can't set hd: use hostedDomain, which also checks the account's domain"));
 }
 
 // ── there and back ──────────────────────────────────────────────────────

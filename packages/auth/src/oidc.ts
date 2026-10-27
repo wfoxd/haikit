@@ -210,6 +210,11 @@ export function google(options: GoogleOptions): SignInProvider {
   if (hostedDomain !== undefined && (typeof hostedDomain !== "string" || hostedDomain === "")) {
     throw new Error("google: hostedDomain must be a domain, such as example.com");
   }
+  // Each has an option of its own, which is what's sent: in params, prompt
+  // would be overridden, and hd would be a hint to the page that nothing checks.
+  for (const [param, option] of [["prompt", "the prompt option"], ["hd", "hostedDomain, which also checks the account's domain"]]) {
+    if (Object.keys(params ?? {}).includes(param)) throw new Error(`google: params can't set ${param}: use ${option}`);
+  }
   return oidc({
     ...rest,
     name: "google",
