@@ -275,7 +275,14 @@ export function Contents({ chat, data, main, button }: { chat: Chat; data: MenuD
       )}
       {!wide && (
         <Sheet open={sheet} onOpenChange={setSheet}>
-          <SheetContent side="left" className="gap-0 data-[side=left]:w-[min(320px,calc(100vw-48px))] border-r-3 border-hai-line bg-hai-panel-2 p-0 font-sans">
+          <SheetContent
+            side="left"
+            // Radix gives the focus back to its own trigger, and the header's button isn't one
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+              toggle.current?.focus();
+            }}
+            className="gap-0 data-[side=left]:w-[min(320px,calc(100vw-48px))] border-r-3 border-hai-line bg-hai-panel-2 p-0 font-sans">
             <SheetHeader className="flex-none border-b-3 border-hai-line py-2.5 pr-12 pl-4">
               <SheetTitle className="text-[13px] font-bold">Contents</SheetTitle>
               <SheetDescription className="text-xs text-hai-dim">{progress}</SheetDescription>
@@ -387,6 +394,7 @@ function List({
                     </span>
                     <span className="sr-only">
                       , {read ? `${read} of ${group.items.length} opened` : `${group.items.length} pages`}
+                      {holds && ", the page on screen among them"}
                     </span>
                   </button>
                   {open && (

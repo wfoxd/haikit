@@ -449,9 +449,15 @@ try {
     check("a page's number drops its tutorial's prefix; the manual's pages have none", row(nav(), "Sign in").textContent.startsWith("04") && !/^\d/.test(row(nav(), "Configuration and limits").textContent));
 
     await click(third);
-    check("closed by the reader, the group carries the mark for the page in it", third.getAttribute("aria-expanded") === "false" && !row(nav(), "Sign in") && third.className.includes("bg-hai-selected"));
+    check(
+      "closed by the reader, the group carries the mark for the page in it, and says so",
+      third.getAttribute("aria-expanded") === "false" && !row(nav(), "Sign in") && third.className.includes("bg-hai-selected") && third.textContent.includes("the page on screen among them"),
+    );
     await r.chat.show("tutorial_step", "3-05");
-    check("the next page opens it again", third.getAttribute("aria-expanded") === "true" && row(nav(), "Say who's signed in")?.getAttribute("aria-current") === "page");
+    check(
+      "the next page opens it again, and the mark goes back to the page",
+      third.getAttribute("aria-expanded") === "true" && row(nav(), "Say who's signed in")?.getAttribute("aria-current") === "page" && !third.textContent.includes("the page on screen"),
+    );
     await r.chat.show("lesson", "2.1");
     check(
       "a lesson opens its part and is marked, and the tutorial keeps both its ticks",
@@ -487,11 +493,16 @@ try {
     check("on a narrow screen there's no column, only the button", !n.main.classList.contains("contents-open") && !n.slot.querySelector("nav") && n.toggle.getAttribute("aria-expanded") === "false");
     await click(n.toggle);
     check("its button opens a sheet with the contents", !!sheet() && text(sheet()).includes("Contents") && !!sheet().querySelector('nav[aria-label="Contents"]') && n.toggle.getAttribute("aria-expanded") === "true");
+    // Radix gives the focus back once the sheet has gone, a moment later
+    const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 0)));
     await click(row(sheet(), "Course map"));
-    check("a choice sends its message and closes the sheet", n.chat.sent.at(-1) === "Show the course map" && !sheet());
+    await settle();
+    check("a choice sends its message, closes the sheet, and gives the focus back to its button", n.chat.sent.at(-1) === "Show the course map" && !sheet() && document.activeElement === n.toggle);
     await click(n.toggle);
+    sheet().querySelector("button")?.focus();
     await key(sheet(), "Escape");
-    check("Escape closes it too", !sheet());
+    await settle();
+    check("Escape closes it too, the focus back on its button", !sheet() && document.activeElement === n.toggle);
     await n.unmount();
     globalThis.CustomEvent = nodeCustomEvent;
     window.matchMedia = globalThis.matchMedia = narrow;
