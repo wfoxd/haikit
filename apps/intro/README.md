@@ -104,11 +104,13 @@ the page polls instead, so the count still arrives, a little later.
 Given a Google client, the introduction lets a reader sign in with Google,
 and only if they want to: signed out, it's as it is without one. **Sign in**,
 at the end of the header, goes to Google and back. Signed in, the header
-shows the reader's Google picture, square, over their initials, and offers
-**Sign out**. A mouse resting on the picture, or a tap or a key on it, shows
-who's signed in: their picture and name. The welcome greets them by name,
-and the conversations they start are theirs alone: to anyone else who has
-one's id, signed out or signed in as someone else, it doesn't exist. A
+shows the reader's Google picture, square, over their initials. A mouse
+resting on the picture shows who's signed in, their picture and name, and
+**Sign out**, until it leaves. A click, a tap or a key on it shows the same,
+to stay until Escape or a click elsewhere, as does a click in it. A sign-out
+that fails says so there. The welcome greets them by name, and the
+conversations they start are theirs alone: to anyone else who has one's id,
+signed out or signed in as someone else, it doesn't exist. A
 conversation started signed out is anyone's who has its id, as every
 conversation is without sign-in, and the reader can carry on in it once
 they've signed in. Signing in or out leaves the page, so the conversation
@@ -274,7 +276,8 @@ That runs three checks:
   what it lists, the message each choice sends, and which page it marks. And
   the header's sign-in: signed out, signed in, and back from a sign-in that
   failed; the reader's picture, or their initials, and who's signed in on it,
-  opened by a click or a resting mouse.
+  with Sign out: opened by a click or a resting mouse, where the focus goes,
+  and a sign-out that fails.
 - **`npm run smoke`** builds the page, boots the server on it as the container
   does, and drives the course the way a learner does: the welcome screen on start and both of its choices, the course map,
   opening a lesson, answering a checkpoint, typing instead of answering, a
@@ -446,8 +449,8 @@ src/client/drawings/       the HaiKIT logo, the welcome screen's diagram and ill
                            Rebook's components drawn small
 src/client/contents.tsx    the contents rail
 src/client/online.tsx      the reading-now chip
-src/client/account.tsx     the header's sign-in: Sign in, or the reader's picture, who's signed in on it,
-                           and Sign out
+src/client/account.tsx     the header's sign-in: Sign in, or the reader's picture, and on it who's signed
+                           in and Sign out
 src/client/components/ui/  shadcn/ui's components
 components.json            where `npx shadcn@latest add` puts a component, and the style it's in
 src/client/globals.css     Tailwind with its preflight; the default UI, through
