@@ -182,6 +182,9 @@ already finished." }`, and `progress` does nothing.
 
 The conversation the call runs in. Keep it if the tool starts work that ends
 later and should tell the conversation, with `hai.notify` or `hai.update`.
+Behind `@haikit/auth`'s gate, `await auth.ownerOf(ctx.conversationId)` is the
+user the call runs for, in a wake turn too (see
+[Sign-in and ownership](auth.md#ownerof)).
 
 Don't await `hai.update` on this conversation inside the call. The running
 turn holds the lease, so it waits its `timeoutMs` (30,000 ms by default) and

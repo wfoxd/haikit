@@ -50,7 +50,7 @@ createServer(async (req, res) => {
 }).listen(5180);
 ```
 
-[`examples/hello-auth`](../../examples/hello-auth) is a whole app built this
+[`examples/hello-auth`](https://github.com/wfoxd/haikit/tree/main/examples/hello-auth) is a whole app built this
 way, with a name-only sign-in page.
 
 ## `createAuth`
