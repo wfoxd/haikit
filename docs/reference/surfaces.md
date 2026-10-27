@@ -442,14 +442,16 @@ interface QueryCtx<P> {
 ### How a click is handled
 
 The browser posts `{ conversationId, handle, action, value }` to
-`/interact`. The server loads the conversation, taking its lease:
+`/interact`. The server checks that the conversation exists, then loads it,
+taking its lease:
 
+- **If the conversation doesn't exist,** or `conversationId` is missing or
+  isn't a string, the answer is HTTP 404 with
+  `{ "error": "unknown conversation" }`, and no event stream. Nothing is
+  created.
 - **If another request holds the lease,** the answer is HTTP 409 with
   `{ "error": "conversation <id> is busy — another turn is in flight" }`, and
   no event stream.
-- **If the conversation doesn't exist,** or `conversationId` is missing, the
-  store creates a new, empty one. The click is then refused with `unknown
-  handle`, and the empty conversation stays stored.
 
 Then it stores any update notice the conversation still owes (see
 [Revisions](revisions.md#from-outside-a-turn-haiupdate)), and checks, in this
