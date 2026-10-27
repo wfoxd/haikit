@@ -76,19 +76,25 @@ function read(messages: ModelRequest["messages"], system = "", tools: ModelReque
 
   // The tutorials' pages, in reading order: the welcome digest gives each
   // one's steps as a range, such as "steps 01–10", around an intro and
-  // next-steps. The second tutorial's ids carry a "2-" prefix.
+  // next-steps. A later tutorial's ids carry its number, as "2-" or "3-".
   const span = (prefix: string, from: string, to: string) => [
     `${prefix}intro`,
     ...Array.from({ length: Number(to) - Number(from) + 1 }, (_, i) => `${prefix}${String(Number(from) + i).padStart(2, "0")}`),
     `${prefix}next-steps`,
   ];
   const range = all.match(/built into this app: "[^"]+", steps (\d+)–(\d+)/);
-  // A conversation saved before the second tutorial has a welcome digest
+  // A conversation saved before a later tutorial has a welcome digest
   // without it; the system prompt, always today's, lists its pages too.
-  const second =
-    all.match(/Then the second tutorial: "[^"]+", pages 2-intro and steps 2-(\d+)–2-(\d+)/) ??
-    system.match(/\(2-intro, 2-(\d+) to 2-(\d+), 2-next-steps\)/);
-  const pages = [...(range ? span("", range[1]!, range[2]!) : []), ...(second ? span("2-", second[1]!, second[2]!) : [])];
+  const later = (n: number) =>
+    all.match(new RegExp(`Then the \\w+ tutorial: "[^"]+", pages ${n}-intro and steps ${n}-(\\d+)–${n}-(\\d+)`)) ??
+    system.match(new RegExp(`\\(${n}-intro, ${n}-(\\d+) to ${n}-(\\d+), ${n}-next-steps\\)`));
+  const pages = [
+    ...(range ? span("", range[1]!, range[2]!) : []),
+    ...[2, 3].flatMap((n) => {
+      const found = later(n);
+      return found ? span(`${n}-`, found[1]!, found[2]!) : [];
+    }),
+  ];
   // The tutorial page on screen, if one was shown after the last lesson.
   const lastUse = (name: string) => uses.findLastIndex((b) => b.name === name);
   const page =
@@ -134,9 +140,11 @@ export function scripted(): ModelAdapter {
             ? "Here's the tutorial: what you'll build, and why. Use Next at the bottom when you're ready."
             : id === "2-intro"
               ? "Here's the second tutorial: the same app, taught to speak up after the request is over. Use Next at the bottom when you're ready."
-              : id === "next-steps" || id === "2-next-steps"
-                ? "The tutorial's last page: where to go from here."
-                : `Tutorial step ${id}${title ? `: ${title}` : ""}. Use Next at the bottom when you're ready.`,
+              : id === "3-intro"
+                ? "Here's the third tutorial: the same app, signed in, so each person sees only their own conversations. Use Next at the bottom when you're ready."
+                : /^(\d+-)?next-steps$/.test(id)
+                  ? "The tutorial's last page: where to go from here."
+                  : `Tutorial step ${id}${title ? `: ${title}` : ""}. Use Next at the bottom when you're ready.`,
           onTextDelta,
           [toolUse("show_tutorial_step", { id })],
         );
@@ -242,17 +250,18 @@ export function scripted(): ModelAdapter {
 
       // The tutorial, before the keyword rules: "start the tutorial" is about
       // the tutorial, and "next" means the next page while one is on screen.
-      // "step 4" is the first tutorial's; "step 2-03" is the second's
-      const stepAsked = text.match(/\bstep (2-\d{1,2}|\d{1,2})\b/)?.[1];
+      // "step 4" is the first tutorial's; "step 2-03" the second's, "step 3-03" the third's
+      const stepAsked = text.match(/\bstep ([23]-\d{1,2}|\d{1,2})\b/)?.[1];
       if (stepAsked) {
-        const [, prefix = "", n] = stepAsked.match(/^(2-)?(\d+)$/)!;
+        const [, prefix = "", n] = stepAsked.match(/^([23]-)?(\d+)$/)!;
         const want = prefix + n!.padStart(2, "0");
-        const steps = pages.filter((p) => /^(2-)?\d+$/.test(p));
+        const steps = pages.filter((p) => /^([23]-)?\d+$/.test(p));
         return pages.includes(want)
           ? tour(want)
           : reply(`There's no step ${stepAsked}. The tutorials have steps ${steps.join(", ")}.`, onTextDelta);
       }
       if (/\b(tutorial 2|second tutorial|notifications? tutorial)\b/.test(text) && pages.includes("2-intro")) return tour("2-intro");
+      if (/\b(tutorial 3|third tutorial|sign-?in tutorial|auth tutorial)\b/.test(text) && pages.includes("3-intro")) return tour("3-intro");
       if (/\btutorial\b/.test(text) && pages.length) return tour("intro");
       if (page && /\b(next|continue|go on|keep going|move on)\b/.test(text)) {
         const next = pages[pages.indexOf(page) + 1];

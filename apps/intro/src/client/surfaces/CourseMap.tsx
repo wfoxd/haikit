@@ -103,7 +103,7 @@ export function CourseMap({ props, send, mode, state, selection }: SurfaceProps<
             row(
               page.id,
               <>
-                {/* the step's number, without the second tutorial's prefix */}
+                {/* the step's number, without a later tutorial's prefix */}
                 <span className={n}>{page.id.match(/^(?:\d+-)?(\d+)$/)?.[1] ?? ""}</span>
                 <span className="text-[15px] font-semibold">{page.title}</span>
               </>,

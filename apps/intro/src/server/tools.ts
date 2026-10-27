@@ -126,11 +126,14 @@ export const showTutorialStep = defineTool({
   description:
     "Show a page of HaiKIT's tutorials, built into this app. The first, building a Hello, World! app: " +
     "intro, a step from 01 to 10, or next-steps. The second, on notifications: 2-intro, a step from " +
-    "2-01 to 2-09, or 2-next-steps. BLOCKS until the reader clicks Previous, Next or Course map on it.",
+    "2-01 to 2-09, or 2-next-steps. The third, on signing people in: 3-intro, a step from 3-01 to 3-09, " +
+    "or 3-next-steps. BLOCKS until the reader clicks Previous, Next or Course map on it.",
   input: z.object({ id: z.string() }),
   inputJsonSchema: {
     type: "object",
-    properties: { id: { type: "string", description: "intro, 01 … 10, next-steps; or 2-intro, 2-01 … 2-09, 2-next-steps" } },
+    properties: {
+      id: { type: "string", description: "intro, 01 … 10, next-steps; 2-intro, 2-01 … 2-09, 2-next-steps; or 3-intro, 3-01 … 3-09, 3-next-steps" },
+    },
     required: ["id"],
     additionalProperties: false,
   },

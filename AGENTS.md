@@ -62,8 +62,9 @@ that changes observable behaviour without updating the manual isn't ready.
 ## Other documents that must move together
 
 - `docs/tutorial.md` is runnable: change `examples/hello` with it.
-  `docs/tutorial-2.md` goes with `examples/hello-notices`.
-- `apps/intro/content/` holds copies of both tutorials and of the reference
+  `docs/tutorial-2.md` goes with `examples/hello-notices`, and
+  `docs/tutorial-3.md` with `examples/hello-auth`.
+- `apps/intro/content/` holds copies of the three tutorials and of the reference
   manual, and the intro shows them as pages. After changing a tutorial, and
   when the intro moves to a new release, run `npm run docs:update` in
   `apps/intro` once the change is on `main`; it runs that app's `npm test`,

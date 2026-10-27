@@ -40,6 +40,11 @@ const handleHai = nodeHandler(hai, "/hai", { gate: auth.gate });
 // GET /auth/me and POST /auth/sign-out
 const handleAuth = auth.handler("/auth");
 
+// The browser half. While developing, Vite runs inside this server as
+// middleware: one process and one port, hot reload for the components and the
+// Tailwind build, and /hai answered by the same server, so there is no proxy to
+// set up. In production, `npm run build` has written dist/, served here as
+// plain files.
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const DIST = path.join(ROOT, "dist");
 const MIME: Record<string, string> = {
@@ -84,6 +89,8 @@ const server = http.createServer((req, res) =>
   }),
 );
 
+// Made after the server so hot reload can share its port: on a port of its
+// own, two of these running at once would fight over it.
 const vite = PRODUCTION
   ? null
   : await (await import("vite")).createServer({ root: ROOT, appType: "spa", server: { middlewareMode: true, ws: { server } } });

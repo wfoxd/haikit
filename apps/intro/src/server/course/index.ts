@@ -580,19 +580,28 @@ const TUTORIAL_PANEL: WelcomeProps["tutorial"] = {
   title: "Build your first HaiKIT app",
   lead: "Hello, World! in whichever language the world picks: ten steps, annotated line by line, about 150 lines in all. Read it right here.",
   steps: tutorialSteps(1),
-  // the second tutorial, which carries on with the same app
-  next: {
-    title: "Tell them later",
-    lead: "The same app, speaking up after the request is over: progress, notices, a turn the model starts, and a picker that changes while you look at it.",
-    first: tutorialRefs(2)[0]!,
-    steps: tutorialSteps(2).length,
-  },
+  // the tutorials that carry on with the same app, in order
+  more: [
+    {
+      title: "Tell them later",
+      lead: "The same app, speaking up after the request is over: progress, notices, a turn the model starts, and a picker that changes while you look at it.",
+      first: tutorialRefs(2)[0]!,
+      steps: tutorialSteps(2).length,
+    },
+    {
+      title: "Who's asking",
+      lead: "The same app, signed in: your own login, a gate that keeps each person to their own conversations, the model knowing who it's talking to, and sign out everywhere.",
+      first: tutorialRefs(3)[0]!,
+      steps: tutorialSteps(3).length,
+    },
+  ],
 };
 
 /** How the course map and the menu name each tutorial, and what it builds. */
 const TUTORIAL_NAMES: Record<number, { title: string; blurb: string }> = {
   1: { title: TUTORIAL_PANEL.title, blurb: "Build a Hello, World! app with HaiKIT, step by step, read right here." },
-  2: { title: TUTORIAL_PANEL.next!.title, blurb: "Teach the same app to speak up later: progress, notices, wake turns and live updates." },
+  2: { title: TUTORIAL_PANEL.more[0]!.title, blurb: "Teach the same app to speak up later: progress, notices, wake turns and live updates." },
+  3: { title: TUTORIAL_PANEL.more[1]!.title, blurb: "Sign people in to the same app: each sees only their own conversations, and the model knows who it's talking to." },
 };
 
 /** The reference manual, as the welcome screen offers it: every page, read from the manual itself. */

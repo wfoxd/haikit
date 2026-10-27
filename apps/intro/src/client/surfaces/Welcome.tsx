@@ -69,8 +69,14 @@ type Panel = { open: boolean; picked: unknown; choose: (id: string) => void };
  * Choosing one answers the welcome screen's question, through its declared
  * `tutorial` action.
  */
+/** The tutorials after the first: `more`, or, on a welcome saved before version 15, its one `next`. */
+type Later = WelcomeProps["tutorial"]["more"][number];
+const laterOf = (tutorial: WelcomeProps["tutorial"]): Later[] => {
+  const next = (tutorial as { next?: Later }).next;
+  return tutorial.more ?? (next ? [next] : []);
+};
+
 function TutorialPanel({ tutorial, open, picked, choose }: Panel & { tutorial: WelcomeProps["tutorial"] }) {
-  const next = tutorial.next;
   return (
     <section className={cn(PANEL, "flex flex-col px-[26px] pt-6 pb-[22px] max-sm:px-4 max-sm:py-[18px]")}>
       <p className={LABEL}>Tutorial</p>
@@ -100,9 +106,9 @@ function TutorialPanel({ tutorial, open, picked, choose }: Panel & { tutorial: W
       <Choice className="mt-auto self-start" picked={picked === "intro"} disabled={!open} onClick={() => choose("intro")}>
         Start the tutorial
       </Choice>
-      {/* The second tutorial, which carries on with the same app. */}
-      {next && (
-        <div className="mt-[18px] border-t border-hai-line pt-3.5">
+      {/* The tutorials that carry on with the same app, each after the last. */}
+      {laterOf(tutorial).map((next) => (
+        <div key={next.first.id} className="mt-[18px] border-t border-hai-line pt-3.5">
           <button
             type="button"
             disabled={!open}
@@ -116,7 +122,7 @@ function TutorialPanel({ tutorial, open, picked, choose }: Panel & { tutorial: W
             <Inline text={`${next.lead} ${next.steps} steps.`} />
           </p>
         </div>
-      )}
+      ))}
     </section>
   );
 }
@@ -222,6 +228,8 @@ export function Welcome({ props: current, send, mode, state, selection }: Surfac
   ] as const;
 
   const manual = props.reference?.pages.find((p) => p.id === picked);
+  // a tutorial that carries on, started from its first page
+  const started = props.tutorial ? laterOf(props.tutorial).find((t) => t.first.id === picked) : undefined;
   const done =
     picked === "first-lesson"
       ? `You started with lesson ${props.first.id}.`
@@ -233,8 +241,8 @@ export function Welcome({ props: current, send, mode, state, selection }: Surfac
             : `You opened ${manual.title} in the reference manual.`
           : picked === "intro"
             ? "You started the tutorial."
-            : props.tutorial?.next && picked === props.tutorial.next.first.id
-              ? `You started ${props.tutorial.next.title}.`
+            : started
+              ? `You started ${started.title}.`
               : typeof picked === "string"
                 ? `You opened step ${picked} of the tutorial.`
                 : "Closed when you typed instead of choosing.";

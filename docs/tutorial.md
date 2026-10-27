@@ -1222,7 +1222,7 @@ You now have every concept in the framework, in about 150 lines. The next app di
 
 Some context the model should never go without: who the user is, their account, their home airport. Asking the model to fetch it is asking it to remember, and it won't every time. Give `createHai` an `init` tool instead, and the runtime runs it itself at the start of every conversation, as soon as the chat opens and before anything is typed.
 
-It's an ordinary tool. This app has one user and no sign-in, so the profile is a constant; a real app would look up the signed-in user here, which needs the request's identity, and tools don't receive that yet.
+It's an ordinary tool. This app has one user and no sign-in, so the profile is a constant. A real app looks up the signed-in user here: *Who's asking*, the third tutorial (`docs/tutorial-3.md`), signs people in, and a tool finds out whose conversation it's in with `auth.ownerOf(ctx.conversationId)`.
 
 **`src/server/tools.ts`** — *append*
 
@@ -1288,6 +1288,10 @@ A component is anything with `mount(element, props, ctx)`. `reactSurface` builds
 ### Tell the user things later
 
 Everything in this tutorial happens inside a request. *Tell them later*, the second tutorial (`docs/tutorial-2.md`), teaches this same app to speak up afterwards: progress while a tool works, a notice when a job finishes, a turn the model starts by itself, and a picker that changes while the user looks at it.
+
+### Sign people in
+
+Anyone who has a conversation's id can use it, which is fine for one person on `localhost`. *Who's asking*, the third tutorial (`docs/tutorial-3.md`), puts `@haikit/auth` in front of this app: a sign-in, a gate that keeps each person to their own conversations, the model greeting them by name, and *sign out everywhere*.
 
 ### Things that will tempt you
 

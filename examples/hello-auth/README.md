@@ -1,8 +1,9 @@
 # hello-auth
 
-Example app — not published. [hello](../hello), signed in: each user sees only
-the conversations they started. It runs against the packages in this repo,
-as hello does.
+Example app — not published. The finished app of the third tutorial,
+*Who's asking* (`docs/tutorial-3.md`): [hello](../hello), signed in, so each
+user sees only the conversations they started. It runs against the packages
+in this repo, as hello does, on its own port so the two can run side by side.
 
 Run from the repo root:
 
