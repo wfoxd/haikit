@@ -819,6 +819,32 @@ async function gateChecks() {
       check("reset() keeps no events stream, and starts nothing", opened() === 4);
       chat.close();
     }
+
+    // A wake turn showing when the events stream is turned away: nothing will
+    // say it ended, so it is given up, rather than leave the chat streaming.
+    {
+      let streams = 0;
+      const frames = (...events) => events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join("");
+      const chat = createChat({
+        endpoint: "http://gate.test/hai",
+        registry: {},
+        fetch: async (url) => {
+          if (url.endsWith("/chat")) {
+            return new Response(frames({ type: "hello", conversationId: "c1", model: "m", events: true }, { type: "status", status: "idle" }));
+          }
+          // the first stream shows a wake turn starting, then drops; its reconnect is refused
+          if (++streams === 1) return new Response(`: open\n\n${frames({ type: "status", status: "streaming", wake: 1 })}`);
+          return new Response(JSON.stringify({ error: "sign in to continue" }), { status: 401 });
+        },
+      });
+      await chat.send("hi");
+      await wait(1600);
+      check(
+        "a wake turn showing when the events stream is turned away is given up: the chat isn't left streaming",
+        streams === 2 && chat.state.unauthorized?.status === 401 && chat.state.status === "idle",
+      );
+      chat.close();
+    }
   } finally {
     server.close();
     server.closeAllConnections?.();
@@ -970,18 +996,24 @@ async function routeChecks() {
       const fits = await post(`${url}/chat`, JSON.stringify({ message: "x".repeat(1_000_000) }));
       await fits.text();
       check("a body within maxBodyBytes is read as usual", fits.status === 200);
-      // a click on a conversation that doesn't exist creates none
-      const before = await base.getNotices("conv_none", 0);
+      // A click on a conversation that doesn't exist creates none. Counted at
+      // the load, since a conversation made for an unknown id gets an id of
+      // its own, so looking for the one asked for afterwards finds nothing.
+      const load = base.loadConversation;
+      const loads = [];
+      base.loadConversation = (id) => (loads.push(id), load(id));
       const clicks = await Promise.all(
         [{ conversationId: "conv_none" }, {}, { conversationId: 7 }].map((ids) =>
           post(`${url}/interact`, JSON.stringify({ ...ids, handle: "ui_01", action: "choose", value: "x" })),
         ),
       );
+      base.loadConversation = load;
       const unknown = await Promise.all(clicks.map((r) => r.json().catch(() => ({}))));
       check(
         "a click on an unknown, missing or non-string conversation id is a 404, saying so",
-        before === null && clicks.every((r) => r.status === 404) && unknown.every((b) => b.error === "unknown conversation"),
+        clicks.every((r) => r.status === 404) && unknown.every((b) => b.error === "unknown conversation"),
       );
+      check("…and loads nothing, so creates nothing", loads.length === 0);
       // a target a URL can't parse, which Node still accepts: raw, since fetch won't send one
       const raw = (target) =>
         new Promise((resolve) => {

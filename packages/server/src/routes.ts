@@ -72,6 +72,8 @@ export interface NodeHandlerOptions {
 
 /** How often an open events stream asks its gate again, so a revoked one ends. */
 const GATE_RECHECK_MS = 60_000;
+/** The longest delay a Node timer keeps; past it, one fires after about a millisecond. */
+const MAX_TIMER_MS = 2_147_483_647;
 
 /** A request turned away before any stream opens: the status, and why. */
 function refuse(res: ServerResponse, status: number, error: string) {
@@ -556,24 +558,30 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
 
   // a heartbeat is only for a stream gone quiet, never one already backed up
   const heartbeat = setInterval(() => res.writableNeedDrain || res.write(": ping\n\n"), HEARTBEAT_MS);
-  // Behind a gate, a stream stays open only while its admission holds: it
-  // ends when that runs out, or when asking again, every GATE_RECHECK_MS, is
-  // refused, so a sign-in revoked meanwhile stops hearing. A timer of its own,
-  // since the heartbeat is skipped on a backed-up stream. A poll needs none:
-  // each is admitted afresh, and holds 15 s at most.
+  // Behind a gate, a stream stays open only while its admission holds. It
+  // ends when that runs out, on a timer that stays armed while the gate is
+  // asked again, so a gate slow to answer can't hold it open past then. And
+  // it asks again every GATE_RECHECK_MS, ending when refused, so a sign-in
+  // revoked meanwhile stops hearing. Timers of their own, since the heartbeat
+  // is skipped on a backed-up stream. A poll needs neither: each is admitted
+  // afresh, and holds 15 s at most.
+  let expiry: ReturnType<typeof setTimeout> | undefined;
   let recheck: ReturnType<typeof setTimeout> | undefined;
-  const scheduleRecheck = () => {
-    if (signal.aborted) return;
-    const wait = until === undefined ? GATE_RECHECK_MS : Math.min(GATE_RECHECK_MS, Math.max(0, until - Date.now()));
-    recheck = setTimeout(recheckGate, wait);
+  const armExpiry = () => {
+    clearTimeout(expiry);
+    const at = until;
+    if (at === undefined || signal.aborted) return;
+    // a deadline further off than a timer can wait is waited for in steps
+    const wait = Math.min(Math.max(0, at - Date.now()), MAX_TIMER_MS);
+    expiry = setTimeout(() => (Date.now() >= at ? aborter.abort() : armExpiry()), wait);
   };
   const recheckGate = () => {
-    if (until !== undefined && Date.now() >= until) return aborter.abort();
     ask().then(
       (admission) => {
         if (!admission.ok) return aborter.abort();
         until = "until" in admission ? admission.until : undefined;
-        scheduleRecheck();
+        armExpiry();
+        if (!signal.aborted) recheck = setTimeout(recheckGate, GATE_RECHECK_MS);
       },
       (err) => {
         // a gate that can't answer lets no one in, here as on a new request
@@ -582,7 +590,10 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
       },
     );
   };
-  if (gate && !polling) scheduleRecheck();
+  if (gate && !polling) {
+    armExpiry();
+    recheck = setTimeout(recheckGate, GATE_RECHECK_MS);
+  }
   // An app that sends no notices has nothing stored to read: the stream is only
   // for signals, and stays open, reading nothing, until the browser leaves.
   const wakes = hai.sendsNotices ? wakeups(store.watch?.(conversationId, signal), signal)[Symbol.asyncIterator]() : null;
@@ -623,6 +634,7 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
     clearTimeout(hold);
   } finally {
     clearInterval(heartbeat);
+    clearTimeout(expiry);
     clearTimeout(recheck);
     aborter.abort();
     closeStream();

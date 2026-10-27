@@ -661,7 +661,10 @@ conversation expires: a notice such as a confirmation is still true then.
 - **404 stops it.** The server has no such conversation, or serves no events
   stream. It isn't tried again for that conversation.
 - **401 and 403 stop it** until `resume()`, or a request answered 200, says
-  to try again. They set `state.unauthorized`, as on a request.
+  to try again. They set `state.unauthorized`, as on a request. A wake turn
+  it was showing is given up, since nothing will say it ended: `status`
+  goes back to `idle`, unless a `send` or `interact` request of this chat's
+  is out.
 - **Any other error status** is retried, with the same backoff, for as long
   as the chat lasts.
 - **Wake turns.** A `status: streaming` on the stream starts a wake turn.
