@@ -100,7 +100,8 @@ export interface SignInProvider {
    * signed in, or why no one did. `access_denied`: the user said no at the
    * provider. `refused`: the app said no to who they are. `expired`: this
    * isn't the answer the flow waits for, such as one to a sign-in another tab
-   * has started since. Throws for anything else, which is logged.
+   * has replaced since, and the flow is kept for its own. Throws for anything
+   * else, which is logged.
    */
   finish(
     callback: URL,
@@ -592,14 +593,29 @@ export function createAuth(options: AuthOptions): Auth {
   /** The browser back from the provider: whoever it names is signed in, or the failure page says why not. */
   async function finishSignIn(provider: SignInProvider, url: URL, req: IncomingMessage, res: ServerResponse) {
     const sealed = cookieOf(req.headers, flowCookie);
-    // one way or another this sign-in is over, and its flow with it
-    addCookie(res, `${flowCookie}=; Max-Age=0; ${cookieAttributes}`);
     const flow = sealed ? await openFlow(sealed) : null;
-    // none, past its time, or another sign-in's, started since in this browser
-    if (!flow || flow.p !== provider.name) return failed(res, provider, "expired");
+    const clear = () => addCookie(res, `${flowCookie}=; Max-Age=0; ${cookieAttributes}`);
+    // none, or one past its time or altered: nothing worth keeping
+    if (!flow) {
+      if (sealed !== null) clear();
+      return failed(res, provider, "expired");
+    }
+    // The answer to an earlier sign-in, in another tab, that this one has
+    // replaced since: this one may still come back, so it keeps its cookie.
+    if (flow.p !== provider.name) return failed(res, provider, "expired");
+    let outcome: Awaited<ReturnType<SignInProvider["finish"]>>;
     try {
-      const outcome = await provider.finish(url, flow.f);
-      if ("error" in outcome) return failed(res, provider, outcome.error === "access_denied" || outcome.error === "expired" ? outcome.error : "refused");
+      outcome = await provider.finish(url, flow.f);
+    } catch (err) {
+      clear();
+      console.error(`[haikit] auth: a sign-in with ${provider.name} failed:`, err);
+      return failed(res, provider, "failed");
+    }
+    if ("error" in outcome && outcome.error === "expired") return failed(res, provider, "expired");
+    // one way or another this sign-in is over, and its flow with it
+    clear();
+    if ("error" in outcome) return failed(res, provider, outcome.error === "access_denied" ? "access_denied" : "refused");
+    try {
       await signIn(res, outcome.userId, outcome.claims ?? {});
     } catch (err) {
       console.error(`[haikit] auth: a sign-in with ${provider.name} failed:`, err);

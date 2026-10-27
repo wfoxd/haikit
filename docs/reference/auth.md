@@ -449,16 +449,22 @@ for a provider that doesn't speak OpenID Connect.
      logged as `[haikit] auth: a sign-in with <name> couldn't start:`.
 2. **`GET` the path of `redirectUri`**, where the provider sends the browser
    back:
-   - The flow cookie is read, and the answer clears it, whatever happens.
+   - The flow cookie is read.
    - No flow cookie, or one that doesn't open (sealed with no secret of this
-     server's, altered, or past its 10 minutes), or one for another provider:
-     `expired`.
+     server's, altered, or past its 10 minutes): `expired`, and the answer
+     clears any there is.
+   - One for another provider: `expired`, and the cookie is kept, for that
+     provider's way back.
    - Otherwise `finish(url, flow)`:
-     - **A user:** `signIn(res, userId, claims ?? {})`, then **303** to
-       `return_to`.
-     - **An `{ error }`:** that code.
-     - **A throw,** `signIn`'s included, as for a claim it sets itself:
-       `failed`, logged as `[haikit] auth: a sign-in with <name> failed:`.
+     - **`{ error: "expired" }`,** the answer to another sign-in than this
+       flow's: `expired`, and the cookie is kept, for this flow's own way
+       back.
+     - **A user:** the cookie is cleared, `signIn(res, userId, claims ?? {})`,
+       then **303** to `return_to`.
+     - **Another `{ error }`:** the cookie is cleared, and that code.
+     - **A throw,** `signIn`'s included, as for a claim it sets itself: the
+       cookie is cleared, and `failed`, logged as
+       `[haikit] auth: a sign-in with <name> failed:`.
 
 Both routes answer GET only; another method resolves `false`. A request that
 throws outside these steps is answered **500**, as `/auth/me` is.
@@ -488,7 +494,8 @@ how a provider sends the browser back. A provider that sent it back by POST
 default, `query`.
 
 **One sign-in at a time per browser.** Starting another, in another tab,
-replaces the cookie, so the first one's way back is `expired`.
+replaces the cookie, so the first one's way back is `expired`. It leaves the
+cookie alone, so the newer sign-in still finishes when it comes back.
 
 ### When it fails
 
@@ -563,7 +570,11 @@ why it, and not the email, is the default user id.
 **`start()`:**
 
 1. Read the provider's settings, on the first sign-in. They're kept for the
-   process's life. A read that fails is tried again on the next sign-in.
+   process's life. A read that fails is tried again on the next sign-in. An
+   `authorization_endpoint` that isn't https, where the user would type
+   their password, is thrown: `oidc: <issuer>'s authorization_endpoint isn't https`.
+   oauth4webapi refuses to send a request to a `token_endpoint` that isn't
+   https.
 2. Make a `state`, a `nonce` and a PKCE code verifier, each 32 random bytes
    as base64url, and the verifier's `S256` challenge.
 3. Send the browser to the provider's `authorization_endpoint` with `params`,
@@ -738,6 +749,9 @@ leaves its row, which no request can reach: its id was the conversation's.
 - **Keep the secret secret,** and at least 32 random bytes. To rotate it,
   put the new one first and keep the old one after it until the old one's
   tokens have expired, `ttlMs` later.
+- **A provider's sign-in page is https.** `oidc` refuses to send a browser to
+  an `authorization_endpoint` that isn't, whatever the provider's settings
+  say.
 - **A provider's sign-in** carries a one-time `state`, so only the browser
   that started it can finish it; a `nonce`, so an ID token can't be
   replayed into it; and PKCE, so a code that leaks on the way back is no use

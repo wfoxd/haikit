@@ -310,24 +310,27 @@ console.log("\nfailures");
     s = await b.get("/auth/fake");
     const callback = idp.signIn(s.location);
     r = await browser().get(pathOf(callback));
-    check("no flow cookie: expired", why(r) === "expired");
+    check("no flow cookie: expired", why(r) === "expired" && !r.cookies.length);
     // the first character of the ciphertext: every bit of it counts
     const parts = b.jar.get("__Host-haikit_sign_in").split(".");
     parts[3] = (parts[3][0] === "A" ? "B" : "A") + parts[3].slice(1);
     b.jar.set("__Host-haikit_sign_in", parts.join("."));
     r = await b.get(pathOf(callback));
-    check("a flow cookie changed by a byte: expired", why(r) === "expired");
+    check("a flow cookie changed by a byte: expired, and cleared", why(r) === "expired" && !b.jar.has("__Host-haikit_sign_in"));
 
     b = browser();
     const first = await b.get("/auth/fake");
-    await b.get("/auth/fake"); // another tab, started since
+    const second = await b.get("/auth/fake"); // another tab, started since
     r = await b.get(pathOf(idp.signIn(first.location)));
     check("the answer to a sign-in another tab has replaced: expired", why(r) === "expired");
+    check("…and the newer one keeps its flow cookie", b.jar.has("__Host-haikit_sign_in") && !r.cookies.length);
+    r = await b.get(pathOf(idp.signIn(second.location)));
+    check("…so it still signs in when it comes back", r.location === "/" && b.jar.has("__Host-haikit_token") && !b.jar.has("__Host-haikit_sign_in"));
 
     b = browser();
     s = await b.get("/auth/other");
     r = await b.get(pathOf(idp.signIn(s.location)).replace("/auth/other/", "/auth/fake/"));
-    check("a flow cookie for another provider: expired", why(r) === "expired");
+    check("a flow cookie for another provider: expired, and kept for it", why(r) === "expired" && b.jar.has("__Host-haikit_sign_in"));
 
     // sealed as the server seals one, by the documented derivation, but ten minutes ago
     const key = new Uint8Array(hkdfSync("sha256", new TextEncoder().encode(SECRET), new Uint8Array(0), "haikit/auth sign-in flow", 32));
@@ -417,6 +420,23 @@ console.log("\nsettings");
     idp.down = false;
     r = await browser().get("/auth/fake");
     check("read again on the next sign-in", r.status === 303 && r.location.startsWith("https://fake.test/authorize") && idp.discoveries === 1);
+    const plain = await fakeProvider({ issuer: "https://plain.test", authorize: "http://plain.test/authorize" });
+    const downgraded = createAuth({
+      store: memoryAuthStore(),
+      jwt: { secret: SECRET },
+      providers: [oidc({ name: "plain", issuer: "https://plain.test", ...CLIENT, redirectUri: "http://localhost/auth/plain/callback", fetch: plain.fetch })],
+    });
+    const there = await serve(downgraded);
+    try {
+      let answer;
+      const said = await quietly(async () => (answer = await there.browser().get("/auth/plain")));
+      check(
+        "an https issuer whose sign-in page is plain http: failed, never sent there",
+        answer.location === "/?sign_in_error=failed" && said.some((l) => l.includes("oidc: https://plain.test/'s authorization_endpoint isn't https")),
+      );
+    } finally {
+      there.server.close();
+    }
     check("the routes answer GET only", (await fetch(`http://127.0.0.1:${server.address().port}/auth/fake`, { method: "POST" })).status === 404);
     check("an unknown provider isn't a route", (await browser().get("/auth/nobody")).status === 404);
   } finally {

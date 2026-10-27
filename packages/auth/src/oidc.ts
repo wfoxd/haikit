@@ -151,6 +151,8 @@ export function oidc(options: OidcOptions): SignInProvider {
     async start() {
       const as = await server();
       if (!as.authorization_endpoint) throw new Error(`oidc: ${issuer.href} names no authorization_endpoint`);
+      // where the user types their password: never over plain http, whatever the settings say
+      if (new URL(as.authorization_endpoint).protocol !== "https:") throw new Error(`oidc: ${issuer.href}'s authorization_endpoint isn't https`);
       const state = oauth.generateRandomState();
       const nonce = oauth.generateRandomNonce();
       const verifier = oauth.generateRandomCodeVerifier();
