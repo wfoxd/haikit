@@ -7,7 +7,9 @@ conversation someone else started is answered as one that doesn't exist.
 
 It doesn't replace your login. Either your app checks the user its own way
 and calls `signIn`, which issues a token as a cookie, or your identity
-provider issues the tokens, and this checks them against its JWKS.
+provider issues the tokens, and this checks them against its JWKS. Or users
+sign in with Google, or any OpenID Connect provider, and this calls `signIn`
+for you.
 
 ```ts
 import { createHai, nodeHandler } from "@haikit/server";
@@ -39,6 +41,33 @@ mountChat({
   fetch: async (url, init) => fetch(url, { ...init, headers: { ...init.headers, authorization: `Bearer ${await getToken()}` } }),
 });
 ```
+
+## Sign in with Google
+
+```ts
+import { google } from "@haikit/auth/oidc";
+
+const auth = createAuth({
+  store,
+  jwt: { secret: process.env.HAIKIT_AUTH_SECRET },
+  providers: [
+    google({
+      clientId: process.env.GOOGLE_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+      redirectUri: "https://app.example.com/auth/google/callback", // as registered with Google
+      failureUrl: "/sign-in", // a failed sign-in comes back here, with ?sign_in_error=
+    }),
+  ],
+});
+```
+
+A link to `/auth/google` sends the browser to Google, and the user Google
+names on the way back is signed in with `signIn`, as `google:` and Google's
+id for them. The code flow carries PKCE, a `state` and a `nonce`, in an
+encrypted cookie that lasts 10 minutes. `user(profile)` maps someone to
+your own user id, or refuses them; `hostedDomain` keeps it to one Google
+Workspace domain. Any other OpenID Connect provider works the same through
+`oidc({ name, issuer, clientId, clientSecret, redirectUri })`.
 
 ## In a tool
 

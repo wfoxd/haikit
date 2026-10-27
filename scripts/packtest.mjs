@@ -192,6 +192,7 @@ import { renderTranscript, h } from "@haikit/client/transcript.js";
 import { reactSurface } from "@haikit/react";
 import { createAuth, memoryAuthStore } from "@haikit/auth";
 import { pgAuthStore, migrate as migrateAuth, schema as authSchema } from "@haikit/auth/postgres";
+import { google, oidc } from "@haikit/auth/oidc";
 import { z } from "zod";
 
 const out = {};
@@ -214,6 +215,17 @@ const token = await auth.signIn({ getHeader: (n) => headers[n], setHeader: (n, v
 const admitted = await auth.gate.admit({ route: "events", method: "GET", headers: { authorization: "Bearer " + token } });
 out.authWorks = (await auth.verify(token))?.id === "ada" && admitted.ok === true && admitted.principal === "ada";
 out.authPostgres = typeof pgAuthStore({ query: async () => ({ rows: [] }) }).getOwner === "function" && typeof migrateAuth === "function" && authSchema.length === 3;
+// a sign-in with Google starts from the tarball, its settings from a stand-in: oauth4webapi came with it
+const settings = { issuer: "https://accounts.google.com", authorization_endpoint: "https://accounts.google.com/o/oauth2/v2/auth", token_endpoint: "https://oauth2.googleapis.com/token" };
+const withGoogle = google({
+  clientId: "c",
+  clientSecret: "s",
+  redirectUri: "http://localhost/auth/google/callback",
+  fetch: async () => new Response(JSON.stringify(settings), { headers: { "content-type": "application/json" } }),
+});
+const { url: toGoogle } = await withGoogle.start();
+createAuth({ store: memoryAuthStore(), jwt: { secret: "a-packtest-secret-of-at-least-32-bytes" }, providers: [withGoogle] });
+out.authOidc = typeof oidc === "function" && withGoogle.name === "google" && toGoogle.searchParams.get("code_challenge_method") === "S256";
 
 // the contract layer does real work, not just re-export shapes
 const surface = defineSurface({
@@ -278,6 +290,7 @@ console.log(JSON.stringify(out));
   check("@haikit/react builds a registry entry", () => runtime.reactExport === true);
   check("@haikit/auth issues and verifies a token, and its gate admits it", () => runtime.authWorks === true);
   check("@haikit/auth/postgres resolves via exports", () => runtime.authPostgres === true);
+  check("@haikit/auth/oidc starts a sign-in with Google", () => runtime.authOidc === true);
   check("defineSurface builds a surface", () => runtime.surfaceName === "packtest_picker");
   check("cap() caps (3 of 47)", () => runtime.capShown === 3 && runtime.capTotal === 47);
   check("cap() reports the omission", () => runtime.capReportsOmission === true);
@@ -329,6 +342,8 @@ import { h } from "@haikit/client/transcript.js";
 import { reactNotice, reactSurface, type ReactOptions, type SurfaceProps } from "@haikit/react";
 import { createAuth, memoryAuthStore, type Auth, type AuthStore, type AuthUser } from "@haikit/auth";
 import { pgAuthStore } from "@haikit/auth/postgres";
+import { google, oidc, type GoogleOptions, type OidcOptions, type OidcProfile, type SignInAs } from "@haikit/auth/oidc";
+import type { SignInProvider } from "@haikit/auth";
 import type { Gate } from "@haikit/core";
 import { z } from "zod";
 
@@ -397,6 +412,11 @@ const shared: AuthStore = pgAuthStore({ query: async (_text: string, _params?: u
 const someone: Promise<AuthUser | null> = auth.verify("token");
 void nodeHandler(createHai({ model: { id: "m", generate: async () => ({ content: [], stop_reason: "end_turn" }) }, store: memoryStore(), tools: [], surfaces: [], system: "" }), "/hai", { gate, maxBodyBytes: 65_536 });
 void shared; void someone;
+// a provider is a SignInProvider, and createAuth takes it; user maps a profile to an id, or refuses
+const asked: GoogleOptions = { clientId: "c", clientSecret: "s", redirectUri: "https://app.example/cb", hostedDomain: "example.com", user: (p: OidcProfile): SignInAs | null => (p.claims.hd ? \`staff:\${p.sub}\` : null) };
+const other: OidcOptions = { name: "okta", issuer: "https://example.okta.com", clientId: "c", clientSecret: "s", redirectUri: "https://app.example/okta" };
+const signInWith: SignInProvider[] = [google(asked), oidc(other)];
+void createAuth({ store: memoryAuthStore(), jwt: { secret: "x".repeat(32) }, providers: signInWith });
 // the client's sign-in surface: fetch, unauthorized, resume, and mountChat's signIn
 declare const signedIn: ReturnType<typeof createChat>;
 const why: { status: 401 | 403; message: string } | null = signedIn.state.unauthorized;

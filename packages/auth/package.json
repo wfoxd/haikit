@@ -24,6 +24,10 @@
       "types": "./dist/postgres.d.ts",
       "default": "./dist/postgres.js"
     },
+    "./oidc": {
+      "types": "./dist/oidc.d.ts",
+      "default": "./dist/oidc.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
@@ -40,7 +44,8 @@
   "dependencies": {
     "@haikit/core": "0.29.0",
     "@types/node": ">=22",
-    "jose": "^6.2.0"
+    "jose": "^6.2.0",
+    "oauth4webapi": "^3.8.8"
   },
   "publishConfig": {
     "access": "public"

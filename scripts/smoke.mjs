@@ -46,7 +46,8 @@ const CASES = [
     entry: "examples/hello-auth/src/server/main.ts",
     build: "examples/hello-auth",
     appCss: ["bg-primary", "data-hai-theme=dark"],
-    env: { NODE_ENV: "production", HAIKIT_AUTH_SECRET: "a-smoke-test-secret-of-at-least-32-bytes" },
+    // without Google, whatever this shell has: the check below needs it off, and no network
+    env: { NODE_ENV: "production", HAIKIT_AUTH_SECRET: "a-smoke-test-secret-of-at-least-32-bytes", GOOGLE_CLIENT_ID: "", GOOGLE_CLIENT_SECRET: "" },
     port: 5276,
     signIn: { as: "ada", stranger: "bob", cookie: "__Host-haikit_token", welcome: "Signed in as ada." },
     message: "greet me",
@@ -295,6 +296,12 @@ for (const c of CASES) {
       sandboxed.status === 403 && raw.startsWith("HTTP/1.1 400") && alive === 200
         ? ok("a null origin is a 403 and an unparsable target a 400, and the server stays up")
         : bad(`null origin: ${sandboxed.status}, //[: ${raw.split("\r\n")[0]}, then: ${alive}`);
+      // without a Google client, no Google: no link to it, and no route
+      const form = await fetch(`${base}/sign-in`).then((r) => r.text());
+      const google = await fetch(`${base}/auth/google`, { redirect: "manual" });
+      !form.includes("/auth/google") && google.status === 404
+        ? ok("without GOOGLE_CLIENT_ID, no Google link and no /auth/google")
+        : bad(`without Google: the link ${form.includes("/auth/google") ? "is there" : "isn't"}, /auth/google answered ${google.status}`);
     }
 
     // one stylesheet: the default UI's, through @haikit/client/tailwind.css,

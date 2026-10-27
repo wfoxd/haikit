@@ -131,7 +131,7 @@ finished result, about 150 lines.
 | [`@haikit/openai`](packages/openai) | OpenAI model adapter, over the Responses API. Defaults to `gpt-6-luna` |
 | [`@haikit/postgres`](packages/postgres) | Durable store adapter. Bring your own driver |
 | [`@haikit/react`](packages/react) | Write surface components in React, typed from the surface contract |
-| [`@haikit/auth`](packages/auth) | Optional sign-in: each user, from a verified JWT, sees only their own conversations. A gate for the routes |
+| [`@haikit/auth`](packages/auth) | Optional sign-in: each user, from a verified JWT, sees only their own conversations. A gate for the routes, and sign-in with Google or any OpenID Connect provider |
 
 Adapters depend on `@haikit/core` only, never on the runtime. That is what
 keeps the model and store seams swappable.
@@ -171,7 +171,7 @@ Each row is a bug the prototype this was extracted from actually produced.
 | --- | --- |
 | [Tutorial](docs/tutorial.md) | Build *Hello, World!* as a HaiKIT app in ten steps, annotated line by line |
 | [Tutorial 2: Tell them later](docs/tutorial-2.md) | Teach the same app to speak up after the request is over: progress, notices, wake turns and live updates |
-| [Tutorial 3: Who's asking](docs/tutorial-3.md) | Sign people in to the same app with `@haikit/auth`: each sees only their own conversations, the model knows who it's talking to, and *sign out everywhere* works |
+| [Tutorial 3: Who's asking](docs/tutorial-3.md) | Sign people in to the same app with `@haikit/auth`: each sees only their own conversations, the model knows who it's talking to, and *sign out everywhere* works, and, optionally, sign in with Google |
 | [Design spec](docs/spec.md) | The dual channel, the contract split, elicit mode, the four guarantees, package topology |
 | [Default UI](docs/default-ui.md) | The chat UI `@haikit/client` ships: setup, the model context drawer, theming, styling your surfaces |
 | [The introduction](apps/intro) | HaiKIT's introduction as a deployable app, live at [haikit.app](https://haikit.app) |

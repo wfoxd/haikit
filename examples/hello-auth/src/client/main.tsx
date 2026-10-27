@@ -10,7 +10,8 @@ mountChat({
   root: document.querySelector<HTMLElement>("#app")!,
   registry,
   title: "hello-auth",
-  subtitle: user ? `signed in as ${user.id}` : "signed out",
+  // a name, from Google, if they signed in with it
+  subtitle: user ? `signed in as ${user.claims.name ?? user.id}` : "signed out",
   emptyText:
     "Only you can open this conversation: the server checks your sign-in on every request, and another user who has its id is told it doesn't exist.",
   suggestions: ["greet me", "which ones are right-to-left?"],
