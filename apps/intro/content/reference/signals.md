@@ -1,7 +1,9 @@
 # Signals and presence
 
 A signal is a broadcast to every open browser: something everyone should see
-now and nobody needs later, such as how many people are online. It belongs to
+now and nobody needs later, such as how many people are online. Behind a
+[gate](http.md#gates), such as `@haikit/auth`'s, that is still every
+signed-in user's browser, so a signal never carries one user's data. It belongs to
 no conversation, is never stored, and never reaches the model or the
 transcript. Presence is the count a server keeps of conversations with an
 events stream open, across every server sharing the store.

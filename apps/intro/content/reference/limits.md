@@ -59,6 +59,8 @@ Checked against `@haikit/*` 0.20.0. Durations are in milliseconds.
 | Parameter | Default | Page |
 | --- | --- | --- |
 | `basePath` | `"/hai"`, with no trailing `/` | [HTTP routes and the wire](http.md#nodehandler) |
+| `options.maxBodyBytes` | `1048576` (1 MiB): a longer POST body is answered 413 | [HTTP routes and the wire](http.md#requests) |
+| `options.gate` | none: a conversation id is all a request needs | [HTTP routes and the wire](http.md#gates) |
 
 ### Stores
 
@@ -99,6 +101,7 @@ Checked against `@haikit/*` 0.20.0. Durations are in milliseconds.
 | `signals` | `{}` | [The browser client](client.md#createchat) |
 | `eventsFallbackMs` | `8000` | [The browser client](client.md#polling) |
 | `pollHoldMs` | `15000` (the server clamps it to 0–15000) | [The browser client](client.md#polling) |
+| `fetch` | the page's `fetch`, looked up at each request | [The browser client](client.md#createchat) |
 
 ### `mountChat` (`@haikit/client/app.js`)
 
@@ -115,7 +118,25 @@ Checked against `@haikit/*` 0.20.0. Durations are in milliseconds.
 | `emptyText` | `""` | [The default UI](ui.md#mountchatoptions) |
 | `theme` | follows the system, or a `data-hai-theme` already on `<html>`. Only `"light"` or `"dark"` pins | [The default UI](ui.md#mountchatoptions) |
 | `dock` | `true` | [The default UI](ui.md#the-dock) |
-| `eventsFallbackMs`, `pollHoldMs` | as `createChat` | [The default UI](ui.md#mountchatoptions) |
+| `eventsFallbackMs`, `pollHoldMs`, `fetch` | as `createChat` | [The default UI](ui.md#mountchatoptions) |
+| `signIn` | none: signed out, the status line says only why | [The default UI](ui.md#mountchatoptions) |
+
+### `createAuth` (`@haikit/auth`)
+
+| Option | Default | Page |
+| --- | --- | --- |
+| `store` | required | [Sign-in and ownership](auth.md#stores) |
+| `jwt.secret` | none; at least 32 bytes each | [Sign-in and ownership](auth.md#createauth) |
+| `jwt.jwks` | none; `secret`, `jwks` or both required | [Sign-in and ownership](auth.md#createauth) |
+| `jwt.issuer`, `jwt.audience` | none: not checked | [Sign-in and ownership](auth.md#createauth) |
+| `jwt.algorithms` | `["HS256"]` with a secret, plus `["RS256", "ES256", "EdDSA"]` with a JWKS | [Sign-in and ownership](auth.md#createauth) |
+| `jwt.userClaim` | `"sub"` | [Sign-in and ownership](auth.md#createauth) |
+| `jwt.ttlMs` | `604800000` (7 days), at least 1000 | [Sign-in and ownership](auth.md#tokens) |
+| `jwt.clockToleranceMs` | `5000`, finite and at least 0 | [Sign-in and ownership](auth.md#tokens) |
+| `cookie.name` | `"__Host-haikit_token"`, or `"haikit_token"` when not `secure` | [Sign-in and ownership](auth.md#createauth) |
+| `cookie.secure` | `true` | [Sign-in and ownership](auth.md#createauth) |
+| `origins` | `[]`: only the request's own host | [Sign-in and ownership](auth.md#the-gate) |
+| `handler(basePath)` | `"/auth"` | [Sign-in and ownership](auth.md#routes) |
 
 ### `hai.css`
 
@@ -161,6 +182,7 @@ None of these can be changed without changing HaiKIT's code.
 | How long a server keeps listening for a conversation's wake turns after its last stream closes | at least 60,000 (longer while a turn runs, or an ended one is kept) | [HTTP routes and the wire](http.md#wake-turns-on-the-stream) |
 | How long an ended wake turn is kept for polls | 60,000 | [HTTP routes and the wire](http.md#wake-turns-on-the-stream) |
 | Ended wake turns kept per conversation | 5 | [HTTP routes and the wire](http.md#wake-turns-on-the-stream) |
+| How often an open events stream asks its gate again | 60,000, and at its admission's `until` | [HTTP routes and the wire](http.md#gates) |
 
 ### Presence
 
@@ -206,6 +228,18 @@ None of these can be changed without changing HaiKIT's code.
 | Docked surfaces open at once | 1 | [The default UI](ui.md#the-dock) |
 | Widest the dock's window grows | 560 px | [The default UI](ui.md#how-it-looks) |
 | Width below which the model's name is hidden | 600 px | [The default UI](ui.md#mountchat) |
+
+### Sign-in (`@haikit/auth`)
+
+| What | Value | Page |
+| --- | --- | --- |
+| How long a server keeps a user's revocation time before reading it again | 30,000 | [Sign-in and ownership](auth.md#revoke) |
+| Revocation granularity | 1 s: a sign-in in the second `revoke` ran in still counts | [Sign-in and ownership](auth.md#revoke) |
+| Owners, and revocation times, kept in memory per server | the 10,000 most recent of each | [Sign-in and ownership](auth.md#ownerof) |
+| When `GET /auth/me` issues a cookie token again | past half its life, not before | [Sign-in and ownership](auth.md#tokens) |
+| How often a page must ask `GET /auth/me` to stay signed in | at least once every half of `ttlMs`: 3.5 days by default | [Sign-in and ownership](auth.md#tokens) |
+| Longest an open events stream outlives a revocation | 60,000 on the server that revoked; about 90,000 on another | [Sign-in and ownership](auth.md#revoke) |
+| JWKS refetched once older than; for an unknown key id, at most every; fetch timeout | 600,000; 30,000; 5000 (`jose`'s defaults) | [Sign-in and ownership](auth.md#createauth) |
 
 ### Limits that don't exist
 
@@ -256,13 +290,21 @@ with the parameters `conversationId`, `after`, `poll`, `wait`, `turn` and
 | `data-handle`, `data-component` | a surface's element in the default transcript | [The default UI](ui.md#rendertranscript) |
 | `data-notice` | a notice's element in the default transcript | [The default UI](ui.md#rendertranscript) |
 | `data-pending` | a message's element in the default transcript, while its request is out and the server's copy hasn't arrived | [The default UI](ui.md#rendertranscript) |
-| `data-status` | the default UI's status line | [The default UI](ui.md#mountchat) |
+| `data-status` | the default UI's status line: the conversation's status, or `unauthorized` while the server turns the chat away | [The default UI](ui.md#mountchat) |
 
 ### Tables
 
 `haikit_conversations`, `haikit_payloads` and `haikit_notices`, and the
 index `haikit_payloads_created_at`: see
-[Stores: the schema](stores.md#the-schema).
+[Stores: the schema](stores.md#the-schema). `@haikit/auth/postgres`'s
+`haikit_auth_owners` and `haikit_auth_revocations`, and the index
+`haikit_auth_owners_user`: see [Sign-in and ownership](auth.md#migrate-schema).
+
+### Cookies
+
+| Name | Holds | Page |
+| --- | --- | --- |
+| `__Host-haikit_token`, or `haikit_token` when not `secure` | The token `@haikit/auth`'s `signIn` issues | [Sign-in and ownership](auth.md#signin) |
 
 ### Framework text in the history
 
@@ -321,9 +363,14 @@ The client adds block ids of its own: `ui:<handle>`, `n:<seq>`, and
 ### Messages the browser shows
 
 The server's and the client's out-of-date messages, `initialisation failed:
-<message>`, the 400 answer `the request body must be a JSON object`, the
+<message>`, the 400 answer `the request body must be a JSON object`, the 413
+answer `the request body is too large`, the 404 answer `unknown conversation`, the
 client's fallbacks (`another turn is already in flight`,
 `request failed (<status>)`), and the error cards (`unknown component:
 <name>`, `unknown notice: <name>`): see
 [Surfaces: freshness](surfaces.md#freshness), [The server](server.md#init), [HTTP routes and the wire](http.md#requests)
-and [The browser client](client.md).
+and [The browser client](client.md). `@haikit/auth`'s gate answers
+`sign in to continue` and `your sign-in has expired or is invalid` (401),
+`the request body must be sent as application/json` (415) and
+`this request came from another site` (403): see
+[Sign-in and ownership](auth.md#the-gate).

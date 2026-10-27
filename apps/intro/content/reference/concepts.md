@@ -225,6 +225,13 @@ HaiKIT ships two: `memoryStore`, for development in one process, and
 provides one for Claude, and `@haikit/openai` one for OpenAI models. See
 [Models](models.md).
 
+**Gate.** What decides who may use the routes, and which conversations each
+may use: `nodeHandler`'s `gate`. It admits a request as a *principal*, the
+string that names who is asking, and answers for each conversation whether
+that principal may use it. A conversation it says no to is answered as one
+that doesn't exist. Without a gate, a conversation id is all a request
+needs. See [HTTP routes and the wire](http.md#gates).
+
 **Wire event.** One JSON object in a server-sent events `data:` frame, of one
 of the 15 `WireEvent` types. Both the POST routes and the events stream send
 them. See [HTTP routes and the wire](http.md).
