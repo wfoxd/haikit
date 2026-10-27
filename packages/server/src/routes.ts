@@ -323,6 +323,16 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
   } finally {
     watchers.pending--;
   }
+  // An admission that lapsed while that was set up is asked again before
+  // anything is sent, and a refusal now is answered as the first would have been.
+  if (until !== undefined && Date.now() >= until) {
+    const again = await ask();
+    if (!again.ok) {
+      forgetWatchers(hai, conversationId, watchers);
+      return refuse(res, again.status, again.error);
+    }
+    until = "until" in again ? again.until : undefined;
+  }
   // gone while that was set up: its close has already been and gone
   if (req.destroyed || res.destroyed) return forgetWatchers(hai, conversationId, watchers);
 
@@ -560,11 +570,12 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
   const heartbeat = setInterval(() => res.writableNeedDrain || res.write(": ping\n\n"), HEARTBEAT_MS);
   // Behind a gate, a stream stays open only while its admission holds. It
   // ends when that runs out, on a timer that stays armed while the gate is
-  // asked again, so a gate slow to answer can't hold it open past then. And
-  // it asks again every GATE_RECHECK_MS, ending when refused, so a sign-in
-  // revoked meanwhile stops hearing. Timers of their own, since the heartbeat
-  // is skipped on a backed-up stream. A poll needs neither: each is admitted
-  // afresh, and holds 15 s at most.
+  // asked again, so a gate slow to answer can't hold it open past then; a
+  // poll ends then too, rather than hold for the rest of its wait. And a
+  // stream asks again every GATE_RECHECK_MS, ending when refused, so a sign-in
+  // revoked meanwhile stops hearing; a poll isn't asked again, since each is
+  // admitted afresh and holds 15 s at most. Timers of their own, since the
+  // heartbeat is skipped on a backed-up stream.
   let expiry: ReturnType<typeof setTimeout> | undefined;
   let recheck: ReturnType<typeof setTimeout> | undefined;
   const armExpiry = () => {
@@ -590,9 +601,9 @@ async function streamNotices(hai: Hai, req: IncomingMessage, res: ServerResponse
       },
     );
   };
-  if (gate && !polling) {
+  if (gate) {
     armExpiry();
-    recheck = setTimeout(recheckGate, GATE_RECHECK_MS);
+    if (!polling) recheck = setTimeout(recheckGate, GATE_RECHECK_MS);
   }
   // An app that sends no notices has nothing stored to read: the stream is only
   // for signals, and stays open, reading nothing, until the browser leaves.

@@ -141,11 +141,14 @@ anything is read. A refusal from `admit` is answered with its status; a
 missing `conversationId`, or `allows` saying `false`, with **HTTP 404**
 `{ "error": "unknown conversation" }`.
 
-**An open stream** stays open only while its admission holds. It ends when
-`until` passes, and the gate is asked again, `admit` then `allows`, every
-60,000 ms: a refusal, or either rejecting, ends it, and the browser's
-reconnect is answered as above. A poll is admitted afresh each time, and
-holds at most 15,000 ms, so it isn't asked again.
+**An open stream** stays open only while its admission holds. If `until`
+has passed by the time it would open, after the store is read, the gate is
+asked again first, and a refusal is answered as above. Once open, it ends
+when `until` passes, and the gate is asked again, `admit` then `allows`,
+every 60,000 ms: a refusal, or either rejecting, ends it, and the browser's
+reconnect is answered as above. A poll ends when `until` passes too, rather
+than holding on, but isn't asked again: each is admitted afresh, and holds
+at most 15,000 ms.
 
 **What isn't gated:** `hai.notify`, `hai.update`, `hai.wake` and
 `hai.signal` are app code, not requests. Signals still go to every events

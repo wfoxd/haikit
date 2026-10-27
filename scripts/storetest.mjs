@@ -611,11 +611,15 @@ async function gateChecks() {
   const asked = [];
   const lasting = {}; // user → how long an admission of theirs holds, in ms
   let claimFails = false;
+  let lapses = 0; // "late"'s events admissions: the first has lapsed already, the next is refused
   const gate = {
     async admit({ route, method, headers }) {
       asked.push(`${method} ${route}`);
       const who = headers["x-user"];
       if (!who) return { ok: false, status: 401, error: "sign in to continue" };
+      if (who === "late" && route === "events") {
+        return lapses++ === 0 ? { ok: true, principal: who, until: Date.now() - 1 } : { ok: false, status: 401, error: "your sign-in has expired" };
+      }
       if (who === "blocked") return { ok: false, status: 403, error: "not allowed here" };
       return { ok: true, principal: who, ...(lasting[who] ? { until: Date.now() + lasting[who] } : {}) };
     },
@@ -685,7 +689,13 @@ async function gateChecks() {
       const res = await post("/chat", { message: "hi" }, "ada");
       const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
       let text = "";
-      while (!text.includes("\n\n")) text += (await reader.read()).value ?? "";
+      // up to the first frame, or the end: a response with none fails below rather than hangs
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        text += value;
+        if (text.includes("\n\n")) break;
+      }
       const hello = events(text)[0];
       adas = hello?.conversationId;
       const claimedFirst = owners.get(adas) === "ada";
@@ -759,6 +769,29 @@ async function gateChecks() {
       const took = Date.now() - started;
       delete lasting.ada;
       check(`an events stream ends when its admission's until passes (${took} ms)`, res.status === 200 && took >= 350 && took < 2500);
+    }
+
+    // a poll too, rather than hold for the rest of its wait
+    {
+      lasting.ada = 400;
+      const started = Date.now();
+      const res = await fetch(`${base}/events?conversationId=${adas}&poll=1&wait=5000`, { headers: as("ada"), signal: AbortSignal.timeout(8000) });
+      await res.text();
+      const took = Date.now() - started;
+      delete lasting.ada;
+      check(`a poll ends when its admission's until passes, not at its hold (${took} ms)`, res.status === 200 && took >= 350 && took < 2500);
+    }
+
+    // an admission that lapses while the stream is set up is asked again before it opens
+    {
+      const made = await post("/chat", { message: "hi" }, "late");
+      const lateId = events(await made.text())[0]?.conversationId;
+      const res = await fetch(`${base}/events?conversationId=${lateId}`, { headers: as("late"), signal: AbortSignal.timeout(5000) });
+      const body = await res.text();
+      check(
+        "an admission that has lapsed by the time the stream would open is asked again, and its refusal answered",
+        lapses === 2 && res.status === 401 && body === JSON.stringify({ error: "your sign-in has expired" }),
+      );
     }
 
     // the client: through its own fetch, stopped by a 401, started again by resume()
