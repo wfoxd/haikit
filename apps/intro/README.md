@@ -104,9 +104,13 @@ the page polls instead, so the count still arrives, a little later.
 Given a Google client, the introduction lets a reader sign in with Google,
 and only if they want to: signed out, it's as it is without one. **Sign in**,
 at the end of the header, goes to Google and back. Signed in, the header
-names the reader and offers **Sign out**, the welcome greets them by name,
-and the conversations they start are theirs alone: to anyone else who has
-one's id, signed out or signed in as someone else, it doesn't exist. A
+shows the reader's Google picture, square, over their initials. A mouse
+resting on the picture shows who's signed in, their picture and name, and
+**Sign out**, until it leaves. A click, a tap or a key on it shows the same,
+to stay until Escape or a click elsewhere, as does a click in it. A sign-out
+that fails says so there. The welcome greets them by name, and the
+conversations they start are theirs alone: to anyone else who has one's id,
+signed out or signed in as someone else, it doesn't exist. A
 conversation started signed out is anyone's who has its id, as every
 conversation is without sign-in, and the reader can carry on in it once
 they've signed in. Signing in or out leaves the page, so the conversation
@@ -121,9 +125,13 @@ goes to auth's own gate, which checks it, and where it came from. A
 conversation no one owns is anyone's, and one started signed in is claimed
 for its reader.
 
-The intro asks Google for `openid` and `profile`: the reader's Google id and
-name, and no email address. Signed in, the reader is `google:<sub>`, and
-their name is in their token. The gate notes it as their requests arrive,
+The intro asks Google for `openid` and `profile`: the reader's Google id,
+name and picture, and no email address. Signed in, the reader is
+`google:<sub>`, as auth names them by default, and their name and the address
+of their picture (only from https) are in their token. The browser loads the
+picture from Google without a referrer, and shows the initials if it won't
+load. A reader who signed in before the picture was kept gets it at their
+next sign-in. The gate notes it as their requests arrive,
 and the welcome looks it up by the conversation's owner. The guide never
 sees it: the welcome's digest leaves it out.
 
@@ -267,7 +275,9 @@ That runs three checks:
   a payload stays text. It mounts the contents rail too, wide and narrow:
   what it lists, the message each choice sends, and which page it marks. And
   the header's sign-in: signed out, signed in, and back from a sign-in that
-  failed.
+  failed; the reader's picture, or their initials, and who's signed in on it,
+  with Sign out: opened by a click or a resting mouse, where the focus goes,
+  and a sign-out that fails.
 - **`npm run smoke`** builds the page, boots the server on it as the container
   does, and drives the course the way a learner does: the welcome screen on start and both of its choices, the course map,
   opening a lesson, answering a checkpoint, typing instead of answering, a
@@ -439,7 +449,8 @@ src/client/drawings/       the HaiKIT logo, the welcome screen's diagram and ill
                            Rebook's components drawn small
 src/client/contents.tsx    the contents rail
 src/client/online.tsx      the reading-now chip
-src/client/account.tsx     the header's sign-in: Sign in, or the reader's name and Sign out
+src/client/account.tsx     the header's sign-in: Sign in, or the reader's picture, and on it who's signed
+                           in and Sign out
 src/client/components/ui/  shadcn/ui's components
 components.json            where `npx shadcn@latest add` puts a component, and the style it's in
 src/client/globals.css     Tailwind with its preflight; the default UI, through

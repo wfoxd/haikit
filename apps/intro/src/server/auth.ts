@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { Gate } from "@haikit/core";
 import { type Auth, type AuthStore, createAuth, memoryAuthStore } from "@haikit/auth";
-import { google } from "@haikit/auth/oidc";
+import { type OidcProfile, type SignInAs, google } from "@haikit/auth/oidc";
 import type { Queryable } from "@haikit/auth/postgres";
 
 // Sign in with Google, once the deployment has a Google client to sign in
@@ -61,8 +61,8 @@ export async function signingIn(db: Queryable | null, port: number): Promise<{ a
     jwt: { secret },
     cookie: { name: COOKIE, secure: PRODUCTION },
     providers: [
-      // google:<sub>, with their name: the intro asks Google for nothing else
-      google({ clientId, clientSecret, redirectUri, scopes: ["openid", "profile"], failureUrl: "/" }),
+      // google:<sub>, with their name and picture: the intro asks Google for nothing else
+      google({ clientId, clientSecret, redirectUri, scopes: ["openid", "profile"], failureUrl: "/", user: asReader }),
     ],
   });
   auth = signedIn;
@@ -101,6 +101,21 @@ async function owners(db: Queryable): Promise<AuthStore> {
   const { migrate, pgAuthStore } = await import("@haikit/auth/postgres");
   await migrate(db); // creates auth's two tables if they don't exist
   return pgAuthStore(db);
+}
+
+/**
+ * Who signed in, as their token says: `google:<sub>`, as auth's own default
+ * names them, with their name and the address of their Google picture, for
+ * the header. The picture only from https, as the browser shows it.
+ */
+export function asReader({ sub, claims: { name, picture } }: OidcProfile): SignInAs {
+  return {
+    userId: `google:${sub}`,
+    claims: {
+      ...(typeof name === "string" ? { name } : {}),
+      ...(typeof picture === "string" && picture.startsWith("https://") ? { picture } : {}),
+    },
+  };
 }
 
 /** The name of the reader who started a conversation signed in, if this server has it. */
