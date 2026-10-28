@@ -200,11 +200,11 @@ export function scripted(): ModelAdapter {
 
         // A way into the tutorial: the welcome's panel, the map, or a page's
         // Previous and Next.
-        const step = latest.join("\n").match(/(?:chose to open|moved to|Opened) tutorial step ([\w-]+) "([^"]+)"/);
+        const step = latest.join("\n").match(/(?:chose(?: to open)?|Opened) tutorial step ([\w-]+) "([^"]+)"/);
         if (step) return tour(step[1]!, step[2]!);
 
         // A way into the reference: the welcome's panel, or a page's link or button.
-        const ref = latest.join("\n").match(/(?:chose to open|moved to) reference page ([\w-]+) "([^"]+)"(?: at #([\w-]+) "([^"]+)")?/);
+        const ref = latest.join("\n").match(/chose(?: to open)? reference page ([\w-]+) "([^"]+)"(?: at #([\w-]+) "([^"]+)")?/);
         if (ref) return look(ref[1]!, ref[2]!, ref[3], ref[4]);
 
         const opened = latest.join("\n").match(/Opened lesson (\d+\.\d+) "([^"]+)"/);

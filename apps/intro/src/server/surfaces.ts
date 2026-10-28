@@ -259,7 +259,8 @@ export const tutorialStepServer = tutorialStep.implement({
       lead ? `It opens: ${lead.length > 220 ? `${lead.slice(0, 219)}…` : lead}` : "",
       files.length ? `Files: ${files.join(", ")}.` : "",
       props.next ? `Next: tutorial step ${props.next.id} ${quote(props.next.title)}.` : "It is the last page of the tutorials.",
-      "The reader moves on with its buttons; query_ui find answers questions about it.",
+      `The reader picks the next page with its ${buttonsNamed(props.next && "Next", props.prev && "Previous", "Course map")};` +
+        " query_ui find answers questions about it.",
     ]
       .filter(Boolean)
       .join(" ");
@@ -271,7 +272,7 @@ export const tutorialStepServer = tutorialStep.implement({
       if (target === "course-map") return "The reader chose to see the course map.";
       const page = [props.prev, props.next].find((p) => p?.id === target);
       if (!page) throw new Error(`no way from ${props.id} to ${target}`);
-      return `The reader moved to tutorial step ${page.id} ${quote(page.title)}.`;
+      return choseTutorialStep(page);
     },
   },
 
@@ -282,6 +283,21 @@ export const tutorialStepServer = tutorialStep.implement({
   },
 });
 // #endregion tutorial-step-server
+
+/** "Next button", or "Next, Previous and Course map buttons": the buttons a page shows, by name. */
+function buttonsNamed(...shown: (string | false | null | undefined)[]): string {
+  const names = shown.filter(Boolean);
+  return names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)} buttons` : `${names[0]} button`;
+}
+
+// A click on a page's button or link changes nothing on screen by itself: the
+// model shows the page it asks for. Said in the past tense, "the reader moved
+// to step 02", a model took it as done, said so, and showed nothing.
+
+/** What a click asking for a tutorial page tells the model. */
+function choseTutorialStep(step: { id: string; title: string }): string {
+  return `The reader chose tutorial step ${step.id} ${quote(step.title)}, which isn't on screen yet: show_tutorial_step shows it.`;
+}
 
 /** The links on a page that lead off it, to another reference page or a tutorial page. */
 export function linksOff(blocks: Block[]): Set<string> {
@@ -327,8 +343,7 @@ export const referencePageServer = referencePage.implement({
     const sections = props.blocks.flatMap((b) => (b.kind === "h" && b.level === 2 ? [plain(b.text)] : []));
     const at = props.anchor ? page?.anchors.get(props.anchor) : undefined;
     // the buttons this page shows: the contents has no Contents, the last page no Next
-    const buttons = [props.next && "Next", props.prev && "Previous", props.id !== "index" && "Contents"].filter(Boolean);
-    const named = buttons.length > 1 ? `${buttons.slice(0, -1).join(", ")} and ${buttons.at(-1)} buttons` : `${buttons[0]} button`;
+    const buttons = buttonsNamed(props.next && "Next", props.prev && "Previous", props.id !== "index" && "Contents");
     return [
       `Reference page ${props.id} ${quote(props.title)} is on screen as ${handle}` +
         (at ? `, opened at its section #${props.anchor} ${quote(at)}` : "") +
@@ -336,7 +351,7 @@ export const referencePageServer = referencePage.implement({
         ` about ${estTokens(props).toLocaleString("en")} tokens that stay in the browser).`,
       page?.lead ? `It opens: ${page.lead.length > 220 ? `${page.lead.slice(0, 219)}…` : page.lead}` : "",
       sections.length ? `Sections: ${sections.join("; ")}.` : "",
-      `The reader moves on with its links and its ${named};` +
+      `The reader picks the next page with its links and its ${buttons};` +
         " query_ui find answers questions about it, with the section each answer is in.",
     ]
       .filter(Boolean)
@@ -357,7 +372,7 @@ export const referencePageServer = referencePage.implement({
       if (tutorial) {
         const step = tutorialPage(tutorial);
         if (!step) throw new Error(`no tutorial page ${tutorial}`);
-        return `The reader moved to tutorial step ${step.id} ${quote(step.title)}.`;
+        return choseTutorialStep(step);
       }
       const [, id, anchor] = target.match(/^ref:([\w-]+)(?:#([\w-]+))?$/) ?? [];
       const page = id ? referencePageOf(id) : null;
@@ -365,7 +380,11 @@ export const referencePageServer = referencePage.implement({
       if (!page) throw new Error(`no reference page ${id}`);
       const section = anchor ? page.anchors.get(anchor) : undefined;
       if (anchor && !section) throw new Error(`no section #${anchor} on reference page ${page.id}`);
-      return `The reader moved to reference page ${page.id} ${quote(page.label)}` + (section ? ` at #${anchor} ${quote(section)}.` : ".");
+      return (
+        `The reader chose reference page ${page.id} ${quote(page.label)}` +
+        (section ? ` at #${anchor} ${quote(section)}` : "") +
+        `, which isn't on screen yet: show_reference_page shows it${section ? ", at that anchor" : ""}.`
+      );
     },
   },
 

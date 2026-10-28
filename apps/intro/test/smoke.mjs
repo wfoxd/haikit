@@ -78,6 +78,13 @@ async function waitFor(url, tries = 60) {
 const lastStatus = (evs) => evs.filter((e) => e.type === "status").at(-1)?.status;
 const opened = (evs) => evs.filter((e) => e.type === "ui_open");
 const propsOf = (evs, handle) => evs.find((e) => e.type === "ui_props" && e.handle === handle)?.props;
+/** The latest tool result the model was sent that starts so: a surface's digest, and once it's answered, the click. */
+const heard = (evs, start) =>
+  (evs.findLast((e) => e.type === "context")?.messages ?? [])
+    .flatMap((m) => (Array.isArray(m.content) ? m.content : []))
+    .filter((b) => b.type === "tool_result")
+    .map((b) => String(b.content))
+    .findLast((t) => t.startsWith(start)) ?? "";
 
 console.log("\nhaikit intro");
 try {
@@ -319,6 +326,15 @@ try {
       four?.id === "04" && four.prev?.id === "03" && four.next?.id === "05"
         ? ok("Next moves to step 04")
         : bad("Next did not open step 04");
+      // what the model reads of the click: a page asked for, not one already
+      // shown, which a model once took it for, and showed nothing
+      const clicked = heard(next, "Tutorial page 03");
+      clicked.endsWith(
+        `The reader picks the next page with its Next, Previous and Course map buttons; query_ui find answers questions about it.\n` +
+          `The reader chose tutorial step 04 "${four?.title}", which isn't on screen yet: show_tutorial_step shows it.`,
+      )
+        ? ok("the model hears of Next as a page to show, not one already shown")
+        : bad(`the model heard of Next as: ${clicked.slice(-240)}`);
 
       const typed = await sse("/hai/chat", { conversationId: id, message: "how do I start the tutorial?" });
       propsOf(typed, opened(typed).find((e) => e.component === "tutorial_step")?.handle)?.id === "intro"
@@ -631,6 +647,13 @@ try {
       tools.props?.id === "tools" && tools.props.anchor === link?.[2] && tools.props.prev?.id === "surfaces"
         ? ok(`a link opens the page it names, at its section (${link?.[1]})`)
         : bad(`the link ${link?.[1]} opened ${JSON.stringify({ id: tools.props?.id, anchor: tools.props?.anchor })}`);
+      const followed = heard(moved, "Reference page surfaces");
+      new RegExp(
+        `\\nThe reader chose reference page tools "Tools" at #${link?.[2]} "[^"]+", ` +
+          `which isn't on screen yet: show_reference_page shows it, at that anchor\\.$`,
+      ).test(followed)
+        ? ok("the model hears of a link as a page to show, at its section, not one already shown")
+        : bad(`the model heard of the link as: ${followed.slice(-240)}`);
       const back = pageOf(await sse("/hai/interact", { conversationId: id, handle: tools.ui?.handle, action: "go", value: "ref:surfaces" }));
       back.props?.id === "surfaces" && back.props.anchor === null ? ok("Previous goes back to Surfaces, at its top") : bad("Previous did not go back");
       const contents = pageOf(await sse("/hai/interact", { conversationId: id, handle: back.ui?.handle, action: "go", value: "ref:index" }));
