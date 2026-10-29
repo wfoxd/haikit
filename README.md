@@ -179,7 +179,8 @@ convention:
   later resumes the same turn.
 - **A click is checked before it counts.** The browser sends `{handle, action,
   value}`. The server refuses an action the contract doesn't declare, a value
-  that fails its schema, and a click on a surface the turn isn't waiting on.
+  that fails its schema, and a `resolve` on a surface the turn isn't waiting
+  on.
 
 **[Vercel AI SDK](https://ai-sdk.dev)** is a general toolkit for calling models
 from TypeScript, and its `useChat` hook renders tool calls as your components.
