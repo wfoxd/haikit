@@ -165,6 +165,61 @@ Each row is a bug the prototype this was extracted from actually produced.
 | An undeclared element quietly round-trips | Undeclared = local by construction; the contract *is* the allowlist |
 | A blocking tool with no way to unblock | `mode: "elicit"` only compiles on a surface declaring `resolve` |
 
+## How it compares
+
+HaiKIT is narrower than the projects below. It is the agent loop on the
+server, and a typed contract for every piece of interface a tool shows. Three
+things are built in, each enforced by the types or by the server rather than by
+convention:
+
+- **The model reads a digest, not the payload.** Every surface must have one,
+  and anything more is fetched through `query_ui`, capped.
+- **A question parks on the server.** An elicit turn is stored, not held open:
+  nothing waits in the browser or on a connection, and a click minutes or days
+  later resumes the same turn.
+- **A click is checked before it counts.** The browser sends `{handle, action,
+  value}`. The server refuses an action the contract doesn't declare, a value
+  that fails its schema, and a `resolve` on a surface the turn isn't waiting
+  on.
+
+**[Vercel AI SDK](https://ai-sdk.dev)** is a general toolkit for calling models
+from TypeScript, and its `useChat` hook renders tool calls as your components.
+You can build HaiKIT's pattern on it: `toModelOutput` shapes what the model
+sees of a tool result, and a tool without `execute` is answered in the browser
+with `addToolOutput`. The waiting call lives in the browser's message list,
+which goes back to the server with the answer. Choose it for breadth: dozens
+of model providers, several UI frameworks, edge runtimes.
+
+**[CopilotKit](https://www.copilotkit.ai)** connects an agent built with
+another framework, such as LangGraph, Mastra or Pydantic AI, to a React front
+end over the AG-UI protocol. Its `useHumanInTheLoop` hook pauses the agent
+until your component calls `respond`. Choose it when your agent already lives
+in one of those frameworks: HaiKIT is the agent loop itself, so it would
+replace that agent rather than sit in front of it.
+
+**[assistant-ui](https://www.assistant-ui.com)** is a set of React components
+for chat over the runtime of your choice, such as the AI SDK or LangGraph, and
+it renders tool calls as your components, including ones the user answers.
+Choose it when the chat interface is what you need and your backend is
+settled. HaiKIT ships a [default UI](docs/default-ui.md) too, but its centre is
+the server.
+
+**[MCP Apps](https://github.com/modelcontextprotocol/ext-apps)** is an MCP
+extension: a tool declares a `ui://` resource, and a host such as Claude or
+ChatGPT shows its HTML in a sandboxed iframe, in the host's own chat. The host
+owns the conversation, the model and the users. Choose it to reach people
+where they already talk to an AI. A HaiKIT app is a site you run, with your
+own model calls and your own sign-in, and it has no MCP export yet (see
+[Status](#status)).
+
+**A `render_ui` tool,** which lets the model pick components and fill them, is
+the one design HaiKIT refuses. Here the model picks a tool, and the tool owns
+its surface. That is what keeps the registry typed, reviewable and safe.
+
+HaiKIT itself is TypeScript on Node's `http` module, with adapters for Claude
+and for any host that serves OpenAI's Responses API. Another model needs a
+[`ModelAdapter`](docs/reference/models.md) of your own.
+
 ## Documentation
 
 | | |
