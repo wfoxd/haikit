@@ -1,12 +1,14 @@
 {
   "name": "@haikit/auth",
   "version": "0.30.0",
-  "description": "Sign-in for haikit: who is asking, from a verified JWT, and which conversations are theirs. A gate for nodeHandler.",
+  "description": "Sign-in for haikit: who is asking, from a verified JWT, and which conversations are theirs. A gate for nodeHandler, and sign-in with Google, GitHub, or any OpenID Connect or OAuth 2.0 provider.",
   "keywords": [
     "haikit",
     "auth",
     "jwt",
     "jwks",
+    "oauth",
+    "oidc",
     "llm",
     "agent",
     "agentic-ui",
@@ -27,6 +29,10 @@
     "./oidc": {
       "types": "./dist/oidc.d.ts",
       "default": "./dist/oidc.js"
+    },
+    "./oauth2": {
+      "types": "./dist/oauth2.d.ts",
+      "default": "./dist/oauth2.js"
     },
     "./package.json": "./package.json"
   },

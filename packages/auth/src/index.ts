@@ -12,8 +12,9 @@
  * refused: a JWT can't be recalled, only outlived or refused.
  *
  * A sign-in can also go through a provider, such as Google (`google()` from
- * `@haikit/auth/oidc`): the handler sends the browser there and takes it back,
- * and ends in the same `signIn`.
+ * `@haikit/auth/oidc`) or GitHub (`github()` from `@haikit/auth/oauth2`): the
+ * handler sends the browser there and takes it back, and ends in the same
+ * `signIn`.
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -82,7 +83,8 @@ export interface CookieOptions {
 
 /**
  * Somewhere a user signs in, such as Google: what `google()` and `oidc()` from
- * `@haikit/auth/oidc` return. `handler` sends the browser to it from
+ * `@haikit/auth/oidc`, and `github()` and `oauth2()` from `@haikit/auth/oauth2`,
+ * return. `handler` sends the browser to it from
  * `GET {basePath}/{name}`, takes it back at the path of `redirectUri`, and
  * signs in the user `finish` names.
  */
@@ -119,7 +121,7 @@ export interface AuthOptions {
    * rewrites `Host`, the public origin goes here.
    */
   origins?: string[];
-  /** Where else a user can sign in, such as `google()` from `@haikit/auth/oidc`. Needs `jwt.secret`. */
+  /** Where else a user can sign in, such as `google()` from `@haikit/auth/oidc` or `github()` from `@haikit/auth/oauth2`. Needs `jwt.secret`. */
   providers?: SignInProvider[];
 }
 
