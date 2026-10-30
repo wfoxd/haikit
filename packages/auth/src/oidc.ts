@@ -12,6 +12,9 @@
 
 import * as oauth from "oauth4webapi";
 import type { SignInProvider } from "./index.js";
+import { checkAuthMethod, checkClient, checkName, checkParams, checkRedirectUri, clientAuth, defaultUser, requestOptions, signInAs, type SignInAs } from "./provider.js";
+
+export type { SignInAs } from "./provider.js";
 
 /** Who signed in, as the provider says: its ID token's claims, checked. */
 export interface OidcProfile {
@@ -21,12 +24,6 @@ export interface OidcProfile {
   sub: string;
   claims: Record<string, unknown>;
 }
-
-/**
- * Whom a provider's user signs in as. A string: that user id, with the
- * default claims. An object: that user id, and exactly those claims.
- */
-export type SignInAs = string | { userId: string; claims?: Record<string, unknown> };
 
 export interface OidcOptions {
   /** The route segment, `{basePath}/{name}`, and the default user id's prefix. */
@@ -84,18 +81,13 @@ export interface GoogleOptions extends Omit<OidcOptions, "name" | "issuer"> {
 }
 
 const GOOGLE = "https://accounts.google.com";
-/** How long reading the provider's settings, or exchanging the code, may take. */
-const REQUEST_TIMEOUT_MS = 10_000;
-const NAME = /^[a-z][a-z0-9-]{0,31}$/;
 /** The parameters the flow sets itself. */
 const FLOW_PARAMS = ["client_id", "redirect_uri", "response_type", "response_mode", "scope", "state", "nonce", "code_challenge", "code_challenge_method", "max_age"];
-const AUTH_METHODS = ["client_secret_basic", "client_secret_post"];
-const LOOPBACK = ["localhost", "127.0.0.1", "[::1]"];
 
 /** Sign in with an OpenID Connect provider. */
 export function oidc(options: OidcOptions): SignInProvider {
-  const { name, clientId, clientSecret } = options;
-  if (typeof name !== "string" || !NAME.test(name)) throw new Error("oidc: name must be 1 to 32 lowercase letters, digits or dashes, starting with a letter");
+  const { name, clientId, clientSecret, redirectUri, tokenEndpointAuthMethod, maxAgeMs } = options;
+  checkName("oidc", name);
   let issuer: URL;
   try {
     issuer = new URL(options.issuer);
@@ -103,36 +95,17 @@ export function oidc(options: OidcOptions): SignInProvider {
     throw new Error("oidc: issuer must be a URL, such as https://accounts.google.com");
   }
   if (issuer.protocol !== "https:") throw new Error("oidc: issuer must be an https URL");
-  if (typeof clientId !== "string" || clientId === "") throw new Error("oidc: clientId must be a non-empty string");
-  if (typeof clientSecret !== "string" || clientSecret === "") throw new Error("oidc: clientSecret must be a non-empty string");
-  let redirect: URL;
-  try {
-    redirect = new URL(options.redirectUri);
-  } catch {
-    throw new Error("oidc: redirectUri must be a URL, such as https://app.example.com/auth/google/callback");
-  }
-  if (!(redirect.protocol === "https:" || (redirect.protocol === "http:" && LOOPBACK.includes(redirect.hostname))) || redirect.hash) {
-    throw new Error("oidc: redirectUri must be https, or http on localhost, with no #fragment");
-  }
-  const redirectUri = options.redirectUri;
-  for (const param of Object.keys(options.params ?? {})) {
-    if (FLOW_PARAMS.includes(param)) throw new Error(`oidc: params can't set ${param}: the sign-in sets it`);
-  }
-  const { tokenEndpointAuthMethod, maxAgeMs } = options;
-  if (tokenEndpointAuthMethod !== undefined && !AUTH_METHODS.includes(tokenEndpointAuthMethod)) {
-    throw new Error("oidc: tokenEndpointAuthMethod must be client_secret_basic or client_secret_post");
-  }
+  checkClient("oidc", clientId, clientSecret);
+  checkRedirectUri("oidc", redirectUri, "https://app.example.com/auth/google/callback");
+  checkParams("oidc", options.params, FLOW_PARAMS);
+  checkAuthMethod("oidc", tokenEndpointAuthMethod);
   if (maxAgeMs !== undefined && !(Number.isFinite(maxAgeMs) && maxAgeMs >= 0)) throw new Error("oidc: maxAgeMs must be a finite number, at least 0");
   // max_age is in whole seconds; it's sent, and checked against auth_time, as that
   const maxAge = maxAgeMs === undefined ? undefined : Math.floor(maxAgeMs / 1000);
   const scope = [...new Set(["openid", ...(options.scopes ?? ["openid", "email", "profile"])])].join(" ");
   const user = options.user ?? defaultUser;
   const client: oauth.Client = { client_id: clientId };
-  const custom = options.fetch;
-  const http = {
-    signal: () => AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    ...(custom ? { [oauth.customFetch]: (url: string, init: oauth.CustomFetchOptions<string, unknown>) => custom(url, init as RequestInit) } : {}),
-  };
+  const http = requestOptions(options.fetch);
 
   // Read once, on the first sign-in, and kept; one that fails is read again next time.
   let settings: Promise<oauth.AuthorizationServer> | null = null;
@@ -190,18 +163,14 @@ export function oidc(options: OidcOptions): SignInProvider {
       // as registered; else client_secret_basic, what a provider that names none takes
       const methods = as.token_endpoint_auth_methods_supported;
       const method = tokenEndpointAuthMethod ?? (methods && !methods.includes("client_secret_basic") && methods.includes("client_secret_post") ? "client_secret_post" : "client_secret_basic");
-      const clientAuth = method === "client_secret_post" ? oauth.ClientSecretPost(clientSecret) : oauth.ClientSecretBasic(clientSecret);
-      const response = await oauth.authorizationCodeGrantRequest(as, client, clientAuth, params, redirectUri, flow.verifier, http);
+      const response = await oauth.authorizationCodeGrantRequest(as, client, clientAuth(method, clientSecret), params, redirectUri, flow.verifier, http);
       const result = await oauth.processAuthorizationCodeResponse(as, client, response, {
         expectedNonce: flow.nonce,
         requireIdToken: true,
         ...(maxAge === undefined ? {} : { maxAge }),
       });
       const claims = { ...oauth.getValidatedIdTokenClaims(result)! };
-      const profile: OidcProfile = { provider: name, sub: claims.sub, claims };
-      const chosen = await user(profile);
-      if (chosen === null) return { error: "refused" };
-      return typeof chosen === "string" ? { userId: chosen, claims: defaultClaims(profile) } : chosen;
+      return signInAs(user, { provider: name, sub: claims.sub, claims });
     },
   };
 }
@@ -229,14 +198,4 @@ export function google(options: GoogleOptions): SignInProvider {
     // hd on the sign-in page only picks which accounts are offered first: the ID token says which one signed in
     user: (profile) => (hostedDomain !== undefined && profile.claims.hd !== hostedDomain ? null : user(profile)),
   });
-}
-
-function defaultUser(profile: OidcProfile): SignInAs {
-  return { userId: `${profile.provider}:${profile.sub}`, claims: defaultClaims(profile) };
-}
-
-/** The user's `name`, and their `email` only once the provider has verified it: anyone can type an address. */
-function defaultClaims({ claims }: OidcProfile): Record<string, unknown> {
-  const { name, email, email_verified } = claims;
-  return { ...(typeof name === "string" ? { name } : {}), ...(typeof email === "string" && email_verified === true ? { email } : {}) };
 }

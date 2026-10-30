@@ -193,6 +193,7 @@ import { reactSurface } from "@haikit/react";
 import { createAuth, memoryAuthStore } from "@haikit/auth";
 import { pgAuthStore, migrate as migrateAuth, schema as authSchema } from "@haikit/auth/postgres";
 import { google, oidc } from "@haikit/auth/oidc";
+import { github, oauth2 } from "@haikit/auth/oauth2";
 import { z } from "zod";
 
 const out = {};
@@ -226,6 +227,11 @@ const withGoogle = google({
 const { url: toGoogle } = await withGoogle.start();
 createAuth({ store: memoryAuthStore(), jwt: { secret: "a-packtest-secret-of-at-least-32-bytes" }, providers: [withGoogle] });
 out.authOidc = typeof oidc === "function" && withGoogle.name === "google" && toGoogle.searchParams.get("code_challenge_method") === "S256";
+// a sign-in with GitHub starts from the tarball, with no settings to read
+const withGitHub = github({ clientId: "c", clientSecret: "s", redirectUri: "http://localhost/auth/github/callback" });
+const { url: toGitHub } = await withGitHub.start();
+createAuth({ store: memoryAuthStore(), jwt: { secret: "a-packtest-secret-of-at-least-32-bytes" }, providers: [withGitHub] });
+out.authOauth2 = typeof oauth2 === "function" && withGitHub.name === "github" && toGitHub.origin === "https://github.com" && toGitHub.searchParams.get("code_challenge_method") === "S256";
 
 // the contract layer does real work, not just re-export shapes
 const surface = defineSurface({
@@ -291,6 +297,7 @@ console.log(JSON.stringify(out));
   check("@haikit/auth issues and verifies a token, and its gate admits it", () => runtime.authWorks === true);
   check("@haikit/auth/postgres resolves via exports", () => runtime.authPostgres === true);
   check("@haikit/auth/oidc starts a sign-in with Google", () => runtime.authOidc === true);
+  check("@haikit/auth/oauth2 starts a sign-in with GitHub", () => runtime.authOauth2 === true);
   check("defineSurface builds a surface", () => runtime.surfaceName === "packtest_picker");
   check("cap() caps (3 of 47)", () => runtime.capShown === 3 && runtime.capTotal === 47);
   check("cap() reports the omission", () => runtime.capReportsOmission === true);
@@ -343,6 +350,7 @@ import { reactNotice, reactSurface, type ReactOptions, type SurfaceProps } from 
 import { createAuth, memoryAuthStore, type Auth, type AuthStore, type AuthUser } from "@haikit/auth";
 import { pgAuthStore } from "@haikit/auth/postgres";
 import { google, oidc, type GoogleOptions, type OidcOptions, type OidcProfile, type SignInAs } from "@haikit/auth/oidc";
+import { github, oauth2, type GitHubOptions, type OAuth2Options, type OAuth2Profile, type ProviderApi, type SignInAs as OAuth2SignInAs } from "@haikit/auth/oauth2";
 import type { SignInProvider } from "@haikit/auth";
 import type { Gate } from "@haikit/core";
 import { z } from "zod";
@@ -417,6 +425,26 @@ const asked: GoogleOptions = { clientId: "c", clientSecret: "s", redirectUri: "h
 const other: OidcOptions = { name: "okta", issuer: "https://example.okta.com", clientId: "c", clientSecret: "s", redirectUri: "https://app.example/okta" };
 const signInWith: SignInProvider[] = [google(asked), oidc(other)];
 void createAuth({ store: memoryAuthStore(), jwt: { secret: "x".repeat(32) }, providers: signInWith });
+// a provider with no OpenID Connect reads who signed in from its API; one user function serves both kinds
+const either = (p: OidcProfile | OAuth2Profile): OAuth2SignInAs | null => \`\${p.provider}:\${p.sub}\`;
+const sameAs: SignInAs | null = either({ provider: "x", sub: "1", claims: {} });
+const discord: OAuth2Options = {
+  name: "discord",
+  authorizationEndpoint: "https://discord.com/oauth2/authorize",
+  tokenEndpoint: "https://discord.com/api/oauth2/token",
+  clientId: "c",
+  clientSecret: "s",
+  redirectUri: "https://app.example/discord",
+  scopes: ["identify"],
+  profile: async (api: ProviderApi) => {
+    const me = (await api.get("https://discord.com/api/users/@me")) as { id: string; global_name: string };
+    return { sub: me.id, claims: { name: me.global_name } };
+  },
+  user: either,
+};
+const fromGitHub: GitHubOptions = { clientId: "c", clientSecret: "s", redirectUri: "https://app.example/github", user: either };
+void createAuth({ store: memoryAuthStore(), jwt: { secret: "x".repeat(32) }, providers: [github(fromGitHub), oauth2(discord), google({ ...asked, user: either })] });
+void sameAs;
 // the client's sign-in surface: fetch, unauthorized, resume, and mountChat's signIn
 declare const signedIn: ReturnType<typeof createChat>;
 const why: { status: 401 | 403; message: string } | null = signedIn.state.unauthorized;
