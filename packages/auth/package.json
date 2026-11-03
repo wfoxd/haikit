@@ -1,6 +1,6 @@
 {
   "name": "@haikit/auth",
-  "version": "0.30.0",
+  "version": "0.31.0",
   "description": "Sign-in for haikit: who is asking, from a verified JWT, and which conversations are theirs. A gate for nodeHandler, and sign-in with Google, GitHub, or any OpenID Connect or OAuth 2.0 provider.",
   "keywords": [
     "haikit",
@@ -48,7 +48,7 @@
     "prepack": "npm --prefix ../.. run build"
   },
   "dependencies": {
-    "@haikit/core": "0.30.0",
+    "@haikit/core": "0.31.0",
     "@types/node": ">=22",
     "jose": "^6.2.0",
     "oauth4webapi": "^3.8.8"
