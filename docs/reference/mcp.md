@@ -205,7 +205,7 @@ it.
 | --- | --- |
 | `transport()` throws or rejects, or the SDK can't connect | `McpError`, reason `connection`: `<server> could not be reached`, its `cause` the error |
 | `transport()` makes nothing within `timeoutMs` | `McpError`, reason `connection`, its `cause` `Error: no transport within <timeoutMs> ms` |
-| Listing the tools fails | `McpError`, its reason as for a call (see [Errors](#errors)), named for the server alone, such as `<server> did not answer in time` |
+| Listing the tools fails | `McpError`, its reason as for a call (see [Errors](#errors)), named for the server alone, such as `<server> did not answer in time`. Never `result`: a listing the SDK can't read is `protocol`, with the SDK's words on `text` |
 | A declared tool fails the check | `Error`: `<server>: ` then each problem, in the order the tools were declared, joined by `; `. A problem is `the server has no tool named "<name>"`, or `tool "<name>" can only run as an MCP task, which @haikit/mcp does not support` |
 | `close()` was called, before or while connecting | `McpError`, reason `closed`: `<server>: the connection was closed` |
 
@@ -299,7 +299,17 @@ threw.
 The SDK checks structured content against the output schema the server
 declared for the tool, and refuses a result that doesn't match it, or has
 none when one is declared. That rejects with reason `result` too, with the
-SDK's words on `text`.
+SDK's words on `text`. It is told apart by the SDK's code and words for
+those checks, as of `@modelcontextprotocol/client` 2.4:
+
+- `-32600`, `Tool <tool> has an output schema but did not return structured content`;
+- `-32602`, `Structured content does not match the tool's output schema: …`;
+- `-32602`, `Failed to validate structured content: …`.
+
+An error the server sends is reason `protocol`, whatever it says, unless it
+has one of those codes and words. So is a declared output schema the SDK
+can't compile (`Tool '<tool>' has an invalid outputSchema: …`), which
+rejects the call before it is sent.
 
 ### `McpCallCtx`
 
@@ -367,10 +377,10 @@ A call that got no result, or one its schema refused.
 | `reason` | When | Message, for a call |
 | --- | --- | --- |
 | `args` | The `args` schema refused the args, or they aren't an object. Nothing was sent | `<server>/<tool> was not called: its args do not match the schema`, or `… its args must be an object` |
-| `result` | The `result` schema refused the result, there was nothing to parse, or the SDK refused it against the server's output schema | `<server>/<tool> returned a result that does not match the schema` |
+| `result` | The `result` schema refused the result, there was nothing to parse, or the SDK refused it against the server's output schema (see [What a call resolves to](#what-a-call-resolves-to)). Only a call has it: listing the tools never fails with `result` | `<server>/<tool> returned a result that does not match the schema` |
 | `timeout` | No answer within `timeoutMs`, or not done within `maxTotalMs`, connecting included | `<server>/<tool> did not answer in time` |
 | `connection` | The server couldn't be reached, or the connection dropped before the answer | `<server>/<tool> could not be reached` |
-| `protocol` | The server refused the call, as for a tool it doesn't have (`code` `-32602`). Also any other SDK error, such as an HTTP 401 or 403, or a server asking this client for input | `<server>/<tool> was refused by the server` |
+| `protocol` | The server refused the call, as for a tool it doesn't have (`code` `-32602`), whatever its words. Also a listing of tools the SDK can't read, and any other SDK error, such as an HTTP 401 or 403, or a server asking this client for input | `<server>/<tool> was refused by the server` |
 | `closed` | `close()` was called, before or during the call | `<server>/<tool>: the connection was closed` |
 
 From `connect()`, the messages name the server alone: `<server> could not

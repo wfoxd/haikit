@@ -19,6 +19,7 @@ import type { Progress, Schema } from "@haikit/core";
 import {
   Client,
   ProtocolError,
+  ProtocolErrorCode,
   SdkError,
   SdkErrorCode,
   type CallToolResult,
@@ -41,8 +42,17 @@ const TIMEOUT_MS = 30_000;
 const MAX_TOTAL_MS = 90_000;
 /** Past the longest timer Node keeps, it fires after about a millisecond. */
 const MAX_TIMER_MS = 2_147_483_647;
-/** What the SDK's errors about a tool's output schema say, as of @modelcontextprotocol/client 2.4. */
-const OUTPUT_SCHEMA = /output ?schema/i;
+/**
+ * The SDK's own checks of a tool's result against the output schema the
+ * server declared, as of @modelcontextprotocol/client 2.4: `callTool` throws
+ * these, with these codes and words, once the server has answered. A
+ * server's own error reads as one only if it has the same code and words.
+ */
+const OUTPUT_CHECKS: ReadonlyArray<readonly [code: number, words: RegExp]> = [
+  [ProtocolErrorCode.InvalidRequest, /^Tool .+ has an output schema but did not return structured content$/],
+  [ProtocolErrorCode.InvalidParams, /^Structured content does not match the tool's output schema: /],
+  [ProtocolErrorCode.InvalidParams, /^Failed to validate structured content: /],
+];
 
 export interface McpServerOptions {
   /** Names the server in errors and warnings, as in `github/search_issues`. */
@@ -456,11 +466,10 @@ class Connection implements McpConnection {
     if (isMcpError(err)) return err;
     if (this.closed) return this.error("closed", tool, { cause: err });
     if (err instanceof ProtocolError) {
-      // The SDK's own check of a structured result against the output schema
-      // the server declared throws one too: the server's result is at fault
-      // there, not the call.
-      const reason = OUTPUT_SCHEMA.test(err.message) ? "result" : "protocol";
-      return this.error(reason, tool, { cause: err, text: err.message, code: err.code });
+      // The SDK's own check of a call's result throws one too: the server's
+      // result is at fault there, not the call. Only a call has a result.
+      const checked = tool !== undefined && OUTPUT_CHECKS.some(([code, words]) => err.code === code && words.test(err.message));
+      return this.error(checked ? "result" : "protocol", tool, { cause: err, text: err.message, code: err.code });
     }
     if (err instanceof SdkError) {
       switch (err.code) {
@@ -472,7 +481,9 @@ class Connection implements McpConnection {
         case SdkErrorCode.ClientHttpFailedToOpenStream:
           return this.error("connection", tool, { cause: err });
         case SdkErrorCode.InvalidResult:
-          return this.error("result", tool, { cause: err });
+          // only a call has a result; a listing the SDK can't read is the server's fault
+          if (tool !== undefined) return this.error("result", tool, { cause: err });
+          return this.error("protocol", tool, { cause: err, text: err.message });
         default:
           return this.error("protocol", tool, { cause: err, text: err.message });
       }

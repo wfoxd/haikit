@@ -13,7 +13,7 @@
 
 import path from "node:path";
 import { InMemoryTransport } from "@modelcontextprotocol/client";
-import { McpServer, Server } from "@modelcontextprotocol/server";
+import { McpServer, ProtocolError, Server } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { McpError, McpToolError, isMcpError, isMcpToolError, mcpServer, stdio, http, textOf } from "../dist/index.js";
 
@@ -472,6 +472,49 @@ console.log("\ncall");
     );
   }
   await s.close();
+}
+{
+  // a server's refusals that speak of output schemas are still refusals
+  const words = "output schema lookup is unavailable";
+  const refusing = (list) =>
+    mcpServer({
+      name: "refuses",
+      transport: async () => {
+        const server = new Server({ name: "refuses", version: "1.0.0" }, { capabilities: { tools: {} } });
+        server.setRequestHandler("tools/list", () => {
+          if (list) throw new ProtocolError(-32601, words);
+          return { tools: [{ name: "search", inputSchema: { type: "object" } }] };
+        });
+        server.setRequestHandler("tools/call", () => {
+          throw new ProtocolError(-32601, words);
+        });
+        const [client, side] = InMemoryTransport.createLinkedPair();
+        await server.connect(side);
+        return client;
+      },
+    });
+  const called = await rejection(refusing(false).tool("search", { args: anything }).call({}));
+  check(
+    "a call the server refuses in words about output schemas: protocol, not result",
+    isMcpError(called) && called.reason === "protocol" && called.code === -32601 && called.text?.includes(words),
+  );
+  const listed = await rejection(refusing(true).connect());
+  check("…and listing tools refused so: protocol too", isMcpError(listed) && listed.reason === "protocol" && listed.code === -32601);
+  const garbled = mcpServer({
+    name: "garbled",
+    transport: async () => {
+      const server = new Server({ name: "garbled", version: "1.0.0" }, { capabilities: { tools: {} } });
+      server.setRequestHandler("tools/list", () => ({ tools: "nope" }));
+      const [client, side] = InMemoryTransport.createLinkedPair();
+      await server.connect(side);
+      return client;
+    },
+  });
+  const unread = await rejection(garbled.connect());
+  check(
+    "a listing the SDK can't read: protocol, not result, the SDK's words on text",
+    isMcpError(unread) && unread.reason === "protocol" && unread.message === "garbled was refused by the server" && /Invalid result for tools\/list/.test(unread.text),
+  );
 }
 
 // ── progress and timeouts ───────────────────────────────────────────────
