@@ -2,7 +2,7 @@
 
 ```bash
 npm install
-npm test          # typecheck, typetest, csstest, storetest, authtest, reacttest, uitest, pgtest, smoke
+npm test          # typecheck, typetest, csstest, storetest, authtest, mcptest, reacttest, uitest, pgtest, smoke
 npm run packtest  # pack the tarballs, install them clean, use them
 npm run pgtest    # @haikit/postgres and @haikit/auth's store on PGlite; set HAIKIT_PG_URL to add a real server
 ```
@@ -18,6 +18,7 @@ packages/openai      model adapter for OpenAI models
 packages/postgres    durable store adapter (bring your own driver)
 packages/react       surface components in React
 packages/auth        optional sign-in: a Gate from a JWT, and who owns which conversation
+packages/mcp         call MCP servers' tools from the app's own tools; the model never sees one
 examples/*           demonstrations. private, never published
 scripts/             typetest.mjs, adaptertest.mjs, storetest.mjs, smoke.mjs, packtest.mjs,
                      build-css.mjs, csstest.mjs
@@ -43,8 +44,8 @@ which `box-sizing` it uses: without one, a page's CSS reset would choose.
 
 ## Two rules with teeth
 
-**Adapters never import the runtime.** `@haikit/anthropic`, `@haikit/openai` and any
-store adapter depend on `@haikit/core` only. If an adapter needs something from
+**Adapters never import the runtime.** `@haikit/anthropic`, `@haikit/openai`,
+`@haikit/mcp` and any store adapter depend on `@haikit/core` only. If an adapter needs something from
 `@haikit/server`, that something belongs in core as an interface.
 
 **`@haikit/client` never imports `@haikit/server`.** The only thing crossing that line
@@ -74,7 +75,7 @@ public signature, run it.
 
 ## Releasing
 
-Changesets, with the eight packages version-locked:
+Changesets, with the nine packages version-locked:
 
 ```bash
 npx changeset          # describe the change
@@ -86,7 +87,7 @@ anything. The PR is made by `npm run version-packages`: `changeset version`,
 then `npm install`, so `package-lock.json` moves with the versions.
 
 Auth is **trusted publishing**: npm verifies the release workflow's OIDC identity
-against a trusted publisher configured on each of the eight packages
+against a trusted publisher configured on each of the nine packages
 (npmjs.com → package → Settings → Trusted Publisher → `wfoxd/haikit`,
 `release.yml`). There is no `NPM_TOKEN` anywhere — nothing to rotate, nothing to
 leak. Provenance comes with it, so published tarballs carry a signed attestation
@@ -94,7 +95,7 @@ tying them to the workflow run that built them.
 
 Two things that quietly break it: removing `id-token: write` from the workflow
 permissions, and renaming `release.yml` without updating the trusted publisher
-config on all eight packages.
+config on all nine packages.
 
 **A new package's first version is published by hand.** npm only lets you
 configure a trusted publisher on a package that already exists, so the release

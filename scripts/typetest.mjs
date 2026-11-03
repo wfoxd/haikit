@@ -16,7 +16,27 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-const SRC = path.join(ROOT, "packages/core/test/types/guarantees.ts");
+
+/**
+ * Each package with guarantees of its own: its test file, and the tsconfig
+ * that compiles it, as `tsconfig.typetest.json` and, for the stripped copy,
+ * `tsconfig.typetest-stripped.json` beside it.
+ */
+const SUITES = [
+  {
+    dir: "packages/core",
+    verified: [
+      "a surface cannot exist without a digest, nor a notice without its model text",
+      "a query's return value can only be produced by cap()",
+      'mode:"elicit" requires a declared resolve action',
+      "an undeclared action does not exist",
+    ],
+  },
+  {
+    dir: "packages/mcp",
+    verified: ["an MCP tool is not a HaiKIT tool: createHai's tools can't be given one", "MCP calls are typed by the app's own schemas"],
+  },
+];
 
 const tsc = (args) => {
   try {
@@ -27,62 +47,64 @@ const tsc = (args) => {
 };
 
 console.log("building packages…");
-const build = tsc(["-b", "packages/core", "packages/server", "packages/anthropic", "packages/openai"]);
+const build = tsc(["-b", "packages/core", "packages/server", "packages/anthropic", "packages/openai", "packages/mcp"]);
 if (!build.ok) {
   console.error(build.out);
   process.exit(1);
 }
 
-// ── pass 1 ────────────────────────────────────────────────────────────
-const p1 = tsc(["-p", "packages/core/tsconfig.typetest.json", "--noEmit"]);
-if (!p1.ok) {
-  console.error("✗ pass 1: typetests.ts should compile cleanly with @ts-expect-error\n");
-  console.error(p1.out);
-  process.exit(1);
-}
-console.log("✓ pass 1 — every @ts-expect-error is load-bearing (no unused directives)");
+for (const suite of SUITES) {
+  console.log(`\n${suite.dir}`);
+  const src = path.join(ROOT, suite.dir, "test/types/guarantees.ts");
 
-// ── pass 2 ────────────────────────────────────────────────────────────
-const source = readFileSync(SRC, "utf8");
-// Only real directives — a `*` docblock merely mentioning the token is prose.
-const DIRECTIVE = /^\s*\/\/ @ts-expect-error/;
-const expected = source
-  .split("\n")
-  .map((line, i) => (DIRECTIVE.test(line) ? i + 2 : null)) // the line it guards
-  .filter((n) => n !== null);
-
-const dir = mkdtempSync(path.join(tmpdir(), "hai-typetest-"));
-mkdirSync(path.join(dir, "src"), { recursive: true });
-const stripped = source.replace(/^(\s*)\/\/ @ts-expect-error.*$/gm, "$1//");
-const target = path.join(ROOT, "packages/core/test/types/.guarantees.stripped.ts");
-writeFileSync(target, stripped);
-
-const p2 = tsc(["-p", "packages/core/tsconfig.typetest-stripped.json", "--noEmit"]);
-rmSync(target, { force: true });
-rmSync(dir, { recursive: true, force: true });
-
-if (p2.ok) {
-  console.error("✗ pass 2: stripping @ts-expect-error produced NO errors — the guarantees are not enforced");
-  process.exit(1);
-}
-
-const errorLines = new Set(
-  [...p2.out.matchAll(/\.guarantees\.stripped\.ts\((\d+),\d+\)/g)].map((m) => Number(m[1])),
-);
-
-let failures = 0;
-for (const line of expected) {
-  if (!errorLines.has(line)) {
-    console.error(`✗ line ${line} was expected to fail, but compiled`);
-    failures++;
+  // ── pass 1 ──────────────────────────────────────────────────────────
+  const p1 = tsc(["-p", `${suite.dir}/tsconfig.typetest.json`, "--noEmit"]);
+  if (!p1.ok) {
+    console.error("✗ pass 1: guarantees.ts should compile cleanly with @ts-expect-error\n");
+    console.error(p1.out);
+    process.exit(1);
   }
+  console.log("✓ pass 1 — every @ts-expect-error is load-bearing (no unused directives)");
+
+  // ── pass 2 ──────────────────────────────────────────────────────────
+  const source = readFileSync(src, "utf8");
+  // Only real directives — a `*` docblock merely mentioning the token is prose.
+  const DIRECTIVE = /^\s*\/\/ @ts-expect-error/;
+  const expected = source
+    .split("\n")
+    .map((line, i) => (DIRECTIVE.test(line) ? i + 2 : null)) // the line it guards
+    .filter((n) => n !== null);
+
+  const dir = mkdtempSync(path.join(tmpdir(), "hai-typetest-"));
+  mkdirSync(path.join(dir, "src"), { recursive: true });
+  const stripped = source.replace(/^(\s*)\/\/ @ts-expect-error.*$/gm, "$1//");
+  const target = path.join(ROOT, suite.dir, "test/types/.guarantees.stripped.ts");
+  writeFileSync(target, stripped);
+
+  const p2 = tsc(["-p", `${suite.dir}/tsconfig.typetest-stripped.json`, "--noEmit"]);
+  rmSync(target, { force: true });
+  rmSync(dir, { recursive: true, force: true });
+
+  if (p2.ok) {
+    console.error("✗ pass 2: stripping @ts-expect-error produced NO errors — the guarantees are not enforced");
+    process.exit(1);
+  }
+
+  const errorLines = new Set(
+    [...p2.out.matchAll(/\.guarantees\.stripped\.ts\((\d+),\d+\)/g)].map((m) => Number(m[1])),
+  );
+
+  let failures = 0;
+  for (const line of expected) {
+    if (!errorLines.has(line)) {
+      console.error(`✗ line ${line} was expected to fail, but compiled`);
+      failures++;
+    }
+  }
+
+  console.log(`✓ pass 2 — ${expected.length - failures}/${expected.length} guarded lines error when unguarded`);
+  if (failures) process.exit(1);
+
+  console.log("Guarantees verified:");
+  suite.verified.forEach((line, i) => console.log(`  ${i + 1}. ${line}`));
 }
-
-console.log(`✓ pass 2 — ${expected.length - failures}/${expected.length} guarded lines error when unguarded`);
-if (failures) process.exit(1);
-
-console.log("\nGuarantees verified:");
-console.log("  1. a surface cannot exist without a digest, nor a notice without its model text");
-console.log("  2. a query's return value can only be produced by cap()");
-console.log("  3. mode:\"elicit\" requires a declared resolve action");
-console.log("  4. an undeclared action does not exist");
