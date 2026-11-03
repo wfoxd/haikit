@@ -153,6 +153,19 @@ Checked against `@haikit/*` 0.20.0. Durations are in milliseconds.
 | `google`'s `hostedDomain` | none: any Google account | [Sign-in and ownership](auth.md#google) |
 | `google`'s `tokenEndpointAuthMethod` | `"client_secret_post"` | [Sign-in and ownership](auth.md#google) |
 
+### `oauth2` and `github` (`@haikit/auth/oauth2`)
+
+| Option | Default | Page |
+| --- | --- | --- |
+| `scopes` | `[]`: no `scope` sent | [Sign-in and ownership](auth.md#oauth2) |
+| `user` | `{name}:{sub}`, with `name` and a verified `email` as claims | [Sign-in and ownership](auth.md#oauth2) |
+| `tokenEndpointAuthMethod` | `"client_secret_basic"` | [Sign-in and ownership](auth.md#oauth2) |
+| `failureUrl` | `"/"` | [Sign-in and ownership](auth.md#when-it-fails) |
+| `fetch` | the global `fetch` | [Sign-in and ownership](auth.md#oauth2) |
+| `api.get`'s `accept` | `"application/json"`, unless its `headers` set one | [Sign-in and ownership](auth.md#providerapi) |
+| `github`'s `scopes` | `["read:user", "user:email"]` | [Sign-in and ownership](auth.md#github) |
+| `github`'s `tokenEndpointAuthMethod` | `"client_secret_post"` | [Sign-in and ownership](auth.md#github) |
+
 ### `hai.css`
 
 Every `--hai-*` custom property, colours and the layout tokens `--hai-radius`
@@ -261,6 +274,7 @@ None of these can be changed without changing HaiKIT's code.
 | Largest flow cookie, name and value; past it, `return_to` is `/` | 1,365 bytes: three come to at most 4,096 | [Sign-in and ownership](auth.md#signing-in-there-and-back) |
 | `oidc`: reading the provider's settings, and exchanging the code, each give up after | 10,000 | [Sign-in and ownership](auth.md#oidc) |
 | `oidc`: the provider's settings are kept | for the process's life, once read; a failed read is tried again | [Sign-in and ownership](auth.md#oidc) |
+| `oauth2`: exchanging the code, and each `api.get`, give up after | 10,000 | [Sign-in and ownership](auth.md#oauth2) |
 
 ### Limits that don't exist
 

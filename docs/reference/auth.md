@@ -9,17 +9,21 @@ way and calls `signIn`, which issues a token as a cookie, or the app's
 identity provider (Auth0, Clerk, Supabase, Cognito and the like) issues the
 tokens, and `@haikit/auth` checks them against its JWKS. Or the user signs in
 with Google, or another OpenID Connect provider, through `@haikit/auth/oidc`,
-which ends in the same `signIn`.
+or with GitHub, or another OAuth 2.0 provider, through `@haikit/auth/oauth2`,
+which end in the same `signIn`.
 
 Exported by `@haikit/auth`: `createAuth`, `Auth`, `AuthOptions`,
 `JwtOptions`, `CookieOptions`, `AuthUser`, `AuthStore`, `SignInProvider`,
 `memoryAuthStore`. By `@haikit/auth/postgres`: `pgAuthStore`, `Queryable`,
 `migrate`, `schema`. By `@haikit/auth/oidc`: `oidc`, `google`,
-`OidcOptions`, `GoogleOptions`, `OidcProfile`, `SignInAs`.
+`OidcOptions`, `GoogleOptions`, `OidcProfile`, `SignInAs`. By
+`@haikit/auth/oauth2`: `oauth2`, `github`, `OAuth2Options`, `GitHubOptions`,
+`OAuth2Profile`, `ProviderApi`, `SignInAs`.
 
-Checked against `@haikit/*` 0.29.0 and `oauth4webapi` 3.8.8. Source:
+Checked against `@haikit/*` 0.30.0 and `oauth4webapi` 3.8.8. Source:
 `packages/auth/src/index.ts`, `packages/auth/src/memory.ts`,
-`packages/auth/src/postgres.ts` and `packages/auth/src/oidc.ts`.
+`packages/auth/src/postgres.ts`, `packages/auth/src/oidc.ts`,
+`packages/auth/src/oauth2.ts` and `packages/auth/src/provider.ts`.
 
 - [`createAuth`](#createauth): `AuthOptions`, `JwtOptions`, `CookieOptions`
 - [`Auth`](#auth): `gate`, `handler`, `signIn`, `signOut`, `verify`, `user`,
@@ -31,7 +35,8 @@ Checked against `@haikit/*` 0.29.0 and `oauth4webapi` 3.8.8. Source:
   provider's two
 - [Signing in with a provider](#signing-in-with-a-provider):
   `SignInProvider`, the flow cookie, `sign_in_error`, `oidc`, `google`,
-  `OidcOptions`, `GoogleOptions`, `OidcProfile`, `SignInAs`
+  `OidcOptions`, `GoogleOptions`, `OidcProfile`, `SignInAs`, `oauth2`,
+  `ProviderApi`, `github`, `OAuth2Options`, `GitHubOptions`, `OAuth2Profile`
 - [Stores](#stores): `AuthStore`, `memoryAuthStore`, `pgAuthStore`,
   `Queryable`, `migrate`, `schema`
 - [Security](#security)
@@ -107,7 +112,7 @@ interface CookieOptions {
 | `cookie.name` | `"__Host-haikit_token"`, or `"haikit_token"` when `secure` is `false` | The cookie the token is set in and read from |
 | `cookie.secure` | `true` | `false` sends the cookie without `Secure`, so it works over plain http, as on `http://localhost` in Safari, which keeps no `Secure` cookie there. Never set it for production. It's never inferred from a request, such as from `x-forwarded-proto` |
 | `origins` | `[]` | Origins a POST that carries the cookie may come from, besides the request's own host, such as `"https://admin.example.com"` (see [The gate](#the-gate)). Behind a proxy that rewrites `Host`, put the public origin here |
-| `providers` | `[]` | Where else a user can sign in, such as [`google()`](#google). `handler` answers two routes for each (see [Signing in with a provider](#signing-in-with-a-provider)). Needs `jwt.secret` |
+| `providers` | `[]` | Where else a user can sign in, such as [`google()`](#google) or [`github()`](#github). `handler` answers two routes for each (see [Signing in with a provider](#signing-in-with-a-provider)). Needs `jwt.secret` |
 
 An HS algorithm is only ever checked against the secrets, and any other
 algorithm only against the JWKS. So a token signed with HS256 using the
@@ -400,6 +405,11 @@ them in: the same cookie, the same gate, `/auth/me`'s renewal and `revoke`.
 does this when `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are set, and
 step 10 of [Who's asking](../tutorial-3.md) builds it.
 
+[`github()`](#github), from `@haikit/auth/oauth2`, is the same for GitHub,
+at `/auth/github`. A provider that speaks OpenID Connect goes through
+[`oidc`](#oidc), and one that speaks only OAuth 2.0 through
+[`oauth2`](#oauth2).
+
 ### `SignInProvider`
 
 ```ts
@@ -415,8 +425,9 @@ interface SignInProvider {
 }
 ```
 
-What [`oidc`](#oidc) and [`google`](#google) return, and what an app writes
-for a provider that doesn't speak OpenID Connect.
+What [`oidc`](#oidc), [`google`](#google), [`oauth2`](#oauth2) and
+[`github`](#github) return, and what an app writes for a provider none of
+them fits.
 
 | Member | Meaning |
 | --- | --- |
@@ -535,7 +546,7 @@ code:
 | `access_denied` | The user said no at the provider |
 | `refused` | The app's `user` returned `null`, or `google`'s `hostedDomain` didn't match. A custom provider's `{ error }` that isn't one of the three is `refused` too |
 | `expired` | No flow cookie of this provider's that this is the answer to: none, one that doesn't open or is past its 10 minutes, one a later sign-in has taken (a fourth at once, or one started at the same moment), or one already ended, as when the way back is opened again |
-| `failed` | Anything else: the provider's settings or its token endpoint unreachable, an ID token that doesn't check out, `user` or `signIn` throwing. Logged, with the reason |
+| `failed` | Anything else: the provider's settings or its token endpoint unreachable, an ID token that doesn't check out, `oauth2`'s `profile` throwing or returning no `sub`, `user` or `signIn` throwing. Logged, with the reason |
 
 ### `oidc`
 
@@ -691,6 +702,230 @@ ID of type **Web application**, and add `redirectUri` to its
 **Authorized redirect URIs**. Google allows `http://localhost` there, for
 development.
 
+### `oauth2`
+
+```ts
+function oauth2(options: OAuth2Options): SignInProvider;
+
+interface OAuth2Options {
+  name: string;
+  authorizationEndpoint: string;
+  tokenEndpoint: string;
+  clientId: string;
+  clientSecret: string;
+  redirectUri: string;
+  scopes?: string[];
+  params?: Record<string, string>;
+  tokenEndpointAuthMethod?: "client_secret_basic" | "client_secret_post";
+  profile(api: ProviderApi): Promise<{ sub: string; claims?: Record<string, unknown> }>;
+  user?(profile: OAuth2Profile): SignInAs | null | Promise<SignInAs | null>;
+  failureUrl?: string;
+  fetch?: typeof globalThis.fetch;
+}
+
+interface OAuth2Profile {
+  provider: string;
+  sub: string;
+  claims: Record<string, unknown>;
+}
+```
+
+From `@haikit/auth/oauth2`, which exports `SignInAs` too, the same type as
+`@haikit/auth/oidc`'s. Signs in with an OAuth 2.0 provider that doesn't
+speak OpenID Connect, such as GitHub, Discord or Spotify, through the
+authorization code flow, with PKCE and `state`, on
+[`oauth4webapi`](https://github.com/panva/oauth4webapi). There's no ID token
+to say who signed in, so the code is exchanged for an access token,
+`profile` reads the user from the provider's API with it, and the token is
+dropped: nothing keeps it, and `user` never sees it.
+
+`OAuth2Profile` has the shape of `OidcProfile`, so one `user` function can
+serve providers of both kinds.
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `name` | required | The route segment, and the default user id's prefix |
+| `authorizationEndpoint` | required | Where the user signs in, an https URL, such as `https://github.com/login/oauth/authorize`. A query it carries is kept |
+| `tokenEndpoint` | required | Where the code is exchanged for an access token, an https URL |
+| `clientId`, `clientSecret` | required | The app's client, as registered with the provider |
+| `redirectUri` | required | Where the provider sends the browser back, exactly as registered: https, or http on `localhost`, `127.0.0.1` or `[::1]`, and no `#fragment`. It's never worked out from the request, whose `Host` header can say anything |
+| `scopes` | `[]`: no `scope` is sent | What to ask for. Each is sent once, separated by spaces |
+| `params` | none | More parameters for the provider's sign-in page, such as `{ allow_signup: "false" }` |
+| `tokenEndpointAuthMethod` | `"client_secret_basic"` | How the client proves itself when it exchanges the code, as registered with the provider. There are no settings to read, so nothing else decides it |
+| `profile` | required | Who signed in, read from the provider's API with [`api.get`](#providerapi). Its `sub` is the provider's id for the user, which it never reuses, as a non-empty string: `String(user.id)` for a numeric id. Its `claims` are what `user` sees. Put an `email` there with `email_verified: true` only once the provider has verified the address |
+| `user` | `{name}:{sub}`, with the default claims | Whom the user signs in as. A string: that user id, with the default claims. An object: that user id, and exactly those claims. `null`: refused |
+| `failureUrl` | `"/"` | A path on this site a failed sign-in is sent to |
+| `fetch` | the global `fetch` | Exchanges the code, and makes `api.get`'s requests: for a proxy, or a test's stand-in provider |
+
+**The default claims** are, as `oidc`'s, the profile's `name`, when it's a
+string, and its `email`, only when `email_verified` is `true`. Nothing else
+`profile` returns goes into the token, unless `user` puts it there.
+
+**`start()`** reads nothing from the provider:
+
+1. Make a `state` and a PKCE code verifier, each 32 random bytes as
+   base64url, and the verifier's `S256` challenge. No `nonce`: with no ID
+   token, nothing would bring it back.
+2. Send the browser to `authorizationEndpoint` with `params`, then
+   `client_id`, `redirect_uri`, `response_type=code`, `scope` when there are
+   scopes, `state`, `code_challenge` and `code_challenge_method=S256`. A
+   provider that doesn't know PKCE ignores the challenge, and later the
+   verifier, as RFC 6749 §3.1 and §3.2 have it do with a parameter it doesn't
+   know.
+3. Keep `{ state, verifier }` in the flow.
+
+**`finish()`:**
+
+1. A `state` on the way back that isn't the flow's: `expired`.
+2. An `iss` on the way back (RFC 9207) is set aside, unchecked: there's no
+   issuer to check it against. Each provider comes back to a path of its own,
+   which `createAuth` makes sure of, and finishes only its own flows there:
+   RFC 9700 §4.4.2 counts that as the defence against mix-up that `iss` is.
+3. An `error=access_denied`: `access_denied`. Any other error, or a response
+   that doesn't check out: thrown, so `failed`.
+4. Exchange the code at `tokenEndpoint`, with the verifier and
+   `redirect_uri`. The client authenticates as `tokenEndpointAuthMethod`
+   says. The answer must be a `200` whose JSON has an `access_token` and a
+   `token_type`. Anything else is thrown, including a `200` that carries an
+   `error` instead, as GitHub's does. An ID token in the answer is checked,
+   against an issuer of `authorizationEndpoint`'s origin, which a provider's
+   ID tokens seldom name: a provider that issues them speaks OpenID Connect,
+   and `oidc` is the one for it.
+5. Call `profile(api)`, with an [`api`](#providerapi) for the access token.
+   It must return an object whose `sub` is a non-empty string, and whose
+   `claims`, if it has them, are an object. Anything else is thrown:
+   `oauth2: profile must return { sub, claims? }: sub a non-empty string, such as String(user.id), and claims an object`.
+   What `profile` throws is thrown on.
+6. Call `user({ provider: name, sub, claims })`, with a copy of the claims,
+   or none.
+
+Exchanging the code gives up after 10,000 ms, and so does each `api.get`.
+
+**Throws** an `Error`, at once, when:
+
+| Condition | Message |
+| --- | --- |
+| A `name` that isn't 1 to 32 lowercase letters, digits or dashes, starting with a letter | `oauth2: name must be 1 to 32 lowercase letters, digits or dashes, starting with a letter` |
+| An `authorizationEndpoint` that isn't a URL | `oauth2: authorizationEndpoint must be a URL, such as https://github.com/login/oauth/authorize` |
+| An `authorizationEndpoint` that isn't https, where the user would type their password | `oauth2: authorizationEndpoint must be an https URL` |
+| A `tokenEndpoint` that isn't a URL | `oauth2: tokenEndpoint must be a URL, such as https://github.com/login/oauth/access_token` |
+| A `tokenEndpoint` that isn't https, where the client sends its secret | `oauth2: tokenEndpoint must be an https URL` |
+| An empty `clientId` | `oauth2: clientId must be a non-empty string` |
+| An empty `clientSecret` | `oauth2: clientSecret must be a non-empty string` |
+| A `redirectUri` that isn't a URL | `oauth2: redirectUri must be a URL, such as https://app.example.com/auth/github/callback` |
+| A `redirectUri` that's http anywhere but on `localhost`, `127.0.0.1` or `[::1]`, any other scheme, or one with a `#fragment` | `oauth2: redirectUri must be https, or http on localhost, with no #fragment` |
+| `params` that set `client_id`, `redirect_uri`, `response_type`, `response_mode`, `scope`, `state`, `code_challenge` or `code_challenge_method` | `oauth2: params can't set <param>: the sign-in sets it` |
+| A `tokenEndpointAuthMethod` that's neither | `oauth2: tokenEndpointAuthMethod must be client_secret_basic or client_secret_post` |
+| A `profile` that isn't a function | `oauth2: profile must be a function: with no ID token, it's what says who signed in` |
+
+A bad `failureUrl` is refused by `createAuth`, which uses it.
+
+```ts
+import { oauth2 } from "@haikit/auth/oauth2";
+
+const discord = oauth2({
+  name: "discord",
+  authorizationEndpoint: "https://discord.com/oauth2/authorize",
+  tokenEndpoint: "https://discord.com/api/oauth2/token",
+  clientId: process.env.DISCORD_CLIENT_ID,
+  clientSecret: process.env.DISCORD_CLIENT_SECRET,
+  redirectUri: "https://app.example.com/auth/discord/callback",
+  scopes: ["identify", "email"],
+  profile: async (api) => {
+    const me = (await api.get("https://discord.com/api/users/@me")) as {
+      id: string;
+      username: string;
+      global_name: string | null;
+      email?: string | null;
+      verified?: boolean;
+    };
+    return { sub: me.id, claims: { name: me.global_name ?? me.username, email: me.email, email_verified: me.verified } };
+  },
+});
+// signs in as discord:<id>, with their name, and their email once Discord has verified it
+```
+
+### `ProviderApi`
+
+```ts
+interface ProviderApi {
+  get(url: string, headers?: Record<string, string>): Promise<unknown>;
+}
+```
+
+From `@haikit/auth/oauth2`. What [`oauth2`](#oauth2)'s `profile` is given: the
+provider's API, with the access token the sign-in was given.
+
+**`get(url, headers?)`** sends a GET to `url`, and resolves to the JSON it
+answers with:
+
+- `url` must be an https URL, since the access token goes with it. Anything
+  else is thrown before a request is made:
+  `oauth2: api.get takes an https URL: the access token goes with it`.
+- The request carries `authorization: Bearer <access token>`, which
+  `headers` can't replace, and `accept: application/json`, unless `headers`
+  sets an `accept` of its own. A header's name is matched in any case.
+- A redirect isn't followed, so the token goes only where it was sent. It,
+  and any other status than 2xx, is thrown as an `Error` with the answer's
+  `status`: `oauth2: GET <url> answered <status>`. Catch it in `profile` to
+  go on without what it asked for.
+- An answer that isn't JSON is thrown, as the `SyntaxError` that parsing it
+  throws.
+- It gives up after 10,000 ms.
+
+### `github`
+
+```ts
+function github(options: GitHubOptions): SignInProvider;
+
+interface GitHubOptions extends Omit<OAuth2Options, "name" | "authorizationEndpoint" | "tokenEndpoint" | "profile"> {
+  scopes?: string[];
+  tokenEndpointAuthMethod?: OAuth2Options["tokenEndpointAuthMethod"];
+}
+```
+
+From `@haikit/auth/oauth2`. `oauth2` with the `name` `"github"`, GitHub's
+endpoints, `https://github.com/login/oauth/authorize` and
+`https://github.com/login/oauth/access_token`, and a `profile` that reads
+GitHub's API. A GitHub user's default id is `github:` followed by their
+GitHub id, a number, which stays the same when they change their login.
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `scopes` | `["read:user", "user:email"]` | `read:user` reads the profile, and `user:email` the email addresses. Without `user:email`, the user signs in with no email |
+| `tokenEndpointAuthMethod` | `"client_secret_post"` | In the body, as GitHub's guide sends the client |
+
+Every other option is `oauth2`'s.
+
+**The profile** asks GitHub's API with `accept: application/vnd.github+json`
+and `x-github-api-version: 2022-11-28`:
+
+1. `GET https://api.github.com/user`. Its `id` is the `sub`, as a string.
+   An answer with no numeric `id` is thrown:
+   `github: GitHub's /user answered with no id`. The claims are everything it
+   answers with, except its `email`, which is only the address the user
+   chose to show on their profile. Their `name` is their `login` when it's
+   `null` or empty, as it often is on GitHub.
+2. `GET https://api.github.com/user/emails`. The address marked both
+   `primary` and `verified`, if there is one, is the claims' `email`, with
+   `email_verified: true`. A 404, as when `user:email` wasn't granted, or a
+   403, as for a GitHub App without the *Email addresses* permission, leaves
+   the claims with no email, and the user still signs in. Any other failure
+   is thrown, so `failed`.
+
+So by default a GitHub user signs in as `github:<id>`, with their name and
+their verified primary email in the token, and `user` can read their
+`login`, `avatar_url` and the rest from `profile.claims`.
+
+**Throws:** what `oauth2` throws.
+
+To register the client: on GitHub, under **Settings**, **Developer
+settings**, **OAuth Apps**, choose **New OAuth App**, and set its
+**Authorization callback URL** to `redirectUri`. An OAuth App has one
+callback URL, so register another for development, with a callback URL on
+`http://localhost`. A GitHub App works too: its user tokens ignore scopes,
+and read what its permissions allow.
+
 ## Stores
 
 ### `AuthStore`
@@ -787,15 +1022,20 @@ leaves its row, which no request can reach: its id was the conversation's.
   tokens have expired, `ttlMs` later.
 - **A provider's sign-in page is https.** `oidc` refuses to send a browser to
   an `authorization_endpoint` that isn't, whatever the provider's settings
-  say.
+  say, and `oauth2` refuses an `authorizationEndpoint` or a `tokenEndpoint`
+  that isn't.
 - **A provider's sign-in** carries a one-time `state`, so only the browser
-  that started it can finish it; a `nonce`, so an ID token can't be
-  replayed into it; and PKCE, so a code that leaks on the way back is no use
-  without the verifier the browser's flow cookie held. Its `redirectUri` is
+  that started it can finish it; through `oidc`, a `nonce`, so an ID token
+  can't be replayed into it; and PKCE, so a code that leaks on the way back
+  is no use without the verifier the browser's flow cookie held. Its `redirectUri` is
   configured, never taken from `Host`, and `return_to` is only ever a path
   on this site, so neither can send a user, or their code, elsewhere.
 - **Keep a provider's `clientSecret` with the JWT secret,** out of the code.
   With it, anyone can exchange your users' codes.
+- **A provider's access token isn't kept.** `oauth2` hands it only to
+  `profile`'s `api.get`, which sends it to https URLs only and follows no
+  redirect, and drops it once `profile` has said who signed in. It isn't
+  stored, isn't in the token `signIn` issues, and isn't passed to `user`.
 
 ## Limits
 
@@ -818,3 +1058,4 @@ leaves its row, which no request can reach: its id was the conversation's.
 | Largest flow cookie, name and value | 1,365 bytes, so three come to at most 4,096 |
 | `oidc`: reading the provider's settings, and exchanging the code, each give up after | 10,000 |
 | `oidc`: the provider's settings are kept | for the process's life, once read |
+| `oauth2`: exchanging the code, and each `api.get`, give up after | 10,000 |
