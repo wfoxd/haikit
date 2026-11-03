@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { Gate } from "@haikit/core";
 import { type Auth, type AuthStore, createAuth, memoryAuthStore } from "@haikit/auth";
-import { type OAuth2Profile, github } from "@haikit/auth/oauth2";
+import { type OAuth2Profile, type ProviderApi, oauth2 } from "@haikit/auth/oauth2";
 import { type OidcProfile, type SignInAs, google } from "@haikit/auth/oidc";
 import type { Queryable } from "@haikit/auth/postgres";
 
@@ -66,10 +66,24 @@ export async function signingIn(db: Queryable | null, port: number): Promise<{ a
       ...(googleClient
         ? [google({ ...googleClient, redirectUri: redirectUri("google", "Google", port), scopes: ["openid", "profile"], failureUrl: "/", user: asReader })]
         : []),
-      // github:<id>, with their name, or login, and avatar: no scopes, so GitHub
-      // grants their public profile only, and keeps their email addresses to itself
+      // github:<id>, with their name, or login, and avatar. No scopes, and a
+      // profile of the intro's own, not github()'s, which reads their email
+      // addresses too: GitHub answers a sign-in that asks for no scope with
+      // every scope the reader granted this app before, user:email included.
       ...(githubClient
-        ? [github({ ...githubClient, redirectUri: redirectUri("github", "GitHub", port), scopes: [], failureUrl: "/", user: asReader })]
+        ? [
+            oauth2({
+              ...githubClient,
+              name: "github",
+              authorizationEndpoint: "https://github.com/login/oauth/authorize",
+              tokenEndpoint: "https://github.com/login/oauth/access_token",
+              tokenEndpointAuthMethod: "client_secret_post", // as github() sends the client
+              redirectUri: redirectUri("github", "GitHub", port),
+              profile: githubReader,
+              failureUrl: "/",
+              user: asReader,
+            }),
+          ]
         : []),
     ],
   });
@@ -125,6 +139,18 @@ async function owners(db: Queryable): Promise<AuthStore> {
   const { migrate, pgAuthStore } = await import("@haikit/auth/postgres");
   await migrate(db); // creates auth's two tables if they don't exist
   return pgAuthStore(db);
+}
+
+/**
+ * Who signed in with GitHub, from its `/user` and nothing else: their id, the
+ * number that stays when their login changes, their name, or their login when
+ * they set none, and their avatar. Never their email addresses.
+ */
+export async function githubReader(api: ProviderApi): Promise<{ sub: string; claims: Record<string, unknown> }> {
+  const user = (await api.get("https://api.github.com/user", { accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28" })) as Record<string, unknown> | null;
+  if (typeof user?.id !== "number") throw new Error("github: GitHub's /user answered with no id");
+  const name = typeof user.name === "string" && user.name !== "" ? user.name : user.login;
+  return { sub: String(user.id), claims: { name, avatar_url: user.avatar_url } };
 }
 
 /**

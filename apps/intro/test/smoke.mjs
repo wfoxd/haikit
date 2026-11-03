@@ -1002,7 +1002,7 @@ console.log("\nsigning in with Google or GitHub");
 // conversation started signed in, while someone could, is still there: it
 // stays closed. In this process, with a database that has one owner.
 {
-  const { signingIn, asReader } = await import("../src/server/auth.ts");
+  const { signingIn, asReader, githubReader } = await import("../src/server/auth.ts");
   const CLIENTS = ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"];
   const shell = Object.fromEntries(CLIENTS.map((name) => [name, process.env[name]]));
   for (const name of CLIENTS) delete process.env[name];
@@ -1046,6 +1046,19 @@ console.log("\nsigning in with Google or GitHub");
   JSON.stringify(plain) === JSON.stringify({ userId: "github:1", claims: { name: "plain" } })
     ? ok("a sign-in with GitHub names the reader github:<id>, with their name and their avatar from https as their picture, and nothing else")
     : bad(`a sign-in with GitHub names ${JSON.stringify(hub)}, and ${JSON.stringify(plain)}`);
+
+  // what GitHub says comes from its /user alone: never /user/emails, which a
+  // sign-in asking for no scope can reach with a user:email granted before
+  const asked = [];
+  const github = (user) => ({ get: async (url, headers) => (asked.push(`${url} ${headers?.accept}`), user) });
+  const AVATAR = "https://avatars.githubusercontent.com/u/583231?v=4";
+  const read = await githubReader(github({ id: 583231, login: "octocat", name: "", avatar_url: AVATAR, email: "octocat@github.com", company: "@github" }));
+  const noId = await githubReader(github({ login: "octocat" })).then(() => "", (err) => err.message);
+  asked[0] === "https://api.github.com/user application/vnd.github+json" && asked.length === 2 && asked.every((a) => a === asked[0]) &&
+  JSON.stringify(read) === JSON.stringify({ sub: "583231", claims: { name: "octocat", avatar_url: AVATAR } }) &&
+  noId === "github: GitHub's /user answered with no id"
+    ? ok("who signed in with GitHub is read from its /user alone: their id, name or login, and avatar, and never an email address")
+    : bad(`githubReader asked ${JSON.stringify(asked)}, read ${JSON.stringify(read)}, and without an id ${noId}`);
 }
 
 console.log(failures ? `\n${failures} check(s) failed\n` : "\nsmoke: all checks passed\n");

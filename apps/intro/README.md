@@ -120,8 +120,8 @@ after it is a new one. A sign-in that comes back without one, cancelled at
 Google or GitHub say, says why beside **Sign in**.
 
 It's `@haikit/auth`, with `google()` from `@haikit/auth/oidc` as the third
-tutorial's step 10 builds it, and `github()` from `@haikit/auth/oauth2`, but
-with a gate of the intro's own
+tutorial's step 10 builds it, and `oauth2()` from `@haikit/auth/oauth2` for
+GitHub, but with a gate of the intro's own
 (`src/server/auth.ts`), since the tutorial's turns away anyone who isn't
 signed in. A request without a token is let in as anyone. One with a token
 goes to auth's own gate, which checks it, and where it came from. A
@@ -129,9 +129,12 @@ conversation no one owns is anyone's, and one started signed in is claimed
 for its reader.
 
 The intro asks Google for `openid` and `profile`: the reader's Google id,
-name and picture, and no email address. It asks GitHub for no scope, which
-grants only their public profile: their GitHub id, name, and avatar, and no
-email address. Signed in, the reader is `google:<sub>` or `github:<id>`, as
+name and picture, and no email address. It asks GitHub for no scope, and
+reads only GitHub's `/user`: their GitHub id, name, and avatar, and no email
+address. That's a profile of the intro's own, not `github()`'s, which reads
+the reader's email addresses too: GitHub answers a sign-in that asks for no
+scope with every scope the reader granted the app before, `user:email`
+included. Signed in, the reader is `google:<sub>` or `github:<id>`, as
 auth names them by default, `<id>` being the number that stays when they
 change their GitHub login. Their name, or on GitHub their login when they set
 none, and the address of their picture (only from https) are in their token.
@@ -296,8 +299,9 @@ That runs three checks:
   Markdown lost, every one of its links leading to a page and a section that
   exist, a page going only where its links lead, and `find` naming the
   section of each answer. Then it boots a second server with a Google and a
-  GitHub client, checks that signing in with GitHub asks for no scope, and
-  signs in as Google or GitHub would leave a reader, with tokens it makes
+  GitHub client, checks that signing in with GitHub asks for no scope and
+  reads only GitHub's `/user`, and signs in as Google or GitHub would leave a
+  reader, with tokens it makes
   itself: the welcome greets them by name, their conversation is no one
   else's, one started signed out is anyone's, and a token the server didn't
   sign, or a cookie sent from another site, is refused. Nothing reaches
