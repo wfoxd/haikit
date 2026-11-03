@@ -1,0 +1,11 @@
+# @haikit/mcp
+
+## 0.32.0
+
+### Minor Changes
+
+- 6f9cfe6: New, optional package: `@haikit/mcp`, for calling MCP servers' tools from inside an app's own tools. The model never sees an MCP tool: `mcpServer({ name, transport })` connects to a server over `http(url)` or `stdio({ command })`, and `server.tool(name, { args, result })` declares one of its tools, typed by the app's own schemas, which a HaiKIT tool calls with `call(args, ctx)` and then decides what the model hears and what the browser shows. An `McpTool` isn't a `Tool`, so `createHai({ tools })` can't be given one, and `npm run typetest` asserts it. `connect()` checks at startup that every declared tool is on the server. A call parses its args before sending them, and its result with the `result` schema; forwards the server's progress to `ctx.progress`, which keeps it alive; times out after 30 s without word and 90 s in all, connecting included, within the turn lease; reconnects once when the connection has dropped; and throws `McpToolError` when the tool reports an error, or `McpError` with a `reason` otherwise. The messages name only the server and the tool, with the server's words on `text`, so an error a tool lets through reaches the model as `<name> failed: <server>/<tool> …` without them. `onChange` hears that a declared tool was removed or changed its schema. `textOf(result)` makes text of a result, marking any cut.
+
+### Patch Changes
+
+- @haikit/core@0.32.0

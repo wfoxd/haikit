@@ -1,6 +1,6 @@
 {
   "name": "@haikit/mcp",
-  "version": "0.31.0",
+  "version": "0.32.0",
   "description": "Call MCP servers' tools from inside your haikit tools. The model never sees an MCP tool: your tool decides what it hears and what the browser shows. Imports only @haikit/core.",
   "keywords": [
     "haikit",
@@ -34,7 +34,7 @@
     "prepack": "npm --prefix ../.. run build"
   },
   "dependencies": {
-    "@haikit/core": "0.31.0",
+    "@haikit/core": "0.32.0",
     "@modelcontextprotocol/client": "^2.4.0",
     "@types/node": ">=22"
   },
