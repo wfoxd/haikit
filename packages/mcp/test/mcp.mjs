@@ -11,9 +11,10 @@
  * InMemoryTransport, and test/fixtures/stdio-server.mjs as a child.
  */
 
+import { createServer } from "node:http";
 import path from "node:path";
 import { InMemoryTransport } from "@modelcontextprotocol/client";
-import { McpServer, ProtocolError, Server } from "@modelcontextprotocol/server";
+import { McpServer, ProtocolError, Server, createMcpHandler } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { McpError, McpToolError, isMcpError, isMcpToolError, mcpServer, stdio, http, textOf } from "../dist/index.js";
 
@@ -738,6 +739,60 @@ console.log("\nhttp");
 {
   check("a bad URL fails when http() is called", thrown(() => http("not a url")) instanceof TypeError);
   check("a good one makes a transport factory", typeof http("https://example.com/mcp", { headers: { Authorization: "Bearer x" } }) === "function");
+}
+{
+  // a real Streamable HTTP server: the SDK's own handler, behind node:http
+  const seen = [];
+  const handler = createMcpHandler(({ requestInfo }) => {
+    const server = new McpServer({ name: "web", version: "1.0.0" });
+    server.registerTool(
+      "whoami",
+      { inputSchema: z.object({}), outputSchema: z.object({ auth: z.string().nullable(), team: z.string().nullable() }) },
+      async () => {
+        const out = { auth: requestInfo?.headers.get("authorization") ?? null, team: requestInfo?.headers.get("x-team") ?? null };
+        return { content: [{ type: "text", text: JSON.stringify(out) }], structuredContent: out };
+      },
+    );
+    return server;
+  });
+  const web = createServer(async (req, res) => {
+    seen.push({ method: req.method, headers: req.headers });
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const response = await handler.fetch(
+      new Request(`http://${req.headers.host}${req.url}`, {
+        method: req.method,
+        headers: req.headers,
+        body: chunks.length ? Buffer.concat(chunks) : undefined,
+      }),
+    );
+    res.writeHead(response.status, Object.fromEntries(response.headers));
+    if (response.body) for await (const chunk of response.body) res.write(chunk);
+    res.end();
+  });
+  await new Promise((resolve) => web.listen(0, "127.0.0.1", resolve));
+  const url = `http://127.0.0.1:${web.address().port}/mcp`;
+
+  const requestInit = { headers: { Authorization: "Bearer from-requestInit", "X-Kept": "yes" } };
+  const s = mcpServer({
+    name: "web",
+    transport: http(url, { headers: { Authorization: "Bearer from-headers", "X-Team": "core" }, requestInit }),
+  });
+  const whoami = s.tool("whoami", { args: anything, result: schema((v) => (typeof v?.auth === "string" ? null : "auth must be a string")) });
+  await s.connect();
+  const me = await whoami.call({});
+  check("over http(): connects, lists, and calls a tool", me.team === "core");
+  check("headers reach the tool, Authorization over requestInit's", me.auth === "Bearer from-headers");
+  const posts = seen.filter((r) => r.method === "POST");
+  check(
+    "…on every request: initialize, the listing and the call",
+    posts.length >= 3 && posts.every((r) => r.headers.authorization === "Bearer from-headers" && r.headers["x-team"] === "core"),
+  );
+  check("requestInit's other headers are sent too", posts.every((r) => r.headers["x-kept"] === "yes"));
+  check("…and the app's requestInit is left as it was", requestInit.headers.Authorization === "Bearer from-requestInit");
+  await s.close();
+  web.closeAllConnections();
+  await new Promise((resolve) => web.close(resolve));
 }
 
 // ── textOf ──────────────────────────────────────────────────────────────
