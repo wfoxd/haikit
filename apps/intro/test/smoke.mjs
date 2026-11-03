@@ -96,8 +96,8 @@ try {
 }
 const child = spawn(process.execPath, ["src/server/main.ts"], {
   cwd: APP,
-  // nothing from the shell: no database, and no Google client to sign in with
-  env: { ...process.env, HAI_SCRIPTED: "1", NODE_ENV: "production", PORT: String(PORT), DATABASE_URL: "", GOOGLE_CLIENT_ID: "", GOOGLE_CLIENT_SECRET: "" },
+  // nothing from the shell: no database, and no Google or GitHub client to sign in with
+  env: { ...process.env, HAI_SCRIPTED: "1", NODE_ENV: "production", PORT: String(PORT), DATABASE_URL: "", GOOGLE_CLIENT_ID: "", GOOGLE_CLIENT_SECRET: "", GITHUB_CLIENT_ID: "", GITHUB_CLIENT_SECRET: "" },
   stdio: ["ignore", "ignore", "pipe"],
 });
 let stderr = "";
@@ -114,11 +114,11 @@ try {
     const manifest = fileURLToPath(import.meta.resolve("@haikit/core/package.json", `file://${APP}/`));
     const installed = JSON.parse(readFileSync(manifest, "utf8")).version;
     about.haikit === installed ? ok(`reports the installed haikit (${installed})`) : bad(`version.json says ${about.haikit}, installed is ${installed}`);
-    // without a Google client, no one signs in, and there's nowhere to
+    // without a client, no one signs in, and there's nowhere to
     const me = await get(`${BASE}/auth/me`);
     JSON.stringify(about.signIn) === "[]" && me.status === 404
-      ? ok("without a Google client, it offers no sign-in, and has no /auth routes")
-      : bad(`without a Google client, version.json's signIn is ${JSON.stringify(about.signIn)} and /auth/me is ${me.status}`);
+      ? ok("without a Google or GitHub client, it offers no sign-in, and has no /auth routes")
+      : bad(`without a client, version.json's signIn is ${JSON.stringify(about.signIn)} and /auth/me is ${me.status}`);
 
     // the page and what it loads, built into dist/
     const page = await get(`${BASE}/`).then((r) => r.text());
@@ -882,10 +882,10 @@ try {
   child.kill("SIGKILL");
 }
 
-// ── signing in with Google, optional: a second server, with a Google client
-// to sign in with. Its tokens are made here, with its secret, as a sign-in
-// would end; nothing reaches Google.
-console.log("\nsigning in with Google");
+// ── signing in with Google or GitHub, optional: a second server, with a
+// client for each to sign in with. Its tokens are made here, with its secret,
+// as a sign-in would end; nothing reaches Google or GitHub.
+console.log("\nsigning in with Google or GitHub");
 {
   const SIGNED_PORT = PORT + 1;
   const SIGNED = `http://127.0.0.1:${SIGNED_PORT}`;
@@ -901,6 +901,9 @@ console.log("\nsigning in with Google");
       GOOGLE_CLIENT_ID: "smoke.apps.googleusercontent.com",
       GOOGLE_CLIENT_SECRET: "smoke",
       GOOGLE_REDIRECT_URI: `${SIGNED}/auth/google/callback`,
+      GITHUB_CLIENT_ID: "Ov23lismoke",
+      GITHUB_CLIENT_SECRET: "smoke",
+      GITHUB_REDIRECT_URI: `${SIGNED}/auth/github/callback`,
       HAIKIT_AUTH_SECRET: SECRET,
     },
     stdio: ["ignore", "ignore", "pipe"],
@@ -918,6 +921,8 @@ console.log("\nsigning in with Google");
   const PICTURE = "https://lh3.googleusercontent.com/a/ada=s96-c";
   const ada = cookie("google:ada", { name: "Ada", picture: PICTURE });
   const grace = cookie("google:grace", { name: "Grace" });
+  const AVATAR = "https://avatars.githubusercontent.com/u/583231?v=4";
+  const octocat = cookie("github:583231", { name: "The Octocat", picture: AVATAR });
 
   /** A POST, as one reader or none: its status, and its events or its error. */
   async function as(reader, route, body, headers = {}) {
@@ -940,21 +945,29 @@ console.log("\nsigning in with Google");
 
   try {
     if (!(await waitFor(`${SIGNED}/healthz`))) {
-      bad(`with a Google client, the server did not start\n${errors}`);
+      bad(`with a Google and a GitHub client, the server did not start\n${errors}`);
     } else {
       const about = await get(`${SIGNED}/version.json`).then((r) => r.json());
-      JSON.stringify(about.signIn) === '["google"]' ? ok("with a Google client, it offers to sign in with Google") : bad(`version.json's signIn is ${JSON.stringify(about.signIn)}`);
+      JSON.stringify(about.signIn) === '["google","github"]' ? ok("with a Google and a GitHub client, it offers to sign in with either") : bad(`version.json's signIn is ${JSON.stringify(about.signIn)}`);
       const me = (reader) => fetch(`${SIGNED}/auth/me`, { headers: reader ? { cookie: reader } : {} }).then((r) => r.json());
-      const [nobody, someone] = [await me(null), await me(ada)];
-      nobody.user === null && someone.user?.id === "google:ada" && someone.user.claims.name === "Ada" && someone.user.claims.picture === PICTURE
-        ? ok("/auth/me says who's signed in, by their Google id, name and picture, or no one")
-        : bad(`/auth/me says ${JSON.stringify(nobody)} signed out, ${JSON.stringify(someone)} signed in`);
+      const [nobody, someone, hubber] = [await me(null), await me(ada), await me(octocat)];
+      nobody.user === null && someone.user?.id === "google:ada" && someone.user.claims.name === "Ada" && someone.user.claims.picture === PICTURE &&
+      hubber.user?.id === "github:583231" && hubber.user.claims.name === "The Octocat" && hubber.user.claims.picture === AVATAR
+        ? ok("/auth/me says who's signed in, by their Google or GitHub id, name and picture, or no one")
+        : bad(`/auth/me says ${JSON.stringify(nobody)} signed out, ${JSON.stringify(someone)} and ${JSON.stringify(hubber)} signed in`);
+      // to GitHub with no scope: the public profile, and no email address
+      const there = await fetch(`${SIGNED}/auth/github`, { redirect: "manual", signal: AbortSignal.timeout(DEADLINE) });
+      const to = new URL(there.headers.get("location") ?? "about:blank");
+      there.status === 303 && `${to.origin}${to.pathname}` === "https://github.com/login/oauth/authorize" && to.searchParams.get("client_id") === "Ov23lismoke" &&
+      to.searchParams.get("redirect_uri") === `${SIGNED}/auth/github/callback` && !to.searchParams.has("scope") && to.searchParams.get("code_challenge_method") === "S256"
+        ? ok("/auth/github goes to GitHub, asking for no scope: their public profile, and no email address")
+        : bad(`/auth/github answers ${there.status}, to ${to.href}`);
 
       const open = await as(null, "/hai/start", {});
       const opens = idOf(open);
       const [anyone] = opened(open.events);
       open.status === 200 && anyone?.component === "welcome" && propsOf(open.events, anyone.handle)?.intro && propsOf(open.events, anyone.handle).reader === undefined
-        ? ok("signed out, anyone reads it, as without a Google client, and the welcome greets no one")
+        ? ok("signed out, anyone reads it, as without a client, and the welcome greets no one")
         : bad(`signed out, /hai/start is ${open.status} ${open.error ?? ""}`);
       const own = await as(ada, "/hai/start", {});
       const owns = idOf(own);
@@ -985,27 +998,31 @@ console.log("\nsigning in with Google");
   }
 }
 
-// Without a Google client no one signs in. With a database, though, a
+// Without a client no one signs in. With a database, though, a
 // conversation started signed in, while someone could, is still there: it
 // stays closed. In this process, with a database that has one owner.
 {
-  const { signingIn, asReader } = await import("../src/server/auth.ts");
-  const shell = { id: process.env.GOOGLE_CLIENT_ID, secret: process.env.GOOGLE_CLIENT_SECRET };
-  delete process.env.GOOGLE_CLIENT_ID;
-  delete process.env.GOOGLE_CLIENT_SECRET;
+  const { signingIn, asReader, githubReader } = await import("../src/server/auth.ts");
+  const CLIENTS = ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"];
+  const shell = Object.fromEntries(CLIENTS.map((name) => [name, process.env[name]]));
+  for (const name of CLIENTS) delete process.env[name];
   const db = { query: async (_sql, params) => ({ rows: params?.[0] === "owned" ? [{ user_id: "google:ada" }] : [] }) };
   const open = await signingIn(null, PORT);
   const kept = await signingIn(db, PORT);
-  if (shell.id !== undefined) process.env.GOOGLE_CLIENT_ID = shell.id;
-  if (shell.secret !== undefined) process.env.GOOGLE_CLIENT_SECRET = shell.secret;
+  Object.assign(process.env, { GITHUB_CLIENT_ID: "Ov23lismoke", GITHUB_CLIENT_SECRET: "smoke" });
+  const githubOnly = await signingIn(null, PORT);
+  for (const name of CLIENTS) shell[name] === undefined ? delete process.env[name] : (process.env[name] = shell[name]);
 
-  !open.auth && !open.gate ? ok("without a Google client or a database, no sign-in and no gate") : bad("without a Google client or a database, there's sign-in or a gate");
+  !open.auth && !open.gate && JSON.stringify(open.signIn) === "[]" ? ok("without a client or a database, no sign-in and no gate") : bad("without a client or a database, there's sign-in or a gate");
+  !!githubOnly.auth && !!githubOnly.gate && JSON.stringify(githubOnly.signIn) === '["github"]'
+    ? ok("with a GitHub client and no Google one, it offers GitHub alone")
+    : bad(`with a GitHub client alone, sign-in ${!!githubOnly.auth} offers ${JSON.stringify(githubOnly.signIn)}`);
   const who = await kept.gate?.admit({ route: "chat", method: "POST", headers: { "content-type": "application/json" } });
   const owned = who?.ok && (await kept.gate.allows(who.principal, "owned"));
   const anyones = who?.ok && (await kept.gate.allows(who.principal, "anyones"));
   !kept.auth && who?.ok && !owned && anyones
-    ? ok("without a Google client but with a database, a conversation started signed in stays closed, and the rest are anyone's")
-    : bad(`without a Google client but with a database: sign-in ${!!kept.auth}, admitted ${who?.ok}, the owned one ${owned}, the rest ${anyones}`);
+    ? ok("without a client but with a database, a conversation started signed in stays closed, and the rest are anyone's")
+    : bad(`without a client but with a database: sign-in ${!!kept.auth}, admitted ${who?.ok}, the owned one ${owned}, the rest ${anyones}`);
 
   // who a sign-in names, from what Google says: its id as auth's default
   // names them, so owners from before stay theirs, and only name and picture
@@ -1016,6 +1033,32 @@ console.log("\nsigning in with Google");
   odd.every((r) => r.userId === "google:123" && JSON.stringify(r.claims) === "{}")
     ? ok("a sign-in names the reader google:<sub>, with their name and a picture from https, and nothing else")
     : bad(`a sign-in names ${JSON.stringify(full)}, and with odd claims ${JSON.stringify(odd)}`);
+
+  // from what GitHub says: github:<id>, its name (github() puts the login there
+  // when they set none), and its avatar_url as their picture, and nothing else
+  const hub = asReader({
+    provider: "github",
+    sub: "583231",
+    claims: { login: "octocat", name: "The Octocat", avatar_url: "https://avatars.githubusercontent.com/u/583231?v=4", html_url: "https://github.com/octocat", company: "@github" },
+  });
+  const plain = asReader({ provider: "github", sub: "1", claims: { login: "plain", name: "plain", avatar_url: "http://example.com/plain.png" } });
+  JSON.stringify(hub) === JSON.stringify({ userId: "github:583231", claims: { name: "The Octocat", picture: "https://avatars.githubusercontent.com/u/583231?v=4" } }) &&
+  JSON.stringify(plain) === JSON.stringify({ userId: "github:1", claims: { name: "plain" } })
+    ? ok("a sign-in with GitHub names the reader github:<id>, with their name and their avatar from https as their picture, and nothing else")
+    : bad(`a sign-in with GitHub names ${JSON.stringify(hub)}, and ${JSON.stringify(plain)}`);
+
+  // what GitHub says comes from its /user alone: never /user/emails, which a
+  // sign-in asking for no scope can reach with a user:email granted before
+  const asked = [];
+  const github = (user) => ({ get: async (url, headers) => (asked.push(`${url} ${headers?.accept}`), user) });
+  const AVATAR = "https://avatars.githubusercontent.com/u/583231?v=4";
+  const read = await githubReader(github({ id: 583231, login: "octocat", name: "", avatar_url: AVATAR, email: "octocat@github.com", company: "@github" }));
+  const noId = await githubReader(github({ login: "octocat" })).then(() => "", (err) => err.message);
+  asked[0] === "https://api.github.com/user application/vnd.github+json" && asked.length === 2 && asked.every((a) => a === asked[0]) &&
+  JSON.stringify(read) === JSON.stringify({ sub: "583231", claims: { name: "octocat", avatar_url: AVATAR } }) &&
+  noId === "github: GitHub's /user answered with no id"
+    ? ok("who signed in with GitHub is read from its /user alone: their id, name or login, and avatar, and never an email address")
+    : bad(`githubReader asked ${JSON.stringify(asked)}, read ${JSON.stringify(read)}, and without an id ${noId}`);
 }
 
 console.log(failures ? `\n${failures} check(s) failed\n` : "\nsmoke: all checks passed\n");

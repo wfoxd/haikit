@@ -1,17 +1,39 @@
 import { useEffect, useRef, useState } from "react";
 import type { PointerEvent } from "react";
 import { Popover } from "radix-ui";
-import { GoogleLogoIcon, SignOutIcon, UserIcon, XIcon } from "@phosphor-icons/react";
+import { GithubLogoIcon, GoogleLogoIcon, SignInIcon, SignOutIcon, UserIcon, XIcon } from "@phosphor-icons/react";
 
 /** Who's signed in, as `GET /auth/me` answers: their id and their token's claims, or null. */
 export type Reader = { id: string; claims: Record<string, unknown> } | null;
 
+/** The providers a reader may sign in with, by the name the server routes them at: `/auth/{name}`. */
+export const PROVIDERS = {
+  google: { label: "Google", Icon: GoogleLogoIcon },
+  github: { label: "GitHub", Icon: GithubLogoIcon },
+};
+export type Provider = keyof typeof PROVIDERS;
+
+/** The providers this page knows, of those the server offers, in its order. */
+export function offered(names: string[] | undefined): Provider[] {
+  return (names ?? []).filter((name): name is Provider => Object.hasOwn(PROVIDERS, name));
+}
+
+/** Which provider the reader signed in with: their id is `{provider}:{their id there}`. */
+export function providerOf(reader: Reader): Provider | undefined {
+  return offered([reader?.id.split(":")[0] ?? ""])[0];
+}
+
+/** A link to sign in with a provider, as mountChat's `signIn` takes one. */
+export function signInWith(provider: Provider): { href: string; label: string } {
+  return { href: `/auth/${provider}`, label: `Sign in with ${PROVIDERS[provider].label}` };
+}
+
 /** Why a sign-in came back without one: the `sign_in_error` it came back with. */
 export const SIGN_IN_ERRORS: Record<string, string> = {
   access_denied: "Signing in was cancelled.",
-  refused: "That Google account can't sign in here.",
+  refused: "That account can't sign in here.",
   expired: "That sign-in took too long, or had ended already. Try again.",
-  failed: "Signing in with Google didn't work. Try again in a moment.",
+  failed: "Signing in didn't work. Try again in a moment.",
 };
 
 /** What to say about a sign-in that came back with this `sign_in_error`, if it did: a code not listed as `failed`. */
@@ -32,23 +54,65 @@ const CLOSE_MS = 200;
 const BUTTON =
   "inline-flex h-[34px] flex-none cursor-pointer items-center gap-[7px] border-2 border-transparent px-2 text-[13px] font-semibold text-hai-dim hover:border-hai-line hover:bg-hai-hover hover:text-hai-fg disabled:cursor-default disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-hai-accent";
 
+const YOURS = "The conversations you start while signed in are yours alone: no one else can open them.";
+
 /**
- * Signing in with Google, at the end of the header: a link to sign in, or
- * the reader's picture, which shows who's signed in and offers to sign out.
- * It's optional: signed out, the introduction is as it is without it.
- * Signing in or out leaves the page, so the conversation after it is a new one.
+ * Signing in with Google or GitHub, at the end of the header: a link to sign
+ * in, or the reader's picture, which shows who's signed in and offers to sign
+ * out. With both, Sign in opens a link to each. It's optional: signed out,
+ * the introduction is as it is without it. Signing in or out leaves the page,
+ * so the conversation after it is a new one.
  */
-export function Account({ reader, error }: { reader: Reader; error?: string }) {
+export function Account({ reader, providers, error }: { reader: Reader; providers: Provider[]; error?: string }) {
   const [note, setNote] = useState(error);
   if (reader) return <Profile reader={reader} />;
   return (
     <span className="relative inline-flex flex-none">
-      <a href="/auth/google" className={BUTTON} title="Sign in with Google: the conversations you start are yours alone">
-        <GoogleLogoIcon className="size-[18px]" />
-        <span className="max-[900px]:sr-only">Sign in</span>
-      </a>
+      {providers.length === 1 ? <Way provider={providers[0]} /> : <Ways providers={providers} />}
       {note && <Note text={note} dismiss={() => setNote(undefined)} />}
     </span>
+  );
+}
+
+/** Sign in, where there's one way: a link to it. */
+function Way({ provider }: { provider: Provider }) {
+  const { label, Icon } = PROVIDERS[provider];
+  return (
+    <a href={`/auth/${provider}`} className={BUTTON} title={`Sign in with ${label}: the conversations you start are yours alone`}>
+      <Icon className="size-[18px]" />
+      <span className="max-[900px]:sr-only">Sign in</span>
+    </a>
+  );
+}
+
+/** Sign in, where there's more than one way: a click opens a link to each, and what signing in does. */
+function Ways({ providers }: { providers: Provider[] }) {
+  return (
+    <Popover.Root>
+      <Popover.Trigger className={`${BUTTON} data-[state=open]:border-hai-line data-[state=open]:bg-hai-hover`}>
+        <SignInIcon className="size-[18px]" />
+        <span className="max-[900px]:sr-only">Sign in</span>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content
+          align="end"
+          sideOffset={4}
+          aria-label="Sign in"
+          className="z-50 w-[min(18rem,calc(100vw-24px))] border-2 border-hai-line bg-hai-panel p-3 text-hai-fg shadow-sm outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 motion-reduce:animate-none"
+        >
+          {providers.map((provider) => {
+            const { label, Icon } = PROVIDERS[provider];
+            return (
+              <a key={provider} href={`/auth/${provider}`} className={`${BUTTON} w-full`}>
+                <Icon className="size-[18px]" />
+                Sign in with {label}
+              </a>
+            );
+          })}
+          <p className="mt-2 border-t-2 border-hai-line pt-2.5 text-xs/snug text-hai-dim">{YOURS}</p>
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
   );
 }
 
@@ -73,6 +137,9 @@ function Profile({ reader }: { reader: NonNullable<Reader> }) {
   useEffect(() => () => clearTimeout(timer.current), []);
   const name = typeof reader.claims.name === "string" ? reader.claims.name : undefined;
   const picture = pictureOf(reader);
+  const via = providerOf(reader);
+  const how = via ? ` with ${PROVIDERS[via].label}` : "";
+  const Via = via ? PROVIDERS[via].Icon : undefined;
 
   const show = (next: boolean) => {
     clearTimeout(timer.current);
@@ -127,7 +194,7 @@ function Profile({ reader }: { reader: NonNullable<Reader> }) {
             card.current?.focus();
           }
         }}
-        aria-label={name ? `${name}, signed in with Google` : "Signed in with Google"}
+        aria-label={name ? `${name}, signed in${how}` : `Signed in${how}`}
         className="inline-flex h-[34px] flex-none cursor-pointer items-center border-2 border-transparent px-1 hover:border-hai-line hover:bg-hai-hover focus-visible:outline-2 focus-visible:outline-hai-accent data-[state=open]:border-hai-line data-[state=open]:bg-hai-hover"
       >
         <Avatar name={name} picture={picture} className="size-6 text-[10px]" />
@@ -164,14 +231,12 @@ function Profile({ reader }: { reader: NonNullable<Reader> }) {
             <div className="min-w-0">
               {name && <p className="truncate font-heading text-[15px] font-semibold">{name}</p>}
               <p className="flex items-center gap-1.5 text-xs text-hai-dim">
-                <GoogleLogoIcon className="size-3.5 flex-none" />
-                Signed in with Google
+                {Via && <Via className="size-3.5 flex-none" />}
+                Signed in{how}
               </p>
             </div>
           </div>
-          <p className="mt-3 border-t-2 border-hai-line pt-2.5 text-xs/snug text-hai-dim">
-            The conversations you start while signed in are yours alone: no one else can open them.
-          </p>
+          <p className="mt-3 border-t-2 border-hai-line pt-2.5 text-xs/snug text-hai-dim">{YOURS}</p>
           <button type="button" className={`${BUTTON} mt-2 w-full`} disabled={leaving} onClick={signOut}>
             <SignOutIcon className="size-[18px]" />
             Sign out
@@ -187,7 +252,7 @@ function Profile({ reader }: { reader: NonNullable<Reader> }) {
   );
 }
 
-/** Their Google picture's address, if their token has one: only from https. */
+/** Their picture's address, from Google or GitHub, if their token has one: only from https. */
 function pictureOf(reader: NonNullable<Reader>): string | undefined {
   const { picture } = reader.claims;
   return typeof picture === "string" && picture.startsWith("https://") ? picture : undefined;
@@ -195,7 +260,7 @@ function pictureOf(reader: NonNullable<Reader>): string | undefined {
 
 /**
  * A picture of the reader, square as the header is: their initials, covered
- * by their Google picture once it loads. A picture that won't load leaves the
+ * by their picture once it loads. A picture that won't load leaves the
  * initials, and no name leaves a figure.
  */
 function Avatar({ name, picture, className }: { name?: string; picture?: string; className: string }) {
@@ -205,7 +270,7 @@ function Avatar({ name, picture, className }: { name?: string; picture?: string;
     <span className={`relative inline-flex flex-none items-center justify-center overflow-hidden bg-hai-accent-soft font-semibold text-hai-accent ${className}`}>
       {letters ? <span aria-hidden>{letters}</span> : <UserIcon aria-hidden className="size-3/5" />}
       {picture && !broken && (
-        // Google is told nothing of the page it's shown on
+        // Google or GitHub is told nothing of the page it's shown on
         <img src={picture} alt="" referrerPolicy="no-referrer" className="absolute inset-0 size-full object-cover" onError={() => setBroken(true)} />
       )}
     </span>

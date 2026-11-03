@@ -528,15 +528,22 @@ try {
     window.matchMedia = globalThis.matchMedia = narrow;
   }
 
-  // ── signing in with Google, at the end of the header
+  // ── signing in with Google or GitHub, at the end of the header
   console.log("\naccount");
   {
     const { createElement } = await import("react");
     const { createRoot } = await import("react-dom/client");
-    const { Account, SIGN_IN_ERRORS, signInError } = await vite.ssrLoadModule("/src/client/account.tsx");
+    const { Account, SIGN_IN_ERRORS, offered, providerOf, signInError, signInWith } = await vite.ssrLoadModule("/src/client/account.tsx");
+    check("it offers the providers it knows, of those the server names, in its order, the map's inherited names not among them",
+      JSON.stringify(offered(["github", "gitlab", "google", "__proto__", "toString"])) === '["github","google"]' && JSON.stringify(offered(undefined)) === "[]");
+    check("a reader's provider is their id's prefix, if it's one it knows",
+      providerOf({ id: "github:583231", claims: {} }) === "github" && providerOf({ id: "google:1", claims: {} }) === "google" &&
+      [null, { id: "ada", claims: {} }, { id: "constructor:1", claims: {} }].every((reader) => providerOf(reader) === undefined));
+    check("signing in again links to the provider, named", JSON.stringify(signInWith("github")) === JSON.stringify({ href: "/auth/github", label: "Sign in with GitHub" }));
     check("a sign_in_error says why, and one it doesn't know, the map's inherited names included, says it failed",
       signInError(null) === undefined && signInError("access_denied") === SIGN_IN_ERRORS.access_denied &&
       ["__proto__", "constructor", "toString", "nonsense"].every((code) => signInError(code) === SIGN_IN_ERRORS.failed));
+    const wait = (ms) => act(() => new Promise((resolve) => setTimeout(resolve, ms)));
     async function account(props) {
       const el = document.createElement("div");
       document.body.append(el);
@@ -544,11 +551,31 @@ try {
       await act(async () => root.render(createElement(Account, props)));
       return { el, unmount: () => act(async () => root.unmount()) };
     }
-    const out = await account({ reader: null });
+    const out = await account({ reader: null, providers: ["google"] });
     const link = out.el.querySelector('a[href="/auth/google"]');
-    check("signed out, it links to sign in with Google, and says nothing else", text(link ?? out.el).includes("Sign in") && !out.el.querySelector('[role="alert"]'));
+    check("signed out, with Google alone, it links to sign in with Google, and says nothing else", text(link ?? out.el).includes("Sign in") && link.title.startsWith("Sign in with Google:") && !out.el.querySelector('[role="alert"]'));
     await out.unmount();
-    const denied = await account({ reader: null, error: SIGN_IN_ERRORS.access_denied });
+    const hubOnly = await account({ reader: null, providers: ["github"] });
+    const hubLink = hubOnly.el.querySelector('a[href="/auth/github"]');
+    check("with GitHub alone, it links to sign in with GitHub", text(hubLink ?? hubOnly.el).includes("Sign in") && hubLink.title.startsWith("Sign in with GitHub:") && hubOnly.el.querySelectorAll("a").length === 1);
+    await hubOnly.unmount();
+
+    // with both, Sign in opens a link to each
+    const both = await account({ reader: null, providers: ["google", "github"] });
+    const ways = () => document.querySelector('[role="dialog"][aria-label="Sign in"]');
+    const opener = button(both.el, "Sign in");
+    check("with both, it's a Sign in button, and no link until it's clicked", !!opener && !both.el.querySelector("a") && !ways());
+    await click(opener);
+    const choices = [...(ways()?.querySelectorAll("a") ?? [])];
+    check("a click opens a link to sign in with each, in the server's order, and says what signing in does",
+      choices.map((a) => `${a.getAttribute("href")} ${text(a).trim()}`).join() === "/auth/google Sign in with Google,/auth/github Sign in with GitHub" && text(ways()).includes("yours alone"));
+    // Radix focuses the card, not a link in it, so Tab reaches the first
+    check("…and takes the focus, so Tab reaches them", document.activeElement === ways());
+    await key(document.body, "Escape");
+    await wait(0);
+    check("…and Escape puts it away, the focus back on Sign in", !ways() && document.activeElement === opener);
+    await both.unmount();
+    const denied = await account({ reader: null, providers: ["google"], error: SIGN_IN_ERRORS.access_denied });
     check("a sign-in that came back without one says why, under the link", denied.el.querySelector('[role="alert"]')?.textContent === SIGN_IN_ERRORS.access_denied && !!denied.el.querySelector('a[href="/auth/google"]'));
     await click(denied.el.querySelector('button[aria-label="Dismiss"]'));
     check("…until it's dismissed", !denied.el.querySelector('[role="alert"]') && !!denied.el.querySelector('a[href="/auth/google"]'));
@@ -557,7 +584,6 @@ try {
     // "…, signed in with Google", or with no name "Signed in with Google": jsdom ignores the case without the i, browsers don't
     const face = (el) => el.querySelector('button[aria-label$="signed in with Google" i]');
     const card = () => document.querySelector(`[role="dialog"][aria-label="Who's signed in"]`);
-    const wait = (ms) => act(() => new Promise((resolve) => setTimeout(resolve, ms)));
     const pointer = (node, type, pointerType) => fire(node, new window.PointerEvent(type, { bubbles: true, pointerType, relatedTarget: document.body }));
     const realFetch = globalThis.fetch;
     /** Sign out from the open card, the server answering as `answer` does: what was posted, and where the page went. */
@@ -625,6 +651,20 @@ try {
     const tanaka = await account({ reader: { id: "google:4", claims: { name: "田中 太郎" } } });
     check("initials a letter at a time, from the first name and the last", text(face(tanaka.el)).trim() === "田太");
     await tanaka.unmount();
+
+    // signed in with GitHub, it says so: on the picture, and in the card
+    const AVATAR = "https://avatars.githubusercontent.com/u/583231?v=4";
+    const octocat = await account({ reader: { id: "github:583231", claims: { name: "The Octocat", picture: AVATAR } }, providers: ["google", "github"] });
+    const hubFace = octocat.el.querySelector("button[aria-label]");
+    check("signed in with GitHub, the picture says so, with their GitHub avatar", hubFace?.getAttribute("aria-label") === "The Octocat, signed in with GitHub" && hubFace.querySelector("img")?.getAttribute("src") === AVATAR);
+    await click(hubFace);
+    check("…and so does the card", text(card() ?? document.createElement("div")).includes("The OctocatSigned in with GitHub"));
+    await key(document.body, "Escape");
+    await wait(0);
+    await octocat.unmount();
+    const unknown = await account({ reader: { id: "ada", claims: {} }, providers: ["google"] });
+    check("signed in some way it doesn't know, it says only that", unknown.el.querySelector("button[aria-label]")?.getAttribute("aria-label") === "Signed in");
+    await unknown.unmount();
 
     // A sign-out that fails leaves the reader signed in: the card says so, and
     // stays, though it opened under the mouse and the mouse then leaves.
