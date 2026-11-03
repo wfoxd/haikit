@@ -6,7 +6,9 @@
 # Optional: ANTHROPIC_API_KEY (Claude Haiku 5.5 instead of the scripted guide),
 # HAI_MODEL (another Claude model), DATABASE_URL (durable conversations in
 # Postgres instead of memory), GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (sign
-# in with Google, which then needs GOOGLE_REDIRECT_URI and HAIKIT_AUTH_SECRET).
+# in with Google, which then needs GOOGLE_REDIRECT_URI and HAIKIT_AUTH_SECRET),
+# GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET (sign in with GitHub, which then
+# needs GITHUB_REDIRECT_URI and HAIKIT_AUTH_SECRET).
 
 # The page: Vite builds the React components, the menu and the stylesheet
 # (Tailwind and shadcn/ui) into dist/. Only dist/ leaves this stage.

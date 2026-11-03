@@ -23,7 +23,7 @@ statement by statement, at the version the page names.
 | `@haikit/openai` | The model adapter for OpenAI models, over the Responses API | Node |
 | `@haikit/client` | The browser runtime, the default chat UI and its stylesheet | browser, no build step |
 | `@haikit/react` | Write surfaces and notices as React components | browser |
-| `@haikit/auth` | Sign-in from a verified JWT, and which conversations are each user's: a gate for `nodeHandler`, with a Postgres store at `@haikit/auth/postgres`, and sign-in with Google or any OpenID Connect provider at `@haikit/auth/oidc` | Node |
+| `@haikit/auth` | Sign-in from a verified JWT, and which conversations are each user's: a gate for `nodeHandler`, with a Postgres store at `@haikit/auth/postgres`, sign-in with Google or any OpenID Connect provider at `@haikit/auth/oidc`, and with GitHub or any OAuth 2.0 provider at `@haikit/auth/oauth2` | Node |
 
 ## Contents
 
@@ -298,6 +298,18 @@ From `@haikit/auth/oidc`:
 | `OidcOptions` | interface | [Sign-in and ownership](auth.md#oidc) |
 | `OidcProfile` | interface | [Sign-in and ownership](auth.md#oidc) |
 | `SignInAs` | type | [Sign-in and ownership](auth.md#oidc) |
+
+From `@haikit/auth/oauth2`:
+
+| Symbol | Kind | Page |
+| --- | --- | --- |
+| `github` | function | [Sign-in and ownership](auth.md#github) |
+| `GitHubOptions` | interface | [Sign-in and ownership](auth.md#github) |
+| `oauth2` | function | [Sign-in and ownership](auth.md#oauth2) |
+| `OAuth2Options` | interface | [Sign-in and ownership](auth.md#oauth2) |
+| `OAuth2Profile` | interface | [Sign-in and ownership](auth.md#oauth2) |
+| `ProviderApi` | interface | [Sign-in and ownership](auth.md#providerapi) |
+| `SignInAs` | type | [Sign-in and ownership](auth.md#oauth2) |
 
 From `@haikit/auth/postgres`:
 

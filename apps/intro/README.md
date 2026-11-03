@@ -101,11 +101,13 @@ the page polls instead, so the count still arrives, a little later.
 
 ## Signing in
 
-Given a Google client, the introduction lets a reader sign in with Google,
-and only if they want to: signed out, it's as it is without one. **Sign in**,
-at the end of the header, goes to Google and back. Signed in, the header
-shows the reader's Google picture, square, over their initials. A mouse
-resting on the picture shows who's signed in, their picture and name, and
+Given a Google client, a GitHub OAuth App, or both, the introduction lets a
+reader sign in with Google or GitHub, and only if they want to: signed out,
+it's as it is without one. **Sign in**, at the end of the header, goes to
+Google or GitHub and back; with both, a click on it offers a link to each.
+Signed in, the header shows the reader's picture from Google or GitHub,
+square, over their initials. A mouse resting on the picture shows who's
+signed in, their picture and name, which of the two they signed in with, and
 **Sign out**, until it leaves. A click, a tap or a key on it shows the same,
 to stay until Escape or a click elsewhere, as does a click in it. A sign-out
 that fails says so there. The welcome greets them by name, and the
@@ -115,10 +117,11 @@ conversation started signed out is anyone's who has its id, as every
 conversation is without sign-in, and the reader can carry on in it once
 they've signed in. Signing in or out leaves the page, so the conversation
 after it is a new one. A sign-in that comes back without one, cancelled at
-Google say, says why beside **Sign in**.
+Google or GitHub say, says why beside **Sign in**.
 
-It's `@haikit/auth`, with `google()` from `@haikit/auth/oidc`, as the third
-tutorial's step 10 builds it, but with a gate of the intro's own
+It's `@haikit/auth`, with `google()` from `@haikit/auth/oidc` as the third
+tutorial's step 10 builds it, and `github()` from `@haikit/auth/oauth2`, but
+with a gate of the intro's own
 (`src/server/auth.ts`), since the tutorial's turns away anyone who isn't
 signed in. A request without a token is let in as anyone. One with a token
 goes to auth's own gate, which checks it, and where it came from. A
@@ -126,11 +129,14 @@ conversation no one owns is anyone's, and one started signed in is claimed
 for its reader.
 
 The intro asks Google for `openid` and `profile`: the reader's Google id,
-name and picture, and no email address. Signed in, the reader is
-`google:<sub>`, as auth names them by default, and their name and the address
-of their picture (only from https) are in their token. The browser loads the
-picture from Google without a referrer, and shows the initials if it won't
-load. A reader who signed in before the picture was kept gets it at their
+name and picture, and no email address. It asks GitHub for no scope, which
+grants only their public profile: their GitHub id, name, and avatar, and no
+email address. Signed in, the reader is `google:<sub>` or `github:<id>`, as
+auth names them by default, `<id>` being the number that stays when they
+change their GitHub login. Their name, or on GitHub their login when they set
+none, and the address of their picture (only from https) are in their token.
+The browser loads the picture from Google or GitHub without a referrer, and
+shows the initials if it won't load. A reader who signed in before the picture was kept gets it at their
 next sign-in. The gate notes it as their requests arrive,
 and the welcome looks it up by the conversation's owner. The guide never
 sees it: the welcome's digest leaves it out.
@@ -138,14 +144,16 @@ sees it: the welcome's digest leaves it out.
 With `DATABASE_URL`, who owns which conversation is kept in Postgres beside
 the conversations, with `@haikit/auth/postgres`. In memory, a restart would
 forget the owners and leave the conversations in the database open to anyone
-with their ids. A deployment with a database that loses its Google client
-keeps those conversations closed, until there's a client again for their
-readers to sign in with. The variables are in [Deploy](#deploy). Locally, a Google
-client whose redirect URI is `http://localhost:5180/auth/google/callback`
-is all it takes:
+with their ids. A deployment with a database that loses a client keeps its
+readers' conversations closed, until there's a client again for them to sign
+in with. The variables are in [Deploy](#deploy). Locally, a Google client
+whose redirect URI is `http://localhost:5180/auth/google/callback`, or a
+GitHub OAuth App whose callback URL is
+`http://localhost:5180/auth/github/callback`, is all it takes. Set either
+pair, or both:
 
 ```bash
-GOOGLE_CLIENT_ID=… GOOGLE_CLIENT_SECRET=… npm start
+GOOGLE_CLIENT_ID=… GOOGLE_CLIENT_SECRET=… GITHUB_CLIENT_ID=… GITHUB_CLIENT_SECRET=… npm start
 ```
 
 ## The tutorials
@@ -274,8 +282,9 @@ That runs three checks:
   surface offers nothing, that every kind of block draws, and that markup in
   a payload stays text. It mounts the contents rail too, wide and narrow:
   what it lists, the message each choice sends, and which page it marks. And
-  the header's sign-in: signed out, signed in, and back from a sign-in that
-  failed; the reader's picture, or their initials, and who's signed in on it,
+  the header's sign-in: signed out with Google, GitHub or both, signed in
+  with either, and back from a sign-in that failed; the reader's picture, or
+  their initials, and who's signed in on it,
   with Sign out: opened by a click or a resting mouse, where the focus goes,
   and a sign-out that fails.
 - **`npm run smoke`** builds the page, boots the server on it as the container
@@ -286,11 +295,13 @@ That runs three checks:
   typing. For the reference manual: every page rendering with nothing in its
   Markdown lost, every one of its links leading to a page and a section that
   exist, a page going only where its links lead, and `find` naming the
-  section of each answer. Then it boots a second server with a Google client
-  and signs in as Google would leave a reader, with tokens it makes itself:
-  the welcome greets them by name, their conversation is no one else's, one
-  started signed out is anyone's, and a token the server didn't sign, or a
-  cookie sent from another site, is refused. Nothing reaches Google.
+  section of each answer. Then it boots a second server with a Google and a
+  GitHub client, checks that signing in with GitHub asks for no scope, and
+  signs in as Google or GitHub would leave a reader, with tokens it makes
+  itself: the welcome greets them by name, their conversation is no one
+  else's, one started signed out is anyone's, and a token the server didn't
+  sign, or a cookie sent from another site, is refused. Nothing reaches
+  Google or GitHub.
 
 ## Which haikit it runs
 
@@ -338,9 +349,11 @@ returns `ok`.
 | `HAI_SCRIPTED` | unset | `1` uses the scripted guide even when a key is set |
 | `HAI_MODEL` | `claude-haiku-5-5` | Which Claude model guides. Empty means the default |
 | `DATABASE_URL` | unset | Postgres connection string. When set, conversations are stored with `@haikit/postgres` and survive restarts, and with sign-in, who owns which with `@haikit/auth/postgres`. Their tables are created on startup |
-| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | unset | A Google Cloud OAuth client, of type Web application. When both are set, a reader can sign in with Google (see [Signing in](#signing-in)). Unset, no one signs in, and there are no `/auth` routes |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | unset | A Google Cloud OAuth client, of type Web application. When both are set, a reader can sign in with Google (see [Signing in](#signing-in)). Unset, and without a GitHub client, no one signs in, and there are no `/auth` routes |
 | `GOOGLE_REDIRECT_URI` | `http://localhost:<PORT>/auth/google/callback`, and none in production | This site's `/auth/google/callback`, exactly as registered with the client, such as `https://intro.example.com/auth/google/callback`. Required in production with a Google client: the server won't start without it |
-| `HAIKIT_AUTH_SECRET` | a new random one each run, and none in production | Signs the readers' tokens: at least 32 bytes, such as `openssl rand -base64 32`. With a random one, every sign-in ends when the server stops. Required in production with a Google client: the server won't start without it |
+| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | unset | A GitHub OAuth App's client id and one of its client secrets. When both are set, a reader can sign in with GitHub (see [Signing in](#signing-in)) |
+| `GITHUB_REDIRECT_URI` | `http://localhost:<PORT>/auth/github/callback`, and none in production | This site's `/auth/github/callback`, exactly as the OAuth App's callback URL, such as `https://intro.example.com/auth/github/callback`. Required in production with a GitHub client: the server won't start without it |
+| `HAIKIT_AUTH_SECRET` | a new random one each run, and none in production | Signs the readers' tokens: at least 32 bytes, such as `openssl rand -base64 32`. With a random one, every sign-in ends when the server stops. Required in production with a Google or GitHub client: the server won't start without it |
 
 Without `DATABASE_URL` the course uses `memoryStore()`, which is meant for
 development: conversations are lost on restart and never evicted, and every
@@ -410,8 +423,8 @@ scripted guide on `memoryStore()`.
   database password in `DATABASE_URL` included.
 - **Keep each value on one line.** A key broken across two lines is read only
   up to the break.
-- **It holds secrets**: the API key, the database password, the Google
-  client's secret and `HAIKIT_AUTH_SECRET`. Keep it out of
+- **It holds secrets**: the API key, the database password, the Google and
+  GitHub clients' secrets and `HAIKIT_AUTH_SECRET`. Keep it out of
   the repository, and don't print it to share a problem. Check a setting is
   there with `grep -c '^DATABASE_URL=' .env`, which prints a count, not the value.
 
@@ -434,8 +447,9 @@ src/server/course/         the lessons, the introduction, the glossary and the a
 src/server/excerpts.ts     reads the code the lessons quote
 src/server/tutorial.ts     reads content/tutorial.md, tutorial-2.md and tutorial-3.md into the tutorials' pages
 src/server/reference.ts    reads content/reference/ into the manual's pages, and checks its links
-src/server/auth.ts         signing in with Google, when there's a Google client, and the gate that
-                           lets anyone in and keeps a signed-in reader's conversations theirs
+src/server/auth.ts         signing in with Google or GitHub, when there's a client for it, and the
+                           gate that lets anyone in and keeps a signed-in reader's conversations
+                           theirs
 src/server/main.ts         createHai, routes, the page: through Vite while developing, from dist/
                            in production
 index.html                 the page

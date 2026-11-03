@@ -100,8 +100,8 @@ async function postgres(pool: Pool): Promise<StoreAdapter> {
   return pgStore(pool);
 }
 
-// Sign in with Google, once there's a Google client: optional for the reader.
-const { auth, gate } = await signingIn(db, PORT);
+// Sign in with Google or GitHub, once there's a client for either: optional for the reader.
+const { auth, signIn, gate } = await signingIn(db, PORT);
 
 // #region create-hai
 const hai = createHai({
@@ -125,10 +125,10 @@ const hai = createHai({
   signals: [online], // the header's count of people reading now
 });
 
-// signed in with Google, a reader's conversations are theirs alone (auth.ts)
+// signed in, a reader's conversations are theirs alone (auth.ts)
 const handleHai = nodeHandler(hai, "/hai", { gate });
 // #endregion create-hai
-const handleAuth = auth?.handler("/auth"); // /auth/google, its callback, /auth/me, /auth/sign-out
+const handleAuth = auth?.handler("/auth"); // /auth/google, /auth/github, their callbacks, /auth/me, /auth/sign-out
 
 // People reading now, for the header. Presence counts each open tab, on every
 // server sharing the store; the header hears it at most every few seconds,
@@ -179,7 +179,7 @@ const VERSION = JSON.stringify({
   packages: PACKAGES,
   model: hai.config.model.id,
   store: DATABASE_URL ? "postgres" : "memory",
-  signIn: auth ? ["google"] : [], // the header offers what's here
+  signIn, // ["google", "github"], either, or none: the header offers what's here
 });
 
 const MENU = JSON.stringify(menu());
@@ -229,7 +229,7 @@ server.listen(PORT, () => {
   const model = SCRIPTED ? "scripted guide" : hai.config.model.id;
   const store = DATABASE_URL ? "postgres" : "memory (development only)";
   const page = PRODUCTION ? "built" : "vite dev";
-  const signing = auth ? "google" : "off";
+  const signing = signIn.join(",") || "off";
   console.log(`haikit intro  http://localhost:${PORT}   haikit ${PACKAGES[0].version}   ${page}   model=${model}   store=${store}   sign-in=${signing}`);
 });
 

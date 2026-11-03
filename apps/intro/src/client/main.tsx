@@ -1,7 +1,7 @@
 import "./globals.css";
 import { createRoot } from "react-dom/client";
 import { mountChat } from "@haikit/client/app.js";
-import { Account, type Reader, signInError } from "./account.tsx";
+import { Account, type Reader, offered, providerOf, signInError, signInWith } from "./account.tsx";
 import { registry } from "./components.tsx";
 import { Contents, type MenuData } from "./contents.tsx";
 import { Online } from "./online.tsx";
@@ -9,10 +9,20 @@ import { Online } from "./online.tsx";
 const root = document.querySelector<HTMLElement>("#app")!;
 
 // Which HaiKIT this server runs, read from its packages at startup, and
-// where a reader can sign in: ["google"], or none.
+// where a reader can sign in: ["google", "github"], either, or none.
 const about: { haikit: string; signIn?: string[] } | null = await fetch("/version.json")
   .then((r) => r.json())
   .catch(() => null);
+
+// Who's signed in, where a reader can: a sign-in that expires is signed in
+// again the way it was, with Google or with GitHub.
+const providers = offered(about?.signIn);
+const { user: reader }: { user: Reader } = providers.length
+  ? await fetch("/auth/me")
+      .then((r) => r.json())
+      .catch(() => ({ user: null }))
+  : { user: null };
+const signInAgain = signInWith(providerOf(reader) ?? providers[0] ?? "google");
 
 // Watching the model's context is half the course, so a first visit opens
 // the context drawer. The client remembers it under this documented key
@@ -30,7 +40,7 @@ const chat = mountChat({
   subtitle: about ? `built with HaiKIT ${about.haikit}` : "built with HaiKIT",
   placeholder: "a lesson number, “next”, or “what is a digest?”",
   // shown if the server turns the chat away, as once a sign-in has expired
-  signIn: { href: "/auth/google", label: "Sign in with Google" },
+  signIn: signInAgain, // { href: "/auth/github", label: "Sign in with GitHub" }
 });
 // #endregion mount
 
@@ -64,13 +74,10 @@ if (menu && grid) {
   createRoot(slot).render(<Contents chat={chat} data={menu} main={grid} button={button} />);
 }
 
-// Signing in with Google, at the end of the header, where the server has a
-// Google client. A sign-in that came back without one says why, once: the
-// reason leaves the address, so a reload doesn't say it again.
-if (actions && about?.signIn?.includes("google")) {
-  const { user }: { user: Reader } = await fetch("/auth/me")
-    .then((r) => r.json())
-    .catch(() => ({ user: null }));
+// Signing in with Google or GitHub, at the end of the header, where the
+// server has a client for either. A sign-in that came back without one says
+// why, once: the reason leaves the address, so a reload doesn't say it again.
+if (actions && providers.length) {
   const url = new URL(location.href);
   const code = url.searchParams.get("sign_in_error");
   if (code !== null) {
@@ -80,5 +87,5 @@ if (actions && about?.signIn?.includes("google")) {
   const account = document.createElement("span");
   account.className = "contents";
   actions.append(account);
-  createRoot(account).render(<Account reader={user} error={signInError(code)} />);
+  createRoot(account).render(<Account reader={reader} providers={providers} error={signInError(code)} />);
 }
