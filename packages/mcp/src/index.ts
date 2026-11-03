@@ -54,11 +54,14 @@ export interface McpServerOptions {
   transport: () => Transport | Promise<Transport>;
   /**
    * How long the server may go without answering a call or reporting progress
-   * on it, in milliseconds. Also bounds connecting and listing tools. Default
-   * 30,000.
+   * on it, in milliseconds. Also bounds making the transport, connecting and
+   * listing tools. Default 30,000.
    */
   timeoutMs?: number;
-  /** The longest a call may take, progress or not, in milliseconds. Default 90,000. */
+  /**
+   * The longest a call may take, progress or not, connecting included, in
+   * milliseconds. Default 90,000.
+   */
   maxTotalMs?: number;
   /**
    * A declared tool was removed from the server, or its schema changed: seen
@@ -169,6 +172,10 @@ class Connection implements McpConnection {
   /** The connected client, or null between connections. */
   private client: Client | null = null;
   private dialing: Promise<Client> | null = null;
+  /** While a connection is being made: its client, once there is one, so `close()` can stop it. */
+  private connecting: Client | null = null;
+  /** While `transport()` is pending: gives up on it, for `close()`. */
+  private abandon: (() => void) | null = null;
   private closed = false;
   /** Clients whose connection has gone. */
   private readonly dropped = new WeakSet<Client>();
@@ -220,7 +227,9 @@ class Connection implements McpConnection {
     this.closed = true;
     const client = this.client;
     this.client = null;
-    // a connection still being made sees `closed` and closes itself
+    // a connection still being made is stopped where it is, and sees `closed`
+    this.abandon?.();
+    await this.connecting?.close().catch(() => {});
     await this.dialing?.catch(() => {});
     await client?.close();
   }
@@ -231,14 +240,37 @@ class Connection implements McpConnection {
     // one connection at a time: calls that arrive meanwhile share it
     this.dialing ??= this.dial().finally(() => {
       this.dialing = null;
+      this.connecting = null;
     });
     return this.dialing;
+  }
+
+  /**
+   * What `transport()` makes, within `timeoutMs` and unless `close()` comes
+   * first. A transport made after that is closed when it comes.
+   */
+  private async made(): Promise<Transport> {
+    const making = Promise.resolve().then(() => this.options.transport());
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const cut = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`no transport within ${this.timeoutMs} ms`)), this.timeoutMs);
+      this.abandon = () => reject(new Error("closed while the transport was being made"));
+    });
+    try {
+      return await Promise.race([making, cut]);
+    } catch (err) {
+      making.then((transport) => transport.close()).catch(() => {});
+      throw err;
+    } finally {
+      clearTimeout(timer);
+      this.abandon = null;
+    }
   }
 
   private async dial(): Promise<Client> {
     let client: Client | undefined;
     try {
-      const transport = await this.options.transport();
+      const transport = await this.made();
       const self: Client = new Client(
         { name: "haikit", version: VERSION },
         {
@@ -259,6 +291,7 @@ class Connection implements McpConnection {
         },
       );
       client = self;
+      this.connecting = self;
       self.onclose = () => {
         this.dropped.add(self);
         if (this.client === self) this.client = null;
@@ -266,7 +299,7 @@ class Connection implements McpConnection {
       await self.connect(transport, { timeout: this.timeoutMs });
     } catch (err) {
       await client?.close().catch(() => {});
-      throw this.error("connection", undefined, { cause: err });
+      throw this.error(this.closed ? "closed" : "connection", undefined, { cause: err });
     }
 
     let tools: ServerTool[];
@@ -334,35 +367,45 @@ class Connection implements McpConnection {
       });
     }
 
-    let client: Client;
-    try {
-      client = await this.open();
-    } catch (err) {
-      // named again for this call; the declared-tool check throws as it is
-      throw isMcpError(err) ? this.error(err.reason, tool, { cause: err.cause ?? err }) : err;
-    }
-
+    // maxTotalMs bounds the whole call, connecting included, and is ours to
+    // keep: the SDK checks its own maxTotalTimeout only when progress comes
+    const deadline = new AbortController();
+    const timer = setTimeout(() => deadline.abort(), def.maxTotalMs ?? this.maxTotalMs);
     let result: CallToolResult;
     try {
-      result = await client.callTool(
-        { name: tool, arguments: input as Record<string, unknown> },
-        {
-          timeout: def.timeoutMs ?? this.timeoutMs,
-          maxTotalTimeout: def.maxTotalMs ?? this.maxTotalMs,
-          // asked for whether or not anyone hears it, so progress always
-          // keeps a long call alive
-          resetTimeoutOnProgress: true,
-          onprogress: (p) => {
-            ctx?.progress?.({
-              done: p.progress,
-              ...(p.total === undefined ? {} : { total: p.total }),
-              ...(p.message === undefined ? {} : { message: p.message }),
-            });
+      let client: Client;
+      try {
+        client = await this.until(deadline.signal, tool, this.open());
+      } catch (err) {
+        // named again for this call, with what the server said; the
+        // declared-tool check throws as it is
+        if (!isMcpError(err) || err.tool === tool) throw err;
+        throw this.error(err.reason, tool, { cause: err.cause ?? err, text: err.text, code: err.code });
+      }
+      try {
+        result = await client.callTool(
+          { name: tool, arguments: input as Record<string, unknown> },
+          {
+            timeout: def.timeoutMs ?? this.timeoutMs,
+            // cancels the request, and rejects it as a timeout
+            signal: deadline.signal,
+            // asked for whether or not anyone hears it, so progress always
+            // keeps a long call alive
+            resetTimeoutOnProgress: true,
+            onprogress: (p) => {
+              ctx?.progress?.({
+                done: p.progress,
+                ...(p.total === undefined ? {} : { total: p.total }),
+                ...(p.message === undefined ? {} : { message: p.message }),
+              });
+            },
           },
-        },
-      );
-    } catch (err) {
-      throw this.failure(err, tool, client);
+        );
+      } catch (err) {
+        throw this.failure(err, tool, client);
+      }
+    } finally {
+      clearTimeout(timer);
     }
 
     const content = result.content ?? [];
@@ -392,6 +435,15 @@ class Connection implements McpConnection {
     } catch (err) {
       throw this.error("result", tool, { cause: err });
     }
+  }
+
+  /** What `promise` resolves to, or a timeout for `tool` if `signal` aborts first. */
+  private until<T>(signal: AbortSignal, tool: string, promise: Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const stop = () => reject(this.error("timeout", tool));
+      signal.addEventListener("abort", stop, { once: true });
+      promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", stop));
+    });
   }
 
   /** An SDK error, as one of ours. */

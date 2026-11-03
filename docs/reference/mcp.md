@@ -98,8 +98,8 @@ The connection to one MCP server. Nothing connects until
 | --- | --- | --- |
 | `name` | required | Names the server in errors and warnings, as in `github/search_issues` |
 | `transport` | required | Makes a connection. Called by the first `connect()` or call, and again for each reconnect, so it must make a new `Transport` each time. [`http(url)`](#http) and [`stdio({ command })`](#stdio) return one |
-| `timeoutMs` | `30_000` (30 s) | How long the server may go without answering a call or reporting progress on it. It also bounds connecting, and listing the server's tools |
-| `maxTotalMs` | `90_000` (90 s) | The longest a call may take, progress or not |
+| `timeoutMs` | `30_000` (30 s) | How long the server may go without answering a call or reporting progress on it. It also bounds making the transport, connecting, and listing the server's tools |
+| `maxTotalMs` | `90_000` (90 s) | The longest a call may take, progress or not, connecting included |
 | `onChange` | a `console.warn` | Hears that a declared tool was removed, or its schema changed. See [Changes to the server's tools](#changes-to-the-servers-tools) |
 | `versionNegotiation` | `"legacy"`, the SDK's default | Passed to the SDK as `versionNegotiation: { mode }`. `"legacy"` connects with the 2025 handshake; `"auto"` asks the server first which protocol revision it speaks; `{ pin: "<revision>" }` speaks only that one |
 
@@ -185,9 +185,10 @@ Connects, and checks every declared tool. Call it at startup, after
 declaring the tools, so a mistake stops the app there. Without it, the first
 call connects, and fails with the same error.
 
-1. `transport()` is called, and an SDK `Client` connects over what it makes,
-   within `timeoutMs`. See [The connection](#the-connection) for what the
-   client tells the server.
+1. `transport()` is called, and must make its `Transport` within
+   `timeoutMs`. One made later is closed when it comes. An SDK `Client`
+   connects over it, within `timeoutMs`. See [The connection](#the-connection)
+   for what the client tells the server.
 2. The server's tools are listed, every page of them, within `timeoutMs`.
 3. On the first connection, each declared tool is checked: the server must
    have a tool of that name, and it mustn't be one that can only run as an
@@ -203,9 +204,10 @@ it.
 | When | With |
 | --- | --- |
 | `transport()` throws or rejects, or the SDK can't connect | `McpError`, reason `connection`: `<server> could not be reached`, its `cause` the error |
+| `transport()` makes nothing within `timeoutMs` | `McpError`, reason `connection`, its `cause` `Error: no transport within <timeoutMs> ms` |
 | Listing the tools fails | `McpError`, its reason as for a call (see [Errors](#errors)), named for the server alone, such as `<server> did not answer in time` |
 | A declared tool fails the check | `Error`: `<server>: ` then each problem, in the order the tools were declared, joined by `; `. A problem is `the server has no tool named "<name>"`, or `tool "<name>" can only run as an MCP task, which @haikit/mcp does not support` |
-| `close()` was called | `McpError`, reason `closed`: `<server>: the connection was closed` |
+| `close()` was called, before or while connecting | `McpError`, reason `closed`: `<server>: the connection was closed` |
 
 After any rejection the connection is closed and nothing is kept, so the
 next `connect()` or call starts again from step 1. Only the first connection
@@ -221,8 +223,10 @@ Closes the connection, and resolves once it is closed. A `stdio` server is
 sent end-of-input, then `SIGTERM` after 2 s, then `SIGKILL` after 2 s more
 (the SDK's `StdioClientTransport.close`).
 
-A connection still being made closes itself. A call in flight rejects with
-reason `closed`. It is final: every later call rejects with
+A connection still being made is stopped where it is: a `transport()` still
+pending is given up on, and what it makes later is closed; a client still
+connecting, or listing the tools, is closed. The `connect()` or call waiting
+on it rejects with reason `closed`, and so does a call in flight. It is final: every later call rejects with
 `McpError`, reason `closed`, `<server>/<tool>: the connection was closed`,
 without connecting, and `connect()` with `<server>: the connection was
 closed`.
@@ -256,11 +260,15 @@ call(args: A, ctx?: McpCallCtx): Promise<R>;
    must be an object`. Nothing is sent either way.
 2. **It connects,** if it isn't connected, as [`connect`](#connect) does. A
    failure rejects the call with the same reason, named for the call, as in
-   `<server>/<tool> could not be reached`, and the same `cause`. The `Error`
-   of a declared tool failing the check rejects the call as it is.
+   `<server>/<tool> could not be reached`, and the same `cause`, `text` and
+   `code`. The `Error` of a declared tool failing the check rejects the call
+   as it is. Connecting counts against `maxTotalMs`: a call still waiting for
+   the connection when it runs out rejects with reason `timeout`, and the
+   connection goes on being made for the calls after it.
 3. **The tool is called** (`tools/call`) with the parsed args.
-   - It times out after `timeoutMs` with no answer and no progress, and
-     after `maxTotalMs` in all.
+   - It times out after `timeoutMs` with no answer and no progress, and once
+     `maxTotalMs` has passed since the call began, connecting included.
+     Either way the server is sent `notifications/cancelled` for it.
    - Progress is always asked for, so a server that reports it keeps a long
      call alive whether or not a `ctx` hears it. Each progress notification
      starts `timeoutMs` again.
@@ -360,7 +368,7 @@ A call that got no result, or one its schema refused.
 | --- | --- | --- |
 | `args` | The `args` schema refused the args, or they aren't an object. Nothing was sent | `<server>/<tool> was not called: its args do not match the schema`, or `… its args must be an object` |
 | `result` | The `result` schema refused the result, there was nothing to parse, or the SDK refused it against the server's output schema | `<server>/<tool> returned a result that does not match the schema` |
-| `timeout` | No answer within `timeoutMs`, or not done within `maxTotalMs` | `<server>/<tool> did not answer in time` |
+| `timeout` | No answer within `timeoutMs`, or not done within `maxTotalMs`, connecting included | `<server>/<tool> did not answer in time` |
 | `connection` | The server couldn't be reached, or the connection dropped before the answer | `<server>/<tool> could not be reached` |
 | `protocol` | The server refused the call, as for a tool it doesn't have (`code` `-32602`). Also any other SDK error, such as an HTTP 401 or 403, or a server asking this client for input | `<server>/<tool> was refused by the server` |
 | `closed` | `close()` was called, before or during the call | `<server>/<tool>: the connection was closed` |
@@ -591,8 +599,8 @@ more (got <value>)`.
 | Limit | Value | Where |
 | --- | --- | --- |
 | A call with no answer and no progress | 30,000 ms, by default | `timeoutMs` |
-| A call in all | 90,000 ms, by default | `maxTotalMs` |
-| Connecting, and listing the tools | `timeoutMs` each | `connect` |
+| A call in all, connecting included | 90,000 ms, by default | `maxTotalMs` |
+| Making the transport, connecting, and listing the tools | `timeoutMs` each | `connect` |
 | Longest `timeoutMs` and `maxTotalMs` | 2,147,483,647 ms | Node's longest timer |
 | `textOf` | 8,000 characters, by default | `maxChars` |
 | Pages of tools listed | 64 | the SDK's `listMaxPages` |

@@ -49,7 +49,7 @@ await github.connect(); // at startup: stops here if a declared tool isn't on th
   through doesn't pass the server's words to the model.
 - Progress from the server reaches `ctx.progress`, and keeps a long call alive.
   A call times out after 30 s without word from the server, and after 90 s in
-  all, inside the 120 s turn lease.
+  all, connecting included, inside the 120 s turn lease.
 - `textOf(result)` turns a result into text, for a tool that decides to pass
   some of it on. A cut is always marked in the text.
 

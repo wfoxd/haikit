@@ -300,8 +300,8 @@ None of these can be changed without changing HaiKIT's code.
 | What | Value | Page |
 | --- | --- | --- |
 | A call with no answer and no progress, by default; each progress notification starts it again | 30,000 | [MCP servers](mcp.md#call) |
-| A call in all, by default | 90,000 | [MCP servers](mcp.md#call) |
-| Connecting, and listing the server's tools | `timeoutMs` each | [MCP servers](mcp.md#connect) |
+| A call in all, connecting included, by default | 90,000 | [MCP servers](mcp.md#call) |
+| Making the transport, connecting, and listing the server's tools | `timeoutMs` each | [MCP servers](mcp.md#connect) |
 | Connections being made at once, per server | 1, shared by every call | [MCP servers](mcp.md#the-connection) |
 | Times a call is sent | 1: a failed call is never sent again on its own | [MCP servers](mcp.md#call) |
 | Reconnect attempts per call | 1 | [MCP servers](mcp.md#the-connection) |
