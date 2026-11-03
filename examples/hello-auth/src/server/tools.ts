@@ -56,7 +56,7 @@ export const welcome = defineTool({
 
   async run(_input, ctx) {
     const owner = await auth.ownerOf(ctx.conversationId);
-    // someone signed in with Google is google: and a number: greet them by their name
+    // someone signed in with Google or GitHub is google: or github: and a number: greet them by their name
     return ctx.text(`Signed in as ${(owner !== null && names.get(owner)) || owner}.`);
   },
 });

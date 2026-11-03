@@ -406,7 +406,8 @@ does this when `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are set, and
 step 10 of [Who's asking](../tutorial-3.md) builds it.
 
 [`github()`](#github), from `@haikit/auth/oauth2`, is the same for GitHub,
-at `/auth/github`. A provider that speaks OpenID Connect goes through
+at `/auth/github`: the example does that too when `GITHUB_CLIENT_ID` and
+`GITHUB_CLIENT_SECRET` are set, and the same step builds it. A provider that speaks OpenID Connect goes through
 [`oidc`](#oidc), and one that speaks only OAuth 2.0 through
 [`oauth2`](#oauth2).
 

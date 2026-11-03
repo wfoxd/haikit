@@ -1,6 +1,6 @@
 # Who's asking
 
-> The hello app from the first tutorial, signed in: each person sees only their own conversations, the model knows who it's talking to, and *sign out everywhere* does what it says. Nine steps, and a tenth to sign in with Google, annotated line by line.
+> The hello app from the first tutorial, signed in: each person sees only their own conversations, the model knows who it's talking to, and *sign out everywhere* does what it says. Nine steps, and a tenth to sign in with Google or GitHub, annotated line by line.
 
 ## Hello, who's asking — the app knows each person, and keeps them apart
 
@@ -465,47 +465,63 @@ The first is refused with *this request came from another site* (403): the cooki
 >
 > The gate, not the conversation id, decides who gets in, and it decides before anything is read. A signed-in user's cookie only works from your own pages. And a configuration that would make tokens forgeable stops the server rather than running weakly.
 
-## 10 · Sign in with Google
+## 10 · Sign in with Google or GitHub
 
-This step is optional: it needs a Google account and a few minutes in Google's console. Everything before it works without it.
+This step is optional: it needs a Google or a GitHub account, and a few minutes registering the app there. Do one, or both. Everything before it works without it.
 
-Your users may not want one more password. With `@haikit/auth/oidc`, they can sign in with Google instead. The browser goes to Google, the person picks an account, and Google sends them back with a code. Your server trades that code with Google for who they are, then calls the same `signIn` as step 04's form. The token, the gate and *sign out everywhere* work exactly as before.
+Your users may not want one more password. With `@haikit/auth`, they can sign in with Google or GitHub instead. The browser goes to the provider, the person picks an account, and the provider sends them back with a code. Your server trades that code with the provider for who they are, then calls the same `signIn` as step 04's form. The token, the gate and *sign out everywhere* work exactly as before.
 
-First, register the app with Google:
+> [!NOTE]
+> **GitHub needs HaiKIT 0.31 or later**
+>
+> `@haikit/auth/oauth2`, which signs in with GitHub, arrived in 0.31. If your project has an older release, update the packages together, as step 01 says.
+
+To sign in with Google, register the app with Google:
 
 1. In the [Google Cloud console](https://console.cloud.google.com/apis/credentials), choose **Create credentials**, then **OAuth client ID**. If it asks you to configure a consent screen first, give it an app name and your email, and keep the defaults.
 2. For **Application type**, choose **Web application**. Under **Authorized redirect URIs**, add `http://localhost:5175/auth/google/callback`.
-3. Click **Create**, and copy the client ID and the client secret into `.env`. As with the secret in step 02, `npm start` reads that file, and so does `npm run mock` if you gave it `--env-file-if-exists=.env`.
+3. Click **Create**, and copy the client ID and the client secret into `.env`.
+
+To sign in with GitHub, register an OAuth App with GitHub:
+
+1. On GitHub, open **Settings**, then **Developer settings**, then **OAuth Apps**, and choose **New OAuth App**.
+2. Give it a name, `http://localhost:5175` as its **Homepage URL**, and `http://localhost:5175/auth/github/callback` as its **Authorization callback URL**. Click **Register application**.
+3. Click **Generate a new client secret**, and copy the client ID and the secret into `.env`.
 
 **`.env`** — *edit*
 
 ```bash
-GOOGLE_CLIENT_ID=paste the client ID
-GOOGLE_CLIENT_SECRET=paste the client secret
+GOOGLE_CLIENT_ID=paste Google's client ID
+GOOGLE_CLIENT_SECRET=paste Google's client secret
+GITHUB_CLIENT_ID=paste GitHub's client ID
+GITHUB_CLIENT_SECRET=paste GitHub's client secret
 ```
 
-A user id from Google is `google:` and a long number, which is no way to greet anyone. So keep the names people go by somewhere the welcome tool can read them:
+Only the pairs you registered. As with the secret in step 02, `npm start` reads that file, and so does `npm run mock` if you gave it `--env-file-if-exists=.env`.
+
+A user id from Google is `google:` and a long number, and one from GitHub is `github:` and a shorter one. Neither is any way to greet someone. So keep the names people go by somewhere the welcome tool can read them:
 
 **`src/server/names.ts`** — *new file*
 
 ```ts
 /**
- * What people who signed in with Google are called, by user id: theirs is
- * `google:` and a number, which is no way to greet anyone. A real app keeps
- * this in its users table. This map forgets on a restart, and `welcome` then
- * says the id.
+ * What people who signed in with Google or GitHub are called, by user id:
+ * theirs is `google:` or `github:` and a number, which is no way to greet
+ * anyone. A real app keeps this in its users table. This map forgets on a
+ * restart, and `welcome` then says the id.
  */
 export const names = new Map<string, string>();
 ```
 
-Then add Google to the auth object. Here it is whole:
+Then add the providers to the auth object. Here it is whole:
 
 **`src/server/auth.ts`** — *edit*
 
 ```ts
 import { randomBytes } from "node:crypto";
 import { createAuth, memoryAuthStore } from "@haikit/auth";
-import { google } from "@haikit/auth/oidc";                                           // 1
+import { github } from "@haikit/auth/oauth2";                                         // 1
+import { google } from "@haikit/auth/oidc";
 import { names } from "./names.ts";
 
 const PRODUCTION = process.env.NODE_ENV === "production";
@@ -515,9 +531,17 @@ const PRODUCTION = process.env.NODE_ENV === "production";
 const SECRET = process.env.HAIKIT_AUTH_SECRET ?? (PRODUCTION ? undefined : randomBytes(32).toString("base64url"));
 if (!SECRET) throw new Error("set HAIKIT_AUTH_SECRET: at least 32 bytes, such as `openssl rand -base64 32`");
 
-// Sign in with Google as well, once there's a Google client to sign in with.
-const { GOOGLE_CLIENT_ID: clientId, GOOGLE_CLIENT_SECRET: clientSecret } = process.env;
-export const withGoogle = Boolean(clientId && clientSecret);                          // 2
+// Sign in with Google or GitHub as well, each once there's a client to sign in with there.
+const { GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET } = process.env;
+export const withGoogle = Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET);          // 2
+export const withGitHub = Boolean(GITHUB_CLIENT_ID && GITHUB_CLIENT_SECRET);
+
+// signed in as google:<sub> or github:<id>, the provider's id for them, and their name kept to greet them by
+function keepName({ provider, sub, claims }: { provider: string; sub: string; claims: Record<string, unknown> }) {  // 3
+  const userId = `${provider}:${sub}`;
+  if (typeof claims.name === "string") names.set(userId, claims.name);
+  return userId;
+}
 
 export const auth = createAuth({
   // memoryAuthStore keeps owners in this process; pgAuthStore shares them
@@ -525,45 +549,55 @@ export const auth = createAuth({
   jwt: { secret: SECRET },
   // Safari keeps no Secure cookie on http://localhost; in production, always Secure
   cookie: { secure: PRODUCTION },
-  providers:
-    clientId && clientSecret
+  providers: [
+    ...(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET
       ? [
           google({
-            clientId,
-            clientSecret,
+            clientId: GOOGLE_CLIENT_ID,
+            clientSecret: GOOGLE_CLIENT_SECRET,
             // exactly as registered with Google: never worked out from the request
-            redirectUri: process.env.GOOGLE_REDIRECT_URI ?? "http://localhost:5175/auth/google/callback",  // 3
-            failureUrl: "/sign-in",                                                   // 4
-            // signed in as google:<sub>, Google's id for them, and their name kept to greet them by
-            user({ provider, sub, claims }) {                                         // 5
-              const userId = `${provider}:${sub}`;
-              if (typeof claims.name === "string") names.set(userId, claims.name);
-              return userId;
-            },
+            redirectUri: process.env.GOOGLE_REDIRECT_URI ?? "http://localhost:5175/auth/google/callback",  // 4
+            failureUrl: "/sign-in",                                                   // 5
+            user: keepName,
           }),
         ]
-      : [],
+      : []),
+    ...(GITHUB_CLIENT_ID && GITHUB_CLIENT_SECRET
+      ? [
+          github({                                                                    // 6
+            clientId: GITHUB_CLIENT_ID,
+            clientSecret: GITHUB_CLIENT_SECRET,
+            // exactly as the OAuth App's callback URL
+            redirectUri: process.env.GITHUB_REDIRECT_URI ?? "http://localhost:5175/auth/github/callback",
+            failureUrl: "/sign-in",
+            user: keepName,
+          }),
+        ]
+      : []),
+  ],
 });
 ```
 
-**1** Google speaks OpenID Connect, as most identity providers do. `google()` is that protocol with Google's address and settings filled in. Its sibling `oidc()` takes any other provider's.
+**1** Google speaks OpenID Connect, as most identity providers do: with the code comes an ID token, Google's signed word on who signed in. `google()` is that protocol with Google's address and settings filled in, and its sibling `oidc()` takes any other provider's. GitHub speaks plain OAuth 2.0, with no ID token. So `github()` trades the code for an access token, asks GitHub's API who it belongs to, and drops the token. Its sibling `oauth2()` takes any other provider like it.
 
-**2** Only when both are set. Without them, there's no Google sign-in, and the app is exactly as it was.
+**2** Each only when both its values are set. Without either pair, there's no sign-in with a provider, and the app is exactly as it was.
 
-**3** This must match the redirect URI you registered, character for character. It's written out rather than worked out from the request. A request's `Host` header can say anything, and a sign-in sent back to the wrong host would hand someone else its code.
+**3** Who the person signs in as. `sub` is the provider's id for them, which never changes and is never reused: Google's stays when their email changes, and GitHub's is their account's number, which stays when they rename their login. So their user id is `google:` or `github:` and that. Their name is kept, to greet them by; on GitHub, where a name is optional, `github()` gives their login instead. Returning `null` refuses them. Without `user`, they sign in as `<provider>:<sub>`, with their name and their verified email in the token.
 
-**4** A sign-in that fails is sent here, with `?sign_in_error=` saying why.
+**4** This must match the redirect URI you registered, character for character. It's written out rather than worked out from the request. A request's `Host` header can say anything, and a sign-in sent back to the wrong host would hand someone else its code.
 
-**5** Who the person signs in as. `sub` is Google's id for them: it never changes, even when their email does, and it's never reused. So their user id is `google:` and that. Their name is kept, to greet them by. Returning `null` refuses them. Without `user`, they sign in as `google:<sub>`, with their name and their verified email in the token.
+**5** A sign-in that fails is sent here, with `?sign_in_error=` saying why.
 
-`main.ts` doesn't change. `auth.handler` already answers the two new routes: `GET /auth/google` sends the browser to Google, and `GET /auth/google/callback` is where Google sends it back.
+**6** `github()` asks GitHub for the `read:user` and `user:email` scopes: the profile, and the email addresses, to find the one GitHub has verified. `scopes` asks for others.
 
-The sign-in page offers the link, and says why a sign-in failed:
+`main.ts` doesn't change. `auth.handler` already answers the new routes: `GET /auth/google` and `GET /auth/github` send the browser to the provider, and `/auth/google/callback` and `/auth/github/callback` are where it comes back.
+
+The sign-in page offers a link to each, and says why a sign-in failed:
 
 **`src/server/sign-in.ts`** — *edit*
 
 ```ts
-import { withGoogle } from "./auth.ts";                     // with the other imports
+import { withGitHub, withGoogle } from "./auth.ts";         // with the other imports
 
 export async function signInPage(req: IncomingMessage, res: ServerResponse, auth: Auth) {
   if (req.method === "GET") {
@@ -573,17 +607,18 @@ export async function signInPage(req: IncomingMessage, res: ServerResponse, auth
   // ...the rest unchanged
 }
 
-/** What each way a sign-in through Google can fail means to the person trying. */
+/** What each way a sign-in through Google or GitHub can fail means to the person trying. */
 const SIGN_IN_ERRORS = new Map([                                                         // 2
-  ["access_denied", "Signing in with Google was cancelled."],
-  ["refused", "That Google account can't sign in here."],
+  ["access_denied", "Signing in was cancelled."],
+  ["refused", "That account can't sign in here."],
   ["expired", "That sign-in took too long, or had ended already. Try again."],
-  ["failed", "Signing in with Google didn't work. Try again in a moment."],
+  ["failed", "Signing in didn't work. Try again in a moment."],
 ]);
 
 function page(res: ServerResponse, user: { id: string } | null, problem = "", status = problem ? 400 : 200) {
   // ...and in the signed-out content, after the form:
   //   ${withGoogle ? `<p><a href="/auth/google">Sign in with Google</a></p>` : ""}       // 3
+  //   ${withGitHub ? `<p><a href="/auth/github">Sign in with GitHub</a></p>` : ""}
   // ...and the response's status is `status`:
   res.writeHead(status, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
 }
@@ -592,7 +627,7 @@ function page(res: ServerResponse, user: { id: string } | null, problem = "", st
 **1** The page itself is fine, so it's a 200. Only the sign-in failed.
 
 **2** `sign_in_error` is one of these four:
-- `access_denied`: they said no on Google's page.
+- `access_denied`: they said no on the provider's page.
 - `refused`: your `user` returned `null`.
 - `expired`: they took more than 10 minutes, or came back to a sign-in that had ended already.
 - `failed`: anything else. The server logs why, and never tells the browser.
@@ -608,7 +643,7 @@ import { names } from "./names.ts";                     // with the other import
 
   async run(_input, ctx) {
     const owner = await auth.ownerOf(ctx.conversationId);
-    // someone signed in with Google is google: and a number: greet them by their name
+    // someone signed in with Google or GitHub is google: or github: and a number: greet them by their name
     return ctx.text(`Signed in as ${(owner !== null && names.get(owner)) || owner}.`);
   },
 ```
@@ -616,22 +651,22 @@ import { names } from "./names.ts";                     // with the other import
 **`src/client/main.tsx`** — *edit*
 
 ```tsx
-  // a name, from Google, if they signed in with it
+  // a name, from Google or GitHub, if they signed in with one
   subtitle: user ? `signed in as ${user.claims.name ?? user.id}` : "signed out",
 ```
 
 > [!TIP]
 > **Checkpoint**
 >
-> Restart, and open `/sign-in`: under the form there's a **Sign in with Google** link. Follow it, and pick your account. You're back in the chat, and the header says *signed in as* your name. The welcome row says it too, and *“greet me”* greets you by it. On `/sign-in`, your user id is `google:` and a long number. Now click **Sign out** there, and open `http://localhost:5175/auth/google/callback?code=x&state=y` yourself. It's a way back from Google that no sign-in of yours started, so it's turned away: the sign-in page says *That sign-in took too long, or had ended already.*
+> Restart, and open `/sign-in`: under the form there's a link for each provider you registered. Follow **Sign in with Google**, and pick your account, or **Sign in with GitHub**, and authorize the app. You're back in the chat, and the header says *signed in as* your name. The welcome row says it too, and *“greet me”* greets you by it. On `/sign-in`, your user id is `google:` and a long number, or `github:` and your account's number. Now click **Sign out** there, and open `http://localhost:5175/auth/github/callback?code=x&state=y` yourself, or `/auth/google/callback` if you registered only Google. It's a way back from the provider that no sign-in of yours started, so it's turned away: the sign-in page says *That sign-in took too long, or had ended already.*
 
-Behind the link, `@haikit/auth` does what a sign-in like this needs:
+Behind each link, `@haikit/auth` does what a sign-in like this needs:
 
 - **A one-time `state`**, so only the browser that started the sign-in can finish it.
-- **A `nonce`**, which Google writes back into what it says about the person, so that answer can't be replayed.
+- **A `nonce`**, with Google, which writes it back into the ID token, so that token can't be replayed. GitHub sends no ID token, so there's nothing for a `nonce` to protect.
 - **PKCE**, so a code that leaks on its way back is of no use without the secret only that browser had.
 
-All three travel in a cookie that's encrypted and lasts 10 minutes. Then it checks that Google's answer names your client, comes from Google and hasn't expired. In production, register your https redirect URI with Google as well, and set `GOOGLE_REDIRECT_URI` to it.
+All of them travel in a cookie that's encrypted and lasts 10 minutes. Then, with Google, it checks that the ID token names your client, comes from Google and hasn't expired. With GitHub, it reads who signed in from GitHub's API, `/user` and then `/user/emails` for the verified address, and drops the access token once it has: signing in is all it was for. In production, register your https redirect URI with the provider as well, and set `GOOGLE_REDIRECT_URI` or `GITHUB_REDIRECT_URI` to it.
 
 ## Where to go next
 
@@ -651,7 +686,7 @@ The hello app now knows who everyone is: it signs them in, keeps them to their o
 
 - **Serve it over https.** In production the cookie is `Secure` and named `__Host-haikit_token`, so the browser sends it only over https, and only to the host that set it.
 - **Put your real login where step 04 checks the name.** And call `auth.revoke(userId)` whenever a user changes their password, or tells you a device is lost.
-- **If you did step 10,** register your https redirect URI with Google, set `GOOGLE_REDIRECT_URI` to it, and keep the client secret where `HAIKIT_AUTH_SECRET` is, out of the code. Keep each user's name in your users table rather than in `names`.
+- **If you did step 10,** register your https redirect URI with Google or GitHub, set `GOOGLE_REDIRECT_URI` or `GITHUB_REDIRECT_URI` to it, and keep the client secrets where `HAIKIT_AUTH_SECRET` is, out of the code. Keep each user's name in your users table rather than in `names`.
 - **Behind a proxy that rewrites the `Host` header,** list your public origin, such as `origins: ["https://hello.example.com"]`, so cookie requests from your own pages aren't mistaken for another site's. Step 04's sign-in page checks the origin itself, against `Host` too: have its `sameHost` accept that origin as well, or signing in and out will be refused.
 
 ### Use your identity provider instead
@@ -685,7 +720,7 @@ mountChat({
 - **Step 05's `/auth/me` call** needs the token too, through the same `fetch`, or take the user's name from your provider's SDK.
 - **`mountChat`'s `signIn` link** points at your provider's login.
 
-Or keep step 04's page and HaiKIT's own cookie, and send people to your provider to sign in, as step 10 does with Google. Most providers speak OpenID Connect, and `oidc()` from `@haikit/auth/oidc` works with any of them:
+Or keep step 04's page and HaiKIT's own cookie, and send people to your provider to sign in, as step 10 does with Google and GitHub. Most providers speak OpenID Connect, and `oidc()` from `@haikit/auth/oidc` works with any of them:
 
 ```ts
 import { oidc } from "@haikit/auth/oidc";
@@ -700,6 +735,8 @@ providers: [
   }),
 ],
 ```
+
+One that speaks only OAuth 2.0, as GitHub does, takes [`oauth2()`](reference/auth.md#oauth2) from `@haikit/auth/oauth2`: its two endpoints, and a `profile` that reads who signed in from its API with the access token.
 
 ### Conversations from before sign-in
 

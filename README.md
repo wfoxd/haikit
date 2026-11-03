@@ -226,7 +226,7 @@ and for any host that serves OpenAI's Responses API. Another model needs a
 | --- | --- |
 | [Tutorial](docs/tutorial.md) | Build *Hello, World!* as a HaiKIT app in ten steps, annotated line by line |
 | [Tutorial 2: Tell them later](docs/tutorial-2.md) | Teach the same app to speak up after the request is over: progress, notices, wake turns and live updates |
-| [Tutorial 3: Who's asking](docs/tutorial-3.md) | Sign people in to the same app with `@haikit/auth`: each sees only their own conversations, the model knows who it's talking to, and *sign out everywhere* works, and, optionally, sign in with Google |
+| [Tutorial 3: Who's asking](docs/tutorial-3.md) | Sign people in to the same app with `@haikit/auth`: each sees only their own conversations, the model knows who it's talking to, and *sign out everywhere* works, and, optionally, sign in with Google or GitHub |
 | [Design spec](docs/spec.md) | The dual channel, the contract split, elicit mode, the four guarantees, package topology |
 | [Default UI](docs/default-ui.md) | The chat UI `@haikit/client` ships: setup, the model context drawer, theming, styling your surfaces |
 | [The introduction](apps/intro) | HaiKIT's introduction as a deployable app, live at [haikit.app](https://haikit.app) |
