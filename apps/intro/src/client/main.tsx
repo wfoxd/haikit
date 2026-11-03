@@ -15,10 +15,12 @@ const about: { haikit: string; signIn?: string[] } | null = await fetch("/versio
   .catch(() => null);
 
 // Who's signed in, where a reader can: a sign-in that expires is signed in
-// again the way it was, with Google or with GitHub.
+// again the way it was, with Google or with GitHub. The chat waits on it, so
+// not for long: no answer in time is no one signed in.
+const ME_WITHIN_MS = 3_000;
 const providers = offered(about?.signIn);
 const { user: reader }: { user: Reader } = providers.length
-  ? await fetch("/auth/me")
+  ? await fetch("/auth/me", { signal: AbortSignal.timeout(ME_WITHIN_MS) })
       .then((r) => r.json())
       .catch(() => ({ user: null }))
   : { user: null };
