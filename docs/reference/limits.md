@@ -166,6 +166,25 @@ Checked against `@haikit/*` 0.20.0. Durations are in milliseconds.
 | `github`'s `scopes` | `["read:user", "user:email"]` | [Sign-in and ownership](auth.md#github) |
 | `github`'s `tokenEndpointAuthMethod` | `"client_secret_post"` | [Sign-in and ownership](auth.md#github) |
 
+### `mcpServer`, `tool` and `textOf` (`@haikit/mcp`)
+
+Checked against `@haikit/*` 0.31.0.
+
+| Option | Default | Valid values | Page |
+| --- | --- | --- | --- |
+| `name` | required | a non-empty string | [MCP servers](mcp.md#mcpserver) |
+| `transport` | required | a function that makes a new `Transport`, such as `http(url)` or `stdio({ command })` | [MCP servers](mcp.md#mcpserver) |
+| `timeoutMs` | `30000` | a whole number from 1 to 2147483647 | [MCP servers](mcp.md#mcpserver) |
+| `maxTotalMs` | `90000` | a whole number from 1 to 2147483647 | [MCP servers](mcp.md#mcpserver) |
+| `onChange` | a `console.warn` | a function | [MCP servers](mcp.md#changes-to-the-servers-tools) |
+| `versionNegotiation` | `"legacy"`, the SDK's default | `"legacy"`, `"auto"`, or `{ pin: "<revision>" }` | [MCP servers](mcp.md#mcpserver) |
+| `args` (on a `tool`) | required | anything with a `parse` method, whose result is an object | [MCP servers](mcp.md#tool) |
+| `result` (on a `tool`) | none: `call` resolves to the content as sent | anything with a `parse` method | [MCP servers](mcp.md#tool) |
+| `timeoutMs`, `maxTotalMs` (on a `tool`) | the server's | as on the server | [MCP servers](mcp.md#tool) |
+| `headers` (`http`) | none | names and values, set over `requestInit.headers` | [MCP servers](mcp.md#http) |
+| `env` (`stdio`) | `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `USER` from this process | names and values, over those | [MCP servers](mcp.md#stdio) |
+| `maxChars` (`textOf`) | `8000` | a whole number, 0 or more | [MCP servers](mcp.md#textof) |
+
 ### `hai.css`
 
 Every `--hai-*` custom property, colours and the layout tokens `--hai-radius`
@@ -276,6 +295,20 @@ None of these can be changed without changing HaiKIT's code.
 | `oidc`: the provider's settings are kept | for the process's life, once read; a failed read is tried again | [Sign-in and ownership](auth.md#oidc) |
 | `oauth2`: exchanging the code, and each `api.get`, give up after | 10,000 | [Sign-in and ownership](auth.md#oauth2) |
 
+### MCP servers (`@haikit/mcp`)
+
+| What | Value | Page |
+| --- | --- | --- |
+| A call with no answer and no progress, by default; each progress notification starts it again | 30,000 | [MCP servers](mcp.md#call) |
+| A call in all, connecting included, by default | 90,000 | [MCP servers](mcp.md#call) |
+| Making the transport, connecting, and listing the server's tools | `timeoutMs` each | [MCP servers](mcp.md#connect) |
+| Connections being made at once, per server | 1, shared by every call | [MCP servers](mcp.md#the-connection) |
+| Times a call is sent | 1: a failed call is never sent again on its own | [MCP servers](mcp.md#call) |
+| Reconnect attempts per call | 1 | [MCP servers](mcp.md#the-connection) |
+| Pages of tools listed | 64 (the SDK's `listMaxPages`) | [MCP servers](mcp.md#limits) |
+| One stdio message | 10 MB (the SDK's `maxBufferSize`) | [MCP servers](mcp.md#limits) |
+| A `stdio` server's stop: end of input, then `SIGTERM`, then `SIGKILL` | 2,000 apart (the SDK's) | [MCP servers](mcp.md#close) |
+
 ### Limits that don't exist
 
 - **Request bodies** have no size limit, and their content type isn't
@@ -371,6 +404,7 @@ index `haikit_payloads_created_at`: see
 | `No such handle: <handle>`, `Unsupported query "<query>". Available: <names, or none>.`, `Invalid args for "<query>": <message>` | `query_ui` couldn't answer | [Surfaces](surfaces.md#query-handlers) |
 | `(<handle> has since been revised: it is <latest> now.)` | Added to a `query_ui` answer about a revised surface | [Surfaces](surfaces.md#query-handlers) |
 | `0 of <total> match.`, `<n> of <total> match. <k> shown[, <m> omitted]:` | A capped query answer's first line | [Tools](tools.md#cap-capoptions) |
+| `<name> failed: <server>/<tool> reported an error`, `… could not be reached`, `… did not answer in time`, and the rest | A HaiKIT tool let an `@haikit/mcp` error through. The server's own words aren't in it | [MCP servers](mcp.md#what-the-model-hears-of-one) |
 
 ### Framework text the model sees outside the history
 
@@ -380,6 +414,11 @@ index `haikit_payloads_created_at`: see
   [The server](server.md#init)).
 - `query_ui`'s description and input schema (see
   [Tools](tools.md#the-built-in-query_ui-tool)).
+
+### What an MCP server is told
+
+`@haikit/mcp` connects as `clientInfo` `{ name: "haikit", version: "<@haikit/mcp's version>" }`,
+with no client capabilities (see [MCP servers](mcp.md#the-connection)).
 
 ### Id formats
 

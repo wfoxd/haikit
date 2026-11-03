@@ -132,6 +132,7 @@ finished result, about 150 lines.
 | [`@haikit/postgres`](packages/postgres) | Durable store adapter. Bring your own driver |
 | [`@haikit/react`](packages/react) | Write surface components in React, typed from the surface contract |
 | [`@haikit/auth`](packages/auth) | Optional sign-in: each user, from a verified JWT, sees only their own conversations. A gate for the routes, and sign-in with Google, GitHub, or any OpenID Connect or OAuth 2.0 provider |
+| [`@haikit/mcp`](packages/mcp) | Call MCP servers' tools from inside your own tools. The model never sees an MCP tool: your tool decides what it hears of the result |
 
 Adapters depend on `@haikit/core` only, never on the runtime. That is what
 keeps the model and store seams swappable.
@@ -262,8 +263,10 @@ Working, and honest about what isn't done.
   `StoreAdapter` for your own database.
 - **No approval gates**, though they are structurally identical to elicit with
   a two-button surface.
-- **No MCP export.** Tools would degrade gracefully (the digest is a complete
-  text answer); elicit tools would have to be excluded.
+- **No MCP export.** HaiKIT can call MCP servers' tools from its own
+  ([`@haikit/mcp`](packages/mcp)), but can't serve its tools as an MCP server
+  yet. Tools would degrade gracefully (the digest is a complete text answer);
+  elicit tools would have to be excluded.
 
 ## Licence
 

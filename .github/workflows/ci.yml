@@ -39,7 +39,8 @@ jobs:
       # which are checked against the same shared contract
       - run: npm run typecheck
 
-      # the four type-level guarantees are still enforced.
+      # the four type-level guarantees are still enforced, and @haikit/mcp's:
+      # an MCP tool can't be handed to createHai as one of the model's tools.
       # this is the check most repos don't have and this one needs.
       - run: npm run typetest
 
@@ -50,6 +51,11 @@ jobs:
       # every StoreAdapter rule an in-process store could ignore and a
       # networked one cannot: handle scoping, batch reads, turn leasing
       - run: npm run storetest
+
+      # @haikit/mcp against real MCP servers, in process and over stdio: what
+      # a call resolves to and throws, timeouts, reconnecting, and a turn in
+      # which the model hears only what the app's own tool decided
+      - run: npm run mcptest
 
       # @haikit/react against a real React and a DOM: renders on mount, sends
       # only declared actions, keeps its own state through a freeze, cleans up

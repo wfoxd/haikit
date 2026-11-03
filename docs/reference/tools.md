@@ -14,6 +14,7 @@ Checked against `@haikit/*` 0.20.0. Source: `packages/core/src/index.ts` and
 - [How a tool call runs](#how-a-tool-call-runs)
 - [The tool's context](#the-tools-context): `ToolCtx`, `ToolReturn`,
   `Progress`
+- [Calling an MCP server](#calling-an-mcp-server)
 - [The built-in `query_ui` tool](#the-built-in-query_ui-tool)
 - [Capping](#capping): `makeCap`, `Cap`, `CapOptions`, `Capped`
 - [`estTokens`](#esttokens)
@@ -309,6 +310,23 @@ interface Progress {
 | `message` | What the tool is doing now, for a person to read |
 | `done` | Steps finished so far |
 | `total` | Steps in all, when the tool knows. With it, the default UI draws a progress bar |
+
+## Calling an MCP server
+
+An MCP server's tools are never the model's tools. `@haikit/mcp` declares the
+ones an app may call, typed by its own schemas, and a tool calls them from
+`run`, passing its `ctx`, so the server's progress reaches `ctx.progress`:
+
+```ts
+async run({ query }, ctx) {
+  const { items } = await searchIssues.call({ q: query }, ctx);
+  return ctx.render(issueList, { issues: items });
+}
+```
+
+The tool decides what the model hears of the result. A declared MCP tool
+isn't a `Tool`, so it can't be listed in `createHai({ tools })`. See
+[MCP servers](mcp.md).
 
 ## The built-in `query_ui` tool
 

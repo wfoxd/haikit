@@ -24,6 +24,7 @@ statement by statement, at the version the page names.
 | `@haikit/client` | The browser runtime, the default chat UI and its stylesheet | browser, no build step |
 | `@haikit/react` | Write surfaces and notices as React components | browser |
 | `@haikit/auth` | Sign-in from a verified JWT, and which conversations are each user's: a gate for `nodeHandler`, with a Postgres store at `@haikit/auth/postgres`, sign-in with Google or any OpenID Connect provider at `@haikit/auth/oidc`, and with GitHub or any OAuth 2.0 provider at `@haikit/auth/oauth2` | Node |
+| `@haikit/mcp` | Call MCP servers' tools from inside the app's own tools. The model never sees an MCP tool | Node |
 
 ## Contents
 
@@ -39,6 +40,7 @@ statement by statement, at the version the page names.
 | [The server](server.md) | `createHai`, the `Hai` class and every `HaiConfig` option | written |
 | [HTTP routes and the wire](http.md) | `nodeHandler`, gates, each route's requests, responses and errors, the events stream and its polling mode, and every wire event | written |
 | [Sign-in and ownership](auth.md) | `@haikit/auth`: `createAuth`, the tokens it issues and accepts, its gate, its routes, revocation, signing in with Google or another provider, and its stores | written |
+| [MCP servers](mcp.md) | `@haikit/mcp`: `mcpServer`, declaring a server's tools, a call and what it resolves to, its errors, connecting and reconnecting, changes to the server's tools, `http` and `stdio`, and `textOf` | written |
 | [Models](models.md) | The model adapter interface, `@haikit/anthropic` and `@haikit/openai` | written |
 | [Stores](stores.md) | The store interface every store implements, `memoryStore`, and `@haikit/postgres`: schema, migration, cross-server channels, cleanup | written |
 | [The browser client](client.md) | `createChat`, the `Chat` object and its state, and the registries for surfaces, notices and signals | written |
@@ -319,3 +321,28 @@ From `@haikit/auth/postgres`:
 | `pgAuthStore` | function | [Sign-in and ownership](auth.md#pgauthstore) |
 | `Queryable` | interface | [Sign-in and ownership](auth.md#pgauthstore) |
 | `schema` | constant | [Sign-in and ownership](auth.md#migrate-schema) |
+
+### `@haikit/mcp`
+
+| Symbol | Kind | Page |
+| --- | --- | --- |
+| `ContentBlock` | type (the SDK's, re-exported) | [MCP servers](mcp.md#mcpresult) |
+| `http` | function | [MCP servers](mcp.md#http) |
+| `HttpOptions` | interface | [MCP servers](mcp.md#http) |
+| `isMcpError` | function | [MCP servers](mcp.md#ismcperror-ismcptoolerror) |
+| `isMcpToolError` | function | [MCP servers](mcp.md#ismcperror-ismcptoolerror) |
+| `McpCallCtx` | interface | [MCP servers](mcp.md#mcpcallctx) |
+| `McpConnection` | interface | [MCP servers](mcp.md#mcpconnection) |
+| `McpError` | class | [MCP servers](mcp.md#mcperror) |
+| `McpErrorReason` | type | [MCP servers](mcp.md#mcperror) |
+| `McpResult` | interface | [MCP servers](mcp.md#mcpresult) |
+| `mcpServer` | function | [MCP servers](mcp.md#mcpserver) |
+| `McpServerOptions` | interface | [MCP servers](mcp.md#mcpserver) |
+| `McpTool` | interface | [MCP servers](mcp.md#mcptool) |
+| `McpToolChange` | interface | [MCP servers](mcp.md#changes-to-the-servers-tools) |
+| `McpToolDef` | interface | [MCP servers](mcp.md#tool) |
+| `McpToolError` | class | [MCP servers](mcp.md#mcptoolerror) |
+| `stdio` | function | [MCP servers](mcp.md#stdio) |
+| `textOf` | function | [MCP servers](mcp.md#textof) |
+| `TextOptions` | interface | [MCP servers](mcp.md#textof) |
+| `Transport` | type (the SDK's, re-exported) | [MCP servers](mcp.md#transports) |

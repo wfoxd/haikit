@@ -19,7 +19,8 @@
       "@haikit/openai",
       "@haikit/postgres",
       "@haikit/react",
-      "@haikit/auth"
+      "@haikit/auth",
+      "@haikit/mcp"
     ]
   ]
 }

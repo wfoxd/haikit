@@ -19,7 +19,7 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const PACKAGES = ["core", "server", "client", "anthropic", "openai", "postgres", "react", "auth"];
+const PACKAGES = ["core", "server", "client", "anthropic", "openai", "postgres", "react", "auth", "mcp"];
 
 let pass = 0;
 const failures = [];
@@ -157,6 +157,7 @@ try {
           "@haikit/postgres": fileDep("postgres"),
           "@haikit/react": fileDep("react"),
           "@haikit/auth": fileDep("auth"),
+          "@haikit/mcp": fileDep("mcp"),
           // @haikit/react's peers, and the types its .d.ts is checked against
           react: "^19.0.0",
           "react-dom": "^19.0.0",
@@ -194,6 +195,7 @@ import { createAuth, memoryAuthStore } from "@haikit/auth";
 import { pgAuthStore, migrate as migrateAuth, schema as authSchema } from "@haikit/auth/postgres";
 import { google, oidc } from "@haikit/auth/oidc";
 import { github, oauth2 } from "@haikit/auth/oauth2";
+import { mcpServer, http, stdio, textOf, isMcpError } from "@haikit/mcp";
 import { z } from "zod";
 
 const out = {};
@@ -232,6 +234,16 @@ const withGitHub = github({ clientId: "c", clientSecret: "s", redirectUri: "http
 const { url: toGitHub } = await withGitHub.start();
 createAuth({ store: memoryAuthStore(), jwt: { secret: "a-packtest-secret-of-at-least-32-bytes" }, providers: [withGitHub] });
 out.authOauth2 = typeof oauth2 === "function" && withGitHub.name === "github" && toGitHub.origin === "https://github.com" && toGitHub.searchParams.get("code_challenge_method") === "S256";
+
+// an MCP connection is made from the tarball, which read its own version from
+// its package.json on import; a call to a server that can't be reached fails
+// as an McpError, and textOf turns a result into text
+const down = mcpServer({ name: "down", transport: () => Promise.reject(new Error("unreachable")) });
+const unreachable = await down.tool("search", { args: z.object({ q: z.string() }) }).call({ q: "x" }).catch((err) => err);
+out.mcpWorks =
+  isMcpError(unreachable) && unreachable.message === "down/search could not be reached" &&
+  typeof http("https://example.com/mcp") === "function" && typeof stdio({ command: "true" }) === "function" &&
+  textOf({ content: [{ type: "text", text: "abcdef" }] }, { maxChars: 3 }) === "abc\\n[Cut at 3 of 6 characters.]";
 
 // the contract layer does real work, not just re-export shapes
 const surface = defineSurface({
@@ -298,6 +310,7 @@ console.log(JSON.stringify(out));
   check("@haikit/auth/postgres resolves via exports", () => runtime.authPostgres === true);
   check("@haikit/auth/oidc starts a sign-in with Google", () => runtime.authOidc === true);
   check("@haikit/auth/oauth2 starts a sign-in with GitHub", () => runtime.authOauth2 === true);
+  check("@haikit/mcp declares and calls a tool, and makes text of a result", () => runtime.mcpWorks === true);
   check("defineSurface builds a surface", () => runtime.surfaceName === "packtest_picker");
   check("cap() caps (3 of 47)", () => runtime.capShown === 3 && runtime.capTotal === 47);
   check("cap() reports the omission", () => runtime.capReportsOmission === true);
@@ -352,7 +365,8 @@ import { pgAuthStore } from "@haikit/auth/postgres";
 import { google, oidc, type GoogleOptions, type OidcOptions, type OidcProfile, type SignInAs } from "@haikit/auth/oidc";
 import { github, oauth2, type GitHubOptions, type OAuth2Options, type OAuth2Profile, type ProviderApi, type SignInAs as OAuth2SignInAs } from "@haikit/auth/oauth2";
 import type { SignInProvider } from "@haikit/auth";
-import type { Gate } from "@haikit/core";
+import { mcpServer, http, stdio, textOf, McpError, McpToolError, type McpConnection, type McpResult, type McpTool, type McpToolChange } from "@haikit/mcp";
+import type { Gate, Tool, ToolCtx } from "@haikit/core";
 import { z } from "zod";
 
 const picker = defineSurface({
@@ -452,6 +466,26 @@ signedIn.resume();
 void why;
 void createChat({ registry: {}, fetch: (url, init) => fetch(url, init) });
 void ((root: HTMLElement) => mountChat({ root, registry: {}, signIn: { href: "/sign-in" } }));
+// an MCP tool is called with a tool's ctx and typed by the app's schemas, and
+// it is not a HaiKIT tool: createHai's tools can't be given one
+const issues: McpConnection = mcpServer({
+  name: "github",
+  transport: http("https://example.com/mcp", { headers: { Authorization: "Bearer x" } }),
+  onChange: (change: McpToolChange) => void change.removed,
+});
+void mcpServer({ name: "local", transport: stdio({ command: "node", args: ["server.js"] }) });
+const searchIssues: McpTool<{ q: string }, { items: string[] }> = issues.tool("search_issues", {
+  args: z.object({ q: z.string() }),
+  result: z.object({ items: z.array(z.string()) }),
+});
+const rawSearch: McpTool<{ q: string }, McpResult> = issues.tool("search_issues", { args: z.object({ q: z.string() }) });
+declare const toolCtx: ToolCtx;
+const found: Promise<{ items: string[] }> = searchIssues.call({ q: "bug" }, toolCtx);
+const asText: Promise<string> = rawSearch.call({ q: "bug" }).then((r) => textOf(r, { maxChars: 2_000 }));
+// @ts-expect-error  an MCP tool has no run, description or schema for the model
+const notATool: Tool = searchIssues;
+const reasons: string[] = [new McpError("closed", "m", { server: "s" }).reason, new McpToolError("s", "t", []).text];
+void found; void asText; void notATool; void reasons;
 // the OpenAI adapter type-checks as a ModelAdapter
 const gpt: ModelAdapter = openai({ model: "gpt-6-luna", effort: "low", promptCacheKey: "packtest" });
 void gpt;
