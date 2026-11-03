@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Auth } from "@haikit/auth";
-import { withGoogle } from "./auth.ts";
+import { withGitHub, withGoogle } from "./auth.ts";
 
 /**
  * The app's own login, as small as one can be: a name, and no password. A
@@ -57,12 +57,12 @@ async function body(req: IncomingMessage): Promise<string> {
 
 const escape = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
-/** What each way a sign-in through Google can fail means to the person trying. */
+/** What each way a sign-in through Google or GitHub can fail means to the person trying. */
 const SIGN_IN_ERRORS = new Map([
-  ["access_denied", "Signing in with Google was cancelled."],
-  ["refused", "That Google account can't sign in here."],
+  ["access_denied", "Signing in was cancelled."],
+  ["refused", "That account can't sign in here."],
   ["expired", "That sign-in took too long, or had ended already. Try again."],
-  ["failed", "Signing in with Google didn't work. Try again in a moment."],
+  ["failed", "Signing in didn't work. Try again in a moment."],
 ]);
 
 function page(res: ServerResponse, user: { id: string } | null, problem = "", status = problem ? 400 : 200) {
@@ -76,6 +76,7 @@ function page(res: ServerResponse, user: { id: string } | null, problem = "", st
          <button>Sign in</button>
        </form>
        ${withGoogle ? `<p><a href="/auth/google">Sign in with Google</a></p>` : ""}
+       ${withGitHub ? `<p><a href="/auth/github">Sign in with GitHub</a></p>` : ""}
        ${problem ? `<p role="alert">${escape(problem)}</p>` : ""}
        <p>No password: this example shows what happens after the app's own login.</p>`;
   res.writeHead(status, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });

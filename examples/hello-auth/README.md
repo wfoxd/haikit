@@ -28,20 +28,26 @@ request to `/hai`:
   half its life, and passes `signIn: { href: "/sign-in" }` to `mountChat`. A
   request turned away then says why in the status line, with a link to sign in.
 
-To sign in with Google as well, tutorial 3's step 10, make a Web-application
-OAuth client in the Google Cloud console with the redirect URI
-`http://localhost:5176/auth/google/callback`, and start it with its id and
-secret:
+To sign in with Google or GitHub as well, tutorial 3's step 10, register
+the app with either, or both:
+
+- **Google:** a Web-application OAuth client in the Google Cloud console, with
+  the redirect URI `http://localhost:5176/auth/google/callback`.
+- **GitHub:** an OAuth App, in GitHub's Developer settings, with the
+  callback URL `http://localhost:5176/auth/github/callback`.
+
+Then start it with the ids and secrets you have:
 
 ```bash
-GOOGLE_CLIENT_ID=… GOOGLE_CLIENT_SECRET=… npm run example:hello-auth
+GOOGLE_CLIENT_ID=… GOOGLE_CLIENT_SECRET=… GITHUB_CLIENT_ID=… GITHUB_CLIENT_SECRET=… npm run example:hello-auth
 ```
 
-`src/server/auth.ts` then passes `google()` from `@haikit/auth/oidc` to
-`createAuth`, and `/sign-in` links to `/auth/google`. Someone who signs in
-there is `google:` and Google's id for them; `src/server/names.ts` keeps their
-name, which `welcome` greets them by. `GOOGLE_REDIRECT_URI` overrides the
-redirect URI, as it must in production.
+`src/server/auth.ts` then passes `google()` from `@haikit/auth/oidc`, and
+`github()` from `@haikit/auth/oauth2`, to `createAuth`, and `/sign-in` links
+to `/auth/google` and `/auth/github`. Someone who signs in there is `google:`
+or `github:` and the provider's id for them; `src/server/names.ts` keeps their
+name, which `welcome` greets them by. `GOOGLE_REDIRECT_URI` and
+`GITHUB_REDIRECT_URI` override the redirect URIs, as they must in production.
 
 Sign in as two names in two browsers. A conversation id from one, sent by the
 other, is answered `404 unknown conversation`. **Sign out everywhere**, on
