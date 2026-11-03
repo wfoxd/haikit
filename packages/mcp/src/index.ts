@@ -187,6 +187,8 @@ class Connection implements McpConnection {
   /** While `transport()` is pending: gives up on it, for `close()`. */
   private abandon: (() => void) | null = null;
   private closed = false;
+  /** The first `close()`, which the others wait for. */
+  private closing: Promise<void> | null = null;
   /** Clients whose connection has gone. */
   private readonly dropped = new WeakSet<Client>();
   /** The server's tools at the last listing, by name. Null until a first connect passes the check. */
@@ -233,7 +235,13 @@ class Connection implements McpConnection {
     await this.open();
   }
 
-  async close(): Promise<void> {
+  close(): Promise<void> {
+    // every close() resolves once the first has closed everything
+    this.closing ??= this.shut();
+    return this.closing;
+  }
+
+  private async shut(): Promise<void> {
     this.closed = true;
     const client = this.client;
     this.client = null;

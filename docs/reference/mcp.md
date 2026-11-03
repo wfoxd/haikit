@@ -219,9 +219,10 @@ to succeed is checked; see [The connection](#the-connection) for later ones.
 close(): Promise<void>;
 ```
 
-Closes the connection, and resolves once it is closed. A `stdio` server is
-sent end-of-input, then `SIGTERM` after 2 s, then `SIGKILL` after 2 s more
-(the SDK's `StdioClientTransport.close`).
+Closes the connection, and resolves once it is closed. Called again, it
+returns the first call's promise, so every `close()` resolves only then.
+A `stdio` server is sent end-of-input, then `SIGTERM` after 2 s, then
+`SIGKILL` after 2 s more (the SDK's `StdioClientTransport.close`).
 
 A connection still being made is stopped where it is: a `transport()` still
 pending is given up on, and what it makes later is closed; a client still

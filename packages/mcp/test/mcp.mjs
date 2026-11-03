@@ -602,6 +602,29 @@ console.log("\nconnections");
   check("connect() after close() too", (await rejection(s.connect()))?.message === "fixture: the connection was closed");
 }
 {
+  // a transport that takes its time to close, as a stdio server's stop does
+  let shut = false;
+  const { transport } = fixture(standard);
+  const s = mcpServer({
+    name: "fixture",
+    transport: async () => {
+      const made = await transport();
+      const close = made.close.bind(made);
+      made.close = async () => {
+        await wait(100);
+        await close();
+        shut = true;
+      };
+      return made;
+    },
+  });
+  await s.connect();
+  const first = s.close();
+  await s.close();
+  check("a second close() resolves only once the first has closed", shut);
+  await first;
+}
+{
   const { state, transport } = fixture(standard);
   const s = mcpServer({ name: "fixture", transport });
   const quiet = s.tool("quiet", { args: anything });
