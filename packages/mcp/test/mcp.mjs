@@ -301,6 +301,35 @@ console.log("\nconnect");
   );
 }
 {
+  // close() as the transport is made, before anything is connecting for it to stop
+  let s;
+  let closing;
+  let transportClosed = false;
+  s = mcpServer({
+    name: "fixture",
+    timeoutMs: 5000,
+    transport: () => {
+      const [client] = InMemoryTransport.createLinkedPair(); // a server that never answers
+      const close = client.close.bind(client);
+      client.close = async () => {
+        transportClosed = true;
+        return close();
+      };
+      queueMicrotask(() => {
+        closing = s.close();
+      });
+      return client;
+    },
+  });
+  const t0 = Date.now();
+  const err = await rejection(s.connect());
+  await closing;
+  check(
+    "close() as the transport is made: closed, at once, and the transport closed",
+    isMcpError(err) && err.reason === "closed" && Date.now() - t0 < 200 && transportClosed,
+  );
+}
+{
   // a server that never answers the handshake
   const s = mcpServer({
     name: "fixture",

@@ -271,6 +271,11 @@ class Connection implements McpConnection {
     let client: Client | undefined;
     try {
       const transport = await this.made();
+      // close() may have come as it was made, with nothing yet to stop
+      if (this.closed) {
+        await transport.close().catch(() => {});
+        throw new Error("closed as the transport was made");
+      }
       const self: Client = new Client(
         { name: "haikit", version: VERSION },
         {
