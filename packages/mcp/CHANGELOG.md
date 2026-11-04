@@ -1,5 +1,15 @@
 # @haikit/mcp
 
+## 0.33.0
+
+### Minor Changes
+
+- a36454a: Calls as each user. `mcpServer({ auth })` takes `createMcpAuth({ userOf }).bearer(token)`: each call then runs as the conversation's owner, from `userOf(ctx.conversationId)`, or as `ctx.userId` for a call outside any conversation, with that user's own token, over a connection of their own. A call with no one to run as rejects with the new reason `user`, and nothing is sent; it never falls back to the app's credentials. A user with no token, a token the server refuses, and a 403 asking for more scope reject with the new reason `auth`, and `err.auth` (`McpAuthNeed`) says which: `connect`, `reconnect` or `scope`. On a 401 the token is looked up once more, so a key the app replaced is picked up; a user's lookups that come together share one, and one that gives nothing within `timeoutMs` fails with `connection`. `close()` stops a call still waiting for `userOf` or a token, with `closed`; `forget(userId)` stops one on the user's connection, including one waiting for their token. Each user's connection checks the tools they see, and `McpToolChange.user` says whose tools changed. The connections are pooled: `maxConnections` (100) and `idleMs` (300,000 ms), and `forget(userId)` closes one. `connect(userId)` connects as a user. `http()` now returns `(authProvider?) => Transport`, and `AuthProvider` is re-exported. `McpErrorReason` has two more members, so a `switch` over it that must be exhaustive needs cases for `user` and `auth`.
+
+### Patch Changes
+
+- @haikit/core@0.33.0
+
 ## 0.32.0
 
 ### Minor Changes
