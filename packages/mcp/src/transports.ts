@@ -1,6 +1,7 @@
 import {
   StreamableHTTPClientTransport,
   type AuthProvider,
+  type FetchLike,
   type StreamableHTTPClientTransportOptions,
   type Transport,
 } from "@modelcontextprotocol/client";
@@ -17,6 +18,10 @@ export interface HttpMade {
   authProvider: boolean;
   /** It sends an `Authorization` header of its own. */
   authorization: boolean;
+  /** The server's URL: the protected resource an `oauth()` server's tokens are for. */
+  url: URL;
+  /** Its `fetch`, which an `oauth()` server's requests to the authorization server go through too. */
+  fetch: FetchLike | undefined;
 }
 
 /** The factories `http()` made: only these can carry each user's credential. */
@@ -41,6 +46,8 @@ export function http(url: string | URL, options: HttpOptions = {}): (authProvide
   madeByHttp.set(make, {
     authProvider: rest.authProvider !== undefined,
     authorization: new Headers(rest.requestInit?.headers).has("authorization"),
+    url: target,
+    fetch: rest.fetch,
   });
   return make;
 }

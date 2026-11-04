@@ -15,7 +15,7 @@
     "smoke": "node scripts/smoke.mjs",
     "storetest": "node scripts/storetest.mjs",
     "adaptertest": "node scripts/adaptertest.mjs",
-    "pgtest": "node packages/postgres/test/conform.mjs && node packages/auth/test/conform.mjs",
+    "pgtest": "node packages/postgres/test/conform.mjs && node packages/auth/test/conform.mjs && node packages/mcp/test/conform.mjs",
     "authtest": "node packages/auth/test/auth.mjs && node packages/auth/test/oidc.mjs && node packages/auth/test/oauth2.mjs",
     "mcptest": "node packages/mcp/test/mcp.mjs",
     "packtest": "node scripts/packtest.mjs",
