@@ -7,11 +7,12 @@
  *
  * The first two are the package's guarantee: an MCP tool is not a HaiKIT tool,
  * so `createHai({ tools })`, which takes `Tool[]`, can't be given one, and the
- * model never sees one. The rest keep calls typed by the app's own schemas.
+ * model never sees one. The rest keep calls typed by the app's own schemas,
+ * and made as a user given by a string.
  */
 
 import type { ActionCtx, Schema, Tool, ToolCtx } from "@haikit/core";
-import { mcpServer, type McpResult } from "../../src/index.js";
+import { createMcpAuth, http, mcpServer, type McpAuthNeed, type McpError, type McpResult } from "../../src/index.js";
 
 declare const query: Schema<{ q: string }>;
 declare const items: Schema<{ items: string[] }>;
@@ -48,4 +49,24 @@ async function typed() {
 // @ts-expect-error  a result type can't be claimed without a schema that checks it
 github.tool<{ q: string }, { items: string[] }>("search_issues", { args: query });
 
-export { asTool, tools, typed };
+// ── calls as each user ─────────────────────────────────────────────────
+const mcpAuth = createMcpAuth({ userOf: async (id: string) => (id === "c1" ? "u1" : null) });
+const perUser = mcpServer({ name: "web", transport: http("https://example.com/mcp"), auth: mcpAuth.bearer(async () => "key") });
+const fetchPage = perUser.tool("fetch", { args: query, result: items });
+async function asEachUser(err: McpError) {
+  await fetchPage.call({ q: "a" }, { userId: "u1" });
+  await perUser.connect("u1");
+  await perUser.forget("u1");
+  const need: McpAuthNeed | undefined = err.auth;
+  // @ts-expect-error  a user id is a string
+  await fetchPage.call({ q: "a" }, { userId: 5 });
+  // @ts-expect-error  bearer's function gives a token or null
+  mcpAuth.bearer(() => 5);
+  // @ts-expect-error  userOf gives a user id or null
+  createMcpAuth({ userOf: () => 5 });
+  // @ts-expect-error  an auth is made by an McpAuth, and says its kind
+  mcpServer({ name: "x", transport: http("https://example.com/mcp"), auth: {} });
+  return need;
+}
+
+export { asTool, tools, typed, asEachUser };

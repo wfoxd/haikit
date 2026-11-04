@@ -10,8 +10,22 @@ import type { ContentBlock } from "@modelcontextprotocol/client";
  * - `protocol`: the server refused the call, such as for a tool it doesn't
  *   have, or asked for something this client doesn't do.
  * - `closed`: `close()` was called.
+ * - `user`: a server with `auth` had no user to call as, so nothing was sent.
+ * - `auth`: the user's credential for the server is missing, was refused, or
+ *   needs more access. `auth` on the error says which.
  */
-export type McpErrorReason = "args" | "result" | "timeout" | "connection" | "protocol" | "closed";
+export type McpErrorReason = "args" | "result" | "timeout" | "connection" | "protocol" | "closed" | "user" | "auth";
+
+/** What a call with reason `auth` needs from the user. */
+export interface McpAuthNeed {
+  /**
+   * `connect`: the user has no credential for the server, so nothing was sent.
+   * `reconnect`: the server refused theirs. `scope`: theirs needs more access.
+   */
+  readonly kind: "connect" | "reconnect" | "scope";
+  /** On `scope`: the scope the server asked for, as its challenge put it. */
+  readonly scope?: string;
+}
 
 /**
  * A call that didn't get a result. The message names only the server and the
@@ -34,11 +48,13 @@ export class McpError extends Error {
   readonly text: string | undefined;
   /** A JSON-RPC error's code. */
   readonly code: number | undefined;
+  /** With reason `auth`: what the user's credential needs. */
+  readonly auth: McpAuthNeed | undefined;
 
   constructor(
     reason: McpErrorReason,
     message: string,
-    detail: { server: string; tool?: string; text?: string; code?: number; cause?: unknown },
+    detail: { server: string; tool?: string; text?: string; code?: number; cause?: unknown; auth?: McpAuthNeed },
   ) {
     super(message, detail.cause === undefined ? undefined : { cause: detail.cause });
     this.reason = reason;
@@ -46,6 +62,7 @@ export class McpError extends Error {
     this.tool = detail.tool;
     this.text = detail.text;
     this.code = detail.code;
+    this.auth = detail.auth === undefined ? undefined : Object.freeze({ ...detail.auth });
   }
 }
 

@@ -53,6 +53,26 @@ await github.connect(); // at startup: stops here if a declared tool isn't on th
 - `textOf(result)` turns a result into text, for a tool that decides to pass
   some of it on. A cut is always marked in the text.
 
+A server can take each user's own credential instead of the app's. Then each
+call runs as the conversation's owner, over a connection of their own:
+
+```ts
+import { createMcpAuth } from "@haikit/mcp";
+
+const mcpAuth = createMcpAuth({ userOf: (id) => auth.ownerOf(id) }); // auth from @haikit/auth
+const tracker = mcpServer({
+  name: "tracker",
+  transport: http("https://mcp.tracker.example/mcp"),
+  auth: mcpAuth.bearer((userId) => keys.find(userId)), // their token, or null
+});
+```
+
+A call with no one to run as is refused with reason `user`, and one for a user
+with no token with reason `auth`, before anything is sent: it never falls
+back to the app's identity. `err.auth.kind` says what the user must do:
+`connect`, `reconnect`, or grant more `scope`. A job outside any conversation
+passes `{ userId }`.
+
 `McpTool` isn't a HaiKIT `Tool`, so it can't be passed to
 `createHai({ tools })`: `npm run typetest` checks that.
 
