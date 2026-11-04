@@ -1,4 +1,9 @@
-import { StreamableHTTPClientTransport, type StreamableHTTPClientTransportOptions, type Transport } from "@modelcontextprotocol/client";
+import {
+  StreamableHTTPClientTransport,
+  type AuthProvider,
+  type StreamableHTTPClientTransportOptions,
+  type Transport,
+} from "@modelcontextprotocol/client";
 import { StdioClientTransport, type StdioServerParameters } from "@modelcontextprotocol/client/stdio";
 
 export interface HttpOptions extends StreamableHTTPClientTransportOptions {
@@ -6,12 +11,24 @@ export interface HttpOptions extends StreamableHTTPClientTransportOptions {
   headers?: Record<string, string>;
 }
 
+/** What `mcpServer({ auth })` needs to know of a transport `http()` made. */
+export interface HttpMade {
+  /** It was given an `authProvider` of its own. */
+  authProvider: boolean;
+  /** It sends an `Authorization` header of its own. */
+  authorization: boolean;
+}
+
+/** The factories `http()` made: only these can carry each user's credential. */
+export const madeByHttp = new WeakMap<object, HttpMade>();
+
 /**
  * A server at `url`, over Streamable HTTP. Everything but `headers` is the
  * SDK's own `StreamableHTTPClientTransportOptions`, such as an `authProvider`.
- * The URL is checked now, so a bad one fails at startup.
+ * The URL is checked now, so a bad one fails at startup. For a server with
+ * `auth`, each user's connection is given that user's `authProvider`.
  */
-export function http(url: string | URL, options: HttpOptions = {}): () => Transport {
+export function http(url: string | URL, options: HttpOptions = {}): (authProvider?: AuthProvider) => Transport {
   const target = new URL(url);
   const { headers, ...rest } = options;
   if (headers) {
@@ -19,7 +36,13 @@ export function http(url: string | URL, options: HttpOptions = {}): () => Transp
     for (const [name, value] of Object.entries(headers)) merged.set(name, value);
     rest.requestInit = { ...rest.requestInit, headers: merged };
   }
-  return () => new StreamableHTTPClientTransport(target, rest);
+  const make = (authProvider?: AuthProvider) =>
+    new StreamableHTTPClientTransport(target, authProvider ? { ...rest, authProvider } : rest);
+  madeByHttp.set(make, {
+    authProvider: rest.authProvider !== undefined,
+    authorization: new Headers(rest.requestInit?.headers).has("authorization"),
+  });
+  return make;
 }
 
 /**

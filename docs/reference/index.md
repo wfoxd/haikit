@@ -40,7 +40,7 @@ statement by statement, at the version the page names.
 | [The server](server.md) | `createHai`, the `Hai` class and every `HaiConfig` option | written |
 | [HTTP routes and the wire](http.md) | `nodeHandler`, gates, each route's requests, responses and errors, the events stream and its polling mode, and every wire event | written |
 | [Sign-in and ownership](auth.md) | `@haikit/auth`: `createAuth`, the tokens it issues and accepts, its gate, its routes, revocation, signing in with Google or another provider, and its stores | written |
-| [MCP servers](mcp.md) | `@haikit/mcp`: `mcpServer`, declaring a server's tools, a call and what it resolves to, its errors, connecting and reconnecting, changes to the server's tools, `http` and `stdio`, and `textOf` | written |
+| [MCP servers](mcp.md) | `@haikit/mcp`: `mcpServer`, declaring a server's tools, a call and what it resolves to, its errors, connecting and reconnecting, calls as each user with `createMcpAuth`, changes to the server's tools, `http` and `stdio`, and `textOf` | written |
 | [Models](models.md) | The model adapter interface, `@haikit/anthropic` and `@haikit/openai` | written |
 | [Stores](stores.md) | The store interface every store implements, `memoryStore`, and `@haikit/postgres`: schema, migration, cross-server channels, cleanup | written |
 | [The browser client](client.md) | `createChat`, the `Chat` object and its state, and the registries for surfaces, notices and signals | written |
@@ -326,17 +326,23 @@ From `@haikit/auth/postgres`:
 
 | Symbol | Kind | Page |
 | --- | --- | --- |
+| `AuthProvider` | type (the SDK's, re-exported) | [MCP servers](mcp.md#http) |
 | `ContentBlock` | type (the SDK's, re-exported) | [MCP servers](mcp.md#mcpresult) |
+| `createMcpAuth` | function | [MCP servers](mcp.md#createmcpauth) |
 | `http` | function | [MCP servers](mcp.md#http) |
 | `HttpOptions` | interface | [MCP servers](mcp.md#http) |
 | `isMcpError` | function | [MCP servers](mcp.md#ismcperror-ismcptoolerror) |
 | `isMcpToolError` | function | [MCP servers](mcp.md#ismcperror-ismcptoolerror) |
+| `McpAuth` | interface | [MCP servers](mcp.md#createmcpauth) |
+| `McpAuthNeed` | interface | [MCP servers](mcp.md#mcpauthneed) |
+| `McpAuthOptions` | interface | [MCP servers](mcp.md#createmcpauth) |
 | `McpCallCtx` | interface | [MCP servers](mcp.md#mcpcallctx) |
 | `McpConnection` | interface | [MCP servers](mcp.md#mcpconnection) |
 | `McpError` | class | [MCP servers](mcp.md#mcperror) |
 | `McpErrorReason` | type | [MCP servers](mcp.md#mcperror) |
 | `McpResult` | interface | [MCP servers](mcp.md#mcpresult) |
 | `mcpServer` | function | [MCP servers](mcp.md#mcpserver) |
+| `McpServerAuth` | interface | [MCP servers](mcp.md#mcpserverauth) |
 | `McpServerOptions` | interface | [MCP servers](mcp.md#mcpserver) |
 | `McpTool` | interface | [MCP servers](mcp.md#mcptool) |
 | `McpToolChange` | interface | [MCP servers](mcp.md#changes-to-the-servers-tools) |

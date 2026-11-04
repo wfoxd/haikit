@@ -168,12 +168,15 @@ Checked against `@haikit/*` 0.20.0. Durations are in milliseconds.
 
 ### `mcpServer`, `tool` and `textOf` (`@haikit/mcp`)
 
-Checked against `@haikit/*` 0.31.0.
+Checked against `@haikit/*` 0.32.0.
 
 | Option | Default | Valid values | Page |
 | --- | --- | --- | --- |
 | `name` | required | a non-empty string | [MCP servers](mcp.md#mcpserver) |
-| `transport` | required | a function that makes a new `Transport`, such as `http(url)` or `stdio({ command })` | [MCP servers](mcp.md#mcpserver) |
+| `transport` | required | a function that makes a new `Transport`, such as `http(url)` or `stdio({ command })`; with `auth`, only what `http()` returned, with no `authProvider` or `Authorization` header of its own | [MCP servers](mcp.md#mcpserver) |
+| `auth` | none: every call shares one connection | what an `McpAuth`'s `bearer` returned; one name per server for each `createMcpAuth` | [MCP servers](mcp.md#calls-as-each-user) |
+| `maxConnections` | `100`, with `auth` | a whole number, 1 or more; only with `auth` | [MCP servers](mcp.md#each-users-connection) |
+| `idleMs` | `300000`, with `auth` | a whole number from 1 to 2147483647; only with `auth` | [MCP servers](mcp.md#each-users-connection) |
 | `timeoutMs` | `30000` | a whole number from 1 to 2147483647 | [MCP servers](mcp.md#mcpserver) |
 | `maxTotalMs` | `90000` | a whole number from 1 to 2147483647 | [MCP servers](mcp.md#mcpserver) |
 | `onChange` | a `console.warn` | a function | [MCP servers](mcp.md#changes-to-the-servers-tools) |
@@ -181,6 +184,8 @@ Checked against `@haikit/*` 0.31.0.
 | `args` (on a `tool`) | required | anything with a `parse` method, whose result is an object | [MCP servers](mcp.md#tool) |
 | `result` (on a `tool`) | none: `call` resolves to the content as sent | anything with a `parse` method | [MCP servers](mcp.md#tool) |
 | `timeoutMs`, `maxTotalMs` (on a `tool`) | the server's | as on the server | [MCP servers](mcp.md#tool) |
+| `userOf` (`createMcpAuth`) | required | a function from a conversation id to a user id, or `null` | [MCP servers](mcp.md#createmcpauth) |
+| `token` (`bearer`) | required | a function from a user id to their token, or `null` | [MCP servers](mcp.md#bearer) |
 | `headers` (`http`) | none | names and values, set over `requestInit.headers` | [MCP servers](mcp.md#http) |
 | `env` (`stdio`) | `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `USER` from this process | names and values, over those | [MCP servers](mcp.md#stdio) |
 | `maxChars` (`textOf`) | `8000` | a whole number, 0 or more | [MCP servers](mcp.md#textof) |
@@ -302,7 +307,10 @@ None of these can be changed without changing HaiKIT's code.
 | A call with no answer and no progress, by default; each progress notification starts it again | 30,000 | [MCP servers](mcp.md#call) |
 | A call in all, connecting included, by default | 90,000 | [MCP servers](mcp.md#call) |
 | Making the transport, connecting, and listing the server's tools | `timeoutMs` each | [MCP servers](mcp.md#connect) |
-| Connections being made at once, per server | 1, shared by every call | [MCP servers](mcp.md#the-connection) |
+| Connections being made at once, per server, or with `auth` per user | 1, shared by every call | [MCP servers](mcp.md#the-connection) |
+| Users connected at once, with `auth`, by default; a connection with a call in flight is never closed for room | 100 (`maxConnections`) | [MCP servers](mcp.md#each-users-connection) |
+| A user's connection with no call is closed after, by default | 300,000 (`idleMs`) | [MCP servers](mcp.md#each-users-connection) |
+| Lookups of a user's token on a 401, then one more try of that request | 1, shared by 401s that come together | [MCP servers](mcp.md#bearer) |
 | Times a call is sent | 1: a failed call is never sent again on its own | [MCP servers](mcp.md#call) |
 | Reconnect attempts per call | 1 | [MCP servers](mcp.md#the-connection) |
 | Pages of tools listed | 64 (the SDK's `listMaxPages`) | [MCP servers](mcp.md#limits) |

@@ -16,7 +16,7 @@ import path from "node:path";
 import { InMemoryTransport } from "@modelcontextprotocol/client";
 import { McpServer, ProtocolError, Server, createMcpHandler } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import { McpError, McpToolError, isMcpError, isMcpToolError, mcpServer, stdio, http, textOf } from "../dist/index.js";
+import { McpError, McpToolError, createMcpAuth, isMcpError, isMcpToolError, mcpServer, stdio, http, textOf } from "../dist/index.js";
 
 let failures = 0;
 const check = (label, ok) => {
@@ -793,6 +793,426 @@ console.log("\nhttp");
   await s.close();
   web.closeAllConnections();
   await new Promise((resolve) => web.close(resolve));
+}
+
+// ── as each user ────────────────────────────────────────────────────────
+console.log("\nas each user");
+
+/**
+ * A Streamable HTTP server that knows its users by their Bearer tokens:
+ * `users` maps a token to `{ user, scope }`. A token it doesn't know gets a
+ * 401, and `write` without the `write` scope a 403. `toolsFor(user)` says
+ * which tools that user sees. `seen` is every request, as `method tool
+ * [token]`.
+ */
+async function userServer({ users, toolsFor = () => ["whoami", "slow", "write", "change"] }) {
+  const seen = [];
+  const handler = createMcpHandler(({ requestInfo }) => {
+    const token = requestInfo?.headers.get("authorization")?.replace(/^Bearer /, "");
+    const who = users.get(token);
+    const server = new McpServer({ name: "web", version: "1.0.0" });
+    const offered = toolsFor(who?.user);
+    const reply = (text) => ({ content: [{ type: "text", text }] });
+    if (offered.includes("whoami")) {
+      server.registerTool("whoami", { inputSchema: z.object({}) }, async () => reply(`${who.user} with ${token}`));
+    }
+    if (offered.includes("slow")) {
+      server.registerTool("slow", { inputSchema: z.object({ ms: z.number() }) }, async ({ ms }) => {
+        await wait(ms);
+        return reply("slept");
+      });
+    }
+    if (offered.includes("write")) server.registerTool("write", { inputSchema: z.object({}) }, async () => reply("written"));
+    if (offered.includes("change")) {
+      // says the tools changed, as a server would after an upgrade
+      server.registerTool("change", { inputSchema: z.object({}) }, async (_args, ctx) => {
+        who.changed = true;
+        await ctx.mcpReq.notify({ method: "notifications/tools/list_changed" });
+        return reply("changed");
+      });
+    }
+    return server;
+  });
+  const web = createServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const body = chunks.length ? Buffer.concat(chunks) : undefined;
+    let rpc = null;
+    try {
+      rpc = body ? JSON.parse(body) : null;
+    } catch {}
+    const token = req.headers.authorization?.replace(/^Bearer /, "") ?? null;
+    const who = users.get(token);
+    seen.push(`${rpc?.method ?? req.method}${rpc?.params?.name ? ` ${rpc.params.name}` : ""} [${token}]`);
+    if (!who) {
+      res.writeHead(401, { "content-type": "application/json", "www-authenticate": "Bearer" });
+      return res.end(JSON.stringify({ error: "invalid_token" }));
+    }
+    if (rpc?.method === "tools/call" && rpc.params?.name === "write" && !who.scope?.includes("write")) {
+      res.writeHead(403, { "content-type": "application/json", "www-authenticate": 'Bearer error="insufficient_scope", scope="read write"' });
+      return res.end(JSON.stringify({ error: "insufficient_scope" }));
+    }
+    const response = await handler.fetch(
+      new Request(`http://${req.headers.host}${req.url}`, { method: req.method, headers: req.headers, body }),
+    );
+    res.writeHead(response.status, Object.fromEntries(response.headers));
+    if (response.body) for await (const chunk of response.body) res.write(chunk);
+    res.end();
+  });
+  await new Promise((resolve) => web.listen(0, "127.0.0.1", resolve));
+  const url = `http://127.0.0.1:${web.address().port}/mcp`;
+  const close = async () => {
+    web.closeAllConnections();
+    await new Promise((resolve) => web.close(resolve));
+  };
+  const handshakes = (token) => seen.filter((line) => line === `initialize [${token}]`).length;
+  return { url, seen, close, handshakes };
+}
+const ownerOf = (owners) => async (id) => owners[id] ?? null;
+const sameNeed = (err, need) => JSON.stringify(err?.auth) === JSON.stringify(need);
+
+{
+  const t = () => {};
+  check(
+    "createMcpAuth needs userOf",
+    thrown(() => createMcpAuth({}))?.message === "createMcpAuth: userOf must be a function, such as (id) => auth.ownerOf(id)",
+  );
+  const mcpAuth = createMcpAuth({ userOf: () => null });
+  check(
+    "bearer needs a function",
+    thrown(() => mcpAuth.bearer("token"))?.message === "bearer: token must be a function that takes a user id and returns their token, or null",
+  );
+  const auth = mcpAuth.bearer(() => "k");
+  check("an McpServerAuth is frozen, and says its kind", Object.isFrozen(auth) && auth.kind === "bearer");
+  check(
+    "an auth createMcpAuth didn't make",
+    thrown(() => mcpServer({ name: "x", transport: http("https://example.com/mcp"), auth: { kind: "bearer" } }))?.message ===
+      "auth must come from createMcpAuth(), such as mcpAuth.bearer(token)",
+  );
+  const notHttp = "auth needs a transport made by http(url): stdio() and other transports can't carry each user's credential";
+  check("auth with stdio()", thrown(() => mcpServer({ name: "x", transport: stdio({ command: "node" }), auth }))?.message === notHttp);
+  check("…or a transport of the app's own", thrown(() => mcpServer({ name: "x", transport: t, auth }))?.message === notHttp);
+  check(
+    "auth with an http() that has an authProvider",
+    thrown(() => mcpServer({ name: "x", transport: http("https://example.com/mcp", { authProvider: { token: async () => "x" } }), auth }))
+      ?.message === "auth gives the transport each user's credential: http() can't be given an authProvider as well",
+  );
+  const ownAuthorization = "auth sets each user's Authorization header: http() can't send one of its own as well";
+  check(
+    "…or an Authorization header of its own",
+    thrown(() => mcpServer({ name: "x", transport: http("https://example.com/mcp", { headers: { Authorization: "Bearer app" } }), auth }))
+      ?.message === ownAuthorization,
+  );
+  check(
+    "…in requestInit too",
+    thrown(() =>
+      mcpServer({ name: "x", transport: http("https://example.com/mcp", { requestInit: { headers: { authorization: "Bearer app" } } }), auth }),
+    )?.message === ownAuthorization,
+  );
+  check(
+    "maxConnections without auth",
+    thrown(() => mcpServer({ name: "x", transport: t, maxConnections: 5 }))?.message ===
+      "maxConnections and idleMs are for a server with auth: without it, every call shares one connection",
+  );
+  check("idleMs without auth", thrown(() => mcpServer({ name: "x", transport: t, idleMs: 5 })) instanceof TypeError);
+  for (const n of [0, 1.5, "3"]) {
+    const err = thrown(() => mcpServer({ name: "x", transport: http("https://example.com/mcp"), auth, maxConnections: n }));
+    check(`maxConnections ${JSON.stringify(n)}`, err instanceof RangeError && err.message === `maxConnections must be a whole number, 1 or more (got ${n})`);
+  }
+  check(
+    "idleMs is checked as timeoutMs is",
+    thrown(() => mcpServer({ name: "x", transport: http("https://example.com/mcp"), auth, idleMs: 0 }))?.message ===
+      "idleMs must be a whole number of milliseconds, from 1 to 2147483647 (got 0)",
+  );
+  const first = mcpServer({ name: "web", transport: http("https://example.com/mcp"), auth });
+  check(
+    "two servers of one createMcpAuth with the same name",
+    thrown(() => mcpServer({ name: "web", transport: http("https://example.com/mcp"), auth: mcpAuth.bearer(() => "k") }))?.message ===
+      'another server from the same createMcpAuth is named "web"',
+  );
+  check(
+    "…but of another createMcpAuth, it's fine",
+    !thrown(() => mcpServer({ name: "web", transport: http("https://example.com/mcp"), auth: createMcpAuth({ userOf: () => null }).bearer(() => "k") })),
+  );
+  await first.close();
+  check("…and a closed server's name is free again", !thrown(() => mcpServer({ name: "web", transport: http("https://example.com/mcp"), auth })));
+  const refused = thrown(() => mcpServer({ name: "late", transport: http("https://example.com/mcp"), auth, idleMs: 0 }));
+  check("a server refused for its options doesn't take its name", refused && !thrown(() => mcpServer({ name: "late", transport: http("https://example.com/mcp"), auth })));
+
+  const shared = mcpServer({ name: "shared", transport: t });
+  check("connect(userId) without auth", (await rejection(shared.connect("u")))?.message === "connect() takes a user only for a server with auth");
+  check(
+    "forget() without auth",
+    (await rejection(shared.forget("u")))?.message === "forget() is for a server with auth: without it, every call shares one connection",
+  );
+  const perUser = mcpServer({ name: "per-user", transport: http("https://example.com/mcp"), auth });
+  check(
+    "connect() with auth needs a user",
+    (await rejection(perUser.connect()))?.message ===
+      "connect() needs a userId for a server with auth: each user's connection is checked as it's made",
+  );
+  check("forget() needs one too", (await rejection(perUser.forget(""))) instanceof TypeError);
+}
+{
+  const users = new Map([
+    ["tA", { user: "a" }],
+    ["tB", { user: "b", scope: "read" }],
+  ]);
+  const keys = { a: "tA", b: "tB" };
+  const owners = { c1: "a", c2: "b", c3: null, c4: "nokey", c5: "broken" };
+  let lookups = 0;
+  const web = await userServer({ users });
+  const mcpAuth = createMcpAuth({
+    userOf: async (id) => {
+      lookups++;
+      if (id === "c-down") throw new Error("store down");
+      if (id === "c-hang") return new Promise(() => {});
+      return owners[id] ?? null;
+    },
+  });
+  const s = mcpServer({
+    name: "web",
+    transport: http(web.url),
+    auth: mcpAuth.bearer((user) => {
+      if (user === "broken") throw new Error("vault sealed");
+      return keys[user] ?? null;
+    }),
+  });
+  const whoami = s.tool("whoami", { args: anything });
+  const write = s.tool("write", { args: anything });
+  const text = async (call) => (await call).content[0].text;
+
+  check("a call runs as the conversation's owner, with their token", (await text(whoami.call({}, { conversationId: "c1" }))) === "a with tA");
+  check("…another's as theirs", (await text(whoami.call({}, { conversationId: "c2" }))) === "b with tB");
+  check("each user has a connection of their own", web.handshakes("tA") === 1 && web.handshakes("tB") === 1);
+  await whoami.call({}, { conversationId: "c1" });
+  check("…which their later calls use", web.handshakes("tA") === 1);
+  check("a job names the user itself", (await text(whoami.call({}, { userId: "b" }))) === "b with tB");
+  check("…and may in a conversation, if it's the owner", (await text(whoami.call({}, { conversationId: "c1", userId: "a" }))) === "a with tA");
+
+  const before = web.seen.length;
+  const other = await rejection(whoami.call({}, { conversationId: "c1", userId: "b" }));
+  check(
+    "a userId that isn't the owner: McpError, user",
+    isMcpError(other) && other.reason === "user" && other.message === "web/whoami was not called: its userId is not the conversation's owner",
+  );
+  const none = await rejection(whoami.call({}));
+  check(
+    "no conversation and no userId: user",
+    isMcpError(none) && none.reason === "user" && none.message === "web/whoami was not called: there is no user to call it as",
+  );
+  const unowned = await rejection(whoami.call({}, { conversationId: "c3" }));
+  check("a conversation with no owner: user, never the app's identity", unowned?.reason === "user" && unowned.message === none.message);
+  const down = await rejection(whoami.call({}, { conversationId: "c-down" }));
+  check(
+    "userOf that throws: user, with its error as the cause",
+    down?.reason === "user" && down.message === "web/whoami was not called: the user it runs for could not be looked up" && down.cause?.message === "store down",
+  );
+  const started = Date.now();
+  const hung = await rejection(s.tool("whoami", { args: anything, maxTotalMs: 100 }).call({}, { conversationId: "c-hang" }));
+  check("userOf that never answers: timeout, inside maxTotalMs", hung?.reason === "timeout" && Date.now() - started < 1000);
+
+  const notConnected = await rejection(whoami.call({}, { conversationId: "c4" }));
+  check(
+    "bearer has no token for the user: auth, connect",
+    isMcpError(notConnected) &&
+      notConnected.reason === "auth" &&
+      sameNeed(notConnected, { kind: "connect" }) &&
+      notConnected.message === "web/whoami: the user has not connected an account",
+  );
+  const broken = await rejection(whoami.call({}, { conversationId: "c5" }));
+  check(
+    "bearer's function throws: connection, with its error as the cause",
+    broken?.reason === "connection" && broken.message === "web/whoami could not be reached" && broken.cause?.message === "vault sealed",
+  );
+  check("none of those sent anything", web.seen.length === before);
+
+  keys.nokey = "tN";
+  users.set("tN", { user: "nokey" });
+  check("once the app has a token for them, their next call works", (await text(whoami.call({}, { conversationId: "c4" }))) === "nokey with tN");
+
+  // the app rotates a's key: the server takes only the new one
+  users.delete("tA");
+  users.set("tA2", { user: "a" });
+  keys.a = "tA2";
+  let mark = web.seen.length;
+  check("a key the app rotated is picked up on the 401", (await text(whoami.call({}, { conversationId: "c1" }))) === "a with tA2");
+  check(
+    "…which sent the old one, then the new",
+    JSON.stringify(web.seen.slice(mark).filter((l) => l.startsWith("tools/call"))) ===
+      JSON.stringify(["tools/call whoami [tA]", "tools/call whoami [tA2]"]),
+  );
+
+  // the server stops taking b's key, and the app still has the same one
+  users.delete("tB");
+  mark = web.seen.length;
+  const refusedKey = await rejection(whoami.call({}, { conversationId: "c2" }));
+  check(
+    "a key the server refuses, and the app has no other: auth, reconnect",
+    refusedKey?.reason === "auth" &&
+      sameNeed(refusedKey, { kind: "reconnect" }) &&
+      refusedKey.message === "web/whoami: the server refused the user's credential",
+  );
+  check(
+    "…after one retry with what the app gave again",
+    web.seen.slice(mark).filter((l) => l.startsWith("tools/call")).length === 2,
+  );
+  users.set("tB", { user: "b", scope: "read" });
+  check("the connection outlives it: the next call works", (await text(whoami.call({}, { conversationId: "c2" }))) === "b with tB");
+
+  // the server refuses b's key, and the app has none for b now
+  users.delete("tB");
+  delete keys.b;
+  const gone = await rejection(whoami.call({}, { conversationId: "c2" }));
+  check("a key the server refuses, and the app has none: reconnect", gone?.reason === "auth" && gone.auth.kind === "reconnect");
+  mark = web.seen.length;
+  const after = await rejection(whoami.call({}, { conversationId: "c2" }));
+  check("…then connect, sending nothing", after?.auth?.kind === "connect" && web.seen.length === mark);
+
+  const scope = await rejection(write.call({}, { conversationId: "c1" }));
+  check(
+    "a 403 asking for more scope: auth, scope, with the scope asked for",
+    scope?.reason === "auth" &&
+      sameNeed(scope, { kind: "scope", scope: "read write" }) &&
+      scope.message === "web/write: the user's account needs more access" &&
+      Object.isFrozen(scope.auth),
+  );
+  users.get("tA2").scope = "read write";
+  check("…and once the user has it, the call goes", (await text(write.call({}, { conversationId: "c1" }))) === "written");
+
+  check("connect(userId) connects as that user", (await rejection(s.connect("a"))) === null);
+  const noKey = await rejection(s.connect("stranger"));
+  check(
+    "…and names the server alone",
+    noKey?.reason === "auth" && noKey.tool === undefined && noKey.message === "web: the user has not connected an account",
+  );
+
+  const lookupsBefore = lookups;
+  await s.close();
+  const closed = await rejection(whoami.call({}, { conversationId: "c1" }));
+  check("after close(): closed, without looking anyone up", closed?.reason === "closed" && lookups === lookupsBefore);
+  check("connect(userId) after close() too", (await rejection(s.connect("a")))?.reason === "closed");
+  await web.close();
+}
+{
+  // the server that never says a thing about users: ctx is not read
+  const { state, transport } = fixture(standard);
+  const s = mcpServer({ name: "fixture", transport });
+  const search = s.tool("search", { args: query, result: items });
+  await search.call({ q: "a" }, { conversationId: "c1", userId: "anyone" });
+  await search.call({ q: "b" });
+  check("without auth, every call shares one connection, whoever it's for", state.dials === 1);
+  await s.close();
+}
+{
+  // the pool
+  const users = new Map(["p1", "p2", "p3", "q1", "q2", "r1", "s1"].map((u) => [`t-${u}`, { user: u }]));
+  const web = await userServer({ users });
+  const mcpAuth = createMcpAuth({ userOf: () => null });
+  const bearer = mcpAuth.bearer((u) => `t-${u}`);
+  const s = mcpServer({ name: "pool", transport: http(web.url), auth: bearer, maxConnections: 2 });
+  const whoami = s.tool("whoami", { args: anything });
+  const slow = s.tool("slow", { args: anything });
+  for (const user of ["p1", "p2", "p3"]) await whoami.call({}, { userId: user });
+  await whoami.call({}, { userId: "p1" });
+  check(
+    "past maxConnections, the least recently used connection is closed",
+    web.handshakes("t-p1") === 2 && web.handshakes("t-p2") === 1 && web.handshakes("t-p3") === 1,
+  );
+  await whoami.call({}, { userId: "p3" });
+  check("…and a recent one kept", web.handshakes("t-p3") === 1);
+  await s.close();
+
+  const one = mcpServer({ name: "one", transport: http(web.url), auth: mcpAuth.bearer((u) => `t-${u}`), maxConnections: 1 });
+  const oneSlow = one.tool("slow", { args: anything });
+  const oneWho = one.tool("whoami", { args: anything });
+  const long = oneSlow.call({ ms: 300 }, { userId: "q1" });
+  await wait(50);
+  await oneWho.call({}, { userId: "q2" });
+  check("a connection with a call in flight is never closed for room", (await long).content[0].text === "slept");
+  check("…the pool grows past the cap instead", web.handshakes("t-q1") === 1 && web.handshakes("t-q2") === 1);
+  await oneWho.call({}, { userId: "q2" });
+  await oneWho.call({}, { userId: "q1" });
+  check("…and shrinks back once one is free", web.handshakes("t-q1") === 2);
+  await one.close();
+
+  const idle = mcpServer({ name: "idle", transport: http(web.url), auth: mcpAuth.bearer((u) => `t-${u}`), idleMs: 50 });
+  const idleWho = idle.tool("whoami", { args: anything });
+  await idleWho.call({}, { userId: "r1" });
+  await wait(150);
+  await idleWho.call({}, { userId: "r1" });
+  check("a connection idle for idleMs is closed", web.handshakes("t-r1") === 2);
+  await idle.close();
+
+  const f = mcpServer({ name: "forget", transport: http(web.url), auth: mcpAuth.bearer((u) => `t-${u}`) });
+  const fWho = f.tool("whoami", { args: anything });
+  const fSlow = f.tool("slow", { args: anything });
+  await fWho.call({}, { userId: "s1" });
+  await f.forget("s1");
+  await fWho.call({}, { userId: "s1" });
+  check("forget(userId) closes their connection: the next call makes a new one", web.handshakes("t-s1") === 2);
+  check("forget() for a user with none does nothing", (await rejection(f.forget("nobody"))) === null);
+  const inFlight = rejection(fSlow.call({ ms: 1000 }, { userId: "s1" }));
+  await wait(50);
+  await f.forget("s1");
+  const cut = await inFlight;
+  check("a call in flight on a forgotten connection: closed", cut?.reason === "closed");
+  check("…and the user's next call works", (await fWho.call({}, { userId: "s1" })).content[0].text === "s1 with t-s1");
+  await f.close();
+  await web.close();
+}
+{
+  // each user's tools
+  const users = new Map([
+    ["tA", { user: "a" }],
+    ["tL", { user: "limited" }],
+  ]);
+  const web = await userServer({
+    users,
+    toolsFor: (user) => {
+      if (user === "limited") return ["whoami"];
+      return users.get("tA").changed ? ["whoami", "change"] : ["whoami", "write", "change"];
+    },
+  });
+  const changes = [];
+  const mcpAuth = createMcpAuth({ userOf: () => null });
+  const s = mcpServer({
+    name: "web",
+    transport: http(web.url),
+    auth: mcpAuth.bearer((u) => (u === "a" ? "tA" : "tL")),
+    onChange: (c) => changes.push(c),
+  });
+  s.tool("whoami", { args: anything });
+  s.tool("write", { args: anything });
+  const change = s.tool("change", { args: anything });
+  check(
+    "each user's first connection checks the tools they see",
+    (await rejection(s.connect("limited")))?.message === 'web: the server has no tool named "write"; the server has no tool named "change"',
+  );
+  check("…and another user's passes", (await rejection(s.connect("a"))) === null);
+  const late = s.tool("absent", { args: anything });
+  const err = await rejection(late.call({}, { userId: "a" }));
+  check("a tool declared later is checked on a user's first call to it", err?.message === 'web: the server has no tool named "absent"' && !isMcpError(err));
+  await change.call({}, { userId: "a" });
+  for (let i = 0; i < 20 && !changes.length; i++) await wait(50);
+  check(
+    "a change to a user's tools names the user",
+    JSON.stringify(changes[0]) === JSON.stringify({ server: "web", user: "a", removed: ["write"], changed: [] }),
+  );
+  await s.close();
+  await web.close();
+
+  users.get("tA").changed = false;
+  const web2 = await userServer({ users, toolsFor: () => (users.get("tA").changed ? ["change"] : ["write", "change"]) });
+  const logged = await quietly(async () => {
+    const s2 = mcpServer({ name: "web", transport: http(web2.url), auth: createMcpAuth({ userOf: () => null }).bearer(() => "tA") });
+    s2.tool("write", { args: anything });
+    await s2.tool("change", { args: anything }).call({}, { userId: "a" });
+    await wait(400);
+    await s2.close();
+  });
+  check("the default warning says whose", logged.includes('@haikit/mcp: web (for user a): tool "write" was removed'));
+  await web2.close();
 }
 
 // ── textOf ──────────────────────────────────────────────────────────────

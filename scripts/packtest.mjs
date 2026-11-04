@@ -195,7 +195,7 @@ import { createAuth, memoryAuthStore } from "@haikit/auth";
 import { pgAuthStore, migrate as migrateAuth, schema as authSchema } from "@haikit/auth/postgres";
 import { google, oidc } from "@haikit/auth/oidc";
 import { github, oauth2 } from "@haikit/auth/oauth2";
-import { mcpServer, http, stdio, textOf, isMcpError } from "@haikit/mcp";
+import { createMcpAuth, mcpServer, http, stdio, textOf, isMcpError } from "@haikit/mcp";
 import { z } from "zod";
 
 const out = {};
@@ -244,6 +244,14 @@ out.mcpWorks =
   isMcpError(unreachable) && unreachable.message === "down/search could not be reached" &&
   typeof http("https://example.com/mcp") === "function" && typeof stdio({ command: "true" }) === "function" &&
   textOf({ content: [{ type: "text", text: "abcdef" }] }, { maxChars: 3 }) === "abc\\n[Cut at 3 of 6 characters.]";
+// a server with auth calls as a user, and refuses a call with no one to run as
+const perUser = mcpServer({
+  name: "per-user",
+  transport: http("https://example.com/mcp"),
+  auth: createMcpAuth({ userOf: () => null }).bearer(() => null),
+});
+const nobody = await perUser.tool("search", { args: z.object({}) }).call({}).catch((err) => err);
+out.mcpAuthWorks = isMcpError(nobody) && nobody.reason === "user";
 
 // the contract layer does real work, not just re-export shapes
 const surface = defineSurface({
@@ -311,6 +319,7 @@ console.log(JSON.stringify(out));
   check("@haikit/auth/oidc starts a sign-in with Google", () => runtime.authOidc === true);
   check("@haikit/auth/oauth2 starts a sign-in with GitHub", () => runtime.authOauth2 === true);
   check("@haikit/mcp declares and calls a tool, and makes text of a result", () => runtime.mcpWorks === true);
+  check("@haikit/mcp makes calls as each user, and refuses one with no user", () => runtime.mcpAuthWorks === true);
   check("defineSurface builds a surface", () => runtime.surfaceName === "packtest_picker");
   check("cap() caps (3 of 47)", () => runtime.capShown === 3 && runtime.capTotal === 47);
   check("cap() reports the omission", () => runtime.capReportsOmission === true);
@@ -365,7 +374,7 @@ import { pgAuthStore } from "@haikit/auth/postgres";
 import { google, oidc, type GoogleOptions, type OidcOptions, type OidcProfile, type SignInAs } from "@haikit/auth/oidc";
 import { github, oauth2, type GitHubOptions, type OAuth2Options, type OAuth2Profile, type ProviderApi, type SignInAs as OAuth2SignInAs } from "@haikit/auth/oauth2";
 import type { SignInProvider } from "@haikit/auth";
-import { mcpServer, http, stdio, textOf, McpError, McpToolError, type McpConnection, type McpResult, type McpTool, type McpToolChange } from "@haikit/mcp";
+import { createMcpAuth, mcpServer, http, stdio, textOf, McpError, McpToolError, type McpAuthNeed, type McpConnection, type McpResult, type McpTool, type McpToolChange } from "@haikit/mcp";
 import type { Gate, Tool, ToolCtx } from "@haikit/core";
 import { z } from "zod";
 
@@ -485,7 +494,15 @@ const asText: Promise<string> = rawSearch.call({ q: "bug" }).then((r) => textOf(
 // @ts-expect-error  an MCP tool has no run, description or schema for the model
 const notATool: Tool = searchIssues;
 const reasons: string[] = [new McpError("closed", "m", { server: "s" }).reason, new McpToolError("s", "t", []).text];
-void found; void asText; void notATool; void reasons;
+// a server with auth: each call as the conversation's owner, or a userId
+const tracker: McpConnection = mcpServer({
+  name: "tracker",
+  transport: http("https://example.com/mcp"),
+  auth: createMcpAuth({ userOf: async (id: string) => id }).bearer(async (userId: string) => userId),
+});
+const asUser: Promise<McpResult> = tracker.tool("list", { args: z.object({}) }).call({}, { userId: "u1" });
+const need: McpAuthNeed | undefined = new McpError("auth", "m", { server: "s", auth: { kind: "connect" } }).auth;
+void found; void asText; void notATool; void reasons; void asUser; void need;
 // the OpenAI adapter type-checks as a ModelAdapter
 const gpt: ModelAdapter = openai({ model: "gpt-6-luna", effort: "low", promptCacheKey: "packtest" });
 void gpt;

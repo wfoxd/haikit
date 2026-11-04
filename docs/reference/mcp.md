@@ -10,24 +10,30 @@ descriptions, not its instructions, and not its results.
 
 Exported by `@haikit/mcp`: `mcpServer`, `McpServerOptions`, `McpConnection`,
 `McpToolDef`, `McpTool`, `McpCallCtx`, `McpResult`, `McpToolChange`,
-`McpError`, `McpErrorReason`, `McpToolError`, `isMcpError`,
+`createMcpAuth`, `McpAuthOptions`, `McpAuth`, `McpServerAuth`,
+`McpError`, `McpErrorReason`, `McpAuthNeed`, `McpToolError`, `isMcpError`,
 `isMcpToolError`, `http`, `HttpOptions`, `stdio`, `textOf`, `TextOptions`,
 and, re-exported from `@modelcontextprotocol/client`, the types
-`ContentBlock` and `Transport`.
+`AuthProvider`, `ContentBlock` and `Transport`.
 
-Checked against `@haikit/*` 0.31.0 and `@modelcontextprotocol/client` 2.4.0.
-Source: `packages/mcp/src/index.ts`, `packages/mcp/src/errors.ts`,
-`packages/mcp/src/text.ts` and `packages/mcp/src/transports.ts`.
+Checked against `@haikit/*` 0.32.0 and `@modelcontextprotocol/client` 2.4.0.
+Source: `packages/mcp/src/index.ts`, `packages/mcp/src/auth.ts`,
+`packages/mcp/src/errors.ts`, `packages/mcp/src/text.ts` and
+`packages/mcp/src/transports.ts`.
 
 - [The rule](#the-rule): the model never sees an MCP tool
 - [`mcpServer`](#mcpserver): `McpServerOptions`
 - [`McpConnection`](#mcpconnection): `tool`, `McpToolDef`, `connect`,
-  `close`
+  `forget`, `close`
 - [A call](#a-call): `McpTool`, `call`, `McpCallCtx`, `McpResult`
-- [Errors](#errors): `McpError`, `McpErrorReason`, `McpToolError`,
-  `isMcpError`, `isMcpToolError`, and what the model hears of one
+- [Errors](#errors): `McpError`, `McpErrorReason`, `McpAuthNeed`,
+  `McpToolError`, `isMcpError`, `isMcpToolError`, and what the model hears
+  of one
 - [The connection](#the-connection): connecting, reconnecting, what this
   client tells a server
+- [Calls as each user](#calls-as-each-user): `createMcpAuth`,
+  `McpAuthOptions`, `McpAuth`, `bearer`, `McpServerAuth`, who a call runs
+  as, each user's connection
 - [Changes to the server's tools](#changes-to-the-servers-tools):
   `McpToolChange`, `onChange`
 - [Transports](#transports): `http`, `HttpOptions`, `stdio`, `Transport`
@@ -83,7 +89,10 @@ function mcpServer(options: McpServerOptions): McpConnection;
 
 interface McpServerOptions {
   name: string;
-  transport: () => Transport | Promise<Transport>;
+  transport: (authProvider?: AuthProvider) => Transport | Promise<Transport>;
+  auth?: McpServerAuth;
+  maxConnections?: number;
+  idleMs?: number;
   timeoutMs?: number;
   maxTotalMs?: number;
   onChange?: (change: McpToolChange) => void;
@@ -97,7 +106,10 @@ The connection to one MCP server. Nothing connects until
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `name` | required | Names the server in errors and warnings, as in `github/search_issues` |
-| `transport` | required | Makes a connection. Called by the first `connect()` or call, and again for each reconnect, so it must make a new `Transport` each time. [`http(url)`](#http) and [`stdio({ command })`](#stdio) return one |
+| `transport` | required | Makes a connection. Called by the first `connect()` or call, and again for each reconnect, so it must make a new `Transport` each time. [`http(url)`](#http) and [`stdio({ command })`](#stdio) return one. For a server with `auth`, it must be what `http()` returned, and is given the `AuthProvider` of the user each connection is for |
+| `auth` | none: every call shares one connection, and one identity | Makes each call as the user it runs for, with their own credential, over a connection of their own: `createMcpAuth({ userOf }).bearer(token)`. See [Calls as each user](#calls-as-each-user) |
+| `maxConnections` | `100`, with `auth` | The most users connected at once. Past it, the least recently used connections with no call in flight are closed. Only with `auth` |
+| `idleMs` | `300_000` (5 min), with `auth` | A user's connection is closed after this long with no call. Only with `auth` |
 | `timeoutMs` | `30_000` (30 s) | How long the server may go without answering a call or reporting progress on it. It also bounds making the transport, connecting, and listing the server's tools |
 | `maxTotalMs` | `90_000` (90 s) | The longest a call may take, progress or not, connecting included |
 | `onChange` | a `console.warn` | Hears that a declared tool was removed, or its schema changed. See [Changes to the server's tools](#changes-to-the-servers-tools) |
@@ -113,6 +125,29 @@ The connection to one MCP server. Nothing connects until
   2147483647 (got <value>)`, and the same for `maxTotalMs`: for a value that
   isn't a number, isn't whole, or is out of that range. 2147483647 is the
   longest timer Node keeps.
+- `TypeError: maxConnections and idleMs are for a server with auth: without
+  it, every call shares one connection`, for either without `auth`.
+
+With `auth`, in this order:
+
+- `TypeError: auth must come from createMcpAuth(), such as
+  mcpAuth.bearer(token)`, for anything an `McpAuth` didn't make, even an
+  object of the same shape.
+- `TypeError: auth needs a transport made by http(url): stdio() and other
+  transports can't carry each user's credential`.
+- `TypeError: auth gives the transport each user's credential: http() can't
+  be given an authProvider as well`.
+- `TypeError: auth sets each user's Authorization header: http() can't send
+  one of its own as well`, for an `Authorization` header, in any case, in
+  `http()`'s `headers` or `requestInit.headers`.
+- `RangeError: maxConnections must be a whole number, 1 or more (got
+  <value>)`.
+- The `RangeError` above for `idleMs`: `idleMs must be a whole number of
+  milliseconds, from 1 to 2147483647 (got <value>)`.
+- `TypeError: another server from the same createMcpAuth is named
+  "<name>"`, while that server is open: a server's name keys its users'
+  credentials. It is checked last, so a server refused for anything else
+  leaves the name free, and [`close()`](#close) frees it.
 
 ## `McpConnection`
 
@@ -121,7 +156,8 @@ interface McpConnection {
   readonly name: string;
   tool<A, R>(name: string, def: McpToolDef<A, R> & { result: Schema<R> }): McpTool<A, R>;
   tool<A>(name: string, def: McpToolDef<A, unknown> & { result?: undefined }): McpTool<A, McpResult>;
-  connect(): Promise<void>;
+  connect(userId?: string): Promise<void>;
+  forget(userId: string): Promise<void>;
   close(): Promise<void>;
 }
 ```
@@ -175,15 +211,27 @@ as in `tool<A, R>(name, { args })`, doesn't compile.
   tool named "<name>"`, or `<server>: tool "<name>" can only run as an MCP
   task, which @haikit/mcp does not support`.
 
+On a server with `auth`, `tool()` doesn't check: each user's connection has
+its own list of tools. A tool declared after a user's connection was checked
+is checked on that user's first call to it, which rejects with that same
+`Error` (see [Each user's connection](#each-users-connection)).
+
 ### `connect`
 
 ```ts
-connect(): Promise<void>;
+connect(userId?: string): Promise<void>;
 ```
 
 Connects, and checks every declared tool. Call it at startup, after
 declaring the tools, so a mistake stops the app there. Without it, the first
 call connects, and fails with the same error.
+
+On a server with `auth`, `connect(userId)` makes that user's connection, and
+checks the tools that user sees, as their first call would: such as just
+after the user has given the app their key. Their credential is looked up
+first (see [`bearer`](#bearer)), and nothing is sent without one. The
+connection is then kept as the user's, as a call's would be (see
+[Each user's connection](#each-users-connection)).
 
 1. `transport()` is called, and must make its `Transport` within
    `timeoutMs`. One made later is closed when it comes. An SDK `Client`
@@ -208,10 +256,36 @@ it.
 | Listing the tools fails | `McpError`, its reason as for a call (see [Errors](#errors)), named for the server alone, such as `<server> did not answer in time`. Never `result`: a listing the SDK can't read is `protocol`, with the SDK's words on `text` |
 | A declared tool fails the check | `Error`: `<server>: ` then each problem, in the order the tools were declared, joined by `; `. A problem is `the server has no tool named "<name>"`, or `tool "<name>" can only run as an MCP task, which @haikit/mcp does not support` |
 | `close()` was called, before or while connecting | `McpError`, reason `closed`: `<server>: the connection was closed` |
+| With `auth`: the user's credential is missing, refused, or needs more access | `McpError`, reason `auth`: `<server>: the user has not connected an account`, `<server>: the server refused the user's credential`, or `<server>: the user's account needs more access` (see [`McpAuthNeed`](#mcpauthneed)) |
+| With `auth`: `token(userId)` throws or rejects | `McpError`, reason `connection`: `<server> could not be reached`, its `cause` what it threw |
+| With `auth`, and no `userId`, or `""` | `TypeError: connect() needs a userId for a server with auth: each user's connection is checked as it's made` |
+| Without `auth`, and a `userId` | `TypeError: connect() takes a user only for a server with auth` |
 
 After any rejection the connection is closed and nothing is kept, so the
 next `connect()` or call starts again from step 1. Only the first connection
 to succeed is checked; see [The connection](#the-connection) for later ones.
+With `auth`, that is each user's first.
+
+### `forget`
+
+```ts
+forget(userId: string): Promise<void>;
+```
+
+For a server with `auth`: closes the user's connection, if they have one,
+and resolves once it is closed. A call in flight on it rejects with reason
+`closed`. The user's next call makes a new connection, checked as a first
+one, and looks up their credential again. Call it when the user takes their
+key away, or the app has a new one for them.
+
+For a user with no connection, it resolves at once.
+
+**Rejects:**
+
+- `TypeError: forget() is for a server with auth: without it, every call
+  shares one connection`.
+- `TypeError: forget() needs a userId`, for one that isn't a non-empty
+  string.
 
 ### `close`
 
@@ -231,6 +305,11 @@ on it rejects with reason `closed`, and so does a call in flight. It is final: e
 `McpError`, reason `closed`, `<server>/<tool>: the connection was closed`,
 without connecting, and `connect()` with `<server>: the connection was
 closed`.
+
+With `auth`, it closes every user's connection the same way. A later call
+rejects with reason `closed` without looking up who it's for, and the
+server's `name` is free again for another server from the same
+`createMcpAuth`.
 
 ## A call
 
@@ -259,14 +338,22 @@ call(args: A, ctx?: McpCallCtx): Promise<R>;
    What it returns must be an object, not an array or `null`, or the call
    rejects with reason `args`: `<server>/<tool> was not called: its args
    must be an object`. Nothing is sent either way.
-2. **It connects,** if it isn't connected, as [`connect`](#connect) does. A
-   failure rejects the call with the same reason, named for the call, as in
-   `<server>/<tool> could not be reached`, and the same `cause`, `text` and
-   `code`. The `Error` of a declared tool failing the check rejects the call
-   as it is. Connecting counts against `maxTotalMs`: a call still waiting for
-   the connection when it runs out rejects with reason `timeout`, and the
-   connection goes on being made for the calls after it.
-3. **The tool is called** (`tools/call`) with the parsed args.
+2. **With `auth`, the user is found** (see
+   [Who a call runs as](#who-a-call-runs-as)), and the call takes their
+   connection. If there is no one to call as, the call rejects with reason
+   `user`, and nothing is sent. Looking up counts against `maxTotalMs`.
+3. **It connects,** if it isn't connected, as [`connect`](#connect) does.
+   With `auth`, the user's credential is looked up first, if their
+   connection has none, and a user with none rejects with reason `auth`,
+   kind `connect`, before anything is sent. A failure rejects the call with
+   the same reason, named for the call, as in `<server>/<tool> could not be
+   reached`, and the same `cause`, `text`, `code` and `auth`. The `Error` of
+   a declared tool failing the check rejects the call as it is, and so does
+   that of a tool declared after the user's connection was checked, on the
+   user's first call to it. Connecting counts against `maxTotalMs`: a call
+   still waiting for the connection when it runs out rejects with reason
+   `timeout`, and the connection goes on being made for the calls after it.
+4. **The tool is called** (`tools/call`) with the parsed args.
    - It times out after `timeoutMs` with no answer and no progress, and once
      `maxTotalMs` has passed since the call began, connecting included.
      Either way the server is sent `notifications/cancelled` for it.
@@ -277,7 +364,11 @@ call(args: A, ctx?: McpCallCtx): Promise<R>;
      total, message }`, with `total` and `message` only when the server sent
      them. In a HaiKIT tool, that sends the browser a `progress` event (see
      [Tools: `progress`](tools.md#progress)).
-4. **The result is decided** (see below).
+   - With `auth`, a 401 from the server has the transport look up the
+     user's token again, and send the request once more (see
+     [`bearer`](#bearer)). That is the SDK's retry of one HTTP request, not a
+     second call: a request the server refused with a 401 wasn't run.
+5. **The result is decided** (see below).
 
 A call is sent once. One that fails is never sent again on its own, even
 when a reconnect follows: the server may have run it.
@@ -317,18 +408,22 @@ rejects the call before it is sent.
 ```ts
 interface McpCallCtx {
   readonly conversationId?: string;
+  readonly userId?: string;
   progress?(progress: Progress): void;
 }
 ```
 
 What a call is made for. A HaiKIT tool's [`ToolCtx`](tools.md#toolctx) or an
-action handler's [`ActionCtx`](surfaces.md) can be passed as it is, and so
-can nothing at all, as from a background job.
+action handler's [`ActionCtx`](surfaces.md) can be passed as it is. On a
+server without `auth`, so can nothing at all, as from a background job.
 
 | Field | Meaning |
 | --- | --- |
-| `conversationId` | Not read yet. It is in the type so a later version can choose a connection per user without calls changing |
-| `progress` | Hears the server's progress notifications, as described in step 3 above |
+| `conversationId` | With `auth`: the call runs as this conversation's owner, from `userOf`. A HaiKIT `ctx` has it (see [Tools: `conversationId`](tools.md#conversationid)). Not read without `auth` |
+| `userId` | With `auth`: the user to call as, for a call made outside any conversation, such as a job. With a `conversationId` too, it must be the conversation's owner. Not read without `auth` |
+| `progress` | Hears the server's progress notifications, as described in step 4 above |
+
+See [Who a call runs as](#who-a-call-runs-as).
 
 ### `McpResult`
 
@@ -359,9 +454,10 @@ class McpError extends Error {
   readonly reason: McpErrorReason;
   readonly text: string | undefined;
   readonly code: number | undefined;
+  readonly auth: McpAuthNeed | undefined;
 }
 
-type McpErrorReason = "args" | "result" | "timeout" | "connection" | "protocol" | "closed";
+type McpErrorReason = "args" | "result" | "timeout" | "connection" | "protocol" | "closed" | "user" | "auth";
 ```
 
 A call that got no result, or one its schema refused.
@@ -373,6 +469,7 @@ A call that got no result, or one its schema refused.
 | `reason` | Why; see below |
 | `text` | What the server, or the SDK, said about it, when it said anything: a JSON-RPC error's message, or the SDK's own |
 | `code` | A JSON-RPC error's code, such as `-32602` |
+| `auth` | With reason `auth`: what the user's credential needs, frozen (see [`McpAuthNeed`](#mcpauthneed)). `undefined` with any other |
 | `cause` | The error it came from, when there was one: what a schema threw, or the SDK's error |
 
 | `reason` | When | Message, for a call |
@@ -381,14 +478,23 @@ A call that got no result, or one its schema refused.
 | `result` | The `result` schema refused the result, there was nothing to parse, or the SDK refused it against the server's output schema (see [What a call resolves to](#what-a-call-resolves-to)). Only a call has it: listing the tools never fails with `result` | `<server>/<tool> returned a result that does not match the schema` |
 | `timeout` | No answer within `timeoutMs`, or not done within `maxTotalMs`, connecting included | `<server>/<tool> did not answer in time` |
 | `connection` | The server couldn't be reached, or the connection dropped before the answer | `<server>/<tool> could not be reached` |
-| `protocol` | The server refused the call, as for a tool it doesn't have (`code` `-32602`), whatever its words. Also a listing of tools the SDK can't read, and any other SDK error, such as an HTTP 401 or 403, or a server asking this client for input | `<server>/<tool> was refused by the server` |
-| `closed` | `close()` was called, before or during the call | `<server>/<tool>: the connection was closed` |
+| `protocol` | The server refused the call, as for a tool it doesn't have (`code` `-32602`), whatever its words. Also a listing of tools the SDK can't read, and any other SDK error, such as an HTTP 401 or 403 on a server without `auth`, or a server asking this client for input | `<server>/<tool> was refused by the server` |
+| `closed` | `close()` or, with `auth`, [`forget()`](#forget) was called, before or during the call | `<server>/<tool>: the connection was closed` |
+| `user` | A server with `auth` had no user to call as (see [Who a call runs as](#who-a-call-runs-as)). Nothing was sent | `<server>/<tool> was not called: there is no user to call it as`, `… the user it runs for could not be looked up`, or `… its userId is not the conversation's owner` |
+| `auth` | A server with `auth`: the user's credential is missing, was refused, or needs more access. `auth.kind` says which | `<server>/<tool>: the user has not connected an account` (`connect`), `<server>/<tool>: the server refused the user's credential` (`reconnect`), or `<server>/<tool>: the user's account needs more access` (`scope`) |
 
 From `connect()`, the messages name the server alone: `<server> could not
 be reached`, `<server> did not answer in time`, `<server> was refused by the
-server`, and `<server>: the connection was closed`.
+server`, `<server>: the connection was closed`, and with `auth`,
+`<server>: the user has not connected an account` and the rest.
 
-How an SDK error is read, in order: after `close()`, `closed`. A JSON-RPC
+How an SDK error is read, in order: after `close()`, `closed`. On a server
+with `auth`, the SDK's `InsufficientScopeError` (a 403 with
+`error="insufficient_scope"`) is `auth`, kind `scope`, with its
+`requiredScope` as `scope` and its message as `text`; and its
+`UnauthorizedError`, or an `SdkHttpError` with code
+`ClientHttpAuthentication` (a 401 again, on the transport's retry), is
+`auth`, kind `reconnect`, with its message as `text`. A JSON-RPC
 error (`ProtocolError`) is `protocol`, with its `code` and its message as
 `text`, unless the message is about an output schema, which is the SDK's
 check above, and `result`. Of the SDK's own errors (`SdkError`): a timeout
@@ -396,6 +502,31 @@ is `timeout`; not connected, connection closed, a failed send, or an HTTP
 stream that wouldn't open is `connection`; an invalid result is `result`;
 any other is `protocol`, with its message as `text`. Anything else is
 `connection` if the connection had dropped, and `protocol` if not.
+
+### `McpAuthNeed`
+
+```ts
+interface McpAuthNeed {
+  readonly kind: "connect" | "reconnect" | "scope";
+  readonly scope?: string;
+}
+```
+
+What a call with reason `auth` needs from the user, on the error's `auth`.
+
+| `kind` | When | What the user can do |
+| --- | --- | --- |
+| `connect` | The app has no credential for the user: `token(userId)` gave `null`. Nothing was sent | Give the app one, such as their key |
+| `reconnect` | The server refused theirs: a 401, and again after the transport looked up the token once more, or that lookup found none | Give the app a new one |
+| `scope` | Theirs needs more access: a 403 with `error="insufficient_scope"` | Grant it more access. `scope` is what the server asked for |
+
+`scope` is there only with kind `scope`, and only when the server's
+`WWW-Authenticate` challenge named one, as it put it, such as
+`"read write"`.
+
+A tool that catches the error decides what to do with it: such as tell the
+model the user must connect an account first, or show a surface that asks
+them to.
 
 ### `McpToolError`
 
@@ -468,11 +599,163 @@ tools is compared with the last one instead, and a change is reported (see
 below). A call to a tool the server no longer has rejects with reason
 `protocol`.
 
+All of this is for one identity. On a server with `auth`, each user has a
+connection of their own that works this way (see
+[Each user's connection](#each-users-connection)).
+
+## Calls as each user
+
+```ts
+import { createMcpAuth, mcpServer, http } from "@haikit/mcp";
+
+const mcpAuth = createMcpAuth({ userOf: (id) => auth.ownerOf(id) });
+const tracker = mcpServer({
+  name: "tracker",
+  transport: http("https://mcp.tracker.example/mcp"),
+  auth: mcpAuth.bearer((userId) => keys.find(userId)),
+});
+const listIssues = tracker.tool("list_issues", { args: z.object({}) });
+
+// in a HaiKIT tool's run, as the conversation's owner:
+await listIssues.call({}, ctx);
+// in a job, as a user it names:
+await listIssues.call({}, { userId });
+```
+
+Without `auth`, every call on a server shares one connection, made with the
+app's own credentials, whoever the conversation belongs to. With it, each
+call is made as the user it runs for, with that user's own credential, over
+a connection of their own. The call's `ctx` says who that is. A call with no
+one to run as is refused before anything is sent: it never falls back to the
+app's credentials, or anyone else's.
+
+### `createMcpAuth`
+
+```ts
+function createMcpAuth(options: McpAuthOptions): McpAuth;
+
+interface McpAuthOptions {
+  userOf(conversationId: string): string | null | Promise<string | null>;
+}
+
+interface McpAuth {
+  bearer(token: (userId: string) => string | null | Promise<string | null>): McpServerAuth;
+}
+```
+
+| Option | Meaning |
+| --- | --- |
+| `userOf` | Who a conversation belongs to: the user a call in it runs as. With `@haikit/auth`, `(id) => auth.ownerOf(id)` (see [Sign-in and ownership: `ownerOf`](auth.md#ownerof)). `null`, or anything but a non-empty string, for no one |
+
+**Returns** a frozen `McpAuth`, which makes the `auth` of each server whose
+calls are made as each user. Servers given an `auth` from one `McpAuth` must
+have different names (see [`mcpServer`](#mcpserver)).
+
+**Throws** `TypeError: createMcpAuth: userOf must be a function, such as
+(id) => auth.ownerOf(id)`.
+
+### `bearer`
+
+```ts
+bearer(token: (userId: string) => string | null | Promise<string | null>): McpServerAuth;
+```
+
+Each user's token, which the app already has, such as a key the user gave
+it. `token(userId)` gives it, or `null` when the user has none. It is sent as
+`Authorization: Bearer <token>` on every request of that user's connection.
+
+- **It's looked up** when the user's connection has none: before its first
+  connection, and after the server refused it. It's kept on the connection
+  in between, and [`forget(userId)`](#forget) drops it with the connection.
+- **`null`, `""`, or anything but a non-empty string** means the user has
+  none: the call rejects with reason `auth`, kind `connect`, and nothing is
+  sent. The next call looks again.
+- **If `token` throws or rejects,** the call rejects with reason
+  `connection`, `<server>/<tool> could not be reached`, its `cause` what it
+  threw.
+- **On a 401,** the transport looks it up again with `token(userId)`, and
+  sends the request once more with what it gives, so a key the app has
+  replaced is picked up without a failed call. 401s that come together share
+  one lookup. `null` from that lookup, or a 401 again, rejects the call with
+  reason `auth`, kind `reconnect`, and the token is forgotten: the user's next
+  call looks it up again.
+- **On a 403 with `error="insufficient_scope"`,** the call rejects with
+  reason `auth`, kind `scope`, with the `scope` the server's challenge
+  asked for.
+
+**Returns** a frozen `McpServerAuth`, `{ kind: "bearer" }`, for one
+`mcpServer`.
+
+**Throws** `TypeError: bearer: token must be a function that takes a user id
+and returns their token, or null`.
+
+### `McpServerAuth`
+
+```ts
+interface McpServerAuth {
+  readonly kind: "bearer";
+}
+```
+
+How a server's calls are made as each user: made by an `McpAuth`, and given
+to `mcpServer({ auth })`. `mcpServer` takes only one an `McpAuth` made, not
+an object of the same shape.
+
+### Who a call runs as
+
+From the call's [`McpCallCtx`](#mcpcallctx):
+
+| `conversationId` | `userId` | The call runs as |
+| --- | --- | --- |
+| a conversation `userOf` gives an owner | none | the owner |
+| a conversation `userOf` gives an owner | the owner | the owner |
+| a conversation `userOf` gives an owner | anyone else | no one: reason `user`, `<server>/<tool> was not called: its userId is not the conversation's owner` |
+| a conversation with no owner | either | no one: reason `user`, `<server>/<tool> was not called: there is no user to call it as` |
+| none | a user | that user, for a call made outside any conversation, such as a job |
+| none | none | no one: reason `user`, as above |
+
+A `userOf` that throws or rejects rejects the call with reason `user`,
+`<server>/<tool> was not called: the user it runs for could not be looked
+up`, its `cause` what it threw. `userOf` is called for every call with a
+conversation, and its answer isn't kept. A `conversationId` or `userId`
+that isn't a non-empty string counts as none.
+
+A `userId` names a user without proof, so it must come from the app's own
+code, never from the model or the browser. In a tool's `run`, pass the
+`ctx`, and the user is the conversation's owner.
+
+### Each user's connection
+
+Each user has a connection of their own to each server with `auth`, made on
+their first call or `connect(userId)`, and kept for their later calls. Each
+works as the one connection of a server without `auth` does (see
+[The connection](#the-connection)), for that user's identity alone:
+
+- **Its tools are checked** on its first connection, against the tools that
+  user sees: a server may show users different tools. A tool declared after
+  that is checked on the user's first call to it.
+- **A change to its tools** is compared with that user's last list, and
+  `McpToolChange.user` says whose (see
+  [Changes to the server's tools](#changes-to-the-servers-tools)).
+- **Closed for room:** making a user's connection when `maxConnections`
+  users (100 by default) have one first closes the least recently used ones
+  with no call in flight. One with a call in flight is never closed for
+  room: when all are busy, the pool grows past `maxConnections`, and shrinks
+  back as each call finishes.
+- **Closed when idle,** after `idleMs` (300,000 ms by default) with no call.
+  The timer doesn't keep the process alive.
+- **Closed by [`forget(userId)`](#forget),** and by [`close()`](#close).
+
+A user whose connection was closed for room, for idling or by `forget` gets
+a new one on their next call, checked as a first one, with their credential
+looked up again.
+
 ## Changes to the server's tools
 
 ```ts
 interface McpToolChange {
   server: string;
+  user?: string;
   removed: string[];
   changed: string[];
 }
@@ -492,12 +775,16 @@ never sees them. Names come in the order the tools were declared. When
 either list has a name, `onChange` is called with both. The new list is
 kept either way: it's what a later `tool()` is checked against.
 
+On a server with `auth`, each user's connection compares its own lists,
+and `user` is the user it is for. Without `auth`, the change has no `user`.
+
 Nothing else changes: the model's tools are the app's, and calls go on as
 before. A call to a removed tool rejects with reason `protocol`; one whose
 args no longer suit the server gets `McpToolError` from it.
 
 **The default `onChange`** writes one `console.warn`: `@haikit/mcp:
-<server>: ` then, joined by `; `, `tool "<name>" was removed` for each
+<server>: `, or with a `user`, `@haikit/mcp: <server> (for user <user>): `,
+then, joined by `; `, `tool "<name>" was removed` for each
 removed tool, and `tool "<name>" changed its schema` for each changed one.
 
 An `onChange` that throws has its error written with `console.error`.
@@ -506,12 +793,13 @@ An `onChange` that throws has its error written with `console.error`.
 
 `Transport` is the SDK's interface, re-exported. Any function that makes a
 new one each time can be `transport`, such as one returning the SDK's
-`InMemoryTransport`, in a test.
+`InMemoryTransport`, in a test. A server with `auth` takes only what
+[`http()`](#http) returned.
 
 ### `http`
 
 ```ts
-function http(url: string | URL, options?: HttpOptions): () => Transport;
+function http(url: string | URL, options?: HttpOptions): (authProvider?: AuthProvider) => Transport;
 
 interface HttpOptions extends StreamableHTTPClientTransportOptions {
   headers?: Record<string, string>;
@@ -519,7 +807,10 @@ interface HttpOptions extends StreamableHTTPClientTransportOptions {
 ```
 
 A server at `url`, over Streamable HTTP. Each call of what it returns makes
-a new `StreamableHTTPClientTransport`.
+a new `StreamableHTTPClientTransport`. Given an `authProvider`, that
+transport uses it: a server with `auth` gives each user's connection the
+`AuthProvider` that sends their credential. `AuthProvider` is the SDK's
+interface, re-exported.
 
 | Option | Meaning |
 | --- | --- |
@@ -528,6 +819,11 @@ a new `StreamableHTTPClientTransport`.
 
 The SDK sets some headers itself, over any of these: `Authorization`, when
 an `authProvider` gives a token, and the protocol's own.
+
+For a server with `auth`, `http()` must have no `authProvider`, and no
+`Authorization` header in `headers` or `requestInit.headers`: each user's
+connection sends their own. `mcpServer` refuses one that does (see its
+Throws).
 
 **Throws** the `TypeError` of `new URL(url)`, when `http()` is called, for a
 URL that doesn't parse: a bad URL fails at startup.
@@ -602,8 +898,17 @@ more (got <value>)`.
   its check in the HaiKIT tool or action handler, where it runs as code.
 - **A `stdio` server** gets this process's safe variables, not its secrets
   (see [`stdio`](#stdio)).
-- **One identity per connection.** Every call on a connection is made with
-  the same credentials, whoever the conversation belongs to.
+- **Whose identity.** Without `auth`, every call on a server is made with
+  the same credentials, the app's, whoever the conversation belongs to:
+  give such a server only what every user may see and do. With `auth`, a
+  call runs as the conversation's owner, or the `userId` of a call outside
+  any conversation, over that user's own connection. It never falls back to
+  the app's credentials or another user's, and a `userId` that isn't the
+  conversation's owner is refused (see
+  [Who a call runs as](#who-a-call-runs-as)).
+- **A user's token stays with the app.** `bearer`'s token is kept in memory
+  on the user's connection, and sent only to that server. It isn't in an
+  error's message, and the model never sees it.
 
 ## Limits
 
@@ -616,7 +921,10 @@ more (got <value>)`.
 | `textOf` | 8,000 characters, by default | `maxChars` |
 | Pages of tools listed | 64 | the SDK's `listMaxPages` |
 | One stdio message | 10 MB | the SDK's `maxBufferSize` |
-| Connections in flight | 1, shared by every call | |
+| Connections, without `auth` | 1, shared by every call | |
+| Connections, with `auth` | 1 per user; at most `maxConnections`, 100 by default, with no call in flight | `maxConnections` |
+| A user's connection with no call is kept | 300,000 ms, by default | `idleMs` |
+| Lookups of a user's token on a 401 | 1, shared by 401s that come together | [`bearer`](#bearer) |
 | Times a call is sent | 1 | |
 
 A call runs inside a turn, which holds the conversation's lease. The lease

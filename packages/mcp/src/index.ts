@@ -18,22 +18,29 @@ import { createRequire } from "node:module";
 import type { Progress, Schema } from "@haikit/core";
 import {
   Client,
+  InsufficientScopeError,
   ProtocolError,
   ProtocolErrorCode,
   SdkError,
   SdkErrorCode,
+  SdkHttpError,
+  UnauthorizedError,
+  type AuthProvider,
   type CallToolResult,
   type ContentBlock,
   type Tool as ServerTool,
   type Transport,
   type VersionNegotiationMode,
 } from "@modelcontextprotocol/client";
-import { McpError, McpToolError, isMcpError, type McpErrorReason } from "./errors.js";
+import { BearerCredential, LookupFailed, NeedsAuth, configOf, type AuthConfig, type Credential, type McpServerAuth } from "./auth.js";
+import { McpError, McpToolError, isMcpError, type McpAuthNeed, type McpErrorReason } from "./errors.js";
+import { madeByHttp } from "./transports.js";
 
-export { McpError, McpToolError, isMcpError, isMcpToolError, type McpErrorReason } from "./errors.js";
+export { createMcpAuth, type McpAuth, type McpAuthOptions, type McpServerAuth } from "./auth.js";
+export { McpError, McpToolError, isMcpError, isMcpToolError, type McpAuthNeed, type McpErrorReason } from "./errors.js";
 export { textOf, type TextOptions } from "./text.js";
 export { http, stdio, type HttpOptions } from "./transports.js";
-export type { ContentBlock, Transport } from "@modelcontextprotocol/client";
+export type { AuthProvider, ContentBlock, Transport } from "@modelcontextprotocol/client";
 
 const { version: VERSION } = createRequire(import.meta.url)("../package.json") as { version: string };
 
@@ -42,6 +49,8 @@ const TIMEOUT_MS = 30_000;
 const MAX_TOTAL_MS = 90_000;
 /** Past the longest timer Node keeps, it fires after about a millisecond. */
 const MAX_TIMER_MS = 2_147_483_647;
+const MAX_CONNECTIONS = 100;
+const IDLE_MS = 300_000;
 /**
  * The SDK's own checks of a tool's result against the output schema the
  * server declared, as of @modelcontextprotocol/client 2.4: `callTool` throws
@@ -59,9 +68,24 @@ export interface McpServerOptions {
   name: string;
   /**
    * Makes a connection: called by the first `connect()` or call, and again
-   * for each reconnect. `http(url)` and `stdio({ command })` make one.
+   * for each reconnect. `http(url)` and `stdio({ command })` make one. For a
+   * server with `auth`, it's given the user's `AuthProvider`, and must be
+   * `http()`'s.
    */
-  transport: () => Transport | Promise<Transport>;
+  transport: (authProvider?: AuthProvider) => Transport | Promise<Transport>;
+  /**
+   * Makes each call as the user it runs for, with their own credential, over
+   * a connection of their own: `createMcpAuth({ userOf }).bearer(token)`.
+   * Without it, every call shares one connection and one identity.
+   */
+  auth?: McpServerAuth;
+  /**
+   * With `auth`: the most users connected at once. Past it, the least recently
+   * used connection with no call in flight is closed. Default 100.
+   */
+  maxConnections?: number;
+  /** With `auth`: a user's connection is closed after this long with no call, in milliseconds. Default 300,000. */
+  idleMs?: number;
   /**
    * How long the server may go without answering a call or reporting progress
    * on it, in milliseconds. Also bounds making the transport, connecting and
@@ -86,6 +110,8 @@ export interface McpServerOptions {
 
 export interface McpToolChange {
   server: string;
+  /** With `auth`: the user whose connection saw the change. Each user's tools are compared apart. */
+  user?: string;
   /** Declared tools the server no longer has. */
   removed: string[];
   /** Declared tools whose input or output schema, or task support, changed. */
@@ -121,10 +147,16 @@ export interface McpResult {
  */
 export interface McpCallCtx {
   /**
-   * The conversation the call is for. Nothing reads it yet: it is here so a
-   * later version can pick a connection per user without calls changing.
+   * The conversation the call is for. A server with `auth` calls as its
+   * owner, from `userOf`.
    */
   readonly conversationId?: string;
+  /**
+   * For a server with `auth`: the user to call as, for a call made outside any
+   * conversation, such as a job. With a `conversationId` too, it must be the
+   * conversation's owner.
+   */
+  readonly userId?: string;
   /** Hears the server's progress notifications, as `ToolCtx.progress` does. */
   progress?(progress: Progress): void;
 }
@@ -153,48 +185,73 @@ export interface McpConnection {
    * Connects, and checks every declared tool: it throws if the server has no
    * tool of that name, or one that can only run as an MCP task. Call it at
    * startup, so a mistake stops the app there; the first call connects
-   * otherwise, and fails with the same error.
+   * otherwise, and fails with the same error. A server with `auth` needs
+   * the user to connect as, and checks the tools that user sees.
    */
-  connect(): Promise<void>;
+  connect(userId?: string): Promise<void>;
+  /**
+   * For a server with `auth`: closes the user's connection, if they have
+   * one. Their next call makes a new one, and looks up their credential again.
+   */
+  forget(userId: string): Promise<void>;
   /** Closes the connection, and stops a `stdio` server. Final: a later call fails with reason `closed`. */
   close(): Promise<void>;
 }
 
 /** The connection to an MCP server. Nothing connects until `connect()` or the first call. */
 export function mcpServer(options: McpServerOptions): McpConnection {
-  return new Connection(options);
+  return new Server(options);
 }
 
-const MESSAGES: Record<McpErrorReason, (who: string) => string> = {
+interface Detail {
+  cause?: unknown;
+  text?: string;
+  code?: number;
+  auth?: McpAuthNeed;
+  /** For reason `user`: why there's no user to call as. */
+  user?: "none" | "lookup" | "other";
+}
+
+const NO_USER = {
+  none: "there is no user to call it as",
+  lookup: "the user it runs for could not be looked up",
+  other: "its userId is not the conversation's owner",
+};
+
+const MESSAGES: Record<McpErrorReason, (who: string, detail: Detail) => string> = {
   args: (who) => `${who} was not called: its args do not match the schema`,
   result: (who) => `${who} returned a result that does not match the schema`,
   timeout: (who) => `${who} did not answer in time`,
   connection: (who) => `${who} could not be reached`,
   protocol: (who) => `${who} was refused by the server`,
   closed: (who) => `${who}: the connection was closed`,
+  user: (who, { user = "none" }) => `${who} was not called: ${NO_USER[user]}`,
+  auth: (who, { auth }) =>
+    auth?.kind === "connect"
+      ? `${who}: the user has not connected an account`
+      : auth?.kind === "scope"
+        ? `${who}: the user's account needs more access`
+        : `${who}: the server refused the user's credential`,
 };
 
-class Connection implements McpConnection {
+class Server implements McpConnection {
   readonly name: string;
-  private readonly options: McpServerOptions;
-  private readonly timeoutMs: number;
+  readonly options: McpServerOptions;
+  readonly timeoutMs: number;
   private readonly maxTotalMs: number;
-  /** The connected client, or null between connections. */
-  private client: Client | null = null;
-  private dialing: Promise<Client> | null = null;
-  /** While a connection is being made: its client, once there is one, so `close()` can stop it. */
-  private connecting: Client | null = null;
-  /** While `transport()` is pending: gives up on it, for `close()`. */
-  private abandon: (() => void) | null = null;
+  /** With `auth`: whose calls are made as whom, and with what. */
+  readonly auth: AuthConfig | null;
+  private readonly maxConnections: number;
+  readonly idleMs: number;
+  /** Without `auth`: the one connection every call shares. */
+  private readonly shared: Link | null;
+  /** With `auth`: each user's connection, the least recently used first. */
+  private readonly links = new Map<string, Link>();
   private closed = false;
   /** The first `close()`, which the others wait for. */
   private closing: Promise<void> | null = null;
-  /** Clients whose connection has gone. */
-  private readonly dropped = new WeakSet<Client>();
-  /** The server's tools at the last listing, by name. Null until a first connect passes the check. */
-  private listed: Map<string, ServerTool> | null = null;
   /** The tools `tool()` declared: the only ones that can be called. */
-  private readonly declared = new Set<string>();
+  readonly declared = new Set<string>();
 
   constructor(options: McpServerOptions) {
     if (typeof options.name !== "string" || options.name === "") {
@@ -207,6 +264,36 @@ class Connection implements McpConnection {
     this.options = options;
     this.timeoutMs = checkMs("timeoutMs", options.timeoutMs ?? TIMEOUT_MS);
     this.maxTotalMs = checkMs("maxTotalMs", options.maxTotalMs ?? MAX_TOTAL_MS);
+
+    if (options.auth === undefined) {
+      if (options.maxConnections !== undefined || options.idleMs !== undefined) {
+        throw new TypeError("maxConnections and idleMs are for a server with auth: without it, every call shares one connection");
+      }
+      this.auth = null;
+      this.maxConnections = 1;
+      this.idleMs = IDLE_MS;
+      this.shared = new Link(this, undefined, null);
+      return;
+    }
+    const auth = configOf(options.auth);
+    if (!auth) throw new TypeError("auth must come from createMcpAuth(), such as mcpAuth.bearer(token)");
+    const made = madeByHttp.get(options.transport);
+    if (!made) {
+      throw new TypeError("auth needs a transport made by http(url): stdio() and other transports can't carry each user's credential");
+    }
+    if (made.authProvider) throw new TypeError("auth gives the transport each user's credential: http() can't be given an authProvider as well");
+    if (made.authorization) throw new TypeError("auth sets each user's Authorization header: http() can't send one of its own as well");
+    const max = options.maxConnections ?? MAX_CONNECTIONS;
+    if (typeof max !== "number" || !Number.isSafeInteger(max) || max < 1) {
+      throw new RangeError(`maxConnections must be a whole number, 1 or more (got ${String(max)})`);
+    }
+    this.idleMs = checkMs("idleMs", options.idleMs ?? IDLE_MS);
+    this.maxConnections = max;
+    // last, so a server refused above leaves its name free
+    if (auth.names.has(this.name)) throw new TypeError(`another server from the same createMcpAuth is named "${this.name}"`);
+    auth.names.add(this.name);
+    this.auth = auth;
+    this.shared = null;
   }
 
   tool(name: string, def: McpToolDef<any, any>): McpTool<any, any> {
@@ -219,10 +306,8 @@ class Connection implements McpConnection {
     }
     if (def.timeoutMs !== undefined) checkMs("timeoutMs", def.timeoutMs);
     if (def.maxTotalMs !== undefined) checkMs("maxTotalMs", def.maxTotalMs);
-    if (this.listed) {
-      const problem = problemWith(name, this.listed);
-      if (problem) throw new Error(`${this.name}: ${problem}`);
-    }
+    // each user's connection checks a tool declared late on its first call to it
+    this.shared?.verify(name);
     this.declared.add(name);
     return Object.freeze({
       server: this.name,
@@ -231,8 +316,31 @@ class Connection implements McpConnection {
     });
   }
 
-  async connect(): Promise<void> {
-    await this.open();
+  async connect(userId?: string): Promise<void> {
+    if (this.shared) {
+      if (userId !== undefined) throw new TypeError("connect() takes a user only for a server with auth");
+      await this.shared.open();
+      return;
+    }
+    if (typeof userId !== "string" || userId === "") {
+      throw new TypeError("connect() needs a userId for a server with auth: each user's connection is checked as it's made");
+    }
+    if (this.closed) throw this.error("closed", undefined);
+    const link = this.take(userId);
+    try {
+      await link.ready();
+    } finally {
+      link.release();
+    }
+  }
+
+  async forget(userId: string): Promise<void> {
+    if (!this.auth) throw new TypeError("forget() is for a server with auth: without it, every call shares one connection");
+    if (typeof userId !== "string" || userId === "") throw new TypeError("forget() needs a userId");
+    const link = this.links.get(userId);
+    if (!link) return;
+    this.links.delete(userId);
+    await link.close();
   }
 
   close(): Promise<void> {
@@ -243,137 +351,62 @@ class Connection implements McpConnection {
 
   private async shut(): Promise<void> {
     this.closed = true;
-    const client = this.client;
-    this.client = null;
-    // a connection still being made is stopped where it is, and sees `closed`
-    this.abandon?.();
-    await this.connecting?.close().catch(() => {});
-    await this.dialing?.catch(() => {});
-    await client?.close();
+    this.auth?.names.delete(this.name);
+    const links = this.shared ? [this.shared] : [...this.links.values()];
+    this.links.clear();
+    await Promise.all(links.map((link) => link.close()));
   }
 
-  private open(): Promise<Client> {
-    if (this.closed) return Promise.reject(this.error("closed", undefined));
-    if (this.client) return Promise.resolve(this.client);
-    // one connection at a time: calls that arrive meanwhile share it
-    this.dialing ??= this.dial().finally(() => {
-      this.dialing = null;
-      this.connecting = null;
-    });
-    return this.dialing;
+  /** The user's connection, made if need be, marked most recently used, and held for a call. */
+  private take(user: string): Link {
+    let link = this.links.get(user);
+    if (link) {
+      this.links.delete(user);
+    } else {
+      this.trim(this.maxConnections - 1);
+      link = new Link(this, user, new BearerCredential(this.auth!.token, user));
+    }
+    this.links.set(user, link);
+    link.hold();
+    return link;
+  }
+
+  /** Closes the least recently used connections with no call in flight, down to `limit`. */
+  trim(limit = this.maxConnections): void {
+    for (const [user, link] of this.links) {
+      if (this.links.size <= limit) return;
+      // when every link is busy, the pool grows past the cap until one is free
+      if (link.busy === 0) this.drop(user, link);
+    }
+  }
+
+  /** Closes a user's connection, unless another has replaced it. */
+  drop(user: string, link: Link): void {
+    if (this.links.get(user) !== link) return;
+    this.links.delete(user);
+    link.close().catch(() => {});
   }
 
   /**
-   * What `transport()` makes, within `timeoutMs` and unless `close()` comes
-   * first. A transport made after that is closed when it comes.
+   * Who a call on a server with `auth` runs as: the conversation's owner, or
+   * the `userId` of a call made outside any conversation. Never anyone else.
    */
-  private async made(): Promise<Transport> {
-    const making = Promise.resolve().then(() => this.options.transport());
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const cut = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error(`no transport within ${this.timeoutMs} ms`)), this.timeoutMs);
-      this.abandon = () => reject(new Error("closed while the transport was being made"));
-    });
+  private async userFor(ctx: McpCallCtx | undefined, tool: string): Promise<string> {
+    const conversationId = nonEmpty(ctx?.conversationId);
+    const given = nonEmpty(ctx?.userId);
+    if (conversationId === undefined) {
+      if (given === undefined) throw this.error("user", tool);
+      return given;
+    }
+    let owner: unknown;
     try {
-      return await Promise.race([making, cut]);
+      owner = await this.auth!.userOf(conversationId);
     } catch (err) {
-      making.then((transport) => transport.close()).catch(() => {});
-      throw err;
-    } finally {
-      clearTimeout(timer);
-      this.abandon = null;
+      throw this.error("user", tool, { cause: err, user: "lookup" });
     }
-  }
-
-  private async dial(): Promise<Client> {
-    let client: Client | undefined;
-    try {
-      const transport = await this.made();
-      // close() may have come as it was made, with nothing yet to stop
-      if (this.closed) {
-        await transport.close().catch(() => {});
-        throw new Error("closed as the transport was made");
-      }
-      const self: Client = new Client(
-        { name: "haikit", version: VERSION },
-        {
-          // No capabilities are advertised, so a server has no reason to ask
-          // this client for input; one that does gets the call refused,
-          // rather than a reply nobody wrote.
-          inputRequired: { autoFulfill: false },
-          ...(this.options.versionNegotiation === undefined
-            ? {}
-            : { versionNegotiation: { mode: this.options.versionNegotiation } }),
-          listChanged: {
-            tools: {
-              onChanged: (error, tools) => {
-                if (!error && tools && this.client === self) this.compare(tools);
-              },
-            },
-          },
-        },
-      );
-      client = self;
-      this.connecting = self;
-      self.onclose = () => {
-        this.dropped.add(self);
-        if (this.client === self) this.client = null;
-      };
-      await self.connect(transport, { timeout: this.timeoutMs });
-    } catch (err) {
-      await client?.close().catch(() => {});
-      throw this.error(this.closed ? "closed" : "connection", undefined, { cause: err });
-    }
-
-    let tools: ServerTool[];
-    try {
-      ({ tools } = await client.listTools(undefined, { timeout: this.timeoutMs }));
-    } catch (err) {
-      await client.close().catch(() => {});
-      throw this.failure(err, undefined, client);
-    }
-
-    if (this.listed === null) {
-      const listing = new Map(tools.map((t) => [t.name, t]));
-      const problems = [...this.declared].flatMap((name) => problemWith(name, listing) ?? []);
-      if (problems.length) {
-        await client.close().catch(() => {});
-        throw new Error(`${this.name}: ${problems.join("; ")}`);
-      }
-      this.listed = listing;
-    } else {
-      this.compare(tools);
-    }
-
-    if (this.closed) {
-      await client.close().catch(() => {});
-      throw this.error("closed", undefined);
-    }
-    if (this.dropped.has(client)) throw this.error("connection", undefined);
-    this.client = client;
-    return client;
-  }
-
-  /** Report what changed about the declared tools since the last listing, and keep this one. */
-  private compare(tools: ServerTool[]): void {
-    const before = this.listed ?? new Map<string, ServerTool>();
-    const next = new Map(tools.map((t) => [t.name, t]));
-    this.listed = next;
-    const removed: string[] = [];
-    const changed: string[] = [];
-    for (const name of this.declared) {
-      const was = before.get(name);
-      const now = next.get(name);
-      if (!was) continue;
-      if (!now) removed.push(name);
-      else if (shape(was) !== shape(now)) changed.push(name);
-    }
-    if (!removed.length && !changed.length) return;
-    try {
-      (this.options.onChange ?? warn)({ server: this.name, removed, changed });
-    } catch (err) {
-      console.error(err);
-    }
+    if (typeof owner !== "string" || owner === "") throw this.error("user", tool);
+    if (given !== undefined && given !== owner) throw this.error("user", tool, { user: "other" });
+    return owner;
   }
 
   private async call(tool: string, def: McpToolDef<unknown, unknown>, args: unknown, ctx: McpCallCtx | undefined) {
@@ -394,17 +427,27 @@ class Connection implements McpConnection {
     // keep: the SDK checks its own maxTotalTimeout only when progress comes
     const deadline = new AbortController();
     const timer = setTimeout(() => deadline.abort(), def.maxTotalMs ?? this.maxTotalMs);
+    let link: Link | undefined;
     let result: CallToolResult;
     try {
+      if (this.shared) {
+        link = this.shared;
+      } else {
+        if (this.closed) throw this.error("closed", tool);
+        const user = await this.until(deadline.signal, tool, this.userFor(ctx, tool));
+        if (this.closed) throw this.error("closed", tool);
+        link = this.take(user);
+      }
       let client: Client;
       try {
-        client = await this.until(deadline.signal, tool, this.open());
+        client = await this.until(deadline.signal, tool, link.ready());
       } catch (err) {
         // named again for this call, with what the server said; the
         // declared-tool check throws as it is
         if (!isMcpError(err) || err.tool === tool) throw err;
-        throw this.error(err.reason, tool, { cause: err.cause ?? err, text: err.text, code: err.code });
+        throw this.error(err.reason, tool, { cause: err.cause ?? err, text: err.text, code: err.code, auth: err.auth });
       }
+      link.verify(tool);
       try {
         result = await client.callTool(
           { name: tool, arguments: input as Record<string, unknown> },
@@ -425,10 +468,11 @@ class Connection implements McpConnection {
           },
         );
       } catch (err) {
-        throw this.failure(err, tool, client);
+        throw link.failure(err, tool, client);
       }
     } finally {
       clearTimeout(timer);
+      if (link !== this.shared) link?.release();
     }
 
     const content = result.content ?? [];
@@ -469,42 +513,291 @@ class Connection implements McpConnection {
     });
   }
 
+  error(reason: McpErrorReason, tool: string | undefined, detail: Detail = {}): McpError {
+    const who = tool === undefined ? this.name : `${this.name}/${tool}`;
+    const { user, ...kept } = detail;
+    return new McpError(reason, MESSAGES[reason](who, detail), { server: this.name, tool, ...kept });
+  }
+}
+
+/**
+ * One SDK client over one transport, for one identity: the server's own, or
+ * one user's. It connects when first needed, and again after it drops.
+ */
+class Link {
+  /** The connected client, or null between connections. */
+  private client: Client | null = null;
+  private dialing: Promise<Client> | null = null;
+  /** While a connection is being made: its client, once there is one, so `close()` can stop it. */
+  private connecting: Client | null = null;
+  /** While `transport()` is pending: gives up on it, for `close()`. */
+  private abandon: (() => void) | null = null;
+  private closed = false;
+  /** The first `close()`, which the others wait for. */
+  private closing: Promise<void> | null = null;
+  /** Clients whose connection has gone. */
+  private readonly dropped = new WeakSet<Client>();
+  /** The server's tools at the last listing, by name. Null until a first connect passes the check. */
+  private listed: Map<string, ServerTool> | null = null;
+  /** The declared tools checked against this connection's tools. */
+  private readonly checked = new Set<string>();
+  /** Calls and `connect()`s using it now: a busy link is never closed for room or for idling. */
+  busy = 0;
+  private idle: ReturnType<typeof setTimeout> | null = null;
+
+  constructor(
+    private readonly server: Server,
+    /** The user it calls as; undefined for the server's own identity. */
+    private readonly user: string | undefined,
+    private readonly credential: Credential | null,
+  ) {}
+
+  hold(): void {
+    this.busy++;
+    if (this.idle) clearTimeout(this.idle);
+    this.idle = null;
+  }
+
+  release(): void {
+    if (--this.busy > 0 || this.user === undefined || this.closed) return;
+    const user = this.user;
+    this.idle = setTimeout(() => this.server.drop(user, this), this.server.idleMs);
+    this.idle.unref?.();
+    // a pool grown past its cap shrinks as soon as a connection is free
+    this.server.trim();
+  }
+
+  /** Connected, with a credential if it needs one. */
+  async ready(): Promise<Client> {
+    if (this.credential && !this.closed) {
+      try {
+        await this.credential.ensure();
+      } catch (err) {
+        throw this.authFailure(err, undefined) ?? err;
+      }
+    }
+    return this.open();
+  }
+
+  /**
+   * A tool declared after this connection's first check is checked on its
+   * first call, and throws as `connect` would.
+   */
+  verify(tool: string): void {
+    if (!this.listed || this.checked.has(tool)) return;
+    const problem = problemWith(tool, this.listed);
+    if (problem) throw new Error(`${this.server.name}: ${problem}`);
+    this.checked.add(tool);
+  }
+
+  open(): Promise<Client> {
+    if (this.closed) return Promise.reject(this.server.error("closed", undefined));
+    if (this.client) return Promise.resolve(this.client);
+    // one connection at a time: calls that arrive meanwhile share it
+    this.dialing ??= this.dial().finally(() => {
+      this.dialing = null;
+      this.connecting = null;
+    });
+    return this.dialing;
+  }
+
+  close(): Promise<void> {
+    // every close() resolves once the first has closed everything
+    this.closing ??= this.shut();
+    return this.closing;
+  }
+
+  private async shut(): Promise<void> {
+    this.closed = true;
+    if (this.idle) clearTimeout(this.idle);
+    this.idle = null;
+    const client = this.client;
+    this.client = null;
+    // a connection still being made is stopped where it is, and sees `closed`
+    this.abandon?.();
+    await this.connecting?.close().catch(() => {});
+    await this.dialing?.catch(() => {});
+    await client?.close();
+  }
+
+  /**
+   * What `transport()` makes, within `timeoutMs` and unless `close()` comes
+   * first. A transport made after that is closed when it comes.
+   */
+  private async made(): Promise<Transport> {
+    const { options, timeoutMs } = this.server;
+    const authProvider = this.credential?.provider;
+    const making = Promise.resolve().then(() => (authProvider ? options.transport(authProvider) : options.transport()));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const cut = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`no transport within ${timeoutMs} ms`)), timeoutMs);
+      this.abandon = () => reject(new Error("closed while the transport was being made"));
+    });
+    try {
+      return await Promise.race([making, cut]);
+    } catch (err) {
+      making.then((transport) => transport.close()).catch(() => {});
+      throw err;
+    } finally {
+      clearTimeout(timer);
+      this.abandon = null;
+    }
+  }
+
+  private async dial(): Promise<Client> {
+    const { server } = this;
+    let client: Client | undefined;
+    try {
+      const transport = await this.made();
+      // close() may have come as it was made, with nothing yet to stop
+      if (this.closed) {
+        await transport.close().catch(() => {});
+        throw new Error("closed as the transport was made");
+      }
+      const self: Client = new Client(
+        { name: "haikit", version: VERSION },
+        {
+          // No capabilities are advertised, so a server has no reason to ask
+          // this client for input; one that does gets the call refused,
+          // rather than a reply nobody wrote.
+          inputRequired: { autoFulfill: false },
+          ...(server.options.versionNegotiation === undefined
+            ? {}
+            : { versionNegotiation: { mode: server.options.versionNegotiation } }),
+          listChanged: {
+            tools: {
+              onChanged: (error, tools) => {
+                if (!error && tools && this.client === self) this.compare(tools);
+              },
+            },
+          },
+        },
+      );
+      client = self;
+      this.connecting = self;
+      self.onclose = () => {
+        this.dropped.add(self);
+        if (this.client === self) this.client = null;
+      };
+      await self.connect(transport, { timeout: server.timeoutMs });
+    } catch (err) {
+      await client?.close().catch(() => {});
+      if (this.closed) throw server.error("closed", undefined, { cause: err });
+      throw this.authFailure(err, undefined) ?? server.error("connection", undefined, { cause: err });
+    }
+
+    let tools: ServerTool[];
+    try {
+      ({ tools } = await client.listTools(undefined, { timeout: server.timeoutMs }));
+    } catch (err) {
+      await client.close().catch(() => {});
+      throw this.failure(err, undefined, client);
+    }
+
+    if (this.listed === null) {
+      const listing = new Map(tools.map((t) => [t.name, t]));
+      const problems = [...server.declared].flatMap((name) => problemWith(name, listing) ?? []);
+      if (problems.length) {
+        await client.close().catch(() => {});
+        throw new Error(`${server.name}: ${problems.join("; ")}`);
+      }
+      this.listed = listing;
+      for (const name of server.declared) this.checked.add(name);
+    } else {
+      this.compare(tools);
+    }
+
+    if (this.closed) {
+      await client.close().catch(() => {});
+      throw server.error("closed", undefined);
+    }
+    if (this.dropped.has(client)) throw server.error("connection", undefined);
+    this.client = client;
+    return client;
+  }
+
+  /** Report what changed about the declared tools since the last listing, and keep this one. */
+  private compare(tools: ServerTool[]): void {
+    const before = this.listed ?? new Map<string, ServerTool>();
+    const next = new Map(tools.map((t) => [t.name, t]));
+    this.listed = next;
+    const removed: string[] = [];
+    const changed: string[] = [];
+    for (const name of this.server.declared) {
+      const was = before.get(name);
+      const now = next.get(name);
+      if (!was) continue;
+      if (!now) removed.push(name);
+      else if (shape(was) !== shape(now)) changed.push(name);
+    }
+    if (!removed.length && !changed.length) return;
+    const change: McpToolChange =
+      this.user === undefined ? { server: this.server.name, removed, changed } : { server: this.server.name, user: this.user, removed, changed };
+    try {
+      (this.server.options.onChange ?? warn)(change);
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  /**
+   * An error about the user's credential, as one of ours, or null for any
+   * other. A server without `auth` has none: its SDK errors read as in
+   * `failure`.
+   */
+  private authFailure(err: unknown, tool: string | undefined): McpError | null {
+    const { server } = this;
+    if (err instanceof NeedsAuth) return server.error("auth", tool, { auth: { kind: err.kind } });
+    if (err instanceof LookupFailed) return server.error("connection", tool, { cause: err.cause });
+    if (!this.credential) return null;
+    if (err instanceof InsufficientScopeError) {
+      const auth: McpAuthNeed = err.requiredScope ? { kind: "scope", scope: err.requiredScope } : { kind: "scope" };
+      return server.error("auth", tool, { cause: err, text: err.message, auth });
+    }
+    // a 401 again on the transport's one retry, after onUnauthorized found a token
+    if (err instanceof UnauthorizedError || (err instanceof SdkHttpError && err.code === SdkErrorCode.ClientHttpAuthentication)) {
+      this.credential.forget();
+      return server.error("auth", tool, { cause: err, text: err.message, auth: { kind: "reconnect" } });
+    }
+    return null;
+  }
+
   /** An SDK error, as one of ours. */
-  private failure(err: unknown, tool: string | undefined, client: Client): McpError {
+  failure(err: unknown, tool: string | undefined, client: Client): McpError {
+    const { server } = this;
     if (isMcpError(err)) return err;
-    if (this.closed) return this.error("closed", tool, { cause: err });
+    if (this.closed) return server.error("closed", tool, { cause: err });
+    const auth = this.authFailure(err, tool);
+    if (auth) return auth;
     if (err instanceof ProtocolError) {
       // The SDK's own check of a call's result throws one too: the server's
       // result is at fault there, not the call. Only a call has a result.
       const checked = tool !== undefined && OUTPUT_CHECKS.some(([code, words]) => err.code === code && words.test(err.message));
-      return this.error(checked ? "result" : "protocol", tool, { cause: err, text: err.message, code: err.code });
+      return server.error(checked ? "result" : "protocol", tool, { cause: err, text: err.message, code: err.code });
     }
     if (err instanceof SdkError) {
       switch (err.code) {
         case SdkErrorCode.RequestTimeout:
-          return this.error("timeout", tool, { cause: err });
+          return server.error("timeout", tool, { cause: err });
         case SdkErrorCode.NotConnected:
         case SdkErrorCode.ConnectionClosed:
         case SdkErrorCode.SendFailed:
         case SdkErrorCode.ClientHttpFailedToOpenStream:
-          return this.error("connection", tool, { cause: err });
+          return server.error("connection", tool, { cause: err });
         case SdkErrorCode.InvalidResult:
           // only a call has a result; a listing the SDK can't read is the server's fault
-          if (tool !== undefined) return this.error("result", tool, { cause: err });
-          return this.error("protocol", tool, { cause: err, text: err.message });
+          if (tool !== undefined) return server.error("result", tool, { cause: err });
+          return server.error("protocol", tool, { cause: err, text: err.message });
         default:
-          return this.error("protocol", tool, { cause: err, text: err.message });
+          return server.error("protocol", tool, { cause: err, text: err.message });
       }
     }
     // the SDK throws a plain Error for a call on a connection that has gone
-    return this.error(this.dropped.has(client) ? "connection" : "protocol", tool, { cause: err });
-  }
-
-  private error(reason: McpErrorReason, tool: string | undefined, detail: { cause?: unknown; text?: string; code?: number } = {}) {
-    const who = tool === undefined ? this.name : `${this.name}/${tool}`;
-    return new McpError(reason, MESSAGES[reason](who), { server: this.name, tool, ...detail });
+    return server.error(this.dropped.has(client) ? "connection" : "protocol", tool, { cause: err });
   }
 }
+
+const nonEmpty = (value: unknown): string | undefined => (typeof value === "string" && value !== "" ? value : undefined);
 
 function checkMs(label: string, ms: number): number {
   if (typeof ms !== "number" || !Number.isInteger(ms) || ms <= 0 || ms > MAX_TIMER_MS) {
@@ -531,5 +824,6 @@ function warn(change: McpToolChange): void {
     ...change.removed.map((name) => `tool "${name}" was removed`),
     ...change.changed.map((name) => `tool "${name}" changed its schema`),
   ];
-  console.warn(`@haikit/mcp: ${change.server}: ${parts.join("; ")}`);
+  const whose = change.user === undefined ? "" : ` (for user ${change.user})`;
+  console.warn(`@haikit/mcp: ${change.server}${whose}: ${parts.join("; ")}`);
 }
