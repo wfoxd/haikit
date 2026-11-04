@@ -767,7 +767,6 @@ class Link {
     }
     // a 401 again on the transport's one retry, after onUnauthorized found a token
     if (err instanceof UnauthorizedError || (err instanceof SdkHttpError && err.code === SdkErrorCode.ClientHttpAuthentication)) {
-      this.credential.forget();
       return server.error("auth", tool, { cause: err, text: err.message, auth: { kind: "reconnect" } });
     }
     return null;

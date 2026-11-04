@@ -810,10 +810,12 @@ console.log("\nas each user");
  * `users` maps a token to `{ user, scope }`. A token it doesn't know gets a
  * 401, and `write` without the `write` scope a 403. `toolsFor(user)` says
  * which tools that user sees. `seen` is every request, as `method tool
- * [token]`.
+ * [token]`. `slowRefusal` holds back the 401 for that tool's retry, the
+ * second time a request is refused, by `ms`.
  */
-async function userServer({ users, toolsFor = () => ["whoami", "slow", "write", "change"] }) {
+async function userServer({ users, toolsFor = () => ["whoami", "slow", "write", "change"], slowRefusal = null }) {
   const seen = [];
+  const refused = new Set();
   const handler = createMcpHandler(({ requestInfo }) => {
     const token = requestInfo?.headers.get("authorization")?.replace(/^Bearer /, "");
     const who = users.get(token);
@@ -852,6 +854,8 @@ async function userServer({ users, toolsFor = () => ["whoami", "slow", "write", 
     const who = users.get(token);
     seen.push(`${rpc?.method ?? req.method}${rpc?.params?.name ? ` ${rpc.params.name}` : ""} [${token}]`);
     if (!who) {
+      if (slowRefusal && rpc?.params?.name === slowRefusal.tool && refused.has(rpc.id)) await wait(slowRefusal.ms);
+      refused.add(rpc?.id);
       res.writeHead(401, { "content-type": "application/json", "www-authenticate": "Bearer" });
       return res.end(JSON.stringify({ error: "invalid_token" }));
     }
@@ -1174,6 +1178,43 @@ const sameNeed = (err, need) => JSON.stringify(err?.auth) === JSON.stringify(nee
     owner?.reason === "closed" && owner.message === "web/whoami: the connection was closed" && Date.now() - closing < 250,
   );
   check("…and while a token is being looked up", token?.reason === "closed");
+  await web.close();
+}
+{
+  // a call refused with the old key while another's 401 found the new one
+  const users = new Map([["T1", { user: "a" }]]);
+  const web = await userServer({ users, slowRefusal: { tool: "slow", ms: 300 } });
+  const keys = { a: "T1" };
+  let reads = 0;
+  const s = mcpServer({
+    name: "web",
+    transport: http(web.url),
+    auth: createMcpAuth({ userOf: () => null }).bearer((user) => {
+      reads++;
+      return keys[user];
+    }),
+  });
+  const whoami = s.tool("whoami", { args: anything });
+  const slow = s.tool("slow", { args: anything });
+  await whoami.call({}, { userId: "a" });
+  // the server stops taking T1 before the app knows: X's 401 finds T1 again
+  users.delete("T1");
+  const x = rejection(slow.call({ ms: 0 }, { userId: "a" }));
+  await wait(50);
+  keys.a = "T2";
+  users.set("T2", { user: "a" });
+  const y = await whoami.call({}, { userId: "a" });
+  const xFailed = await x;
+  const before = reads;
+  const z = await whoami.call({}, { userId: "a" });
+  check(
+    "a call refused on its retry leaves the token another call's 401 found",
+    xFailed?.auth?.kind === "reconnect" &&
+      y.content[0].text === "a with T2" &&
+      z.content[0].text === "a with T2" &&
+      reads === before,
+  );
+  await s.close();
   await web.close();
 }
 {

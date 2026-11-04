@@ -83,14 +83,12 @@ export class LookupFailed extends Error {
 export interface Credential {
   /** Before a connection or call: finds the credential, or throws `NeedsAuth("connect")`, so nothing is sent without one. */
   ensure(): Promise<void>;
-  /** After the server refused it: the next `ensure()` looks again. */
-  forget(): void;
   /** For a connection being closed: stops a lookup on its way, and its timer. */
   close(): void;
   readonly provider: AuthProvider;
 }
 
-/** A token from `bearer`'s function, kept until the server refuses it. */
+/** A token from `bearer`'s function, kept until a lookup on a 401 finds another, or none. */
 export class BearerCredential implements Credential {
   private token: string | null = null;
   /** The lookup on its way, which every caller shares: only it sets `token`. */
@@ -110,10 +108,6 @@ export class BearerCredential implements Credential {
     if (this.token === null) throw new NeedsAuth("connect");
   }
 
-  forget(): void {
-    this.token = null;
-  }
-
   close(): void {
     this.stop?.();
   }
@@ -129,8 +123,9 @@ export class BearerCredential implements Credential {
       return this.token;
     },
     onUnauthorized: async () => {
-      // a token the server still refuses gets its 401 on the retry, and is
-      // forgotten then
+      // A token the server still refuses gets its 401 on the retry, and is
+      // kept: the next 401 looks again. Forgetting it would throw away a
+      // newer one that another call's 401 found meanwhile.
       if ((await this.look()) === null) throw new NeedsAuth("reconnect");
     },
   };

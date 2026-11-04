@@ -668,12 +668,13 @@ Each user's token, which the app already has, such as a key the user gave
 it. `token(userId)` gives it, or `null` when the user has none. It is sent as
 `Authorization: Bearer <token>` on every request of that user's connection.
 
-- **It's looked up** when the user's connection has none: before its first
-  connection, and after the server refused it. It's kept on the connection
-  in between, and [`forget(userId)`](#forget) drops it with the connection.
-  One lookup runs at a time for each user's connection: first calls made
-  together, and 401s that come together, share it, and only it sets the
-  token.
+- **It's looked up** when the user's connection has none, before its
+  first connection or after a lookup found none, and again on each 401.
+  It's kept on the connection in between, and
+  [`forget(userId)`](#forget) drops it with the connection. One lookup runs
+  at a time for each user's connection: first calls made together, and 401s
+  that come together, share it, and only a lookup sets the token, so one
+  call's refusal never throws away a newer token another call's 401 found.
 - **`null`, `""`, or anything but a non-empty string** means the user has
   none: the call rejects with reason `auth`, kind `connect`, and nothing is
   sent. The next call looks again.
@@ -685,9 +686,11 @@ it. `token(userId)` gives it, or `null` when the user has none. It is sent as
   timer, so one that never answers doesn't keep the process running.
 - **On a 401,** the transport looks it up again with `token(userId)`, and
   sends the request once more with what it gives, so a key the app has
-  replaced is picked up without a failed call. `null` from that lookup, or a 401 again, rejects the call with
-  reason `auth`, kind `reconnect`, and the token is forgotten: the user's next
-  call looks it up again.
+  replaced is picked up without a failed call. `null` from that lookup, or a
+  401 again, rejects the call with reason `auth`, kind `reconnect`. After
+  `null`, the user's next call looks again, and rejects with kind `connect`,
+  sending nothing, while the app still has none. After a 401 again, the
+  token is kept, and the next 401 looks again.
 - **A request is never sent without the user's token.** One whose call
   began with a token that has gone since, as when another call's 401 found
   none, is stopped before it is sent, and the call rejects with reason
