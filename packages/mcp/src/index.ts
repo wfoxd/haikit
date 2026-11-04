@@ -88,8 +88,8 @@ export interface McpServerOptions {
   idleMs?: number;
   /**
    * How long the server may go without answering a call or reporting progress
-   * on it, in milliseconds. Also bounds making the transport, connecting and
-   * listing tools. Default 30,000.
+   * on it, in milliseconds. Also bounds making the transport, connecting,
+   * listing tools and, with `auth`, looking up a user's token. Default 30,000.
    */
   timeoutMs?: number;
   /**
@@ -248,6 +248,8 @@ class Server implements McpConnection {
   /** With `auth`: each user's connection, the least recently used first. */
   private readonly links = new Map<string, Link>();
   private closed = false;
+  /** Aborted by `close()`: a call waiting on anything stops with reason `closed`. */
+  private readonly shutdown = new AbortController();
   /** The first `close()`, which the others wait for. */
   private closing: Promise<void> | null = null;
   /** The tools `tool()` declared: the only ones that can be called. */
@@ -306,8 +308,9 @@ class Server implements McpConnection {
     }
     if (def.timeoutMs !== undefined) checkMs("timeoutMs", def.timeoutMs);
     if (def.maxTotalMs !== undefined) checkMs("maxTotalMs", def.maxTotalMs);
-    // each user's connection checks a tool declared late on its first call to it
-    this.shared?.verify(name);
+    // checked against the latest tools, even if declared before; each user's
+    // connection checks a tool declared late on its first call to it
+    this.shared?.verify(name, true);
     this.declared.add(name);
     return Object.freeze({
       server: this.name,
@@ -351,6 +354,7 @@ class Server implements McpConnection {
 
   private async shut(): Promise<void> {
     this.closed = true;
+    this.shutdown.abort();
     this.auth?.names.delete(this.name);
     const links = this.shared ? [this.shared] : [...this.links.values()];
     this.links.clear();
@@ -364,7 +368,7 @@ class Server implements McpConnection {
       this.links.delete(user);
     } else {
       this.trim(this.maxConnections - 1);
-      link = new Link(this, user, new BearerCredential(this.auth!.token, user));
+      link = new Link(this, user, new BearerCredential(this.auth!.token, user, this.timeoutMs));
     }
     this.links.set(user, link);
     link.hold();
@@ -504,13 +508,12 @@ class Server implements McpConnection {
     }
   }
 
-  /** What `promise` resolves to, or a timeout for `tool` if `signal` aborts first. */
-  private until<T>(signal: AbortSignal, tool: string, promise: Promise<T>): Promise<T> {
-    return new Promise<T>((resolve, reject) => {
-      const stop = () => reject(this.error("timeout", tool));
-      signal.addEventListener("abort", stop, { once: true });
-      promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", stop));
-    });
+  /** What `promise` resolves to, unless `close()` comes first (`closed`), or `deadline` aborts (`timeout`). */
+  private until<T>(deadline: AbortSignal, tool: string, promise: Promise<T>): Promise<T> {
+    return unless(promise, [
+      [this.shutdown.signal, () => this.error("closed", tool)],
+      [deadline, () => this.error("timeout", tool)],
+    ]);
   }
 
   error(reason: McpErrorReason, tool: string | undefined, detail: Detail = {}): McpError {
@@ -533,6 +536,8 @@ class Link {
   /** While `transport()` is pending: gives up on it, for `close()`. */
   private abandon: (() => void) | null = null;
   private closed = false;
+  /** Aborted by `close()`: stops a wait for the credential, which no transport is there to stop. */
+  private readonly ending = new AbortController();
   /** The first `close()`, which the others wait for. */
   private closing: Promise<void> | null = null;
   /** Clients whose connection has gone. */
@@ -571,8 +576,10 @@ class Link {
   async ready(): Promise<Client> {
     if (this.credential && !this.closed) {
       try {
-        await this.credential.ensure();
+        await unless(this.credential.ensure(), [[this.ending.signal, () => this.server.error("closed", undefined)]]);
       } catch (err) {
+        // closed, whatever the lookup did meanwhile
+        if (this.closed) throw isMcpError(err) ? err : this.server.error("closed", undefined, { cause: err });
         throw this.authFailure(err, undefined) ?? err;
       }
     }
@@ -581,10 +588,11 @@ class Link {
 
   /**
    * A tool declared after this connection's first check is checked on its
-   * first call, and throws as `connect` would.
+   * first call, and throws as `connect` would. `again` checks it against the
+   * latest tools even if it was checked before.
    */
-  verify(tool: string): void {
-    if (!this.listed || this.checked.has(tool)) return;
+  verify(tool: string, again = false): void {
+    if (!this.listed || (!again && this.checked.has(tool))) return;
     const problem = problemWith(tool, this.listed);
     if (problem) throw new Error(`${this.server.name}: ${problem}`);
     this.checked.add(tool);
@@ -609,6 +617,7 @@ class Link {
 
   private async shut(): Promise<void> {
     this.closed = true;
+    this.ending.abort();
     if (this.idle) clearTimeout(this.idle);
     this.idle = null;
     const client = this.client;
@@ -795,6 +804,27 @@ class Link {
     // the SDK throws a plain Error for a call on a connection that has gone
     return server.error(this.dropped.has(client) ? "connection" : "protocol", tool, { cause: err });
   }
+}
+
+/**
+ * What `promise` resolves to, unless one of `stops` aborts first: then it
+ * rejects with what that stop's `error()` makes, the first in the list if
+ * more than one has. `promise` is left to settle on its own.
+ */
+function unless<T>(promise: Promise<T>, stops: ReadonlyArray<readonly [AbortSignal, () => unknown]>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const offs = stops.map(([signal, error]) => {
+      const stop = () => reject(error());
+      signal.addEventListener("abort", stop, { once: true });
+      return () => signal.removeEventListener("abort", stop);
+    });
+    promise.then(resolve, reject).finally(() => {
+      for (const off of offs) off();
+    });
+    // an abort that came before is never heard as an event
+    const done = stops.find(([signal]) => signal.aborted);
+    if (done) reject(done[1]());
+  });
 }
 
 const nonEmpty = (value: unknown): string | undefined => (typeof value === "string" && value !== "" ? value : undefined);

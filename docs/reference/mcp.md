@@ -110,7 +110,7 @@ The connection to one MCP server. Nothing connects until
 | `auth` | none: every call shares one connection, and one identity | Makes each call as the user it runs for, with their own credential, over a connection of their own: `createMcpAuth({ userOf }).bearer(token)`. See [Calls as each user](#calls-as-each-user) |
 | `maxConnections` | `100`, with `auth` | The most users connected at once. Past it, the least recently used connections with no call in flight are closed. Only with `auth` |
 | `idleMs` | `300_000` (5 min), with `auth` | A user's connection is closed after this long with no call. Only with `auth` |
-| `timeoutMs` | `30_000` (30 s) | How long the server may go without answering a call or reporting progress on it. It also bounds making the transport, connecting, and listing the server's tools |
+| `timeoutMs` | `30_000` (30 s) | How long the server may go without answering a call or reporting progress on it. It also bounds making the transport, connecting, listing the server's tools and, with `auth`, looking up a user's token |
 | `maxTotalMs` | `90_000` (90 s) | The longest a call may take, progress or not, connecting included |
 | `onChange` | a `console.warn` | Hears that a declared tool was removed, or its schema changed. See [Changes to the server's tools](#changes-to-the-servers-tools) |
 | `versionNegotiation` | `"legacy"`, the SDK's default | Passed to the SDK as `versionNegotiation: { mode }`. `"legacy"` connects with the 2025 handshake; `"auto"` asks the server first which protocol revision it speaks; `{ pin: "<revision>" }` speaks only that one |
@@ -206,7 +206,8 @@ as in `tool<A, R>(name, { args })`, doesn't compile.
 - The `RangeError` of [`mcpServer`](#mcpserver) for a `timeoutMs` or
   `maxTotalMs` out of range.
 - Declared after a first [`connect`](#connect) has succeeded, the tool is
-  checked against the server's latest list of tools at once, and the
+  checked against the server's latest list of tools at once, even if a tool
+  of that name was declared and checked before, and the
   `Error` `connect` would throw is thrown here: `<server>: the server has no
   tool named "<name>"`, or `<server>: tool "<name>" can only run as an MCP
   task, which @haikit/mcp does not support`.
@@ -257,7 +258,7 @@ it.
 | A declared tool fails the check | `Error`: `<server>: ` then each problem, in the order the tools were declared, joined by `; `. A problem is `the server has no tool named "<name>"`, or `tool "<name>" can only run as an MCP task, which @haikit/mcp does not support` |
 | `close()` was called, before or while connecting | `McpError`, reason `closed`: `<server>: the connection was closed` |
 | With `auth`: the user's credential is missing, refused, or needs more access | `McpError`, reason `auth`: `<server>: the user has not connected an account`, `<server>: the server refused the user's credential`, or `<server>: the user's account needs more access` (see [`McpAuthNeed`](#mcpauthneed)) |
-| With `auth`: `token(userId)` throws or rejects | `McpError`, reason `connection`: `<server> could not be reached`, its `cause` what it threw |
+| With `auth`: `token(userId)` throws or rejects, or gives nothing within `timeoutMs` | `McpError`, reason `connection`: `<server> could not be reached`, its `cause` what it threw, or `Error: no token within <timeoutMs> ms` |
 | With `auth`, and no `userId`, or `""` | `TypeError: connect() needs a userId for a server with auth: each user's connection is checked as it's made` |
 | Without `auth`, and a `userId` | `TypeError: connect() takes a user only for a server with auth` |
 
@@ -274,7 +275,8 @@ forget(userId: string): Promise<void>;
 
 For a server with `auth`: closes the user's connection, if they have one,
 and resolves once it is closed. A call in flight on it rejects with reason
-`closed`. The user's next call makes a new connection, checked as a first
+`closed`, and so does a call or `connect(userId)` still waiting for the
+user's token, without waiting for it. The user's next call makes a new connection, checked as a first
 one, and looks up their credential again. Call it when the user takes their
 key away, or the app has a new one for them.
 
@@ -306,8 +308,10 @@ on it rejects with reason `closed`, and so does a call in flight. It is final: e
 without connecting, and `connect()` with `<server>: the connection was
 closed`.
 
-With `auth`, it closes every user's connection the same way. A later call
-rejects with reason `closed` without looking up who it's for, and the
+With `auth`, it closes every user's connection the same way. A call still
+waiting for `userOf`, or for a user's token, rejects with reason `closed`
+without waiting for it. A later call rejects with reason `closed` without
+looking up who it's for, and the
 server's `name` is free again for another server from the same
 `createMcpAuth`.
 
@@ -667,16 +671,20 @@ it. `token(userId)` gives it, or `null` when the user has none. It is sent as
 - **It's looked up** when the user's connection has none: before its first
   connection, and after the server refused it. It's kept on the connection
   in between, and [`forget(userId)`](#forget) drops it with the connection.
+  One lookup runs at a time for each user's connection: first calls made
+  together, and 401s that come together, share it, and only it sets the
+  token.
 - **`null`, `""`, or anything but a non-empty string** means the user has
   none: the call rejects with reason `auth`, kind `connect`, and nothing is
   sent. The next call looks again.
 - **If `token` throws or rejects,** the call rejects with reason
   `connection`, `<server>/<tool> could not be reached`, its `cause` what it
-  threw.
+  threw. One that gives nothing within `timeoutMs` rejects the same way,
+  its `cause` `Error: no token within <timeoutMs> ms`, and the next lookup
+  starts afresh.
 - **On a 401,** the transport looks it up again with `token(userId)`, and
   sends the request once more with what it gives, so a key the app has
-  replaced is picked up without a failed call. 401s that come together share
-  one lookup. `null` from that lookup, or a 401 again, rejects the call with
+  replaced is picked up without a failed call. `null` from that lookup, or a 401 again, rejects the call with
   reason `auth`, kind `reconnect`, and the token is forgotten: the user's next
   call looks it up again.
 - **On a 403 with `error="insufficient_scope"`,** the call rejects with
@@ -916,7 +924,7 @@ more (got <value>)`.
 | --- | --- | --- |
 | A call with no answer and no progress | 30,000 ms, by default | `timeoutMs` |
 | A call in all, connecting included | 90,000 ms, by default | `maxTotalMs` |
-| Making the transport, connecting, and listing the tools | `timeoutMs` each | `connect` |
+| Making the transport, connecting, listing the tools, and with `auth` looking up a user's token | `timeoutMs` each | `connect` |
 | Longest `timeoutMs` and `maxTotalMs` | 2,147,483,647 ms | Node's longest timer |
 | `textOf` | 8,000 characters, by default | `maxChars` |
 | Pages of tools listed | 64 | the SDK's `listMaxPages` |
@@ -924,7 +932,7 @@ more (got <value>)`.
 | Connections, without `auth` | 1, shared by every call | |
 | Connections, with `auth` | 1 per user; at most `maxConnections`, 100 by default, with no call in flight | `maxConnections` |
 | A user's connection with no call is kept | 300,000 ms, by default | `idleMs` |
-| Lookups of a user's token on a 401 | 1, shared by 401s that come together | [`bearer`](#bearer) |
+| Lookups of a user's token at once, for each user's connection | 1, shared by first calls and 401s that come together | [`bearer`](#bearer) |
 | Times a call is sent | 1 | |
 
 A call runs inside a turn, which holds the conversation's lease. The lease

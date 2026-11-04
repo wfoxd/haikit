@@ -306,11 +306,11 @@ None of these can be changed without changing HaiKIT's code.
 | --- | --- | --- |
 | A call with no answer and no progress, by default; each progress notification starts it again | 30,000 | [MCP servers](mcp.md#call) |
 | A call in all, connecting included, by default | 90,000 | [MCP servers](mcp.md#call) |
-| Making the transport, connecting, and listing the server's tools | `timeoutMs` each | [MCP servers](mcp.md#connect) |
+| Making the transport, connecting, listing the server's tools, and with `auth` looking up a user's token | `timeoutMs` each | [MCP servers](mcp.md#connect) |
 | Connections being made at once, per server, or with `auth` per user | 1, shared by every call | [MCP servers](mcp.md#the-connection) |
 | Users connected at once, with `auth`, by default; a connection with a call in flight is never closed for room | 100 (`maxConnections`) | [MCP servers](mcp.md#each-users-connection) |
 | A user's connection with no call is closed after, by default | 300,000 (`idleMs`) | [MCP servers](mcp.md#each-users-connection) |
-| Lookups of a user's token on a 401, then one more try of that request | 1, shared by 401s that come together | [MCP servers](mcp.md#bearer) |
+| Lookups of a user's token at once, for each user's connection; after one on a 401, one more try of that request | 1, shared by first calls and 401s that come together | [MCP servers](mcp.md#bearer) |
 | Times a call is sent | 1: a failed call is never sent again on its own | [MCP servers](mcp.md#call) |
 | Reconnect attempts per call | 1 | [MCP servers](mcp.md#the-connection) |
 | Pages of tools listed | 64 (the SDK's `listMaxPages`) | [MCP servers](mcp.md#limits) |

@@ -657,6 +657,10 @@ console.log("\nchanges to the server's tools");
     "a declared tool removed, and one whose schema changed",
     changes.length === 1 && JSON.stringify(changes[0]) === JSON.stringify({ server: "fixture", removed: ["json"], changed: ["search"] }),
   );
+  check(
+    "a tool declared again once it's gone is checked against the latest tools",
+    thrown(() => s.tool("json", { args: anything }))?.message === 'fixture: the server has no tool named "json"',
+  );
   await s.close();
 }
 {
@@ -1092,6 +1096,54 @@ const sameNeed = (err, need) => JSON.stringify(err?.auth) === JSON.stringify(nee
   const closed = await rejection(whoami.call({}, { conversationId: "c1" }));
   check("after close(): closed, without looking anyone up", closed?.reason === "closed" && lookups === lookupsBefore);
   check("connect(userId) after close() too", (await rejection(s.connect("a")))?.reason === "closed");
+  await web.close();
+}
+{
+  // lookups that come together, and ones that never answer
+  const web = await userServer({ users: new Map([["tA", { user: "a" }]]) });
+  let reads = 0;
+  const s = mcpServer({
+    name: "web",
+    transport: http(web.url),
+    timeoutMs: 300,
+    auth: createMcpAuth({ userOf: (id) => (id === "c-stuck" ? new Promise(() => {}) : null) }).bearer(async (user) => {
+      reads++;
+      if (user !== "a") return new Promise(() => {});
+      await wait(50);
+      return "tA";
+    }),
+  });
+  const whoami = s.tool("whoami", { args: anything });
+  const both = await Promise.all([whoami.call({}, { userId: "a" }), whoami.call({}, { userId: "a" })]);
+  check(
+    "a user's first calls, made together, share one lookup of their token",
+    reads === 1 && both.every((r) => r.content[0].text === "a with tA"),
+  );
+  const started = Date.now();
+  const slow = await rejection(s.connect("hang"));
+  check(
+    "a token that never comes: connect(userId) gives up after timeoutMs, reason connection",
+    slow?.reason === "connection" && slow.cause?.message === "no token within 300 ms" && Date.now() - started < 2000,
+  );
+  const forgotten = rejection(whoami.call({}, { userId: "hang" }));
+  await wait(50);
+  await s.forget("hang");
+  const cut = await forgotten;
+  check(
+    "forget() while their token is being looked up: closed, without waiting for it",
+    cut?.reason === "closed" && cut.message === "web/whoami: the connection was closed",
+  );
+  const stuck = rejection(whoami.call({}, { conversationId: "c-stuck" }));
+  const lookingUp = rejection(whoami.call({}, { userId: "hang" }));
+  await wait(50);
+  const closing = Date.now();
+  await s.close();
+  const [owner, token] = [await stuck, await lookingUp];
+  check(
+    "close() while userOf hasn't answered: closed, without waiting for maxTotalMs",
+    owner?.reason === "closed" && owner.message === "web/whoami: the connection was closed" && Date.now() - closing < 250,
+  );
+  check("…and while a token is being looked up", token?.reason === "closed");
   await web.close();
 }
 {
