@@ -618,6 +618,8 @@ class Link {
   private async shut(): Promise<void> {
     this.closed = true;
     this.ending.abort();
+    // a lookup that never answers would keep its timer, and the process, going
+    this.credential?.close();
     if (this.idle) clearTimeout(this.idle);
     this.idle = null;
     const client = this.client;

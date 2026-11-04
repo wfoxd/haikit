@@ -681,12 +681,17 @@ it. `token(userId)` gives it, or `null` when the user has none. It is sent as
   `connection`, `<server>/<tool> could not be reached`, its `cause` what it
   threw. One that gives nothing within `timeoutMs` rejects the same way,
   its `cause` `Error: no token within <timeoutMs> ms`, and the next lookup
-  starts afresh.
+  starts afresh. `forget()` and `close()` stop a lookup on its way, and its
+  timer, so one that never answers doesn't keep the process running.
 - **On a 401,** the transport looks it up again with `token(userId)`, and
   sends the request once more with what it gives, so a key the app has
   replaced is picked up without a failed call. `null` from that lookup, or a 401 again, rejects the call with
   reason `auth`, kind `reconnect`, and the token is forgotten: the user's next
   call looks it up again.
+- **A request is never sent without the user's token.** One whose call
+  began with a token that has gone since, as when another call's 401 found
+  none, is stopped before it is sent, and the call rejects with reason
+  `auth`, kind `reconnect`.
 - **On a 403 with `error="insufficient_scope"`,** the call rejects with
   reason `auth`, kind `scope`, with the `scope` the server's challenge
   asked for.
@@ -910,8 +915,9 @@ more (got <value>)`.
   the same credentials, the app's, whoever the conversation belongs to:
   give such a server only what every user may see and do. With `auth`, a
   call runs as the conversation's owner, or the `userId` of a call outside
-  any conversation, over that user's own connection. It never falls back to
-  the app's credentials or another user's, and a `userId` that isn't the
+  any conversation, over that user's own connection, and no request on it
+  is sent without their token. It never falls back to the app's credentials,
+  another user's, or none, and a `userId` that isn't the
   conversation's owner is refused (see
   [Who a call runs as](#who-a-call-runs-as)).
 - **A user's token stays with the app.** `bearer`'s token is kept in memory

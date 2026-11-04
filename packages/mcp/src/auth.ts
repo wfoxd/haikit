@@ -85,6 +85,8 @@ export interface Credential {
   ensure(): Promise<void>;
   /** After the server refused it: the next `ensure()` looks again. */
   forget(): void;
+  /** For a connection being closed: stops a lookup on its way, and its timer. */
+  close(): void;
   readonly provider: AuthProvider;
 }
 
@@ -93,6 +95,8 @@ export class BearerCredential implements Credential {
   private token: string | null = null;
   /** The lookup on its way, which every caller shares: only it sets `token`. */
   private looking: Promise<string | null> | null = null;
+  /** Stops the lookup on its way, for `close()`. */
+  private stop: (() => void) | null = null;
 
   constructor(
     private readonly read: (userId: string) => string | null | Promise<string | null>,
@@ -110,10 +114,20 @@ export class BearerCredential implements Credential {
     this.token = null;
   }
 
+  close(): void {
+    this.stop?.();
+  }
+
   // The transport asks for the token before every request, and on a 401
   // calls onUnauthorized, then tries once more with what it finds.
   readonly provider: AuthProvider = {
-    token: async () => this.token ?? undefined,
+    // A request is never sent without the user's token: the transport would
+    // send it with no Authorization at all. Gone since its call began, as
+    // when another call's 401 found none, it stops the request here.
+    token: async () => {
+      if (this.token === null) throw new NeedsAuth("reconnect");
+      return this.token;
+    },
     onUnauthorized: async () => {
       // a token the server still refuses gets its 401 on the retry, and is
       // forgotten then
@@ -135,6 +149,7 @@ export class BearerCredential implements Credential {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const cut = new Promise<never>((_, reject) => {
       timer = setTimeout(() => reject(new Error(`no token within ${this.timeoutMs} ms`)), this.timeoutMs);
+      this.stop = () => reject(new Error("closed while the token was being looked up"));
     });
     let token: unknown;
     try {
@@ -143,6 +158,7 @@ export class BearerCredential implements Credential {
       throw new LookupFailed(err);
     } finally {
       clearTimeout(timer);
+      this.stop = null;
     }
     return typeof token === "string" && token !== "" ? token : null;
   }

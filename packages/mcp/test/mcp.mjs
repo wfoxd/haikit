@@ -18,6 +18,8 @@ import { InMemoryTransport } from "@modelcontextprotocol/client";
 import { McpServer, ProtocolError, Server, createMcpHandler } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { McpError, McpToolError, createMcpAuth, isMcpError, isMcpToolError, mcpServer, stdio, http, textOf } from "../dist/index.js";
+// not exported: for what no call can make happen on cue
+import { BearerCredential } from "../dist/auth.js";
 
 let failures = 0;
 const check = (label, ok) => {
@@ -1134,6 +1136,24 @@ const sameNeed = (err, need) => JSON.stringify(err?.auth) === JSON.stringify(nee
     "forget() while their token is being looked up: closed, without waiting for it",
     cut?.reason === "closed" && cut.message === "web/whoami: the connection was closed",
   );
+  // timers running now: a lookup that never answers keeps its own
+  const timers = () => process.getActiveResourcesInfo().filter((kind) => kind === "Timeout").length;
+  const long = mcpServer({
+    name: "web-long",
+    transport: http(web.url),
+    timeoutMs: 60_000,
+    auth: createMcpAuth({ userOf: () => null }).bearer(() => new Promise(() => {})),
+  });
+  const running = timers();
+  const pending = rejection(long.connect("hang"));
+  const armed = timers();
+  await long.forget("hang");
+  const ended = await pending;
+  check(
+    "forget() stops a lookup that never answers, timer and all",
+    armed === running + 1 && ended?.reason === "closed" && timers() === running,
+  );
+  await long.close();
   const brief = s.tool("whoami", { args: anything, maxTotalMs: 10 });
   const timedOut = [];
   for (let i = 0; i < 12; i++) timedOut.push(await rejection(brief.call({}, { conversationId: "c-stuck" })));
@@ -1155,6 +1175,20 @@ const sameNeed = (err, need) => JSON.stringify(err?.auth) === JSON.stringify(nee
   );
   check("…and while a token is being looked up", token?.reason === "closed");
   await web.close();
+}
+{
+  // a token gone while a call was on its way: another call's 401 found none
+  let key = "k1";
+  const credential = new BearerCredential(() => key, "u", 1_000);
+  await credential.ensure();
+  check("a request is sent with the user's token", (await credential.provider.token()) === "k1");
+  key = null;
+  const refused = await rejection(credential.provider.onUnauthorized({}));
+  const unsent = await rejection(credential.provider.token());
+  check(
+    "…and once a 401's lookup found none, a request made after is stopped, never sent without one",
+    refused?.name === "NeedsAuth" && unsent?.name === "NeedsAuth" && unsent.kind === "reconnect",
+  );
 }
 {
   // the server that never says a thing about users: ctx is not read
