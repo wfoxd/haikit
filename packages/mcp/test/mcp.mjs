@@ -11,6 +11,7 @@
  * InMemoryTransport, and test/fixtures/stdio-server.mjs as a child.
  */
 
+import { getEventListeners } from "node:events";
 import { createServer } from "node:http";
 import path from "node:path";
 import { InMemoryTransport } from "@modelcontextprotocol/client";
@@ -1132,6 +1133,15 @@ const sameNeed = (err, need) => JSON.stringify(err?.auth) === JSON.stringify(nee
   check(
     "forget() while their token is being looked up: closed, without waiting for it",
     cut?.reason === "closed" && cut.message === "web/whoami: the connection was closed",
+  );
+  const brief = s.tool("whoami", { args: anything, maxTotalMs: 10 });
+  const timedOut = [];
+  for (let i = 0; i < 12; i++) timedOut.push(await rejection(brief.call({}, { conversationId: "c-stuck" })));
+  check(
+    "calls that time out waiting for userOf leave nothing waiting on the server",
+    timedOut.every((err) => err?.reason === "timeout") &&
+      // a private field, read here only: what close() aborts for every wait
+      getEventListeners(s.shutdown.signal, "abort").length === 0,
   );
   const stuck = rejection(whoami.call({}, { conversationId: "c-stuck" }));
   const lookingUp = rejection(whoami.call({}, { userId: "hang" }));

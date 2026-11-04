@@ -809,21 +809,30 @@ class Link {
 /**
  * What `promise` resolves to, unless one of `stops` aborts first: then it
  * rejects with what that stop's `error()` makes, the first in the list if
- * more than one has. `promise` is left to settle on its own.
+ * more than one has. `promise` is left to settle on its own, and holds
+ * nothing of this wait: every listener goes as soon as it ends, however it
+ * ends, so one that never settles leaves none on a long-lived signal.
  */
 function unless<T>(promise: Promise<T>, stops: ReadonlyArray<readonly [AbortSignal, () => unknown]>): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const offs = stops.map(([signal, error]) => {
-      const stop = () => reject(error());
+    const offs: Array<() => void> = [];
+    const end =
+      <V>(settle: (value: V) => void) =>
+      (value: V) => {
+        for (const off of offs) off();
+        settle(value);
+      };
+    const fulfil = end(resolve);
+    const fail = end(reject);
+    for (const [signal, error] of stops) {
+      const stop = () => fail(error());
       signal.addEventListener("abort", stop, { once: true });
-      return () => signal.removeEventListener("abort", stop);
-    });
-    promise.then(resolve, reject).finally(() => {
-      for (const off of offs) off();
-    });
+      offs.push(() => signal.removeEventListener("abort", stop));
+    }
+    promise.then(fulfil, fail);
     // an abort that came before is never heard as an event
     const done = stops.find(([signal]) => signal.aborted);
-    if (done) reject(done[1]());
+    if (done) fail(done[1]());
   });
 }
 
