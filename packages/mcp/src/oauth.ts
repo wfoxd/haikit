@@ -61,6 +61,8 @@ export interface OAuthCore {
 interface Kept {
   /** As the authorization server issued them, stamped with its `issuer`. */
   tokens: StoredOAuthTokens & { issuer: string };
+  /** The client they were issued to: refreshed and revoked as it, whatever the store keeps for new connects. */
+  client: StoredOAuthClientInformation;
   /** The scope granted, or asked for when the authorization server didn't say. */
   scope: string | null;
   /** When the user connected, epoch ms. A refresh keeps it. */
@@ -81,6 +83,8 @@ export interface Flow {
   conversation: string | null;
   /** The PKCE verifier. */
   verifier: string;
+  /** The client the code is issued to: exchanged as it, though another connect replaced the one the store keeps. */
+  client: StoredOAuthClientInformation;
   /** The SDK's discovery state, from the connect route: the callback is bound to its authorization server. */
   discovery: OAuthDiscoveryState;
   /** The scope asked for. */
@@ -126,6 +130,7 @@ export async function takeFlow(core: OAuthCore, state: string): Promise<Flow | n
     typeof flow?.user !== "string" ||
     typeof flow.server !== "string" ||
     typeof flow.verifier !== "string" ||
+    typeof flow.client?.client_id !== "string" ||
     typeof flow.discovery?.authorizationServerUrl !== "string" ||
     typeof flow.expiresAt !== "number" ||
     flow.expiresAt <= Date.now()
@@ -142,6 +147,8 @@ export async function takeFlow(core: OAuthCore, state: string): Promise<Flow | n
 export class OAuthServer {
   /** The authorization server, discovered on the first refresh or revocation, or seeded by a callback. */
   private found: Promise<Where> | null = null;
+  /** Each user's refresh on its way, which every 401 of theirs shares until it settles. */
+  private readonly refreshing = new Map<string, Promise<Held>>();
 
   constructor(
     readonly core: OAuthCore,
@@ -169,7 +176,12 @@ export class OAuthServer {
     const sealed = await this.core.store.get(user, this.name);
     if (sealed === null) return null;
     const kept = this.core.sealer.open(sealed, binding.credential(user, this.name)) as Kept | null;
-    if (typeof kept?.tokens?.access_token !== "string" || typeof kept.tokens.issuer !== "string" || typeof kept.connectedAt !== "number") {
+    if (
+      typeof kept?.tokens?.access_token !== "string" ||
+      typeof kept.tokens.issuer !== "string" ||
+      typeof kept.client?.client_id !== "string" ||
+      typeof kept.connectedAt !== "number"
+    ) {
       console.error(`@haikit/mcp: ${this.name}: the credential of user ${user} doesn't open: sealed with a secret that's gone, or for another row`);
       return null;
     }
@@ -180,29 +192,35 @@ export class OAuthServer {
     return this.core.sealer.seal(kept, binding.credential(user, this.name));
   }
 
+  /** The client configured, stamped with the pinned issuer: the SDK refuses it for any other. */
+  private configured(): StoredOAuthClientInformation | undefined {
+    const { client, issuer } = this.options;
+    return client && { client_id: client.id, ...(client.secret === undefined ? {} : { client_secret: client.secret }), issuer: issuer! };
+  }
+
   /**
-   * The client for an authorization server: the one configured, or the one
-   * registered for the app. `connecting`: one registered for another redirect
-   * URI or metadata document is no use, and is registered again.
+   * The client to connect with at an authorization server: the one
+   * configured, or the one registered for the app. One registered for
+   * another redirect URI or metadata document, or that doesn't open, is no
+   * use, and is registered again.
    */
-  async client(issuer: string, connecting: boolean): Promise<StoredOAuthClientInformation | undefined> {
-    const { client, issuer: pinned } = this.options;
-    if (client) {
-      // stamped with the pinned issuer: the SDK refuses it for any other
-      return { client_id: client.id, ...(client.secret === undefined ? {} : { client_secret: client.secret }), issuer: pinned! };
-    }
+  private async client(issuer: string): Promise<StoredOAuthClientInformation | undefined> {
+    const configured = this.configured();
+    if (configured) return configured;
     const sealed = await this.core.store.getClient(this.name, issuer);
     if (sealed === null) return undefined;
     const info = this.core.sealer.open(sealed, binding.client(this.name, issuer)) as StoredOAuthClientInformation | null;
     if (typeof info?.client_id !== "string") return undefined;
-    if (connecting) {
-      const fits =
-        "redirect_uris" in info && Array.isArray(info.redirect_uris)
-          ? info.redirect_uris.includes(this.core.redirectUri)
-          : info.client_id === this.core.clientMetadataUrl;
-      if (!fits) return undefined;
-    }
-    return info;
+    const fits =
+      "redirect_uris" in info && Array.isArray(info.redirect_uris)
+        ? info.redirect_uris.includes(this.core.redirectUri)
+        : info.client_id === this.core.clientMetadataUrl;
+    return fits ? info : undefined;
+  }
+
+  /** The client a flow or credential was issued to, as it's sent: the configured one with its secret as configured now. */
+  issuedTo(client: StoredOAuthClientInformation): StoredOAuthClientInformation {
+    return this.options.client?.id === client.client_id ? this.configured()! : client;
   }
 
   private async saveClient(issuer: string, info: StoredOAuthClientInformation): Promise<void> {
@@ -260,8 +278,22 @@ export class OAuthServer {
     let discovery: OAuthDiscoveryState | undefined;
     let verifier: string | undefined;
     let to: URL | undefined;
+    // the client the code is issued to: the one auth() is given, or the one it registers
+    let client: StoredOAuthClientInformation | undefined;
     const provider: OAuthClientProvider = {
-      ...this.registration(true),
+      redirectUrl: core.redirectUri,
+      clientMetadata: core.clientMetadata,
+      ...(core.clientMetadataUrl === undefined ? {} : { clientMetadataUrl: core.clientMetadataUrl }),
+      clientInformation: async (ctx) => (client = await this.client(ctx?.issuer ?? "")),
+      // a configured client is never replaced by one registered on the fly
+      ...(this.options.client
+        ? {}
+        : {
+            saveClientInformation: async (info, ctx) => {
+              client = info;
+              await this.saveClient(ctx?.issuer ?? info.issuer ?? "", info);
+            },
+          }),
       state: () => state,
       // a reconnect starts over, whatever is kept
       tokens: () => undefined,
@@ -284,27 +316,28 @@ export class OAuthServer {
     };
     const scope = computeScopeUnion(this.options.scopes?.join(" "), asked);
     const result = await auth(provider, { serverUrl: this.url, fetchFn: this.fetch, ...(scope ? { scope } : {}) });
-    if (result !== "REDIRECT" || !to || verifier === undefined || !discovery) {
+    if (result !== "REDIRECT" || !to || verifier === undefined || !discovery || !client) {
       throw new Error(`the SDK's auth() answered ${result}, with nowhere to send the user`);
     }
+    // a configured client's secret isn't kept: it's read from the options when used, so it can be changed
+    if (this.options.client) client = { client_id: client.client_id, ...(client.issuer === undefined ? {} : { issuer: client.issuer }) };
     const expiresAt = Date.now() + FLOW_MS;
-    const flow: Flow = { user, server: this.name, conversation, verifier, discovery, scope: to.searchParams.get("scope"), expiresAt };
+    const flow: Flow = { user, server: this.name, conversation, verifier, client, discovery, scope: to.searchParams.get("scope"), expiresAt };
     await core.store.putFlow(state, core.sealer.seal(flow, binding.flow(state)), expiresAt);
     return to;
   }
 
   /**
-   * The callback: exchanges the code with the authorization server the flow
-   * was started with, which checks `iss` (RFC 9207) before it asks for any
-   * token, stores the credential, and closes the user's connection.
+   * The callback: exchanges the code with the authorization server and as
+   * the client the flow was started with, which checks `iss` (RFC 9207)
+   * before it asks for any token, stores the credential, and closes the
+   * user's connection.
    */
   async finish(flow: Flow, code: string, iss: string | undefined): Promise<void> {
     const where = await this.check(flow.discovery);
-    const client = await this.client(where.issuer, false);
-    if (!client) throw new Error("the client the flow started with is no longer kept");
     const tokens = await exchangeAuthorization(where.url, {
       metadata: where.metadata,
-      clientInformation: client,
+      clientInformation: this.issuedTo(flow.client),
       authorizationCode: code,
       iss,
       codeVerifier: flow.verifier,
@@ -312,7 +345,7 @@ export class OAuthServer {
       ...(where.resource ? { resource: where.resource } : {}),
       fetchFn: this.fetch,
     });
-    const kept: Kept = { tokens: { ...tokens, issuer: where.issuer }, scope: tokens.scope ?? flow.scope, connectedAt: Date.now() };
+    const kept: Kept = { tokens: { ...tokens, issuer: where.issuer }, client: flow.client, scope: tokens.scope ?? flow.scope, connectedAt: Date.now() };
     const sealed = this.seal(flow.user, kept);
     // the newest connect wins over whatever was kept
     let written = false;
@@ -339,12 +372,12 @@ export class OAuthServer {
   }
 
   /** RFC 7009, at the authorization server's revocation endpoint, if it has one. */
-  private async revoke({ tokens }: Kept): Promise<void> {
+  private async revoke(kept: Kept): Promise<void> {
+    const { tokens } = kept;
     const where = await this.where(tokens.issuer);
     const endpoint = (where.metadata as { revocation_endpoint?: string } | undefined)?.revocation_endpoint;
     if (!endpoint) return;
-    const client = await this.client(where.issuer, false);
-    if (!client) return;
+    const client = this.issuedTo(kept.client);
     const url = assertSecureTokenEndpoint(endpoint);
     const body = new URLSearchParams(
       tokens.refresh_token ? { token: tokens.refresh_token, token_type_hint: "refresh_token" } : { token: tokens.access_token, token_type_hint: "access_token" },
@@ -353,6 +386,7 @@ export class OAuthServer {
     const metadata = where.metadata as { revocation_endpoint_auth_methods_supported?: string[]; token_endpoint_auth_methods_supported?: string[] };
     const method = selectClientAuthMethod(client, metadata.revocation_endpoint_auth_methods_supported ?? metadata.token_endpoint_auth_methods_supported ?? []);
     if (method === "client_secret_basic" && client.client_secret !== undefined) {
+      // as the SDK's own token requests send it: the authorization server checks the client the same way at both
       headers.set("authorization", `Basic ${btoa(`${client.client_id}:${client.client_secret}`)}`);
     } else {
       body.set("client_id", client.client_id);
@@ -363,16 +397,81 @@ export class OAuthServer {
     if (!response.ok) throw new Error(`the revocation endpoint answered ${response.status}`);
   }
 
-  /** What every provider of the SDK's `auth()` says about the app's client. */
-  private registration(connecting: boolean): Pick<OAuthClientProvider, "redirectUrl" | "clientMetadata" | "clientMetadataUrl" | "clientInformation" | "saveClientInformation"> {
-    return {
-      redirectUrl: this.core.redirectUri,
-      clientMetadata: this.core.clientMetadata,
-      ...(this.core.clientMetadataUrl === undefined ? {} : { clientMetadataUrl: this.core.clientMetadataUrl }),
-      clientInformation: (ctx) => this.client(ctx?.issuer ?? "", connecting),
-      // a configured client is never replaced by one registered on the fly
-      ...(this.options.client ? {} : { saveClientInformation: (info, ctx) => this.saveClient(ctx?.issuer ?? info.issuer ?? "", info) }),
-    };
+  /**
+   * After a 401: the credential to use instead of `before`. One refresh for
+   * each user at a time, shared until it settles, however long that takes,
+   * on whichever connection of theirs: a second would spend a refresh token
+   * the first may have spent already, and delete the credential when it's
+   * refused.
+   */
+  refresh(user: string, before: Held, resourceMetadataUrl: URL | undefined): Promise<Held> {
+    let refreshing = this.refreshing.get(user);
+    if (!refreshing) {
+      refreshing = this.renew(user, before, resourceMetadataUrl)
+        .catch((err) => {
+          if (err instanceof Mismatch) console.error(`@haikit/mcp: ${this.name}: no refresh for user ${user}: ${err.message}`);
+          throw err;
+        })
+        .finally(() => this.refreshing.delete(user));
+      this.refreshing.set(user, refreshing);
+    }
+    return refreshing;
+  }
+
+  /**
+   * The store's newer credential if another refresh wrote one, else a
+   * refresh of `before`. A refusal deletes it, unless another write came
+   * first; an outage keeps it.
+   */
+  private async renew(user: string, before: Held, resourceMetadataUrl: URL | undefined): Promise<Held> {
+    const moved = await this.newer(user, before);
+    if (moved) return moved;
+    const { tokens } = before.kept;
+    if (!tokens.refresh_token) {
+      await this.drop(user, before);
+      throw new NeedsAuth("reconnect");
+    }
+    const where = await this.where(tokens.issuer, resourceMetadataUrl);
+    let fresh: Awaited<ReturnType<typeof refreshAuthorization>>;
+    try {
+      fresh = await refreshAuthorization(where.url, {
+        metadata: where.metadata,
+        clientInformation: this.issuedTo(before.kept.client),
+        refreshToken: tokens.refresh_token,
+        ...(where.resource ? { resource: where.resource } : {}),
+        fetchFn: this.fetch,
+      });
+    } catch (err) {
+      if (err instanceof OAuthError && REFUSED.has(err.code)) {
+        // Refused: unless another refresh spent the token first, and stored
+        // what it got, which is then the one to use.
+        const moved = await this.newer(user, before);
+        if (moved) return moved;
+        await this.drop(user, before);
+        throw new NeedsAuth("reconnect");
+      }
+      // an outage, or an answer that isn't OAuth's: kept, for the next 401 to try
+      throw new LookupFailed(err);
+    }
+    const kept: Kept = { ...before.kept, tokens: { ...fresh, issuer: tokens.issuer }, scope: fresh.scope ?? before.kept.scope };
+    const sealed = this.seal(user, kept);
+    if (await this.core.store.put(user, this.name, sealed, before.sealed)) return { sealed, kept };
+    // another write came first, and stands
+    const stands = await this.newer(user, before);
+    if (!stands) throw new Error("the store refused a write of what it still holds");
+    return stands;
+  }
+
+  /** The store's credential if it's newer than `before`, or null if it's still `before`. With none, the server's refusal stands. */
+  private async newer(user: string, before: Held): Promise<Held | null> {
+    const now = await this.read(user);
+    if (now === null) throw new NeedsAuth("reconnect");
+    return now.sealed === before.sealed ? null : now;
+  }
+
+  /** Deletes the credential, if the store still holds `before`: never a newer one. */
+  private async drop(user: string, before: Held): Promise<void> {
+    await this.core.store.delete(user, this.name, before.sealed);
   }
 }
 
@@ -387,8 +486,6 @@ class OAuthCredential implements Credential {
   private held: Held | null = null;
   /** The lookup on its way, which every caller shares. */
   private looking: Promise<void> | null = null;
-  /** The refresh on its way, which every 401 shares. */
-  private refreshing: Promise<void> | null = null;
   private readonly lookups: Lookup;
   private readonly refreshes: Lookup;
 
@@ -420,16 +517,21 @@ class OAuthCredential implements Credential {
       return this.held.kept.tokens.access_token;
     },
     onUnauthorized: async (ctx) => {
-      this.refreshing ??= this.refreshes
-        .run(() => this.renew(extractWWWAuthenticateParams(ctx.response).resourceMetadataUrl))
-        .catch((err) => {
-          if (err instanceof Mismatch) console.error(`@haikit/mcp: ${this.server.name}: no refresh for user ${this.user}: ${err.message}`);
-          throw err instanceof NeedsAuth || err instanceof Mismatch || err instanceof LookupFailed ? err : new LookupFailed(err);
-        })
-        .finally(() => {
-          this.refreshing = null;
-        });
-      await this.refreshing;
+      const before = this.held;
+      if (before === null) throw new NeedsAuth("reconnect");
+      // held when the refresh settles, though this 401 gave up waiting for it
+      const refreshing = this.server.refresh(this.user, before, extractWWWAuthenticateParams(ctx.response).resourceMetadataUrl).then(
+        (next) => this.take(before, next),
+        (err) => {
+          if (err instanceof NeedsAuth) this.take(before, null);
+          throw err;
+        },
+      );
+      try {
+        await this.refreshes.run(() => refreshing);
+      } catch (err) {
+        throw err instanceof NeedsAuth || err instanceof Mismatch || err instanceof LookupFailed ? err : new LookupFailed(err);
+      }
     },
   };
 
@@ -448,78 +550,6 @@ class OAuthCredential implements Credential {
         this.looking = null;
       });
     return this.looking;
-  }
-
-  /**
-   * After a 401: the store's newer credential if another refresh wrote one,
-   * else a refresh of this one. A refusal deletes it, unless another write
-   * came first; an outage keeps it.
-   */
-  private async renew(resourceMetadataUrl: URL | undefined): Promise<void> {
-    const before = this.held;
-    if (before === null) throw new NeedsAuth("reconnect");
-    const { server, user } = this;
-    if (await this.moved(before)) return;
-    const { tokens } = before.kept;
-    if (!tokens.refresh_token) {
-      await this.drop(before);
-      throw new NeedsAuth("reconnect");
-    }
-    const where = await server.where(tokens.issuer, resourceMetadataUrl);
-    const client = await server.client(where.issuer, false);
-    if (!client) {
-      await this.drop(before);
-      throw new NeedsAuth("reconnect");
-    }
-    let fresh: Awaited<ReturnType<typeof refreshAuthorization>>;
-    try {
-      fresh = await refreshAuthorization(where.url, {
-        metadata: where.metadata,
-        clientInformation: client,
-        refreshToken: tokens.refresh_token,
-        ...(where.resource ? { resource: where.resource } : {}),
-        fetchFn: server.fetch,
-      });
-    } catch (err) {
-      if (err instanceof OAuthError && REFUSED.has(err.code)) {
-        // Refused: unless another refresh spent the token first, and stored
-        // what it got, which is then the one to use.
-        if (await this.moved(before)) return;
-        await this.drop(before);
-        throw new NeedsAuth("reconnect");
-      }
-      // an outage, or an answer that isn't OAuth's: kept, for the next 401 to try
-      throw new LookupFailed(err);
-    }
-    const kept: Kept = { ...before.kept, tokens: { ...fresh, issuer: tokens.issuer }, scope: fresh.scope ?? before.kept.scope };
-    const sealed = server.seal(user, kept);
-    if (await server.core.store.put(user, server.name, sealed, before.sealed)) {
-      this.take(before, { sealed, kept });
-      return;
-    }
-    // another write came first, and stands
-    if (!(await this.moved(before))) throw new Error("the store refused a write of what it still holds");
-  }
-
-  /**
-   * Whether the store holds a newer credential than `before`, which is then
-   * held. With none, nothing is held, and the server's refusal stands.
-   */
-  private async moved(before: Held): Promise<boolean> {
-    const now = await this.server.read(this.user);
-    if (now === null) {
-      this.take(before, null);
-      throw new NeedsAuth("reconnect");
-    }
-    if (now.sealed === before.sealed) return false;
-    this.take(before, now);
-    return true;
-  }
-
-  /** Deletes the credential, if the store still holds `before`: never a newer one. */
-  private async drop(before: Held): Promise<void> {
-    this.take(before, null);
-    await this.server.core.store.delete(this.user, this.server.name, before.sealed);
   }
 
   /** Holds `next`, unless something newer than `before` is held already, as by a refresh that outlived its wait. */

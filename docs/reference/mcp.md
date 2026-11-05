@@ -840,8 +840,16 @@ document](#the-client-metadata-document), where the authorization server
 says it takes one (`client_id_metadata_document_supported`) and the
 redirect URI is https; else by dynamic client registration (RFC 7591), as a
 public client with the same metadata as that document. A kept client
-registered for another redirect URI, or another document, is registered
-again on the next connect.
+registered for another redirect URI, or another document, or one that
+doesn't open, is registered again on the next connect.
+
+Each connect flow keeps the client it started with, and each credential the
+client its tokens were issued to: the code is exchanged, and the tokens
+refreshed and revoked, as that client, whatever the store keeps for new
+connects. So two first connects at once that each register a client each
+come back as their own, and a client registered again for a new redirect
+URI leaves those connected before with theirs. A configured `client`'s
+secret isn't kept with them: it's read from the options each time.
 
 **A call:**
 
@@ -857,11 +865,14 @@ again on the next connect.
   `Authorization: Bearer`, and the token is bound to the server by the
   resource indicator it was issued for (RFC 8707). It's sent only to that
   server, and refreshed only at the authorization server that issued it.
-- **On a 401,** the credential is refreshed, once for the user's connection
+- **On a 401,** the credential is refreshed, once for the user at a time,
   however many requests got a 401 together, such as a new connection's
-  stream and its list of tools. The refresh, steps 1 to 6, must finish
-  within `timeoutMs`, or the call rejects with reason `connection`, its
-  `cause` `Error: no refresh within <timeoutMs> ms`.
+  stream and its list of tools. A 401 waits for the refresh, steps 1 to 6,
+  for at most `timeoutMs`, then the call rejects with reason `connection`,
+  its `cause` `Error: no refresh within <timeoutMs> ms`. The refresh itself
+  goes on until it settles, since it may have spent the refresh token
+  already: a 401 meanwhile, on the user's connection or a new one, waits for
+  it rather than sending another, and the tokens it gets are stored.
   1. The store is read again. A newer credential, as another process's
      refresh wrote, is used as it is, with nothing sent to the authorization
      server. With none, the call rejects with kind `reconnect`.
@@ -872,10 +883,10 @@ again on the next connect.
      if it isn't, it's found again, once, and if it still isn't, the call
      rejects with reason `protocol`, nothing is sent, and `@haikit/mcp:
      <server>: no refresh for user <userId>: <why>` is logged. The
-     credential is kept. With no client kept for that authorization server,
-     the credential is deleted, and the call rejects with kind `reconnect`.
-  4. The refresh is sent, with the resource indicator. If the authorization
-     server refuses it, with `invalid_grant`, `invalid_client` or
+     credential is kept.
+  4. The refresh is sent, as the client the tokens were issued to (see
+     [The app's client](#oauth)), with the resource indicator. If the
+     authorization server refuses it, with `invalid_grant`, `invalid_client` or
      `unauthorized_client`, the store is read again, and a newer credential,
      as when another process spent the same refresh token first, is used.
      Else the credential is deleted, if the store still holds the one the
@@ -884,10 +895,11 @@ again on the next connect.
      the call with reason `connection`, and keeps the credential, for the
      next 401 to try again.
   6. The new tokens are written over the credential the refresh began with,
-     keeping its `connectedAt`, and its scope unless the tokens name one. If
-     another write came first, the store's credential is used instead. The
-     transport then sends the request once more, with the new token: a 401
-     again rejects with kind `reconnect`, and keeps the credential.
+     keeping its `connectedAt` and its client, and its scope unless the
+     tokens name one. If another write came first, the store's credential
+     is used instead. The transport then sends the request once more, with
+     the new token: a 401 again rejects with kind `reconnect`, and keeps the
+     credential.
 - **No call starts a sign-in,** or registers a client: only the connect
   route does.
 - **On a 403 with `error="insufficient_scope"`,** the call rejects with
@@ -985,8 +997,8 @@ credential of the user's for:
 
 1. **The tokens are revoked** (RFC 7009) where the authorization server's
    metadata has a `revocation_endpoint`: the refresh token if there is one,
-   else the access token, within `timeoutMs`. The app's client
-   authenticates as the metadata's
+   else the access token, within `timeoutMs`. The client the tokens were
+   issued to authenticates, as the token requests do, as the metadata's
    `revocation_endpoint_auth_methods_supported` says, or else its
    `token_endpoint_auth_methods_supported`. A revocation that fails, or an endpoint that isn't https or
    on a loopback host, is logged, `@haikit/mcp: <server>: the tokens of user
@@ -1134,7 +1146,8 @@ query as [`McpAuthNeed.connect`](#mcpauthneed) puts them. In order:
    or a new one (see [`oauth`](#oauth)).
 6. **The flow is stored,** sealed, under a new `state` of 32 random bytes,
    base64url: the user, the server, the conversation, the PKCE verifier,
-   what discovery found, and the scope asked for. It lasts 10 minutes.
+   the client, what discovery found, and the scope asked for. It lasts 10
+   minutes.
 7. **303** to the authorization endpoint, `cache-control: no-store`, with
    `response_type=code`, `client_id`, `code_challenge` and
    `code_challenge_method=S256` (PKCE), `redirect_uri`, `state`, `scope`
@@ -1160,18 +1173,19 @@ browser back, with `code`, `state` and `iss`. In order:
    who started it: `refused`.
 3. **`error=access_denied`:** `access_denied`. Any other `error`, no
    `code`, or a server no longer configured: `failed`, logged.
-4. **The code is exchanged** at the authorization server the flow started
-   with, with the PKCE verifier, the redirect URI and the resource
-   indicator, within `timeoutMs`. Before it asks for a token, the SDK checks
-   `iss` against that server's `issuer` (RFC 9207): one that differs, or
-   none from an authorization server whose metadata says it sends one, is
-   `failed`. A failure here is `failed`, and is logged: `@haikit/mcp:
-   <server>: connecting user <userId> failed: <err>`.
+4. **The code is exchanged** at the authorization server, and as the
+   client, the flow started with, with the PKCE verifier, the redirect URI
+   and the resource indicator, within `timeoutMs`. Before it asks for a
+   token, the SDK checks `iss` against that server's `issuer` (RFC 9207):
+   one that differs, or none from an authorization server whose metadata
+   says it sends one, is `failed`. A failure here is `failed`, and is
+   logged: `@haikit/mcp: <server>: connecting user <userId> failed: <err>`.
 5. **The credential is stored,** sealed, over whatever the user had for the
    server: the tokens, stamped with the authorization server's `issuer`, the
-   scope granted, and when. If what the store holds changes under it three
-   times running, the callback is `failed`. The user's connection to the
-   server is closed, so their next call dials with the new credential.
+   client they were issued to, the scope granted, and when. If what the
+   store holds changes under it three times running, the callback is
+   `failed`. The user's connection to the server is closed, so their next
+   call dials with the new credential.
 6. **`onConnected` is called,** and awaited. What it throws is logged,
    `@haikit/mcp: <server>: onConnected threw, and user <userId> is connected
    all the same: <err>`.
@@ -1298,7 +1312,7 @@ from another.
 | `put` | Writes it only if the row still holds `previous` (`null`: no row yet), and resolves `true`; else `false`, changing nothing. The check and the write must be one atomic step: of two writes onto the same value at once, one lands |
 | `delete` | Deletes the user's credential for `server`, or with no `server`, all of theirs. With `previous`, only if the row still holds it. Nothing there is fine |
 | `list` | The names of the servers the user has a credential for |
-| `getClient`, `putClient` | The app's client for a server at an authorization server's `issuer`, shared by every user. `putClient` replaces one |
+| `getClient`, `putClient` | The app's client for a server at an authorization server's `issuer`, which every user's next connect starts with. `putClient` replaces one |
 | `putFlow` | Keeps a flow under its `state` until it's taken, or `expiresAt` (epoch ms) passes |
 | `takeFlow` | Removes a flow and gives it, once: of two takes at once, one gets it. `null` for none, or one past its `expiresAt` |
 
@@ -1377,8 +1391,13 @@ IV, the 16-byte tag and the ciphertext.
   value copied to another row doesn't open there, so a database write can't
   give one user another's credential.
 - **Rotation.** With `secret` a list, the first seals, and each one opens
-  what it sealed. To rotate, put the new secret first; once every credential
-  has been written again, as each refresh and connect does, drop the old.
+  what it sealed. To rotate, put the new secret first. Drop the old once
+  every credential has been written again, as each refresh and connect
+  does, which Postgres's `updated_at` shows, and the flows on their way have
+  had their 10 minutes. A credential the old secret still sealed then
+  doesn't open, and the user connects again. A kept client it sealed is registered
+  again on the next connect: each credential keeps its own client, so none
+  is lost with it.
 - **A value that doesn't open** counts as none. A credential that doesn't is
   logged (see [`oauth`](#oauth)), and the user's next call is `connect`.
 - **A leaked table or backup** holds no token that can be used without the

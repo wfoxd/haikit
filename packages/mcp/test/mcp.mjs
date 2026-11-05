@@ -1395,10 +1395,12 @@ async function listen(handle) {
  * An OAuth authorization server. `/authorize` signs in whoever `x-login`
  * names and sends the browser straight back. Access tokens go into `issued`,
  * which the resource server reads, and a refresh token is spent by its
- * refresh: one used again is refused. `refresh` says how a refresh is
- * answered, "ok", "invalid_grant" or "503", after `refreshDelay`; a refusal
- * waits `reuseDelay` more. `dud` issues access tokens no resource server
- * takes. `tokens` is every token request, `revoked` every revocation.
+ * refresh: one used again, or by another client than it was issued to, is
+ * refused. `refresh` says how a refresh is answered, "ok", "invalid_grant"
+ * or "503", after `refreshDelay`; a refusal waits `reuseDelay` more.
+ * A registration waits `registerDelay`. `dud` issues access tokens no
+ * resource server takes. `tokens` is every token request, `revoked` every
+ * revocation.
  */
 async function authorizationServer() {
   const as = {
@@ -1413,6 +1415,7 @@ async function authorizationServer() {
     refresh: "ok",
     refreshDelay: 0,
     reuseDelay: 0,
+    registerDelay: 0,
     deny: false,
     dud: false,
     cimd: false,
@@ -1422,10 +1425,10 @@ async function authorizationServer() {
     issued: new Map(),
   };
   let n = 0;
-  const mint = (sub, scope) => {
+  const mint = (sub, scope, client) => {
     n++;
     if (!as.dud) as.issued.set(`at-${n}`, { sub, scope });
-    as.refreshes.set(`rt-${n}`, { sub, scope });
+    as.refreshes.set(`rt-${n}`, { sub, scope, client });
     return { access_token: `at-${n}`, token_type: "Bearer", expires_in: 3600, refresh_token: `rt-${n}`, scope };
   };
   /** The client a request authenticates as: by Basic auth, or by its id alone for one with no secret. */
@@ -1457,9 +1460,9 @@ async function authorizationServer() {
       });
     }
     if (url.pathname === "/register" && req.method === "POST") {
-      as.registrations++;
+      const id = `dcr-${++as.registrations}`;
       const metadata = JSON.parse(await bodyOf(req));
-      const id = `dcr-${as.registrations}`;
+      await wait(as.registerDelay);
       as.clients.set(id, { redirect_uris: metadata.redirect_uris });
       return answer(res, 201, { ...metadata, client_id: id, client_id_issued_at: Math.floor(Date.now() / 1000) });
     }
@@ -1493,20 +1496,20 @@ async function authorizationServer() {
         if (code?.challenge !== proof || code.client !== client.id || code.redirect !== form.get("redirect_uri")) {
           return answer(res, 400, { error: "invalid_grant" });
         }
-        return answer(res, 200, mint(code.sub, code.scope));
+        return answer(res, 200, mint(code.sub, code.scope, code.client));
       }
       if (grant === "refresh_token") {
         await wait(as.refreshDelay);
         if (as.refresh === "503") return res.writeHead(503, { "content-type": "text/plain" }).end("down for maintenance");
         const held = as.refreshes.get(form.get("refresh_token"));
-        if (as.refresh === "invalid_grant" || !held) {
+        if (as.refresh === "invalid_grant" || !held || held.client !== client.id) {
           as.refused++;
           await wait(as.reuseDelay);
           return answer(res, 400, { error: "invalid_grant" });
         }
         as.refreshes.delete(form.get("refresh_token"));
         as.granted++;
-        return answer(res, 200, mint(held.sub, held.scope));
+        return answer(res, 200, mint(held.sub, held.scope, held.client));
       }
       return answer(res, 400, { error: "unsupported_grant_type" });
     }
@@ -1811,7 +1814,28 @@ const NEW_SECRET = "the secret that replaces it, of 32 bytes or more";
       (await text(whoami.call({}, { userId: "ada" }))) === "ada" && as.granted === granted + 1,
     );
     check("…both of which had been refused", rs.refusals.slice(mark).includes("GET") && rs.refusals.slice(mark).includes("tools/list"));
+
     as.refreshDelay = as.reuseDelay = 0;
+
+    // a refresh granted, and written slower than a call waits for it
+    let slowPut = 0;
+    const slowStore = { ...store, put: async (...args) => (await wait(slowPut), store.put(...args)) };
+    const patient = createMcpAuth({ ...options, store: slowStore, onConnected: undefined });
+    const brief = mcpServer({ name: "github", transport: http(rs.url), auth: patient.oauth({ issuer: as.issuer }), timeoutMs: 300 });
+    const briefWho = brief.tool("whoami", { args: anything });
+    expire("ada");
+    slowPut = 400;
+    const refreshes = () => as.tokens.filter((t) => t.grant === "refresh_token").length;
+    const sent = refreshes();
+    const late = await rejection(briefWho.call({}, { userId: "ada" }));
+    check("a refresh the call can't wait for: connection", late?.reason === "connection");
+    check(
+      "…and a call meanwhile waits for that refresh, rather than spending its refresh token again",
+      (await text(briefWho.call({}, { userId: "ada" }))) === "ada" && refreshes() === sent + 1 && (await store.get("ada", "github")) !== null,
+    );
+    slowPut = 0;
+    await brief.close();
+    await gh.forget("ada");
 
     as.refresh = "503";
     expire("ada");
@@ -2027,6 +2051,49 @@ const NEW_SECRET = "the secret that replaces it, of 32 bytes or more";
         new Sealer([SECRET]).open(resealed, binding.credential("ada", "github")) === null,
     );
     await gh4.close();
+  }
+
+  // the app's redirect URI changes: a new client for new connects, and those connected before keep theirs
+  {
+    const app2 = await appServer();
+    const movedApp = createMcpAuth({ ...options, secret: [NEW_SECRET, SECRET], redirectUri: `${app2.origin}/mcp/callback`, onConnected: undefined });
+    app2.handle = movedApp.handler();
+    const gh6 = mcpServer({ name: "github", transport: http(rs.url), auth: movedApp.oauth({ issuer: as.issuer }) });
+    const before = as.registrations;
+    const dan = await connectFlow(app2, "/mcp/connect/github", "dan");
+    check(
+      "a new redirect URI: the next connect registers a client for it",
+      dan.message?.ok === true && as.registrations === before + 1 && dan.to.searchParams.get("client_id") === `dcr-${before + 1}`,
+    );
+    expire("ada");
+    check(
+      "…and a user connected before refreshes as the client their tokens were issued to",
+      (await text(gh6.tool("whoami", { args: anything }).call({}, { userId: "ada" }))) === "ada" && as.tokens.at(-1).grant === "refresh_token" && as.tokens.at(-1).clientId === "dcr-1",
+    );
+    await gh6.close();
+    await app2.close();
+  }
+
+  // two first connects at once, with no client kept: each registers one
+  {
+    const app3 = await appServer();
+    const firstApp = createMcpAuth({ ...options, store: memoryCredentialStore(), redirectUri: `${app3.origin}/mcp/callback`, onConnected: undefined });
+    app3.handle = firstApp.handler();
+    const gh7 = mcpServer({ name: "github", transport: http(rs.url), auth: firstApp.oauth({ issuer: as.issuer }) });
+    const who7 = gh7.tool("whoami", { args: anything });
+    const before = as.registrations;
+    as.registerDelay = 100;
+    const users = ["ada", "bob"];
+    const flows = await Promise.all(users.map((user) => authorize(app3, "/mcp/connect/github", user)));
+    as.registerDelay = 0;
+    const ids = new Set(flows.map((f) => f.to.searchParams.get("client_id")));
+    const back = await Promise.all(flows.map((f, i) => returned(f.back, users[i])));
+    check("two first connects at once each register a client, and each comes back as its own", as.registrations === before + 2 && ids.size === 2 && back.every((m) => m?.ok === true));
+    for (const user of users) expire(user);
+    const calls = await Promise.all(users.map((user) => text(who7.call({}, { userId: user }))));
+    check("…and each refreshes as its own", calls.join() === users.join());
+    await gh7.close();
+    await app3.close();
   }
 
   // the client metadata document, for a redirect URI that's https

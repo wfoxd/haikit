@@ -320,8 +320,8 @@ None of these can be changed without changing HaiKIT's code.
 | Users connected at once, with `auth`, by default; a connection with a call in flight is never closed for room | 100 (`maxConnections`) | [MCP servers](mcp.md#each-users-connection) |
 | A user's connection with no call is closed after, by default | 300,000 (`idleMs`) | [MCP servers](mcp.md#each-users-connection) |
 | Lookups of a user's token at once, for each user's connection; after one on a 401, one more try of that request | 1, shared by first calls and 401s that come together | [MCP servers](mcp.md#bearer) |
-| Refreshes of a user's OAuth credential at once, for each user's connection; after one, one more try of that request | 1, shared by 401s that come together | [MCP servers](mcp.md#oauth) |
-| A refresh, and each request to an authorization server | `timeoutMs` each | [MCP servers](mcp.md#oauth) |
+| Refreshes of a user's OAuth credential at once, for each server, in each process; after one, one more try of that request | 1, shared by every 401 until it settles, however long that takes | [MCP servers](mcp.md#oauth) |
+| A 401's wait for a refresh, and each request to an authorization server | `timeoutMs` each | [MCP servers](mcp.md#oauth) |
 | A connect flow, from the connect route to the callback; taken once | 600,000 (10 minutes) | [MCP servers](mcp.md#connecting) |
 | Flows `memoryCredentialStore` keeps; past it, the oldest goes | 10,000 | [MCP servers](mcp.md#memorycredentialstore) |
 | A connect link's `scope` | 1,000 characters | [MCP servers](mcp.md#connecting) |
