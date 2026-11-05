@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { reactNotice, reactSurface, type NoticeProps, type SurfaceProps } from "@haikit/react";
-import type { connectCard, noteDraft, noteList } from "../shared/surfaces.ts";
-import type { accountConnected } from "../shared/notices.ts";
+// types only: @haikit/mcp runs on the server
+import type { accountConnected, connectCard } from "@haikit/mcp";
+import type { noteDraft, noteList } from "../shared/surfaces.ts";
 import { ACCOUNTS } from "../shared/surfaces.ts";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";

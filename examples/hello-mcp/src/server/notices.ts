@@ -1,4 +1,4 @@
-import { accountConnected } from "../shared/notices.ts";
+import { accountConnected } from "@haikit/mcp";
 import { ACCOUNTS } from "../shared/surfaces.ts";
 
 // A wake notice starts a turn, so its model text can't be null: the turn is

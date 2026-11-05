@@ -7,24 +7,6 @@ export const ACCOUNTS: Record<string, string> = { notes: "Notes" };
 export const Note = z.object({ id: z.string(), text: z.string(), createdAt: z.string() });
 export type Note = z.infer<typeof Note>;
 
-/**
- * Asks the user to connect an account, from an `auth` error's `err.auth`.
- * A display surface with no actions: the tool returns at once, the turn
- * goes on, and the user connects whenever they like. The `account_connected`
- * notice wakes the conversation once they have.
- */
-export const connectCard = defineSurface({
-  name: "connect_card",
-  version: 1,
-  props: z.object({
-    server: z.string(),
-    label: z.string(),
-    need: z.enum(["connect", "reconnect", "scope"]),
-    // err.auth.connect: a path on this app, for the browser. Never in the digest.
-    href: z.string().regex(/^\/(?!\/)/, "a path on this app"),
-  }),
-});
-
 /** The user's notes, as Notes lists them. */
 export const noteList = defineSurface({
   name: "note_list",

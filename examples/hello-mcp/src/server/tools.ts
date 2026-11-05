@@ -1,5 +1,5 @@
 import { defineTool } from "@haikit/core";
-import { isMcpError } from "@haikit/mcp";
+import { connectCardFor } from "@haikit/mcp";
 import { z } from "zod";
 import { ACCOUNTS } from "../shared/surfaces.ts";
 import { auth } from "./auth.ts";
@@ -7,16 +7,6 @@ import { listEvents, listNotes, mcpAuth, today } from "./mcp.ts";
 import { connectCardServer, noteDraftServer, noteListServer } from "./surfaces.ts";
 
 const none = { type: "object", properties: {}, additionalProperties: false } as const;
-
-/**
- * The connect card's props, for a call the user hadn't connected an account
- * for, or null for any other error. Only an oauth() server's error has a
- * link to connect at: `err.auth.connect`, for the browser alone.
- */
-function connectCardFor(err: unknown) {
-  if (!isMcpError(err) || err.reason !== "auth" || !err.auth?.connect) return null;
-  return { server: err.server, label: ACCOUNTS[err.server] ?? err.server, need: err.auth.kind, href: err.auth.connect };
-}
 
 /**
  * Runs as the conversation starts, and tells the model which accounts the
@@ -53,7 +43,7 @@ export const showNotes = defineTool({
       // as the conversation's owner, with their own Notes account
       return ctx.render(noteListServer, await listNotes.call({}, ctx));
     } catch (err) {
-      const card = connectCardFor(err);
+      const card = connectCardFor(err, ACCOUNTS.notes);
       if (card) return ctx.render(connectCardServer, card);
       throw err;
     }
@@ -79,7 +69,7 @@ export const draftNote = defineTool({
       const { account, notes } = await listNotes.call({}, ctx);
       return ctx.render(noteDraftServer, { text, account, count: notes.length }, { mode: "elicit" });
     } catch (err) {
-      const card = connectCardFor(err);
+      const card = connectCardFor(err, ACCOUNTS.notes);
       if (card) return ctx.render(connectCardServer, card);
       throw err;
     }

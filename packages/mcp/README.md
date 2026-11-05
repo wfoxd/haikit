@@ -100,6 +100,32 @@ do: `connect`, `reconnect`, or grant more `scope`. For an `oauth()` server,
 `/mcp/connect/linear?conversation=c_123`, to show the user in a surface,
 never to give the model. A job outside any conversation passes `{ userId }`.
 
+Two contracts come with it, for asking the user to connect and for telling
+the conversation they have: `connectCard`, a display surface, and
+`accountConnected`, a wake notice. Your server implements each with its own
+words for the model, and your browser renders each with its own component:
+
+```ts
+import { accountConnected, connectCard, connectCardFor } from "@haikit/mcp";
+
+const connectCardServer = connectCard.implement({
+  digest: (p) => `Shown: a button for the user to connect ${p.label}. You'll be told once they have.`,
+  actions: {},
+  queries: {},
+});
+const accountConnectedServer = accountConnected.implement({ model: (p) => `The user connected ${p.server}.` });
+
+// in a tool: the card's props from the error, href and all, or null for any other error
+const card = connectCardFor(err, "Linear");
+if (card) return ctx.render(connectCardServer, card);
+
+// in onConnected, for the conversation the card was in
+if (conversationId) await hai.notify(conversationId, accountConnectedServer, { server });
+```
+
+The card takes only a path on the app as its `href`. In the browser, import
+them as types only: `import type { connectCard } from "@haikit/mcp"`.
+
 With `oauth()`, the connect route sends the user to the authorization server
 with PKCE, and the callback stores their tokens sealed with `secret`, bound
 to the user and the server. A 401 refreshes them once, however many calls
@@ -114,7 +140,7 @@ instead.
 `McpTool` isn't a HaiKIT `Tool`, so it can't be passed to
 `createHai({ tools })`: `npm run typetest` checks that.
 
-Imports only `@haikit/core`, never `@haikit/server`. `@haikit/mcp/postgres`
+Imports only `@haikit/core`, never `@haikit/server` or `@haikit/react`. `@haikit/mcp/postgres`
 takes any driver with `query(text, params)`, such as a `pg.Pool`. Built on
 [`@modelcontextprotocol/client`](https://www.npmjs.com/package/@modelcontextprotocol/client),
 the official TypeScript SDK's client.

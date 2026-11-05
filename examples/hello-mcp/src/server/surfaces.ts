@@ -1,5 +1,5 @@
-import { isMcpError, isMcpToolError } from "@haikit/mcp";
-import { connectCard, noteDraft, noteList } from "../shared/surfaces.ts";
+import { connectCard, isMcpError, isMcpToolError } from "@haikit/mcp";
+import { noteDraft, noteList } from "../shared/surfaces.ts";
 import { addNote } from "./mcp.ts";
 
 const cut = (text: string, max = 80) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);

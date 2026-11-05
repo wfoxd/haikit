@@ -24,7 +24,7 @@ statement by statement, at the version the page names.
 | `@haikit/client` | The browser runtime, the default chat UI and its stylesheet | browser, no build step |
 | `@haikit/react` | Write surfaces and notices as React components | browser |
 | `@haikit/auth` | Sign-in from a verified JWT, and which conversations are each user's: a gate for `nodeHandler`, with a Postgres store at `@haikit/auth/postgres`, sign-in with Google or any OpenID Connect provider at `@haikit/auth/oidc`, and with GitHub or any OAuth 2.0 provider at `@haikit/auth/oauth2` | Node |
-| `@haikit/mcp` | Call MCP servers' tools from inside the app's own tools, as the app or as each user. The model never sees an MCP tool. Its Postgres credential store is at `@haikit/mcp/postgres` | Node |
+| `@haikit/mcp` | Call MCP servers' tools from inside the app's own tools, as the app or as each user. The model never sees an MCP tool. Its Postgres credential store is at `@haikit/mcp/postgres` | Node, and the browser (its contracts' types) |
 
 ## Contents
 
@@ -40,7 +40,7 @@ statement by statement, at the version the page names.
 | [The server](server.md) | `createHai`, the `Hai` class and every `HaiConfig` option | written |
 | [HTTP routes and the wire](http.md) | `nodeHandler`, gates, each route's requests, responses and errors, the events stream and its polling mode, and every wire event | written |
 | [Sign-in and ownership](auth.md) | `@haikit/auth`: `createAuth`, the tokens it issues and accepts, its gate, its routes, revocation, signing in with Google or another provider, and its stores | written |
-| [MCP servers](mcp.md) | `@haikit/mcp`: `mcpServer`, declaring a server's tools, a call and what it resolves to, its errors, connecting and reconnecting, calls as each user with `createMcpAuth` (a token, each user's OAuth account, or the SDK's own provider), the connect and disconnect routes, credential stores with `@haikit/mcp/postgres`, changes to the server's tools, `http` and `stdio`, and `textOf` | written |
+| [MCP servers](mcp.md) | `@haikit/mcp`: `mcpServer`, declaring a server's tools, a call and what it resolves to, its errors, connecting and reconnecting, calls as each user with `createMcpAuth` (a token, each user's OAuth account, or the SDK's own provider), the connect and disconnect routes, the connect card and the `accountConnected` notice, credential stores with `@haikit/mcp/postgres`, changes to the server's tools, `http` and `stdio`, and `textOf` | written |
 | [Models](models.md) | The model adapter interface, `@haikit/anthropic` and `@haikit/openai` | written |
 | [Stores](stores.md) | The store interface every store implements, `memoryStore`, and `@haikit/postgres`: schema, migration, cross-server channels, cleanup | written |
 | [The browser client](client.md) | `createChat`, the `Chat` object and its state, and the registries for surfaces, notices and signals | written |
@@ -326,7 +326,11 @@ From `@haikit/auth/postgres`:
 
 | Symbol | Kind | Page |
 | --- | --- | --- |
+| `accountConnected` | constant (a notice) | [MCP servers](mcp.md#accountconnected) |
 | `AuthProvider` | type (the SDK's, re-exported) | [MCP servers](mcp.md#http) |
+| `connectCard` | constant (a surface) | [MCP servers](mcp.md#connectcard) |
+| `connectCardFor` | function | [MCP servers](mcp.md#connectcardfor) |
+| `ConnectCardProps` | interface | [MCP servers](mcp.md#connectcardprops) |
 | `ContentBlock` | type (the SDK's, re-exported) | [MCP servers](mcp.md#mcpresult) |
 | `createMcpAuth` | function | [MCP servers](mcp.md#createmcpauth) |
 | `CredentialStore` | interface | [MCP servers](mcp.md#credentialstore) |
