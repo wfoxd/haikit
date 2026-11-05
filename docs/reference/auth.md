@@ -225,7 +225,11 @@ is one, else the cookie. `null` with neither. For the app's own routes.
 
 Who owns a conversation, or `null` if no one does. A tool learns who it
 runs for with `await auth.ownerOf(ctx.conversationId)`. That works in a wake
-turn too, which no request carries a token for.
+turn too, which no request carries a token for. `@haikit/mcp` makes each
+call to a server with `auth` as the conversation's owner, given
+`createMcpAuth({ userOf: (id) => auth.ownerOf(id) })`, and its routes act
+for `(await auth.user(req))?.id` (see
+[MCP servers: calls as each user](mcp.md#calls-as-each-user)).
 
 Owners never change, so each one found is kept in memory, the latest
 10,000 of them. A conversation with no owner yet is always looked up, since
