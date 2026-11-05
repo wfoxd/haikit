@@ -35,11 +35,11 @@ document needs an https redirect URI.
 ## What to try
 
 1. **"show my notes"**, before connecting Notes. `show_notes` catches the
-   `auth` error and renders the **connect card**, `connect_card`, from
-   `err.auth`: its props are `{ server, label, need, href }`, and `href` is
-   `err.auth.connect`. The model hears only the digest, `Shown: a button for
-   the user to connect Notes. …`: the link goes to the browser, never into
-   model text.
+   `auth` error and renders the **connect card**, `@haikit/mcp`'s
+   `connectCard`, with the props `connectCardFor(err, label)` makes:
+   `{ server, label, need, href }`, where `href` is `err.auth.connect`. The
+   model hears only this app's digest, `Shown: a button for the user to
+   connect Notes. …`: the link goes to the browser, never into model text.
 2. **Connect Notes**, on the card. Its button opens the link in a popup, from
    the click. The connect route sends it to Notes, where you sign in with any
    name and allow. Notes sends it back to the callback, which stores the
@@ -47,7 +47,8 @@ document needs an https redirect URI.
    `{ type: "haikit:mcp", server, ok }` to the card and closes
    (`src/client/connect.ts`).
 3. **The wake turn.** The callback calls `onConnected`, which sends
-   `account_connected`, a wake notice, to the conversation the card was in.
+   `@haikit/mcp`'s `accountConnected`, a wake notice, to the conversation the
+   card was in.
    The model hears `The user connected Notes.`, unasked, and calls
    `show_notes` again.
 4. **"note: water the plants".** The approval pattern: the model has no tool
@@ -71,18 +72,20 @@ conversation starts, and tells the model which accounts are connected.
 
 - `src/server/mcp.ts`: `createMcpAuth`, the three servers, and the server
   tools the app declares.
-- `src/server/tools.ts`: the model's tools, and `connectCardFor`, which makes
-  the card's props from an `auth` error.
-- `src/server/surfaces.ts`: the digests, and `note_draft`'s handler, the only
-  code that writes to Notes.
-- `src/shared/`: the surfaces' and the notice's contracts, which both halves
+- `src/server/tools.ts`: the model's tools, which render the connect card
+  from an `auth` error.
+- `src/server/surfaces.ts`: the digests, the connect card's among them, and
+  `note_draft`'s handler, the only code that writes to Notes.
+- `src/server/notices.ts`: what the model hears of `accountConnected`.
+- `src/shared/`: the contracts of this app's own surfaces, which both halves
   import.
 - `src/client/components.tsx`: the card, the notes, the draft and the notice.
 - `src/client/connect.ts`: the popup, and the done page's message.
 - `src/client/accounts.tsx`: the settings panel.
 
-The connect card and `account_connected` belong to this app, not to
-`@haikit/mcp`: copy them, and change what you need.
+The connect card's and the notice's contracts come from `@haikit/mcp`, and
+the browser imports them as types only. What the model hears of them, and
+the components that render them, are this app's.
 
 A browser that blocks the popup gets a link to open in a tab instead, on the
 card and in Accounts. Its done page says `Connected. You can close this

@@ -47,6 +47,7 @@ export {
   type OAuthServerOptions,
 } from "./auth.js";
 export { McpError, McpToolError, isMcpError, isMcpToolError, type McpAuthNeed, type McpErrorReason } from "./errors.js";
+export { accountConnected, connectCard, connectCardFor, type ConnectCardProps } from "./contracts.js";
 export { textOf, type TextOptions } from "./text.js";
 export { memoryCredentialStore, type CredentialStore } from "./store.js";
 export { http, stdio, type HttpOptions } from "./transports.js";

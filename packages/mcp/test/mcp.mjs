@@ -23,6 +23,9 @@ import { z } from "zod";
 import {
   McpError,
   McpToolError,
+  accountConnected,
+  connectCard,
+  connectCardFor,
   createMcpAuth,
   isMcpError,
   isMcpToolError,
@@ -1671,6 +1674,11 @@ const NEW_SECRET = "the secret that replaces it, of 32 bytes or more";
       Object.isFrozen(first.auth),
   );
   check("…sending nothing", rs.seen.length === mark);
+  check(
+    "…and connectCardFor makes the connect card's props from it",
+    JSON.stringify(connectCardFor(first, "GitHub")) ===
+      JSON.stringify({ server: "github", label: "GitHub", need: "connect", href: "/mcp/connect/github?conversation=c1" }),
+  );
   check("a call with no conversation: the link names none", sameNeed(await rejection(whoami.call({}, { userId: "ada" })), { kind: "connect", connect: "/mcp/connect/github" }));
   check("connect(userId) gives the link too", sameNeed(await rejection(gh.connect("ada")), { kind: "connect", connect: "/mcp/connect/github" }));
 
@@ -2391,6 +2399,98 @@ console.log("\nerrors");
   check("isMcpError by name, as a duplicated install needs", isMcpError(copy) && !isMcpError(new Error("x")) && !isMcpError("McpError"));
   check("isMcpToolError too", isMcpToolError(Object.assign(new Error("x"), { name: "McpToolError" })) && !isMcpToolError(copy));
   check("McpError is an Error", new McpError("closed", "m", { server: "s" }) instanceof Error);
+}
+
+// ── the connect card and the notice ─────────────────────────────────────
+console.log("\nthe connect card and the notice");
+{
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const parse = (props) => thrown(() => connectCard.props.parse(props))?.message ?? null;
+  const card = { server: "github", label: "GitHub", need: "connect", href: "/mcp/connect/github?conversation=c1" };
+
+  check("connect_card, version 1, with no actions or queries", connectCard.name === "connect_card" && connectCard.version === 1 && same(connectCard.actions, {}) && same(connectCard.queries, {}));
+  check("account_connected, version 1, a wake notice", accountConnected.name === "account_connected" && accountConnected.version === 1 && accountConnected.kind === "wake");
+  check("the card's props, as they are, and nothing else", same(connectCard.props.parse({ ...card, token: "t" }), card));
+  check("each need", ["connect", "reconnect", "scope"].every((need) => connectCard.props.parse({ ...card, need }).need === need));
+  check("a link with a scope", connectCard.props.parse({ ...card, href: "/mcp/connect/github?scope=read+write" }).href === "/mcp/connect/github?scope=read+write");
+  check("props that aren't an object", parse(null) === "connect_card: props must be an object" && parse("x") === "connect_card: props must be an object");
+  check("no server", parse({ ...card, server: "" }) === "connect_card: server must be a non-empty string");
+  check("no label", parse({ ...card, label: undefined }) === "connect_card: label must be a non-empty string");
+  check("a need it doesn't know", parse({ ...card, need: "login" }) === 'connect_card: need must be "connect", "reconnect" or "scope"');
+  const offApp = ["https://evil.example/x", "//evil.example/x", "/\\evil.example/x", "/\t/evil.example/x", "mcp/connect/github", "javascript:alert(1)", 7];
+  check(
+    "a link anywhere but a path on this app, as a browser reads it",
+    offApp.every((href) => parse({ ...card, href }) === "connect_card: href must be a path on this app, such as err.auth.connect"),
+  );
+  check("…and no message quotes a prop", !parse({ ...card, href: "//evil.example/x" }).includes("evil"));
+
+  const payload = (value) => thrown(() => accountConnected.payload.parse(value))?.message ?? null;
+  check("the notice's payload, and nothing else", same(accountConnected.payload.parse({ server: "github", userId: "ada" }), { server: "github" }));
+  check("a payload with no server", [null, {}, { server: "" }, { server: 1 }].every((p) => payload(p) === "account_connected: server must be a non-empty string"));
+
+  const need = (auth) => new McpError("auth", "github/whoami: the user has not connected an account", { server: "github", tool: "whoami", auth });
+  check("connectCardFor: an oauth() server's auth error", same(connectCardFor(need({ kind: "connect", connect: card.href }), "GitHub"), card));
+  check("…named by the server's name, with no label", connectCardFor(need({ kind: "connect", connect: card.href })).label === "github");
+  check("…each need, and its link", same(connectCardFor(need({ kind: "scope", scope: "repo", connect: "/mcp/connect/github?scope=repo" }), "GitHub"), { ...card, need: "scope", href: "/mcp/connect/github?scope=repo" }));
+  check("…the card takes what it makes", same(connectCard.props.parse(connectCardFor(need({ kind: "reconnect", connect: card.href }), "GitHub")), { ...card, need: "reconnect" }));
+  check("…null for an auth error with no link, as bearer() gives", connectCardFor(need({ kind: "connect" })) === null);
+  check(
+    "…and for any other error",
+    connectCardFor(new McpError("connection", "github/whoami could not be reached", { server: "github" })) === null &&
+      connectCardFor(new McpToolError("github", "whoami", [])) === null &&
+      connectCardFor(new Error("x")) === null &&
+      connectCardFor(undefined) === null,
+  );
+
+  // through createHai: the browser gets the link, the model the digest, and the notice wakes it
+  const { createHai, memoryStore } = await import("../../server/dist/index.js");
+  const { defineTool } = await import("../../core/dist/index.js");
+  const cardImpl = connectCard.implement({ digest: (p) => `Shown: a button for the user to connect ${p.label}.`, actions: {}, queries: {} });
+  const noticeImpl = accountConnected.implement({ model: (p) => `The user connected ${p.server}.` });
+  const listIssues = defineTool({
+    name: "list_issues",
+    description: "List issues.",
+    input: anything,
+    inputJsonSchema: { type: "object", properties: {} },
+    async run(_input, ctx) {
+      const err = need({ kind: "connect", connect: `/mcp/connect/github?conversation=${ctx.conversationId}` });
+      return ctx.render(cardImpl, connectCardFor(err, "GitHub"));
+    },
+  });
+  const heard = [];
+  const hai = createHai({
+    model: {
+      id: "test",
+      async generate({ messages }) {
+        heard.push(JSON.stringify(messages));
+        if (heard.length === 1) return { content: [{ type: "tool_use", id: "tu_1", name: "list_issues", input: {} }], stop_reason: "tool_use" };
+        return { content: [{ type: "text", text: "Done." }], stop_reason: "end_turn" };
+      },
+    },
+    store: memoryStore(),
+    system: "x",
+    tools: [listIssues],
+    surfaces: [cardImpl],
+    notices: [noticeImpl],
+  });
+  const store = hai.config.store;
+  const conversation = await store.loadConversation(undefined);
+  const events = [];
+  await hai.send(conversation, "show my issues", (e) => events.push(e));
+  conversation.leaseUntil = null;
+  await store.saveConversation(conversation);
+  const opened = events.find((e) => e.type === "ui_open");
+  const sent = events.find((e) => e.type === "ui_props" && e.handle === opened?.handle)?.props;
+  const result = conversation.messages.flatMap((m) => (Array.isArray(m.content) ? m.content : [])).find((b) => b.type === "tool_result");
+  check(
+    "the browser gets the card, with its link",
+    opened?.component === "connect_card" && opened.mode === "display" && sent?.href === `/mcp/connect/github?conversation=${conversation.id}`,
+  );
+  check("the model hears the digest, and no link", result?.content?.startsWith("Shown: a button for the user to connect GitHub.") && !heard.join("").includes("/mcp/connect"));
+  await hai.notify(conversation.id, noticeImpl, { server: "github" });
+  const later = await store.loadConversation(conversation.id);
+  await hai.send(later, "ok", () => {});
+  check("account_connected reaches the model as its text", heard.at(-1).includes("[App notification: account_connected] The user connected github."));
 }
 
 // ── a turn through createHai ────────────────────────────────────────────

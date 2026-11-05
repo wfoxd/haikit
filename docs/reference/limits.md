@@ -364,6 +364,15 @@ None of these can be changed without changing HaiKIT's code.
 `query_ui` is HaiKIT's own tool. A tool of yours with that name is replaced
 by it (see [Tools](tools.md#the-built-in-query_ui-tool)).
 
+### Surface and notice names
+
+`@haikit/mcp`'s `connectCard` is the surface `connect_card`, and its
+`accountConnected` the notice `account_connected`, each version 1. An app
+that registers them can't use either name for its own: of two surfaces with
+one name, `createHai` keeps the later, and two notices with one name throw
+`two notices are named "<name>"` (see [The server](server.md)). See
+[MCP servers](mcp.md#the-connect-card-and-the-notice).
+
 ### Routes and parameters
 
 `POST {basePath}/chat`, `/start` and `/interact`, and `GET {basePath}/events`
