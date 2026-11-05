@@ -1,4 +1,4 @@
-import { isMcpError } from "@haikit/mcp";
+import { isMcpError, isMcpToolError } from "@haikit/mcp";
 import { connectCard, noteDraft, noteList } from "../shared/surfaces.ts";
 import { addNote } from "./mcp.ts";
 
@@ -34,12 +34,18 @@ export const noteDraftServer = noteDraft.implement({
       if (choice === "discard") return "Discarded: nothing was saved.";
       try {
         // As the conversation's owner. Keyed by the draft, so a click that
-        // runs twice (see "at least once" in the manual) saves one note.
-        const { note } = await addNote.call({ text: ctx.props.text, key: `${ctx.conversationId}/${ctx.handle}` }, ctx);
+        // runs twice (see "at least once" in the manual) saves one note. And
+        // only to the account the draft names: the user may have connected
+        // another since, and they approved this one.
+        const { note } = await addNote.call({ text: ctx.props.text, key: `${ctx.conversationId}/${ctx.handle}`, account: ctx.props.account }, ctx);
         return `Saved to ${ctx.props.account}'s notes: ${JSON.stringify(note.text)}.`;
       } catch (err) {
         // disconnected since the draft was shown
         if (isMcpError(err) && err.reason === "auth") return "Not saved: Notes needs the user to connect again.";
+        // connected as another account since; what Notes said stays here
+        if (isMcpToolError(err) && err.text.startsWith("account mismatch")) {
+          return `Not saved: Notes is connected as another account now, not ${ctx.props.account}. Nothing was written.`;
+        }
         // anything else refuses the click, and the draft stays for another
         throw err;
       }

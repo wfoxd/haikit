@@ -22,6 +22,7 @@ const CARD = /^Shown: a button for the user to (?:connect (.+?)(?: again)?|give 
 const LISTED = /^(.+)'s (\d+) notes, newest first/;
 const SAVED = /^Saved to .+'s notes: (".*")\.$/m;
 const NOT_SAVED = /^Not saved: /m;
+const ELSEWHERE = /^Not saved: Notes is connected as another account now/m;
 const DISCARDED = /^Discarded: /m;
 const AGENDA = /'s calendar today: (.+)\.$/;
 const DAY = /^(\w+ \d{4}-\d{2}-\d{2}): day (\d+) of (\d+)\./;
@@ -77,6 +78,7 @@ export function scripted(): ModelAdapter {
         // a click on a draft: its label rides after the draft's digest
         const saved = results.match(SAVED);
         if (saved) return say(`Saved to Notes: ${saved[1]}.`, onTextDelta);
+        if (ELSEWHERE.test(results)) return say("I didn't save it: Notes is connected as another account now. Ask again, and I'll draft it for that one.", onTextDelta);
         if (NOT_SAVED.test(results)) return say("I couldn't save it: Notes needs connecting again. Ask to see your notes, and connect it there.", onTextDelta);
         if (DISCARDED.test(results)) return say("Discarded. Nothing was saved.", onTextDelta);
 

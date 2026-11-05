@@ -25,6 +25,8 @@ export async function listen(handle: (req: http.IncomingMessage, res: http.Serve
 }
 
 export async function bodyOf(req: http.IncomingMessage): Promise<string> {
+  // decoded as a stream, so a character split between two chunks comes through whole
+  req.setEncoding("utf8");
   let text = "";
   for await (const chunk of req) {
     text += chunk;

@@ -690,6 +690,31 @@ for (const c of CASES) {
       : bad(`disconnect: ${crossSite.status} from another site, ${gone.status} from the app; then ${JSON.stringify(left)}`);
     const again = await sse(`${base}/hai/chat`, { conversationId: secondId, message: "show my notes" });
     again.find((e) => e.type === "ui_open")?.component === "connect_card" ? ok("disconnected, show_notes shows the connect card again") : bad(`after disconnecting: ${resultOf(again)}`);
+
+    // 9 · a draft is for the account it names: connected as another since, its Save writes nothing
+    const connectAs = async (account) => {
+      const to = (await fetch(`${base}/mcp/connect/notes`, { headers: signedIn, redirect: "manual" })).headers.get("location");
+      const allowed = await fetch(to, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ account, decision: "allow" }),
+        redirect: "manual",
+      });
+      return doneMessage(await fetch(allowed.headers.get("location"), { headers: signedIn }));
+    };
+    const thirdId = (await sse(`${base}/hai/start`, {})).find((e) => e.type === "hello")?.conversationId;
+    const backAgain = await connectAs("ada-at-notes");
+    const forAda = (await sse(`${base}/hai/chat`, { conversationId: thirdId, message: "note: buy bread" })).find((e) => e.type === "ui_open");
+    await fetch(`${base}/mcp/disconnect/notes`, { method: "POST", headers: signedIn });
+    const elsewhere = await connectAs("ada-elsewhere");
+    const refused = await sse(`${base}/hai/interact`, { conversationId: thirdId, handle: forAda?.handle, action: "decide", value: "save" });
+    const refusedLabel = refused.find((e) => e.type === "block_start" && e.block.kind === "interaction")?.block.label ?? "";
+    const theirs = await sse(`${base}/hai/chat`, { conversationId: secondId, message: "show my notes" });
+    backAgain?.ok && elsewhere?.ok && forAda?.component === "note_draft" &&
+    refusedLabel === "Not saved: Notes is connected as another account now, not ada-at-notes. Nothing was written." &&
+    /^ada-elsewhere's 2 notes/.test(resultOf(theirs))
+      ? ok("a draft shown for one Notes account isn't saved to another the user connected since")
+      : bad(`connected: ${backAgain?.ok}, ${elsewhere?.ok}; the click's label: ${refusedLabel}; then ${resultOf(theirs)}`);
   } catch (err) {
     bad(`hello-mcp: ${err.stack ?? err}`);
   } finally {

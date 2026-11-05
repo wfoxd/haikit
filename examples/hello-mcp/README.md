@@ -54,6 +54,8 @@ document needs an https redirect URI.
    that writes. `draft_note` shows the note, `note_draft`, and the turn waits.
    Only the handler of its Save click calls Notes' `add_note`, as the
    conversation's owner, keyed by the draft so a click run twice saves once.
+   It names the account the draft was shown for, and Notes adds nothing if
+   the user has connected another since: they approved this one.
 5. **Accounts**, in the header. The settings panel lists what
    `GET /mcp/connections` gives, and Disconnect is
    `POST /mcp/disconnect/notes`: Notes revokes the tokens, and the next call
@@ -82,9 +84,10 @@ conversation starts, and tells the model which accounts are connected.
 The connect card and `account_connected` belong to this app, not to
 `@haikit/mcp`: copy them, and change what you need.
 
-A browser that blocks the popup gets a link to open in a tab instead. Its done
-page says `Connected. You can close this window.`, and the notice still wakes
-the chat in the first tab.
+A browser that blocks the popup gets a link to open in a tab instead, on the
+card and in Accounts. Its done page says `Connected. You can close this
+window.`, the notice still wakes the chat in the first tab, and Accounts
+reloads its list when the user comes back.
 
 ## Configuration
 

@@ -38,6 +38,8 @@ function sameHost(origin: string, host: string | undefined): boolean {
 }
 
 async function body(req: IncomingMessage): Promise<string> {
+  // decoded as a stream, so a character split between two chunks comes through whole
+  req.setEncoding("utf8");
   let text = "";
   for await (const chunk of req) {
     text += chunk;

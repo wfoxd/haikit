@@ -66,7 +66,8 @@ export const listNotes = notes.tool("list_notes", {
   result: z.object({ account: z.string(), notes: z.array(Note) }),
 });
 export const addNote = notes.tool("add_note", {
-  args: z.object({ text: z.string().min(1).max(500), key: z.string() }),
+  // `account`: Notes adds nothing unless the user is still connected as it
+  args: z.object({ text: z.string().min(1).max(500), key: z.string(), account: z.string() }),
   result: z.object({ note: Note }),
 });
 

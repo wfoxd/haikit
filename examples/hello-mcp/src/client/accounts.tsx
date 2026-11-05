@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ACCOUNTS } from "../shared/surfaces.ts";
 import { Badge } from "@/components/ui/badge";
@@ -21,27 +21,40 @@ interface Account {
 function Accounts({ buttonClass }: { buttonClass: string }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [accounts, setAccounts] = useState<Account[] | null>(null);
-  const [problem, setProblem] = useState("");
+  // what went wrong, and, for a connect, its link to open in a tab instead
+  const [problem, setProblem] = useState<{ text: string; server?: string; href?: string } | null>(null);
 
   const load = async () => {
     const res = await fetch("/mcp/connections");
-    setAccounts(res.ok ? ((await res.json()) as { servers: Account[] }).servers : []);
+    const servers = res.ok ? ((await res.json()) as { servers: Account[] }).servers : [];
+    setAccounts(servers);
+    // connected since, as in a tab: the problem is over
+    setProblem((p) => (p?.server && servers.some((a) => a.name === p.server) ? null : p));
   };
+  // back from a tab opened from the link below: show what it did
+  useEffect(() => {
+    const back = () => {
+      if (dialog.current?.open) void load();
+    };
+    window.addEventListener("focus", back);
+    return () => window.removeEventListener("focus", back);
+  }, []);
   const open = () => {
-    setProblem("");
+    setProblem(null);
     dialog.current?.showModal();
     void load();
   };
   const disconnect = async (server: string) => {
     // revoked at Notes, deleted here, and the user's connection closed: the next call shows the connect card
     const res = await fetch(`/mcp/disconnect/${encodeURIComponent(server)}`, { method: "POST" });
-    setProblem(res.ok ? "" : "That didn't disconnect. Try again.");
+    setProblem(res.ok ? null : { text: "That didn't disconnect. Try again." });
     await load();
   };
   const connectTo = async (server: string) => {
     // no conversation in the link, so this wakes none
-    const answer = await connect(`/mcp/connect/${encodeURIComponent(server)}`);
-    setProblem(answer.ok ? "" : (WHY_NOT[answer.error ?? "failed"] ?? WHY_NOT.failed!));
+    const href = `/mcp/connect/${encodeURIComponent(server)}`;
+    const answer = await connect(href);
+    setProblem(answer.ok ? null : { text: WHY_NOT[answer.error ?? "failed"] ?? WHY_NOT.failed!, server, href });
     await load();
   };
 
@@ -103,7 +116,13 @@ function Accounts({ buttonClass }: { buttonClass: string }) {
         </ul>
         {problem ? (
           <p role="alert" className="mb-3 text-sm text-muted-foreground">
-            {problem}
+            {problem.text}{" "}
+            {/* a link isn't blocked, as the card's isn't; the list reloads when the user comes back */}
+            {problem.href ? (
+              <a className="underline" href={problem.href} target="_blank">
+                Open it in a tab
+              </a>
+            ) : null}
           </p>
         ) : null}
         <form method="dialog" className="flex justify-end">

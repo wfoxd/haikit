@@ -22,9 +22,14 @@ export const WHY_NOT: Record<string, string> = {
  * resolves with what the done page posts once the user is back: from this
  * app's own origin, from that popup, and nothing else. Call it from a click,
  * or the browser blocks the popup.
+ *
+ * Each call opens a window of its own: one name for all of them would let a
+ * second flow, such as the settings panel's, replace a card's, whose listener
+ * would then take the second's answer for its own.
  */
+let opened = 0;
 export function connect(href: string): Promise<DoneMessage | { ok: false; error: "closed" | "blocked" }> {
-  const popup = window.open(href, "haikit-connect", "popup,width=480,height=640");
+  const popup = window.open(href, `haikit-connect-${++opened}`, "popup,width=480,height=640");
   if (!popup) return Promise.resolve({ ok: false, error: "blocked" });
   return new Promise((resolve) => {
     let settled = false;

@@ -99,11 +99,16 @@ export async function startNotes() {
     server.registerTool(
       "add_note",
       {
-        description: "Adds a note. A note with the key of one already added replaces it, so saving twice keeps one.",
-        inputSchema: z.object({ text: z.string().min(1).max(500), key: z.string().max(200).optional() }),
+        description:
+          "Adds a note. A note with the key of one already added replaces it, so saving twice keeps one. " +
+          "With `account`, it adds nothing unless the token is that account's.",
+        inputSchema: z.object({ text: z.string().min(1).max(500), key: z.string().max(200).optional(), account: z.string().max(40).optional() }),
         outputSchema: z.object({ note: NoteOut }),
       },
-      async ({ text, key }) => {
+      async ({ text, key, account: expected }) => {
+        if (expected !== undefined && expected !== account) {
+          return { content: [{ type: "text" as const, text: `account mismatch: this token is not ${expected}'s` }], isError: true };
+        }
         const notes = notebookOf(account);
         const kept = key === undefined ? undefined : notes.find((n) => n.key === key);
         const note = kept ?? { id: `n${notes.length + 1}`, text, createdAt: new Date().toISOString(), key };

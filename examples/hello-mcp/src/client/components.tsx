@@ -108,7 +108,9 @@ function NoteDraft({ props: { text, account, count }, send, state, mode, selecti
             </Button>
           </div>
         ) : selection ? (
-          <Badge variant={selection === "save" ? "default" : "outline"}>{selection === "save" ? "saved" : "discarded"}</Badge>
+          // the button clicked, not how it went: a Save can still be refused, and the
+          // chat shows the outcome, the click's label, under the draft
+          <Badge variant={selection === "save" ? "default" : "outline"}>{selection === "save" ? "Save clicked" : "Discard clicked"}</Badge>
         ) : null}
       </CardContent>
     </Card>
