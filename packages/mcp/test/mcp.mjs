@@ -2423,6 +2423,12 @@ console.log("\nthe connect card and the notice");
     offApp.every((href) => parse({ ...card, href }) === "connect_card: href must be a path on this app, such as err.auth.connect"),
   );
   check("…and no message quotes a prop", !parse({ ...card, href: "//evil.example/x" }).includes("evil"));
+  // the check resolves an href against hosts of its own: naming one of them doesn't pass either
+  const itsOwn = ["haikit.invalid", "a.haikit.invalid", "b.haikit.invalid"].flatMap((host) => [`//${host}/x`, `/\\${host}/x`, `/\t/${host}/x`]);
+  check(
+    "a link to the very host the check resolves against",
+    itsOwn.every((href) => parse({ ...card, href }) === "connect_card: href must be a path on this app, such as err.auth.connect"),
+  );
 
   const payload = (value) => thrown(() => accountConnected.payload.parse(value))?.message ?? null;
   check("the notice's payload, and nothing else", same(accountConnected.payload.parse({ server: "github", userId: "ada" }), { server: "github" }));

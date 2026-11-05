@@ -25,19 +25,21 @@ export interface ConnectCardProps {
 }
 
 const NEEDS: ReadonlyArray<string> = ["connect", "reconnect", "scope"];
-const SOMEWHERE = "http://haikit.invalid";
+/** Two, so an href naming a host can't pass by naming the one it's checked against. */
+const SOMEWHERE = ["http://a.haikit.invalid", "http://b.haikit.invalid"];
 
 const named = (value: unknown): value is string => typeof value === "string" && value !== "";
 
 /**
- * A path on this app: starts with one `/`, and stays on the origin it's
- * resolved against. So not `//evil.example`, and not `/\evil.example` or a
- * tab after the slash, which a browser reads the same way.
+ * A path on this app: starts with one `/`, and stays on whichever origin
+ * it's resolved against. So not `//evil.example`, and not `/\evil.example`
+ * or a tab after the slash, which a browser reads the same way: those keep
+ * their own host, whatever the base.
  */
 function onThisApp(href: string): boolean {
   if (!href.startsWith("/")) return false;
   try {
-    return new URL(href, SOMEWHERE).origin === SOMEWHERE;
+    return SOMEWHERE.every((base) => new URL(href, base).origin === base);
   } catch {
     return false;
   }
