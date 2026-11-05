@@ -2053,6 +2053,27 @@ const NEW_SECRET = "the secret that replaces it, of 32 bytes or more";
     const revoked = as.revoked.length;
     await mcpAuth.disconnect("cy");
     check("disconnect(userId) with no server: every one of theirs, configured or not", (await store.list("cy")).length === 0 && as.revoked.length === revoked + 1);
+
+    // a disconnect while a refresh is on its way, and its write still to come
+    await connectFlow(app, "/mcp/connect/github", "eve");
+    let slowPut = 0;
+    const lagging = createMcpAuth({ ...options, store: { ...store, put: async (...args) => (await wait(slowPut), store.put(...args)) }, onConnected: undefined });
+    const gh8 = mcpServer({ name: "github", transport: http(rs.url), auth: lagging.oauth({ issuer: as.issuer }) });
+    const eveWho = gh8.tool("whoami", { args: anything });
+    check("a user's call works before", (await text(eveWho.call({}, { userId: "eve" }))) === "eve");
+    expire("eve");
+    slowPut = 300;
+    const pending = rejection(eveWho.call({}, { userId: "eve" }));
+    await wait(150);
+    await mcpAuth.disconnect("eve");
+    const lost = await pending;
+    slowPut = 0;
+    check(
+      "…then disconnected: the refresh's write finds the credential gone, and the call is reconnect",
+      lost?.auth?.kind === "reconnect" && (await store.get("eve", "github")) === null,
+    );
+    check("…and the tokens it got are revoked, not left live", ![...as.refreshes.values()].some((who) => who.sub === "eve"));
+    await gh8.close();
   }
 
   // a new secret first, and the old after it
@@ -2175,6 +2196,8 @@ const NEW_SECRET = "the secret that replaces it, of 32 bytes or more";
       "createMcpAuth: redirectUri comes back to /mcp/connect/github, a route handler() answers already",
     ],
     ["a basePath with a trailing slash", { ...full, basePath: "/mcp/" }, 'createMcpAuth: basePath must be a path such as "/mcp", with no trailing slash (got "/mcp/")'],
+    ["a basePath with a dot segment", { ...full, basePath: "/api/../mcp" }, 'createMcpAuth: basePath can\'t have a "." or ".." segment (got "/api/../mcp")'],
+    ["…or one percent-encoded", { ...full, basePath: "/api/%2e%2e/mcp" }, 'createMcpAuth: basePath can\'t have a "." or ".." segment (got "/api/%2e%2e/mcp")'],
     ["a requestUser that isn't a function", { ...full, requestUser: "ada" }, "createMcpAuth: requestUser must be a function"],
     ["an onConnected that isn't one", { ...full, onConnected: true }, "createMcpAuth: onConnected must be a function"],
     ["an empty clientName", { ...full, clientName: "" }, "createMcpAuth: clientName must be a non-empty string"],

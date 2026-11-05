@@ -159,6 +159,10 @@ export function createMcpAuth(options: McpAuthOptions): McpAuth {
   if (typeof basePath !== "string" || !BASE_PATH.test(basePath)) {
     throw new TypeError(`createMcpAuth: basePath must be a path such as "/mcp", with no trailing slash (got ${JSON.stringify(basePath)})`);
   }
+  // a request's path is read as a URL, which takes out dot segments: one there would match no route
+  if (new URL(basePath, "http://localhost").pathname !== basePath) {
+    throw new TypeError(`createMcpAuth: basePath can't have a "." or ".." segment (got ${JSON.stringify(basePath)})`);
+  }
   const core = oauthCore(options, basePath);
 
   /** Every server attached, by name: its kind, and its OAuth if it has one. */

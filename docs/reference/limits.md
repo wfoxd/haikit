@@ -188,7 +188,7 @@ Checked against `@haikit/*` 0.33.0.
 | `store`, `secret`, `redirectUri` (`createMcpAuth`) | none: no `oauth()`, `handler()`, `connections()` or `disconnect()` | all three or none: a `CredentialStore`; a string, or a list of them, each 32 bytes or more; an https URL, or http on a loopback host, with no query or fragment, not at one of `handler()`'s routes | [MCP servers](mcp.md#createmcpauth) |
 | `requestUser` (`createMcpAuth`) | none: no `handler()` | a function from a request to the user signed in, or `null` | [MCP servers](mcp.md#createmcpauth) |
 | `onConnected` (`createMcpAuth`) | none | a function | [MCP servers](mcp.md#mcpconnected) |
-| `basePath` (`createMcpAuth`) | `"/mcp"` | a path of one or more segments, with no trailing slash | [MCP servers](mcp.md#createmcpauth) |
+| `basePath` (`createMcpAuth`) | `"/mcp"` | a path of one or more segments, with no trailing slash, and no `.` or `..` segment | [MCP servers](mcp.md#createmcpauth) |
 | `clientName` (`createMcpAuth`) | the redirect URI's host | a non-empty string | [MCP servers](mcp.md#createmcpauth) |
 | `token` (`bearer`) | required | a function from a user id to their token, or `null` | [MCP servers](mcp.md#bearer) |
 | `issuer` (`oauth`) | none: whichever authorization server the server names | an https URL, or http on a loopback host | [MCP servers](mcp.md#oauth) |

@@ -473,11 +473,27 @@ export class OAuthServer {
     const kept: Kept = { ...before.kept, tokens: { ...fresh, issuer: tokens.issuer }, scope: fresh.scope ?? before.kept.scope };
     const sealed = this.seal(user, kept);
     if (await this.core.store.put(user, this.name, sealed, before.sealed)) return { sealed, kept };
-    // another write came first, and stands
+    // Another write came first, or a delete, as by a disconnect: the tokens
+    // just issued are no one's, so they're revoked rather than left live.
+    await this.orphaned(user, kept, tokens.refresh_token);
     const stands = await this.newer(user, before);
     if (stands) return stands;
     await giveBack();
     throw new Error("the store refused a write of what it still holds");
+  }
+
+  /**
+   * Revokes the tokens a refresh got but couldn't store: its refresh token
+   * if the authorization server rotated it, else only its access token, as
+   * the one refresh token may be what the store holds now.
+   */
+  private async orphaned(user: string, kept: Kept, spent: string): Promise<void> {
+    const { refresh_token, ...access } = kept.tokens;
+    try {
+      await this.revoke(refresh_token === spent ? { ...kept, tokens: access } : kept);
+    } catch (err) {
+      console.error(`@haikit/mcp: ${this.name}: the tokens refreshed for user ${user} weren't stored, and couldn't be revoked:`, err);
+    }
   }
 
   /**

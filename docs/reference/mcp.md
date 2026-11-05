@@ -746,6 +746,10 @@ they connect again.
 - `createMcpAuth: basePath must be a path such as "/mcp", with no trailing
   slash (got <basePath as JSON>)`: one or more segments, each `/` and one or
   more of `A–Z a–z 0–9 - . _ ~ ! $ & ' ( ) * + , ; = : @ %`.
+- `createMcpAuth: basePath can't have a "." or ".." segment (got <basePath
+  as JSON>)`, for one a URL's path would read differently, such as
+  `/api/../mcp` or `/api/%2e%2e/mcp`: a request's path is read as a URL,
+  which takes such segments out, so no route would match.
 - `createMcpAuth: store, secret and redirectUri go together: oauth() needs
   all three`, for one or two of them.
 - `createMcpAuth: store must be a CredentialStore, such as
@@ -908,8 +912,15 @@ secret isn't kept with them: it's read from the options each time.
      lease back, for the next 401 to try again.
   7. The new tokens are written over the credential the refresh began with,
      keeping its `connectedAt` and its client, and its scope unless the
-     tokens name one, which ends the lease. If another write came first, the
-     store's credential is used instead. The transport then sends the request once more, with
+     tokens name one, which ends the lease. If another write came first, or
+     a delete, as by a [disconnect](#disconnect), the new tokens are no
+     one's, and are revoked rather than left live: the refresh token if the
+     authorization server rotated it, else only the access token, since the
+     one refresh token may be what the store holds now. A revocation that
+     fails is logged, `@haikit/mcp: <server>: the tokens refreshed for user
+     <userId> weren't stored, and couldn't be revoked: <err>`. The store's
+     credential is then used instead, or with none, the call rejects with
+     kind `reconnect`. The transport then sends the request once more, with
      the new token: a 401 again rejects with kind `reconnect`, and keeps the
      credential.
 - **No call starts a sign-in,** or registers a client: only the connect
@@ -1012,11 +1023,14 @@ credential of the user's for:
    else the access token, within `timeoutMs`. The client the tokens were
    issued to authenticates, as the token requests do, as the metadata's
    `revocation_endpoint_auth_methods_supported` says, or else its
-   `token_endpoint_auth_methods_supported`. A revocation that fails, or an endpoint that isn't https or
-   on a loopback host, is logged, `@haikit/mcp: <server>: the tokens of user
-   <userId> couldn't be revoked, and are deleted anyway: <err>`, and doesn't
-   stop the rest. A credential that doesn't open isn't revoked.
-2. **The credential is deleted.**
+   `token_endpoint_auth_methods_supported`. A revocation that fails, or an
+   endpoint that isn't https or on a loopback host, is logged, `@haikit/mcp:
+   <server>: the tokens of user <userId> couldn't be revoked, and are
+   deleted anyway: <err>`, and doesn't stop the rest. A credential that
+   doesn't open isn't revoked.
+2. **The credential is deleted.** A refresh on its way, in this process or
+   another, then can't write what it got, and revokes it (see
+   [`oauth`](#oauth), step 7).
 3. **The user's connection is closed,** as by [`forget(userId)`](#forget).
 
 A name that isn't an open `oauth()` server's, such as a server no longer
