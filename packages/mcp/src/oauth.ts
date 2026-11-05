@@ -498,8 +498,13 @@ export class OAuthServer {
         if (await this.core.store.put(user, this.name, sealed, before.sealed)) return true;
         return tries > 1 && (await this.core.store.get(user, this.name)) === sealed;
       } catch (err) {
-        if (tries >= WRITE_TRIES) throw err;
-        await pause(WRITE_PAUSE_MS);
+        if (tries < WRITE_TRIES) {
+          await pause(WRITE_PAUSE_MS);
+          continue;
+        }
+        // the last may have landed too, though its answer was lost
+        if ((await this.core.store.get(user, this.name).catch(() => null)) === sealed) return true;
+        throw err;
       }
     }
   }
@@ -560,6 +565,8 @@ class OAuthCredential implements Credential {
   private held: Held | null = null;
   /** The lookup on its way, which every caller shares. */
   private looking: Promise<void> | null = null;
+  /** The account, by its `connectedAt`, that the last check found, and the user's connection is made as. */
+  private account: number | null = null;
   private readonly lookups: Lookup;
   private readonly refreshes: Lookup;
 
@@ -577,11 +584,15 @@ class OAuthCredential implements Credential {
    * as it is; another connect says so, for the connection to be made again.
    */
   async ensure(): Promise<boolean> {
-    const before = this.held;
     await this.look();
     const now = this.held;
-    if (now === null) throw new NeedsAuth("connect");
-    return before !== null && now !== before && now.kept.connectedAt !== before.kept.connectedAt;
+    if (now === null) {
+      this.account = null;
+      throw new NeedsAuth("connect");
+    }
+    const changed = this.account !== null && now.kept.connectedAt !== this.account;
+    this.account = now.kept.connectedAt;
+    return changed;
   }
 
   close(): void {
@@ -591,31 +602,38 @@ class OAuthCredential implements Credential {
   }
 
   // The transport asks for the token before every request, and on a 401
-  // calls onUnauthorized, then tries once more with what it finds.
-  readonly provider: AuthProvider = {
-    token: async () => {
+  // calls onUnauthorized, then tries once more with what it finds. Each
+  // connection has its own, bound to the account it was made as: once the
+  // user has connected again, as a refresh can find, nothing more is sent
+  // on it, and the next call makes it again.
+  get provider(): AuthProvider {
+    const account = this.account;
+    const mine = (held: Held | null): Held => {
       // gone since this call began, as when another call's 401 was refused
-      if (this.held === null) throw new NeedsAuth("reconnect");
-      return this.held.kept.tokens.access_token;
-    },
-    onUnauthorized: async (ctx) => {
-      const before = this.held;
-      if (before === null) throw new NeedsAuth("reconnect");
-      // held when the refresh settles, though this 401 gave up waiting for it
-      const refreshing = this.server.refresh(this.user, before, extractWWWAuthenticateParams(ctx.response).resourceMetadataUrl).then(
-        (next) => this.take(before, next),
-        (err) => {
-          if (err instanceof NeedsAuth) this.take(before, null);
-          throw err;
-        },
-      );
-      try {
-        await this.refreshes.run(() => refreshing);
-      } catch (err) {
-        throw err instanceof NeedsAuth || err instanceof Mismatch || err instanceof LookupFailed ? err : new LookupFailed(err);
-      }
-    },
-  };
+      if (held === null) throw new NeedsAuth("reconnect");
+      if (held.kept.connectedAt !== account) throw new LookupFailed(new Error("the user connected again since this connection was made"));
+      return held;
+    };
+    return {
+      token: async () => mine(this.held).kept.tokens.access_token,
+      onUnauthorized: async (ctx) => {
+        const before = mine(this.held);
+        // held when the refresh settles, though this 401 gave up waiting for it
+        const refreshing = this.server.refresh(this.user, before, extractWWWAuthenticateParams(ctx.response).resourceMetadataUrl).then(
+          (next) => this.take(before, next),
+          (err) => {
+            if (err instanceof NeedsAuth) this.take(before, null);
+            throw err;
+          },
+        );
+        try {
+          await this.refreshes.run(() => refreshing);
+        } catch (err) {
+          throw err instanceof NeedsAuth || err instanceof Mismatch || err instanceof LookupFailed ? err : new LookupFailed(err);
+        }
+      },
+    };
+  }
 
   private look(): Promise<void> {
     this.looking ??= this.lookups

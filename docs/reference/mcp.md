@@ -495,7 +495,7 @@ A call that got no result, or one its schema refused.
 | `args` | The `args` schema refused the args, or they aren't an object. Nothing was sent | `<server>/<tool> was not called: its args do not match the schema`, or `… its args must be an object` |
 | `result` | The `result` schema refused the result, there was nothing to parse, or the SDK refused it against the server's output schema (see [What a call resolves to](#what-a-call-resolves-to)). Only a call has it: listing the tools never fails with `result` | `<server>/<tool> returned a result that does not match the schema` |
 | `timeout` | No answer within `timeoutMs`, or not done within `maxTotalMs`, connecting included | `<server>/<tool> did not answer in time` |
-| `connection` | The server couldn't be reached, or the connection dropped before the answer. With `auth`, also: the user's credential couldn't be looked up, or for `oauth()`, refreshed, as when the authorization server couldn't be reached, or answered with something other than a refusal | `<server>/<tool> could not be reached` |
+| `connection` | The server couldn't be reached, or the connection dropped before the answer. With `auth`, also: the user's credential couldn't be looked up, or for `oauth()`, refreshed, as when the authorization server couldn't be reached, or answered with something other than a refusal, or found the user connected again as the call was made | `<server>/<tool> could not be reached` |
 | `protocol` | The server refused the call, as for a tool it doesn't have (`code` `-32602`), whatever its words. Also a listing of tools the SDK can't read, and any other SDK error, such as an HTTP 401 or 403 on a server without `auth`, or a server asking this client for input. For `oauth()`, also a server that now names an authorization server other than the one that issued the user's credential | `<server>/<tool> was refused by the server` |
 | `closed` | `close()` or, with `auth`, [`forget()`](#forget) was called, before or during the call | `<server>/<tool>: the connection was closed` |
 | `user` | A server with `auth` had no user to call as (see [Who a call runs as](#who-a-call-runs-as)). Nothing was sent | `<server>/<tool> was not called: there is no user to call it as`, `… the user it runs for could not be looked up`, or `… its userId is not the conversation's owner` |
@@ -873,7 +873,11 @@ secret isn't kept with them: it's read from the options each time.
   One refreshed elsewhere, with the same `connectedAt`, is used on the same
   connection. One the user connected again, with a new `connectedAt`, as
   when they connected another account, closes the connection as above, and
-  the call makes a new one with it.
+  the call makes a new one with it. Nothing of one account's is sent on a
+  connection made as another: if a 401's refresh finds the user connected
+  again (steps 1, 4 and 5), the call rejects with reason `connection`, its
+  `cause` `Error: the user connected again since this connection was
+  made`, and the next call makes the connection again.
 - **Every request** on the user's connection carries their access token, as
   `Authorization: Bearer`, and the token is bound to the server by the
   resource indicator it was issued for (RFC 8707). It's sent only to that
@@ -924,10 +928,10 @@ secret isn't kept with them: it's read from the options each time.
      tokens name one, which ends the lease. The old refresh token may be
      spent, so a store that throws or rejects is tried twice more, 250 ms
      apart, under the lease, and a try that landed though its answer was
-     lost counts as written. If the third throws too, the call rejects with
-     reason `connection`, its `cause` what the store threw, and the lease is
-     kept until it lapses, for another process to read what may have
-     landed. If another write came first, or
+     lost counts as written, the third too if the store then holds it. If
+     the third throws, and the store doesn't hold what it wrote, the call
+     rejects with reason `connection`, its `cause` what the store threw, and
+     the lease is kept until it lapses. If another write came first, or
      a delete, as by a [disconnect](#disconnect), the new tokens are no
      one's, and are revoked rather than left live: the refresh token if the
      authorization server rotated it, else only the access token, since the

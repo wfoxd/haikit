@@ -1533,10 +1533,11 @@ async function authorizationServer() {
  * `expireOnInitialized` has their token stop working as their connection's
  * `notifications/initialized` arrives, so the stream and the tool list that
  * follow both get a 401. `seen` is every request, as `method [user]`, and
- * `refusals` the method of every 401.
+ * `refusals` the method of every 401. `beforeRefusal`, if set, is waited for
+ * before a 401 is answered.
  */
 async function resourceServer(as) {
-  const rs = { url: "", names: null, seen: [], refusals: [], expireOnInitialized: new Set() };
+  const rs = { url: "", names: null, seen: [], refusals: [], expireOnInitialized: new Set(), beforeRefusal: null };
   const handler = createMcpHandler(({ requestInfo }) => {
     const who = as.issued.get(requestInfo?.headers.get("authorization")?.replace(/^Bearer /, ""));
     const server = new McpServer({ name: "rs", version: "1.0.0" });
@@ -1562,6 +1563,7 @@ async function resourceServer(as) {
     rs.seen.push(`${method} [${who?.sub ?? "?"}]`);
     if (!who) {
       rs.refusals.push(method);
+      await rs.beforeRefusal?.();
       return answer(res, 401, { error: "invalid_token" }, { "www-authenticate": `Bearer error="invalid_token", resource_metadata="${metadata}"` });
     }
     if (rpc?.method === "tools/call" && rpc.params?.name === "write" && !who.scope?.split(" ").includes("write")) {
@@ -1861,14 +1863,14 @@ const NEW_SECRET = "the secret that replaces it, of 32 bytes or more";
     const flakyStore = {
       ...store,
       put: async (...args) => {
+        if (failPuts > 0) {
+          failPuts--;
+          throw new Error("the store is down");
+        }
         if (landThenFail) {
           landThenFail = false;
           await store.put(...args);
           throw new Error("the store's answer was lost");
-        }
-        if (failPuts > 0) {
-          failPuts--;
-          throw new Error("the store is down");
         }
         return store.put(...args);
       },
@@ -1890,6 +1892,17 @@ const NEW_SECRET = "the secret that replaces it, of 32 bytes or more";
     check(
       "…and one that landed, though the store's answer was lost: written, and nothing revoked",
       (await text(flakyWho.call({}, { userId: "ada" }))) === "ada" && (await store.get("ada", "github")) !== unwritten && as.revoked.length === revokedBefore,
+    );
+    expire("ada");
+    failPuts = 2;
+    landThenFail = true;
+    const unwrittenLast = await store.get("ada", "github");
+    check(
+      "…and the third of three that landed, though its answer was lost: written",
+      (await text(flakyWho.call({}, { userId: "ada" }))) === "ada" &&
+        !landThenFail &&
+        (await store.get("ada", "github")) !== unwrittenLast &&
+        as.revoked.length === revokedBefore,
     );
     await ghF.close();
 
@@ -2141,6 +2154,30 @@ const NEW_SECRET = "the secret that replaces it, of 32 bytes or more";
     check(
       "…and disconnected in another process: connect, with nothing sent",
       sameNeed(await rejection(fayWho.call({}, { userId: "fay" })), { kind: "connect", connect: "/mcp/connect/github" }) && rs.seen.length === mark,
+    );
+
+    // connected again, as another account, in another process, between a call's read of the store and its 401
+    await connectFlow(app, "/mcp/connect/github", "gus");
+    check("a user's call in another process, again", (await text(fayWho.call({}, { userId: "gus" }))) === "gus");
+    expire("gus");
+    rs.beforeRefusal = async () => {
+      rs.beforeRefusal = null;
+      const elsewhere = await authorize(app, "/mcp/connect/github", "gus", "gus-elsewhere");
+      await comeBack(elsewhere.back, "gus");
+    };
+    mark = rs.seen.length;
+    const raced = await rejection(fayWho.call({}, { userId: "gus" }));
+    check(
+      "the user connected again, as another account, as a call's 401 is answered: the call is connection, and nothing of that account's is sent on the old connection",
+      isMcpError(raced) &&
+        raced.reason === "connection" &&
+        raced.cause?.message === "the user connected again since this connection was made" &&
+        !rs.seen.slice(mark).some((line) => line.endsWith("[gus-elsewhere]")),
+    );
+    dials = rs.handshakes("gus-elsewhere");
+    check(
+      "…and the next call makes the connection again, as that account",
+      (await text(fayWho.call({}, { userId: "gus" }))) === "gus-elsewhere" && rs.handshakes("gus-elsewhere") === dials + 1,
     );
     await ghA.close();
   }

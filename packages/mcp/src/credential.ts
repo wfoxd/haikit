@@ -40,7 +40,7 @@ export interface Credential {
   ensure(): Promise<boolean>;
   /** For a connection being closed: stops a lookup on its way, and its timer. */
   close(): void;
-  /** What the transport is given, once `ensure()` has found the credential. */
+  /** What each connection's transport is given, read as it's made, once `ensure()` has found the credential. */
   readonly provider: AuthProvider | OAuthClientProvider;
 }
 
