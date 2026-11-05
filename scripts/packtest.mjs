@@ -195,7 +195,8 @@ import { createAuth, memoryAuthStore } from "@haikit/auth";
 import { pgAuthStore, migrate as migrateAuth, schema as authSchema } from "@haikit/auth/postgres";
 import { google, oidc } from "@haikit/auth/oidc";
 import { github, oauth2 } from "@haikit/auth/oauth2";
-import { createMcpAuth, mcpServer, http, stdio, textOf, isMcpError } from "@haikit/mcp";
+import { createMcpAuth, mcpServer, memoryCredentialStore, http, stdio, textOf, isMcpError } from "@haikit/mcp";
+import { pgCredentialStore, migrate as migrateMcp, schema as mcpSchema } from "@haikit/mcp/postgres";
 import { z } from "zod";
 
 const out = {};
@@ -252,6 +253,22 @@ const perUser = mcpServer({
 });
 const nobody = await perUser.tool("search", { args: z.object({}) }).call({}).catch((err) => err);
 out.mcpAuthWorks = isMcpError(nobody) && nobody.reason === "user";
+// a server with oauth(): a user who hasn't connected gets the connect link, with nothing sent
+const credentials = memoryCredentialStore();
+const withOAuth = createMcpAuth({
+  userOf: () => null,
+  store: credentials,
+  secret: "a-packtest-secret-of-at-least-32-bytes",
+  redirectUri: "https://app.example.com/mcp/callback",
+  requestUser: () => null,
+});
+const linked = mcpServer({ name: "linked", transport: http("https://example.com/mcp"), auth: withOAuth.oauth() });
+const unconnected = await linked.tool("search", { args: z.object({}) }).call({}, { userId: "ada" }).catch((err) => err);
+out.mcpOAuth =
+  unconnected?.auth?.connect === "/mcp/connect/linked" && typeof withOAuth.handler() === "function" &&
+  (await credentials.put("ada", "linked", "sealed", null)) === true &&
+  (await credentials.lease("ada", "linked", "sealed", "holder", 60_000)) === true;
+out.mcpPostgres = typeof pgCredentialStore({ query: async () => ({ rows: [] }) }).takeFlow === "function" && typeof migrateMcp === "function" && mcpSchema.length === 3;
 
 // the contract layer does real work, not just re-export shapes
 const surface = defineSurface({
@@ -320,6 +337,8 @@ console.log(JSON.stringify(out));
   check("@haikit/auth/oauth2 starts a sign-in with GitHub", () => runtime.authOauth2 === true);
   check("@haikit/mcp declares and calls a tool, and makes text of a result", () => runtime.mcpWorks === true);
   check("@haikit/mcp makes calls as each user, and refuses one with no user", () => runtime.mcpAuthWorks === true);
+  check("@haikit/mcp gives a user with no OAuth account the connect link, and its store takes a refresh lease", () => runtime.mcpOAuth === true);
+  check("@haikit/mcp/postgres resolves via exports", () => runtime.mcpPostgres === true);
   check("defineSurface builds a surface", () => runtime.surfaceName === "packtest_picker");
   check("cap() caps (3 of 47)", () => runtime.capShown === 3 && runtime.capTotal === 47);
   check("cap() reports the omission", () => runtime.capReportsOmission === true);
@@ -375,6 +394,8 @@ import { google, oidc, type GoogleOptions, type OidcOptions, type OidcProfile, t
 import { github, oauth2, type GitHubOptions, type OAuth2Options, type OAuth2Profile, type ProviderApi, type SignInAs as OAuth2SignInAs } from "@haikit/auth/oauth2";
 import type { SignInProvider } from "@haikit/auth";
 import { createMcpAuth, mcpServer, http, stdio, textOf, McpError, McpToolError, type McpAuthNeed, type McpConnection, type McpResult, type McpTool, type McpToolChange } from "@haikit/mcp";
+import { memoryCredentialStore, type CredentialStore, type McpAccount, type McpConnected, type OAuthServerOptions } from "@haikit/mcp";
+import { pgCredentialStore } from "@haikit/mcp/postgres";
 import type { Gate, Tool, ToolCtx } from "@haikit/core";
 import { z } from "zod";
 
@@ -503,6 +524,22 @@ const tracker: McpConnection = mcpServer({
 const asUser: Promise<McpResult> = tracker.tool("list", { args: z.object({}) }).call({}, { userId: "u1" });
 const need: McpAuthNeed | undefined = new McpError("auth", "m", { server: "s", auth: { kind: "connect" } }).auth;
 void found; void asText; void notATool; void reasons; void asUser; void need;
+// each user's OAuth: the stores, the routes, and the connect link an auth error carries
+const credentialStore: CredentialStore = pgCredentialStore({ query: async () => ({ rows: [] }) });
+const mcpAuth = createMcpAuth({
+  userOf: async (id: string) => id,
+  store: memoryCredentialStore(),
+  secret: "a-packtest-secret-of-at-least-32-bytes",
+  redirectUri: "https://app.example.com/mcp/callback",
+  requestUser: () => null,
+  onConnected: (connected: McpConnected) => void connected.conversationId,
+});
+const githubMcp: OAuthServerOptions = { issuer: "https://github.com/login/oauth", scopes: ["repo"] };
+void mcpServer({ name: "github-mcp", transport: http("https://example.com/mcp"), auth: mcpAuth.oauth(githubMcp) });
+const accounts: Promise<McpAccount[]> = mcpAuth.connections("u1");
+const connectLink: string | undefined = need?.connect;
+const routes: (req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) => Promise<boolean> = mcpAuth.handler();
+void credentialStore; void accounts; void connectLink; void routes;
 // the OpenAI adapter type-checks as a ModelAdapter
 const gpt: ModelAdapter = openai({ model: "gpt-6-luna", effort: "low", promptCacheKey: "packtest" });
 void gpt;

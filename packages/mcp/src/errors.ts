@@ -25,6 +25,13 @@ export interface McpAuthNeed {
   readonly kind: "connect" | "reconnect" | "scope";
   /** On `scope`: the scope the server asked for, as its challenge put it. */
   readonly scope?: string;
+  /**
+   * For an `oauth()` server: the app's connect route for this server and the
+   * call's conversation, asking for `scope` if there is one, such as
+   * `/mcp/connect/github?conversation=c_123`. For the browser, as a surface's
+   * prop: never for the model. Absent for `bearer()` and `sdk()`.
+   */
+  readonly connect?: string;
 }
 
 /**

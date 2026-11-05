@@ -58,25 +58,64 @@ call runs as the conversation's owner, over a connection of their own:
 
 ```ts
 import { createMcpAuth } from "@haikit/mcp";
+import { pgCredentialStore } from "@haikit/mcp/postgres";
 
-const mcpAuth = createMcpAuth({ userOf: (id) => auth.ownerOf(id) }); // auth from @haikit/auth
+const mcpAuth = createMcpAuth({
+  userOf: (id) => auth.ownerOf(id), // auth from @haikit/auth
+  // for oauth(): where each user's tokens are kept, sealed, and who's signed in
+  store: pgCredentialStore(pool), // or memoryCredentialStore()
+  secret: process.env.MCP_SECRET!, // 32 bytes or more; a list to rotate
+  redirectUri: "https://app.example.com/mcp/callback",
+  requestUser: async (req) => (await auth.user(req))?.id ?? null,
+  onConnected: ({ userId, server, conversationId }) => { /* wake the conversation */ },
+});
+
+// a token the app already has for each user, or null
 const tracker = mcpServer({
   name: "tracker",
   transport: http("https://mcp.tracker.example/mcp"),
-  auth: mcpAuth.bearer((userId) => keys.find(userId)), // their token, or null
+  auth: mcpAuth.bearer((userId) => keys.find(userId)),
+});
+
+// each user connects their own account, with the server's authorization server
+const linear = mcpServer({
+  name: "linear",
+  transport: http("https://mcp.linear.example/mcp"),
+  auth: mcpAuth.oauth({ issuer: "https://linear.example" }), // pin a third party's
+});
+
+// the connect, callback and disconnect routes, beside your own
+const mcpRoutes = mcpAuth.handler();
+createServer(async (req, res) => {
+  if (await mcpRoutes(req, res)) return;
+  // ...
 });
 ```
 
 A call with no one to run as is refused with reason `user`, and one for a user
-with no token with reason `auth`, before anything is sent: it never falls
-back to the app's identity. `err.auth.kind` says what the user must do:
-`connect`, `reconnect`, or grant more `scope`. A job outside any conversation
-passes `{ userId }`.
+with no credential with reason `auth`, before anything is sent: it never
+falls back to the app's identity. `err.auth.kind` says what the user must
+do: `connect`, `reconnect`, or grant more `scope`. For an `oauth()` server,
+`err.auth.connect` is the app's link for it, such as
+`/mcp/connect/linear?conversation=c_123`, to show the user in a surface,
+never to give the model. A job outside any conversation passes `{ userId }`.
+
+With `oauth()`, the connect route sends the user to the authorization server
+with PKCE, and the callback stores their tokens sealed with `secret`, bound
+to the user and the server. A 401 refreshes them once, however many calls
+get one. Across app processes sharing the store, one at a time takes the
+store's refresh lease and spends the refresh token, and the others use what
+it stores. Each call reads the store first, so a refresh, a connect or a
+disconnect in another process is seen on the next call. `connections(userId)` lists what a user connected, and
+`disconnect(userId, server?)` revokes and deletes.
+`mcpAuth.sdk(make)` takes one of the SDK's own providers for each user
+instead.
 
 `McpTool` isn't a HaiKIT `Tool`, so it can't be passed to
 `createHai({ tools })`: `npm run typetest` checks that.
 
-Imports only `@haikit/core`, never `@haikit/server`. Built on
+Imports only `@haikit/core`, never `@haikit/server`. `@haikit/mcp/postgres`
+takes any driver with `query(text, params)`, such as a `pg.Pool`. Built on
 [`@modelcontextprotocol/client`](https://www.npmjs.com/package/@modelcontextprotocol/client),
 the official TypeScript SDK's client.
 

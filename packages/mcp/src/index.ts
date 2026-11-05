@@ -32,15 +32,25 @@ import {
   type Transport,
   type VersionNegotiationMode,
 } from "@modelcontextprotocol/client";
-import { BearerCredential, LookupFailed, NeedsAuth, configOf, type AuthConfig, type Credential, type McpServerAuth } from "./auth.js";
+import { configOf, type AuthConfig, type Binding, type McpServerAuth } from "./auth.js";
+import { LookupFailed, Mismatch, NeedsAuth, type Credential } from "./credential.js";
 import { McpError, McpToolError, isMcpError, type McpAuthNeed, type McpErrorReason } from "./errors.js";
 import { madeByHttp } from "./transports.js";
 
-export { createMcpAuth, type McpAuth, type McpAuthOptions, type McpServerAuth } from "./auth.js";
+export {
+  createMcpAuth,
+  type McpAccount,
+  type McpAuth,
+  type McpAuthOptions,
+  type McpConnected,
+  type McpServerAuth,
+  type OAuthServerOptions,
+} from "./auth.js";
 export { McpError, McpToolError, isMcpError, isMcpToolError, type McpAuthNeed, type McpErrorReason } from "./errors.js";
 export { textOf, type TextOptions } from "./text.js";
+export { memoryCredentialStore, type CredentialStore } from "./store.js";
 export { http, stdio, type HttpOptions } from "./transports.js";
-export type { AuthProvider, ContentBlock, Transport } from "@modelcontextprotocol/client";
+export type { AuthProvider, ContentBlock, OAuthClientProvider, Transport } from "@modelcontextprotocol/client";
 
 const { version: VERSION } = createRequire(import.meta.url)("../package.json") as { version: string };
 
@@ -75,8 +85,9 @@ export interface McpServerOptions {
   transport: (authProvider?: AuthProvider) => Transport | Promise<Transport>;
   /**
    * Makes each call as the user it runs for, with their own credential, over
-   * a connection of their own: `createMcpAuth({ userOf }).bearer(token)`.
-   * Without it, every call shares one connection and one identity.
+   * a connection of their own: `mcpAuth.oauth()`, `mcpAuth.bearer(token)` or
+   * `mcpAuth.sdk(make)`, from `createMcpAuth`. Without it, every call shares
+   * one connection and one identity.
    */
   auth?: McpServerAuth;
   /**
@@ -239,8 +250,10 @@ class Server implements McpConnection {
   readonly options: McpServerOptions;
   readonly timeoutMs: number;
   private readonly maxTotalMs: number;
-  /** With `auth`: whose calls are made as whom, and with what. */
+  /** With `auth`: whose calls are made as whom. */
   readonly auth: AuthConfig | null;
+  /** With `auth`: this server's place on its `McpAuth`, which makes each user's credential. */
+  private readonly binding: Binding | null;
   private readonly maxConnections: number;
   readonly idleMs: number;
   /** Without `auth`: the one connection every call shares. */
@@ -275,6 +288,7 @@ class Server implements McpConnection {
       this.maxConnections = 1;
       this.idleMs = IDLE_MS;
       this.shared = new Link(this, undefined, null);
+      this.binding = null;
       return;
     }
     const auth = configOf(options.auth);
@@ -292,8 +306,7 @@ class Server implements McpConnection {
     this.idleMs = checkMs("idleMs", options.idleMs ?? IDLE_MS);
     this.maxConnections = max;
     // last, so a server refused above leaves its name free
-    if (auth.names.has(this.name)) throw new TypeError(`another server from the same createMcpAuth is named "${this.name}"`);
-    auth.names.add(this.name);
+    this.binding = auth.attach({ name: this.name, timeoutMs: this.timeoutMs, url: made.url, fetch: made.fetch, forget: (user) => this.forget(user) });
     this.auth = auth;
     this.shared = null;
   }
@@ -332,6 +345,8 @@ class Server implements McpConnection {
     const link = this.take(userId);
     try {
       await link.ready();
+    } catch (err) {
+      throw this.linked(err, undefined);
     } finally {
       link.release();
     }
@@ -355,7 +370,7 @@ class Server implements McpConnection {
   private async shut(): Promise<void> {
     this.closed = true;
     this.shutdown.abort();
-    this.auth?.names.delete(this.name);
+    this.binding?.detach();
     const links = this.shared ? [this.shared] : [...this.links.values()];
     this.links.clear();
     await Promise.all(links.map((link) => link.close()));
@@ -368,7 +383,7 @@ class Server implements McpConnection {
       this.links.delete(user);
     } else {
       this.trim(this.maxConnections - 1);
-      link = new Link(this, user, new BearerCredential(this.auth!.token, user, this.timeoutMs));
+      link = new Link(this, user, this.binding!.credential(user));
     }
     this.links.set(user, link);
     link.hold();
@@ -474,6 +489,8 @@ class Server implements McpConnection {
       } catch (err) {
         throw link.failure(err, tool, client);
       }
+    } catch (err) {
+      throw this.linked(err, nonEmpty(ctx?.conversationId));
     } finally {
       clearTimeout(timer);
       if (link !== this.shared) link?.release();
@@ -516,6 +533,19 @@ class Server implements McpConnection {
     ]);
   }
 
+  /**
+   * An `auth` error of an `oauth()` server, with the connect route's path for
+   * the browser: for the call's conversation, and the scope the server asked
+   * for. Built from configuration, never from what the server said but that
+   * scope. Any other error, as it is.
+   */
+  private linked(err: unknown, conversationId: string | undefined): unknown {
+    const connect = this.binding?.connect;
+    if (!connect || !isMcpError(err) || err.reason !== "auth" || !err.auth) return err;
+    const auth: McpAuthNeed = { ...err.auth, connect: connect(conversationId, err.auth.kind === "scope" ? err.auth.scope : undefined) };
+    return new McpError("auth", err.message, { server: err.server, tool: err.tool, text: err.text, code: err.code, cause: err.cause, auth });
+  }
+
   error(reason: McpErrorReason, tool: string | undefined, detail: Detail = {}): McpError {
     const who = tool === undefined ? this.name : `${this.name}/${tool}`;
     const { user, ...kept } = detail;
@@ -546,6 +576,8 @@ class Link {
   private listed: Map<string, ServerTool> | null = null;
   /** The declared tools checked against this connection's tools. */
   private readonly checked = new Set<string>();
+  /** The credential's check before a call, which calls at once share. */
+  private checking: Promise<void> | null = null;
   /** Calls and `connect()`s using it now: a busy link is never closed for room or for idling. */
   busy = 0;
   private idle: ReturnType<typeof setTimeout> | null = null;
@@ -575,8 +607,12 @@ class Link {
   /** Connected, with a credential if it needs one. */
   async ready(): Promise<Client> {
     if (this.credential && !this.closed) {
+      const credential = this.credential;
+      this.checking ??= this.check(credential).finally(() => {
+        this.checking = null;
+      });
       try {
-        await unless(this.credential.ensure(), [[this.ending.signal, () => this.server.error("closed", undefined)]]);
+        await unless(this.checking, [[this.ending.signal, () => this.server.error("closed", undefined)]]);
       } catch (err) {
         // closed, whatever the lookup did meanwhile
         if (this.closed) throw isMcpError(err) ? err : this.server.error("closed", undefined, { cause: err });
@@ -584,6 +620,30 @@ class Link {
       }
     }
     return this.open();
+  }
+
+  /**
+   * The credential, before a call. A connection made with one that's gone,
+   * or that the user has since replaced by connecting again, is hung up, so
+   * nothing more is sent with it, and the next is made with what's held now.
+   */
+  private async check(credential: Credential): Promise<void> {
+    let changed: boolean;
+    try {
+      changed = await credential.ensure();
+    } catch (err) {
+      if (err instanceof NeedsAuth) await this.hangUp();
+      throw err;
+    }
+    if (changed) await this.hangUp();
+  }
+
+  /** Ends the connection, as when it drops, but not the link: the next call connects again. */
+  private async hangUp(): Promise<void> {
+    await this.dialing?.catch(() => {});
+    const client = this.client;
+    this.client = null;
+    await client?.close().catch(() => {});
   }
 
   /**
@@ -638,7 +698,9 @@ class Link {
   private async made(): Promise<Transport> {
     const { options, timeoutMs } = this.server;
     const authProvider = this.credential?.provider;
-    const making = Promise.resolve().then(() => (authProvider ? options.transport(authProvider) : options.transport()));
+    // An OAuthClientProvider, from sdk(), goes to http()'s transport as it
+    // is, which adapts it: only http() is ever given one.
+    const making = Promise.resolve().then(() => (authProvider ? options.transport(authProvider as AuthProvider) : options.transport()));
     let timer: ReturnType<typeof setTimeout> | undefined;
     const cut = new Promise<never>((_, reject) => {
       timer = setTimeout(() => reject(new Error(`no transport within ${timeoutMs} ms`)), timeoutMs);
@@ -760,6 +822,7 @@ class Link {
     const { server } = this;
     if (err instanceof NeedsAuth) return server.error("auth", tool, { auth: { kind: err.kind } });
     if (err instanceof LookupFailed) return server.error("connection", tool, { cause: err.cause });
+    if (err instanceof Mismatch) return server.error("protocol", tool, { cause: err });
     if (!this.credential) return null;
     if (err instanceof InsufficientScopeError) {
       const auth: McpAuthNeed = err.requiredScope ? { kind: "scope", scope: err.requiredScope } : { kind: "scope" };

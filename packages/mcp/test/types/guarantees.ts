@@ -8,11 +8,25 @@
  * The first two are the package's guarantee: an MCP tool is not a HaiKIT tool,
  * so `createHai({ tools })`, which takes `Tool[]`, can't be given one, and the
  * model never sees one. The rest keep calls typed by the app's own schemas,
- * and made as a user given by a string.
+ * made as a user given by a string, and each user's OAuth typed as the
+ * store and the routes keep it.
  */
 
+import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ActionCtx, Schema, Tool, ToolCtx } from "@haikit/core";
-import { createMcpAuth, http, mcpServer, type McpAuthNeed, type McpError, type McpResult } from "../../src/index.js";
+import {
+  createMcpAuth,
+  http,
+  mcpServer,
+  memoryCredentialStore,
+  type CredentialStore,
+  type McpAccount,
+  type McpAuthNeed,
+  type McpConnected,
+  type McpError,
+  type McpResult,
+} from "../../src/index.js";
+import { pgCredentialStore, type Queryable } from "../../src/postgres.js";
 
 declare const query: Schema<{ q: string }>;
 declare const items: Schema<{ items: string[] }>;
@@ -69,4 +83,50 @@ async function asEachUser(err: McpError) {
   return need;
 }
 
-export { asTool, tools, typed, asEachUser };
+// ── OAuth, and the app's own provider ──────────────────────────────────
+declare const db: Queryable;
+const store: CredentialStore = memoryCredentialStore();
+const shared: CredentialStore = pgCredentialStore(db);
+const withOAuth = createMcpAuth({
+  userOf: async () => null,
+  store,
+  secret: ["a secret of 32 bytes, or more...", "the one before it, which still opens what it sealed"],
+  redirectUri: "https://app.example.com/mcp/callback",
+  requestUser: async (req: IncomingMessage) => (typeof req.headers["x-user"] === "string" ? req.headers["x-user"] : null),
+  onConnected: ({ userId, server, conversationId }: McpConnected) => void [userId, server, conversationId],
+});
+const linear = mcpServer({
+  name: "linear",
+  transport: http("https://mcp.linear.app/mcp"),
+  auth: withOAuth.oauth({ issuer: "https://linear.app", scopes: ["read"] }),
+});
+async function withAccounts(err: McpError) {
+  const connect: string | undefined = err.auth?.connect;
+  const accounts: McpAccount[] = await withOAuth.connections("u1");
+  const connectedAt: number = accounts[0].connectedAt;
+  const landed: boolean = await store.put("u1", "linear", "sealed", null);
+  const leased: boolean = await store.lease("u1", "linear", "sealed", "holder", 60_000);
+  const handle: (req: IncomingMessage, res: ServerResponse) => Promise<boolean> = withOAuth.handler();
+  await withOAuth.disconnect("u1");
+  withOAuth.sdk(async () => ({ token: async () => "t" }));
+  withOAuth.sdk(() => null);
+  // @ts-expect-error  scopes are a list
+  withOAuth.oauth({ scopes: "read" });
+  // @ts-expect-error  a client needs its id
+  withOAuth.oauth({ issuer: "https://linear.app", client: { secret: "s" } });
+  // @ts-expect-error  requestUser gives a user id or null
+  createMcpAuth({ userOf: () => null, requestUser: () => 5 });
+  // @ts-expect-error  sdk's function gives a provider or null
+  withOAuth.sdk(() => "token");
+  // @ts-expect-error  when an account was connected is epoch ms
+  const when: string = accounts[0].connectedAt;
+  // @ts-expect-error  a write says only whether it landed
+  const written: string = await store.put("u1", "linear", "sealed", null);
+  // @ts-expect-error  a write names the value it expects there, or null for none
+  await store.put("u1", "linear", "sealed");
+  // @ts-expect-error  a lease names its holder, and how long it lasts
+  await store.lease("u1", "linear", "sealed");
+  return [connect, connectedAt, landed, leased, handle, when, written, linear, shared];
+}
+
+export { asTool, tools, typed, asEachUser, withAccounts };

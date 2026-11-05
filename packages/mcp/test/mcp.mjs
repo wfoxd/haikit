@@ -2,24 +2,40 @@
 /**
  * @haikit/mcp: what mcpServer and tool refuse, what connect checks, what a
  * call resolves to and throws, progress and timeouts, reconnecting, changes to
- * the server's tools, a stdio server's process, textOf, and a turn through
- * createHai in which the model hears only what the HaiKIT tool decided.
+ * the server's tools, a stdio server's process, calls made as each user with
+ * their own token or their OAuth account, textOf, and a turn through createHai
+ * in which the model hears only what the HaiKIT tool decided.
  *
  *   node packages/mcp/test/mcp.mjs
  *
  * The servers are real: @modelcontextprotocol/server, in this process over
- * InMemoryTransport, and test/fixtures/stdio-server.mjs as a child.
+ * InMemoryTransport or HTTP, and test/fixtures/stdio-server.mjs as a child.
+ * The OAuth authorization server is a fake one, in this file.
  */
 
+import { createHash } from "node:crypto";
 import { getEventListeners } from "node:events";
 import { createServer } from "node:http";
 import path from "node:path";
 import { InMemoryTransport } from "@modelcontextprotocol/client";
 import { McpServer, ProtocolError, Server, createMcpHandler } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import { McpError, McpToolError, createMcpAuth, isMcpError, isMcpToolError, mcpServer, stdio, http, textOf } from "../dist/index.js";
+import {
+  McpError,
+  McpToolError,
+  createMcpAuth,
+  isMcpError,
+  isMcpToolError,
+  mcpServer,
+  memoryCredentialStore,
+  stdio,
+  http,
+  textOf,
+} from "../dist/index.js";
 // not exported: for what no call can make happen on cue
 import { BearerCredential } from "../dist/auth.js";
+import { Sealer, binding } from "../dist/seal.js";
+import { conform } from "./store.mjs";
 
 let failures = 0;
 const check = (label, ok) => {
@@ -1350,6 +1366,980 @@ const sameNeed = (err, need) => JSON.stringify(err?.auth) === JSON.stringify(nee
   });
   check("the default warning says whose", logged.includes('@haikit/mcp: web (for user a): tool "write" was removed'));
   await web2.close();
+}
+
+// ── as each user, with OAuth ────────────────────────────────────────────
+await conform("memoryCredentialStore", memoryCredentialStore, check);
+console.log("\nas each user, with OAuth");
+
+const bodyOf = async (req) => {
+  const chunks = [];
+  for await (const chunk of req) chunks.push(chunk);
+  return Buffer.concat(chunks).toString();
+};
+const answer = (res, status, body, headers = {}) => {
+  res.writeHead(status, { "content-type": "application/json", ...headers });
+  res.end(JSON.stringify(body));
+};
+async function listen(handle) {
+  const web = createServer(handle);
+  await new Promise((resolve) => web.listen(0, "127.0.0.1", resolve));
+  const close = async () => {
+    web.closeAllConnections();
+    await new Promise((resolve) => web.close(resolve));
+  };
+  return { origin: `http://127.0.0.1:${web.address().port}`, close };
+}
+
+/**
+ * An OAuth authorization server. `/authorize` signs in whoever `x-login`
+ * names and sends the browser straight back. Access tokens go into `issued`,
+ * which the resource server reads, and a refresh token is spent by its
+ * refresh: one used again, or by another client than it was issued to, is
+ * refused. `refresh` says how a refresh is answered, "ok", "invalid_grant"
+ * or "503", after `refreshDelay`; a refusal waits `reuseDelay` more.
+ * A registration waits `registerDelay`. `dud` issues access tokens no
+ * resource server takes. `tokens` is every token request, `revoked` every
+ * revocation.
+ */
+async function authorizationServer() {
+  const as = {
+    issuer: "",
+    discoveries: 0,
+    registrations: 0,
+    authorizations: 0,
+    granted: 0,
+    refused: 0,
+    tokens: [],
+    revoked: [],
+    refresh: "ok",
+    refreshDelay: 0,
+    reuseDelay: 0,
+    registerDelay: 0,
+    deny: false,
+    dud: false,
+    cimd: false,
+    clients: new Map(),
+    codes: new Map(),
+    refreshes: new Map(),
+    issued: new Map(),
+  };
+  let n = 0;
+  const mint = (sub, scope, client) => {
+    n++;
+    if (!as.dud) as.issued.set(`at-${n}`, { sub, scope });
+    as.refreshes.set(`rt-${n}`, { sub, scope, client });
+    return { access_token: `at-${n}`, token_type: "Bearer", expires_in: 3600, refresh_token: `rt-${n}`, scope };
+  };
+  /** The client a request authenticates as: by Basic auth, or by its id alone for one with no secret. */
+  const clientOf = (req, form) => {
+    const basic = req.headers.authorization?.startsWith("Basic ")
+      ? Buffer.from(req.headers.authorization.slice(6), "base64").toString().split(":")
+      : null;
+    const id = basic?.[0] ?? form.get("client_id");
+    const client = as.clients.get(id);
+    const ok = client !== undefined && (client.secret === undefined || basic?.[1] === client.secret);
+    return { id, basic: basic !== null, ok };
+  };
+  const { origin, close } = await listen(async (req, res) => {
+    const url = new URL(req.url, as.issuer);
+    if (url.pathname === "/.well-known/oauth-authorization-server") {
+      as.discoveries++;
+      return answer(res, 200, {
+        issuer: as.issuer,
+        authorization_endpoint: `${as.issuer}/authorize`,
+        token_endpoint: `${as.issuer}/token`,
+        registration_endpoint: `${as.issuer}/register`,
+        revocation_endpoint: `${as.issuer}/revoke`,
+        response_types_supported: ["code"],
+        grant_types_supported: ["authorization_code", "refresh_token"],
+        code_challenge_methods_supported: ["S256"],
+        token_endpoint_auth_methods_supported: ["none", "client_secret_basic"],
+        authorization_response_iss_parameter_supported: true,
+        ...(as.cimd ? { client_id_metadata_document_supported: true } : {}),
+      });
+    }
+    if (url.pathname === "/register" && req.method === "POST") {
+      const id = `dcr-${++as.registrations}`;
+      const metadata = JSON.parse(await bodyOf(req));
+      await wait(as.registerDelay);
+      as.clients.set(id, { redirect_uris: metadata.redirect_uris });
+      return answer(res, 201, { ...metadata, client_id: id, client_id_issued_at: Math.floor(Date.now() / 1000) });
+    }
+    if (url.pathname === "/authorize") {
+      as.authorizations++;
+      const q = url.searchParams;
+      const redirect = q.get("redirect_uri");
+      if (!as.clients.get(q.get("client_id"))?.redirect_uris.includes(redirect)) return answer(res, 400, { error: "invalid_request" });
+      const back = new URL(redirect);
+      back.searchParams.set("state", q.get("state"));
+      back.searchParams.set("iss", as.issuer);
+      if (as.deny) back.searchParams.set("error", "access_denied");
+      else {
+        const code = `code-${++n}`;
+        as.codes.set(code, { sub: req.headers["x-login"], client: q.get("client_id"), redirect, challenge: q.get("code_challenge"), scope: q.get("scope") });
+        back.searchParams.set("code", code);
+      }
+      res.writeHead(302, { location: back.href }).end();
+      return;
+    }
+    if (url.pathname === "/token" && req.method === "POST") {
+      const form = new URLSearchParams(await bodyOf(req));
+      const client = clientOf(req, form);
+      const grant = form.get("grant_type");
+      as.tokens.push({ grant, clientId: client.id, basic: client.basic, resource: form.get("resource") });
+      if (!client.ok) return answer(res, 401, { error: "invalid_client" });
+      if (grant === "authorization_code") {
+        const code = as.codes.get(form.get("code"));
+        as.codes.delete(form.get("code"));
+        const proof = createHash("sha256").update(form.get("code_verifier") ?? "").digest("base64url");
+        if (code?.challenge !== proof || code.client !== client.id || code.redirect !== form.get("redirect_uri")) {
+          return answer(res, 400, { error: "invalid_grant" });
+        }
+        return answer(res, 200, mint(code.sub, code.scope, code.client));
+      }
+      if (grant === "refresh_token") {
+        await wait(as.refreshDelay);
+        if (as.refresh === "503") return res.writeHead(503, { "content-type": "text/plain" }).end("down for maintenance");
+        const held = as.refreshes.get(form.get("refresh_token"));
+        if (as.refresh === "invalid_grant" || !held || held.client !== client.id) {
+          as.refused++;
+          await wait(as.reuseDelay);
+          return answer(res, 400, { error: "invalid_grant" });
+        }
+        as.refreshes.delete(form.get("refresh_token"));
+        as.granted++;
+        return answer(res, 200, mint(held.sub, held.scope, held.client));
+      }
+      return answer(res, 400, { error: "unsupported_grant_type" });
+    }
+    if (url.pathname === "/revoke" && req.method === "POST") {
+      const form = new URLSearchParams(await bodyOf(req));
+      const client = clientOf(req, form);
+      as.revoked.push({ token: form.get("token"), hint: form.get("token_type_hint"), clientId: client.id });
+      as.refreshes.delete(form.get("token"));
+      as.issued.delete(form.get("token"));
+      return res.writeHead(200).end();
+    }
+    res.writeHead(404).end();
+  });
+  return Object.assign(as, { issuer: origin, close });
+}
+
+/**
+ * An MCP server that takes the access tokens `as` issued, as `issued` has
+ * them now: any other gets a 401 that points at its metadata, which names
+ * `as`, or `names` instead. `write` needs the `write` scope. A user in
+ * `expireOnInitialized` has their token stop working as their connection's
+ * `notifications/initialized` arrives, so the stream and the tool list that
+ * follow both get a 401. `seen` is every request, as `method [user]`, and
+ * `refusals` the method of every 401. `beforeRefusal`, if set, is waited for
+ * before a 401 is answered.
+ */
+async function resourceServer(as) {
+  const rs = { url: "", names: null, seen: [], refusals: [], expireOnInitialized: new Set(), beforeRefusal: null };
+  const handler = createMcpHandler(({ requestInfo }) => {
+    const who = as.issued.get(requestInfo?.headers.get("authorization")?.replace(/^Bearer /, ""));
+    const server = new McpServer({ name: "rs", version: "1.0.0" });
+    const reply = (text) => ({ content: [{ type: "text", text }] });
+    server.registerTool("whoami", { inputSchema: z.object({}) }, async () => reply(who?.sub ?? "nobody"));
+    server.registerTool("write", { inputSchema: z.object({}) }, async () => reply("written"));
+    return server;
+  });
+  const { origin, close } = await listen(async (req, res) => {
+    const url = new URL(req.url, origin);
+    const metadata = `${origin}/.well-known/oauth-protected-resource/mcp`;
+    if (url.pathname.startsWith("/.well-known/oauth-protected-resource")) {
+      return answer(res, 200, { resource: rs.url, authorization_servers: [rs.names ?? as.issuer], scopes_supported: ["read"] });
+    }
+    const body = await bodyOf(req);
+    let rpc = null;
+    try {
+      rpc = body ? JSON.parse(body) : null;
+    } catch {}
+    const token = req.headers.authorization?.replace(/^Bearer /, "");
+    const who = as.issued.get(token);
+    const method = rpc?.method ?? req.method;
+    rs.seen.push(`${method} [${who?.sub ?? "?"}]`);
+    if (!who) {
+      rs.refusals.push(method);
+      await rs.beforeRefusal?.();
+      return answer(res, 401, { error: "invalid_token" }, { "www-authenticate": `Bearer error="invalid_token", resource_metadata="${metadata}"` });
+    }
+    if (rpc?.method === "tools/call" && rpc.params?.name === "write" && !who.scope?.split(" ").includes("write")) {
+      return answer(res, 403, { error: "insufficient_scope" }, { "www-authenticate": 'Bearer error="insufficient_scope", scope="read write"' });
+    }
+    if (rpc?.method === "notifications/initialized" && rs.expireOnInitialized.delete(who.sub)) as.issued.delete(token);
+    const response = await handler.fetch(new Request(`${origin}${req.url}`, { method: req.method, headers: req.headers, body: body || undefined }));
+    res.writeHead(response.status, Object.fromEntries(response.headers));
+    if (response.body) for await (const chunk of response.body) res.write(chunk);
+    res.end();
+  });
+  rs.url = `${origin}/mcp`;
+  rs.close = close;
+  rs.handshakes = (sub) => rs.seen.filter((line) => line === `initialize [${sub}]`).length;
+  return rs;
+}
+
+/** The app: `handle` is `mcpAuth.handler()`, and what it doesn't answer is the app's own 404. */
+async function appServer() {
+  const app = { handle: async () => false };
+  const { origin, close } = await listen(async (req, res) => {
+    if (!(await app.handle(req, res))) res.writeHead(404, { "content-type": "text/plain" }).end("the app's own 404");
+  });
+  return Object.assign(app, { origin, close });
+}
+
+/** The browser of the user signed in, through `requestUser`. */
+const signedIn = (user) => (user ? { "x-user": user } : {});
+const unescapeHtml = (text) => text.replace(/&(quot|#39|lt|gt|amp);/g, (_, e) => ({ quot: '"', "#39": "'", lt: "<", gt: ">", amp: "&" })[e]);
+/** What the done page posts to the window that opened it. */
+const messageOf = async (response) => {
+  const found = /data-message="([^"]*)"/.exec(await response.text());
+  return found ? JSON.parse(unescapeHtml(found[1])) : null;
+};
+/** Follows a connect link as `user`, and through the authorization server, which signs in `login`: `back` is the callback URL it sends the browser to. */
+async function authorize(app, path, user, login = user) {
+  const start = await fetch(new URL(path, app.origin), { headers: signedIn(user), redirect: "manual" });
+  if (start.status !== 303) return { start, to: null, back: null };
+  const to = new URL(start.headers.get("location"));
+  const authorized = await fetch(to, { headers: { "x-login": login }, redirect: "manual" });
+  return { start, to, back: new URL(authorized.headers.get("location")) };
+}
+/** The browser at the callback, as `user`. */
+const comeBack = (back, user) => fetch(back, { headers: signedIn(user), redirect: "manual" });
+const returned = async (back, user) => messageOf(await comeBack(back, user));
+/** A connect link followed all the way, as `user`. */
+async function connectFlow(app, path, user) {
+  const flow = await authorize(app, path, user);
+  const page = await comeBack(flow.back, user);
+  return { ...flow, page, message: await messageOf(page) };
+}
+const SECRET = "a secret of 32 bytes, or more...";
+const NEW_SECRET = "the secret that replaces it, of 32 bytes or more";
+
+{
+  const as = await authorizationServer();
+  const rs = await resourceServer(as);
+  const app = await appServer();
+  const redirectUri = `${app.origin}/mcp/callback`;
+  const base = memoryCredentialStore();
+  /** The expiry of every flow put, and whether the store keeps one an hour longer than it's asked to. */
+  const flowsPut = [];
+  let laxFlows = false;
+  const store = {
+    ...base,
+    putFlow: (state, value, expiresAt) => {
+      flowsPut.push(expiresAt);
+      return base.putFlow(state, value, laxFlows ? expiresAt + 3_600_000 : expiresAt);
+    },
+  };
+  const connected = [];
+  const LONG = "c".repeat(513);
+  const options = {
+    userOf: ownerOf({ c1: "ada", c2: "bob", c3: "cy", [LONG]: "bob" }),
+    store,
+    secret: SECRET,
+    redirectUri,
+    requestUser: (req) => req.headers["x-user"] ?? null,
+    onConnected: (c) => {
+      connected.push(c);
+      if (c.userId === "cy") throw new Error("hook down");
+    },
+  };
+  const mcpAuth = createMcpAuth(options);
+  app.handle = mcpAuth.handler();
+  const gh = mcpServer({ name: "github", transport: http(rs.url), auth: mcpAuth.oauth({ issuer: as.issuer }) });
+  const plain = mcpServer({ name: "plain", transport: http(rs.url), auth: mcpAuth.bearer(() => null) });
+  const whoami = gh.tool("whoami", { args: anything });
+  const write = gh.tool("write", { args: anything });
+  const text = async (call) => (await call).content[0].text;
+  /** The resource server stops taking a user's access tokens. */
+  const expire = (sub) => {
+    for (const [token, who] of as.issued) if (who.sub === sub) as.issued.delete(token);
+  };
+  const tokensAsked = () => as.tokens.length;
+
+  let mark = rs.seen.length;
+  const first = await rejection(whoami.call({}, { conversationId: "c1" }));
+  check(
+    "an oauth() server, before the user connects: auth, connect, with the app's connect link",
+    isMcpError(first) &&
+      first.reason === "auth" &&
+      sameNeed(first, { kind: "connect", connect: "/mcp/connect/github?conversation=c1" }) &&
+      first.message === "github/whoami: the user has not connected an account" &&
+      Object.isFrozen(first.auth),
+  );
+  check("…sending nothing", rs.seen.length === mark);
+  check("a call with no conversation: the link names none", sameNeed(await rejection(whoami.call({}, { userId: "ada" })), { kind: "connect", connect: "/mcp/connect/github" }));
+  check("connect(userId) gives the link too", sameNeed(await rejection(gh.connect("ada")), { kind: "connect", connect: "/mcp/connect/github" }));
+
+  const out = await fetch(`${app.origin}/mcp/connect/github`, { redirect: "manual" });
+  const page = await out.clone().text();
+  const script = /<script>(.*)<\/script>/.exec(page)?.[1] ?? "";
+  check(
+    "the connect route, signed out: the done page says so",
+    out.status === 200 && JSON.stringify(await messageOf(out)) === JSON.stringify({ type: "haikit:mcp", server: "github", ok: false, error: "signed_out" }),
+  );
+  check(
+    "the done page runs only its own script, can't be framed, and isn't kept",
+    out.headers.get("content-security-policy") ===
+      `default-src 'none'; script-src 'sha256-${createHash("sha256").update(script).digest("base64")}'; frame-ancestors 'none'` &&
+      out.headers.get("cache-control") === "no-store" &&
+      out.headers.get("referrer-policy") === "no-referrer",
+  );
+  check("…and shows one line, for a browser with no window to tell", page.includes(">Not connected: sign in, then try again.</p>"));
+  const unknown = await fetch(`${app.origin}/mcp/connect/nope`, { headers: signedIn("ada"), redirect: "manual" });
+  check("a server with no such name: 404", unknown.status === 404 && (await unknown.json()).error === "no server of that name connects with OAuth");
+  check("…or one that doesn't connect with OAuth", (await fetch(`${app.origin}/mcp/connect/plain`, { headers: signedIn("ada"), redirect: "manual" })).status === 404);
+  const elsewhere = await fetch(`${app.origin}/mcp/elsewhere`);
+  check("what isn't a route is left to the app", elsewhere.status === 404 && (await elsewhere.text()) === "the app's own 404");
+
+  let logged = await quietly(async () => {
+    const before = tokensAsked();
+    const taken = await authorize(app, "/mcp/connect/github?conversation=c1", "ada");
+    check("the callback, as another user: refused", (await returned(taken.back, "bob"))?.error === "refused");
+    check("…and the flow is used up, even for the user it was for", (await returned(taken.back, "ada"))?.error === "expired");
+    check("the callback, signed out", (await returned((await authorize(app, "/mcp/connect/github", "ada")).back, null))?.error === "signed_out");
+    as.deny = true;
+    const denied = await authorize(app, "/mcp/connect/github", "ada");
+    as.deny = false;
+    check("the user says no at the authorization server: access_denied", (await returned(denied.back, "ada"))?.error === "access_denied");
+    const forged = await authorize(app, "/mcp/connect/github", "ada");
+    forged.back.searchParams.set("iss", "https://evil.example");
+    check("a callback whose iss isn't the authorization server's: failed", (await returned(forged.back, "ada"))?.error === "failed");
+    const unsigned = await authorize(app, "/mcp/connect/github", "ada");
+    unsigned.back.searchParams.delete("iss");
+    check("…or with no iss, from one that says it sends it", (await returned(unsigned.back, "ada"))?.error === "failed");
+    check("…and none of those asked for a token", tokensAsked() === before);
+
+    const stale = await authorize(app, "/mcp/connect/github", "ada");
+    check("a flow lasts 10 minutes", Math.abs(flowsPut.at(-1) - Date.now() - 600_000) < 5_000);
+    laxFlows = true;
+    const kept = await authorize(app, "/mcp/connect/github", "ada");
+    laxFlows = false;
+    const now = Date.now;
+    Date.now = () => now() + 11 * 60_000;
+    try {
+      check("a callback after them: expired", (await returned(stale.back, "ada"))?.error === "expired");
+      check("…even from a store that kept the flow longer", (await returned(kept.back, "ada"))?.error === "expired");
+    } finally {
+      Date.now = now;
+    }
+    check("a callback with a state nobody started: expired", (await returned(new URL(`${redirectUri}?state=made-up&code=x`), "ada"))?.error === "expired");
+    check("…and still no token was asked for", tokensAsked() === before);
+    const bad = await fetch(`${app.origin}/mcp/connect/github?scope=${encodeURIComponent('read "write"')}`, { headers: signedIn("ada"), redirect: "manual" });
+    check("a connect link asking for what isn't an OAuth scope: failed, with no redirect", bad.status === 200 && (await messageOf(bad))?.error === "failed");
+  });
+  check("a callback that fails is logged, with why", logged.some((line) => line.startsWith("@haikit/mcp: github: connecting user ada failed:")));
+
+  const ok = await connectFlow(app, "/mcp/connect/github?conversation=c1", "ada");
+  const q = ok.to.searchParams;
+  check(
+    "the connect route sends the browser to the authorization server, with PKCE, a state and the resource",
+    ok.start.status === 303 &&
+      ok.start.headers.get("cache-control") === "no-store" &&
+      `${ok.to.origin}${ok.to.pathname}` === `${as.issuer}/authorize` &&
+      q.get("response_type") === "code" &&
+      q.get("code_challenge_method") === "S256" &&
+      q.get("code_challenge")?.length === 43 &&
+      q.get("state")?.length === 43 &&
+      q.get("redirect_uri") === redirectUri &&
+      q.get("resource") === rs.url &&
+      q.get("scope") === "read",
+  );
+  check("the app's client is registered once, by dynamic registration, and kept", as.registrations === 1 && q.get("client_id") === "dcr-1");
+  check("the callback: connected", JSON.stringify(ok.message) === JSON.stringify({ type: "haikit:mcp", server: "github", ok: true }));
+  check(
+    "…with the code exchanged for the resource",
+    JSON.stringify(as.tokens.at(-1)) === JSON.stringify({ grant: "authorization_code", clientId: "dcr-1", basic: false, resource: rs.url }),
+  );
+  const sealed = await store.get("ada", "github");
+  const adaToken = [...as.issued].find(([, who]) => who.sub === "ada")?.[0];
+  check(
+    "the store holds the credential sealed, with no token in it",
+    sealed?.startsWith("v1.") &&
+      adaToken !== undefined &&
+      !sealed.includes(adaToken) &&
+      !Buffer.from(sealed.slice(3), "base64url").toString("latin1").includes("access_token"),
+  );
+  check("onConnected is told, with the conversation the link was for", JSON.stringify(connected) === JSON.stringify([{ userId: "ada", server: "github", conversationId: "c1" }]));
+  check("the user's call now runs with their own token", (await text(whoami.call({}, { conversationId: "c1" }))) === "ada");
+  check("a callback used once: expired", (await returned(ok.back, "ada"))?.error === "expired");
+  await connectFlow(app, "/mcp/connect/github?conversation=c1", "bob");
+  check("a link naming someone else's conversation: onConnected isn't told it", JSON.stringify(connected.at(-1)) === JSON.stringify({ userId: "bob", server: "github" }));
+  await connectFlow(app, `/mcp/connect/github?conversation=${LONG}`, "bob");
+  check("…nor one longer than 512 characters", JSON.stringify(connected.at(-1)) === JSON.stringify({ userId: "bob", server: "github" }));
+  logged = await quietly(async () => {
+    const cy = await connectFlow(app, "/mcp/connect/github?conversation=c3", "cy");
+    check("onConnected that throws: connected all the same", cy.message?.ok === true && (await store.get("cy", "github")) !== null);
+  });
+  check("…and logged", logged.some((line) => line.startsWith("@haikit/mcp: github: onConnected threw, and user cy is connected all the same:")));
+
+  const registrations = as.registrations;
+  const authorizations = as.authorizations;
+  logged = await quietly(async () => {
+    const { connectedAt } = (await mcpAuth.connections("ada"))[0];
+    const before = await store.get("ada", "github");
+    let granted = as.granted;
+    expire("ada");
+    check("a token the server no longer takes is refreshed on the 401", (await text(whoami.call({}, { conversationId: "c1" }))) === "ada" && as.granted === granted + 1);
+    const after = await store.get("ada", "github");
+    check("…and the new one stored, keeping connectedAt", after !== null && after !== before && (await mcpAuth.connections("ada"))[0].connectedAt === connectedAt);
+    check("…with the refresh sent for the resource", as.tokens.at(-1).grant === "refresh_token" && as.tokens.at(-1).resource === rs.url);
+
+    // another process of the app, on the same store
+    const other = createMcpAuth({ ...options, onConnected: undefined });
+    const gh2 = mcpServer({ name: "github", transport: http(rs.url), auth: other.oauth({ issuer: as.issuer }) });
+    const whoami2 = gh2.tool("whoami", { args: anything });
+    check("another process on the same store calls with the same credential", (await text(whoami2.call({}, { userId: "ada" }))) === "ada");
+    expire("ada");
+    as.refreshDelay = as.reuseDelay = 100;
+    granted = as.granted;
+    const refused = as.refused;
+    const refreshesSent = () => as.tokens.filter((t) => t.grant === "refresh_token").length;
+    let sent = refreshesSent();
+    const both = await Promise.all([text(whoami.call({}, { userId: "ada" })), text(whoami2.call({}, { userId: "ada" }))]);
+    check(
+      "two processes refreshing at once: one refresh is sent, under the store's lease, and the other takes what it stored",
+      both.every((t) => t === "ada") &&
+        refreshesSent() === sent + 1 &&
+        as.granted === granted + 1 &&
+        as.refused === refused &&
+        (await store.get("ada", "github")) !== null,
+    );
+    granted = as.granted;
+    await Promise.all([whoami.call({}, { userId: "ada" }), whoami2.call({}, { userId: "ada" })]);
+    check("…and both call with it after", as.granted === granted);
+    await gh2.close();
+
+    // a process that took the lease, and is gone
+    await gh.forget("ada");
+    expire("ada");
+    as.refreshDelay = as.reuseDelay = 0;
+    check("a lease another process holds", await store.lease("ada", "github", await store.get("ada", "github"), "gone", 600));
+    sent = refreshesSent();
+    const started = Date.now();
+    check(
+      "…is waited for, and once it lapses this process takes it and refreshes",
+      (await text(whoami.call({}, { userId: "ada" }))) === "ada" && refreshesSent() === sent + 1 && Date.now() - started >= 500,
+    );
+    as.refreshDelay = as.reuseDelay = 100;
+
+    rs.expireOnInitialized.add("ada");
+    await gh.forget("ada");
+    granted = as.granted;
+    mark = rs.refusals.length;
+    check(
+      "a new connection whose stream and tool list both get a 401: one refresh, shared",
+      (await text(whoami.call({}, { userId: "ada" }))) === "ada" && as.granted === granted + 1,
+    );
+    check("…both of which had been refused", rs.refusals.slice(mark).includes("GET") && rs.refusals.slice(mark).includes("tools/list"));
+
+    as.refreshDelay = as.reuseDelay = 0;
+
+    // a refresh granted, and written slower than a call waits for it
+    let slowPut = 0;
+    const slowStore = { ...store, put: async (...args) => (await wait(slowPut), store.put(...args)) };
+    const patient = createMcpAuth({ ...options, store: slowStore, onConnected: undefined });
+    const brief = mcpServer({ name: "github", transport: http(rs.url), auth: patient.oauth({ issuer: as.issuer }), timeoutMs: 300 });
+    const briefWho = brief.tool("whoami", { args: anything });
+    expire("ada");
+    slowPut = 400;
+    sent = refreshesSent();
+    const late = await rejection(briefWho.call({}, { userId: "ada" }));
+    check("a refresh the call can't wait for: connection", late?.reason === "connection");
+    check(
+      "…and a call meanwhile waits for that refresh, rather than spending its refresh token again",
+      (await text(briefWho.call({}, { userId: "ada" }))) === "ada" && refreshesSent() === sent + 1 && (await store.get("ada", "github")) !== null,
+    );
+    slowPut = 0;
+    await brief.close();
+    await gh.forget("ada");
+
+    // a store that fails as a refreshed credential is written
+    let failPuts = 0;
+    let landThenFail = false;
+    const flakyStore = {
+      ...store,
+      put: async (...args) => {
+        if (failPuts > 0) {
+          failPuts--;
+          throw new Error("the store is down");
+        }
+        if (landThenFail) {
+          landThenFail = false;
+          await store.put(...args);
+          throw new Error("the store's answer was lost");
+        }
+        return store.put(...args);
+      },
+    };
+    const flaky = createMcpAuth({ ...options, store: flakyStore, onConnected: undefined });
+    const ghF = mcpServer({ name: "github", transport: http(rs.url), auth: flaky.oauth({ issuer: as.issuer }) });
+    const flakyWho = ghF.tool("whoami", { args: anything });
+    const revokedBefore = as.revoked.length;
+    expire("ada");
+    failPuts = 2;
+    sent = refreshesSent();
+    check(
+      "a refreshed credential the store fails to write twice: written on the third try",
+      (await text(flakyWho.call({}, { userId: "ada" }))) === "ada" && failPuts === 0 && refreshesSent() === sent + 1,
+    );
+    expire("ada");
+    landThenFail = true;
+    const unwritten = await store.get("ada", "github");
+    check(
+      "…and one that landed, though the store's answer was lost: written, and nothing revoked",
+      (await text(flakyWho.call({}, { userId: "ada" }))) === "ada" && (await store.get("ada", "github")) !== unwritten && as.revoked.length === revokedBefore,
+    );
+    expire("ada");
+    failPuts = 2;
+    landThenFail = true;
+    const unwrittenLast = await store.get("ada", "github");
+    check(
+      "…and the third of three that landed, though its answer was lost: written",
+      (await text(flakyWho.call({}, { userId: "ada" }))) === "ada" &&
+        !landThenFail &&
+        (await store.get("ada", "github")) !== unwrittenLast &&
+        as.revoked.length === revokedBefore,
+    );
+    await ghF.close();
+
+    as.refresh = "503";
+    expire("ada");
+    const held = await store.get("ada", "github");
+    const outage = await rejection(whoami.call({}, { conversationId: "c1" }));
+    check(
+      "a refresh the authorization server can't answer: connection, and the credential kept",
+      outage?.reason === "connection" && outage.message === "github/whoami could not be reached" && (await store.get("ada", "github")) === held,
+    );
+    check("…and its lease given back", (await store.lease("ada", "github", held, "another", 0)) === true);
+    as.refresh = "ok";
+    check("…so once it's back, the next 401 refreshes", (await text(whoami.call({}, { conversationId: "c1" }))) === "ada");
+
+    as.dud = true;
+    expire("ada");
+    const dud = await rejection(whoami.call({}, { conversationId: "c1" }));
+    check(
+      "a refreshed token the server refuses as well: auth, reconnect, after one retry",
+      dud?.reason === "auth" && sameNeed(dud, { kind: "reconnect", connect: "/mcp/connect/github?conversation=c1" }),
+    );
+    as.dud = false;
+    check("…and the credential is kept: the next 401 refreshes again", (await text(whoami.call({}, { conversationId: "c1" }))) === "ada");
+
+    as.refresh = "invalid_grant";
+    expire("ada");
+    const gone = await rejection(whoami.call({}, { conversationId: "c1" }));
+    check(
+      "a refresh the authorization server refuses: auth, reconnect, with the connect link",
+      gone?.reason === "auth" &&
+        sameNeed(gone, { kind: "reconnect", connect: "/mcp/connect/github?conversation=c1" }) &&
+        gone.message === "github/whoami: the server refused the user's credential",
+    );
+    check("…and the credential deleted", (await store.get("ada", "github")) === null);
+    as.refresh = "ok";
+    mark = rs.seen.length;
+    const then = await rejection(whoami.call({}, { conversationId: "c1" }));
+    check("…so the next call is connect, and sends nothing", sameNeed(then, { kind: "connect", connect: "/mcp/connect/github?conversation=c1" }) && rs.seen.length === mark);
+  });
+  check("no refresh started a sign-in, or registered a client", as.authorizations === authorizations && as.registrations === registrations);
+  check("…or had the SDK warn", !logged.some((line) => line.includes("[mcp-sdk]")));
+
+  await connectFlow(app, "/mcp/connect/github?conversation=c1", "ada");
+  const scope = await rejection(write.call({}, { conversationId: "c1" }));
+  check(
+    "a 403 asking for more scope: auth, scope, with a connect link that asks for it",
+    sameNeed(scope, { kind: "scope", scope: "read write", connect: "/mcp/connect/github?conversation=c1&scope=read+write" }),
+  );
+  const more = await connectFlow(app, scope.auth.connect, "ada");
+  check("…which the authorization server is asked for", more.to.searchParams.get("scope") === "read write" && more.message?.ok === true);
+  const dials = rs.handshakes("ada");
+  check(
+    "the callback closes the user's connection: the next call dials with the new credential",
+    (await text(write.call({}, { conversationId: "c1" }))) === "written" && rs.handshakes("ada") === dials + 1,
+  );
+
+  const accounts = await mcpAuth.connections("ada");
+  check(
+    "connections() lists the servers a user connected, with the scope granted",
+    accounts.length === 1 &&
+      accounts[0].name === "github" &&
+      accounts[0].scope === "read write" &&
+      Math.abs(accounts[0].connectedAt - Date.now()) < 60_000,
+  );
+  const listed = await fetch(`${app.origin}/mcp/connections`, { headers: signedIn("ada") });
+  check(
+    "…and so does its route, for the user signed in",
+    listed.status === 200 && listed.headers.get("cache-control") === "no-store" && JSON.stringify(await listed.json()) === JSON.stringify({ servers: accounts }),
+  );
+  const anonymous = await fetch(`${app.origin}/mcp/connections`);
+  check("…but for no one signed out: 401", anonymous.status === 401 && (await anonymous.json()).error === "sign in to continue");
+  await store.put("ada", "retired", "v1.whatever", null);
+  check("a server no longer configured isn't listed", (await mcpAuth.connections("ada")).length === 1);
+
+  // the server now names another authorization server, and a process that hasn't seen it before asks
+  {
+    const elsewhere = await authorizationServer();
+    const fresh = createMcpAuth({ ...options, onConnected: undefined });
+    const gh3 = mcpServer({ name: "github", transport: http(rs.url), auth: fresh.oauth() });
+    rs.names = elsewhere.issuer;
+    expire("ada");
+    const before = tokensAsked();
+    let moved;
+    logged = await quietly(async () => {
+      moved = await rejection(gh3.tool("whoami", { args: anything }).call({}, { userId: "ada" }));
+    });
+    check(
+      "a server that names another authorization server than the one that issued the credential: protocol, with no refresh sent",
+      moved?.reason === "protocol" && tokensAsked() === before && elsewhere.tokens.length === 0 && (await store.get("ada", "github")) !== null,
+    );
+    check("…and logged", logged.some((line) => line.startsWith("@haikit/mcp: github: no refresh for user ada:")));
+    rs.names = null;
+    await gh3.close();
+    await elsewhere.close();
+  }
+
+  const pinned = mcpServer({ name: "pinned", transport: http(rs.url), auth: mcpAuth.oauth({ issuer: "https://login.example.com" }) });
+  const counts = [as.registrations, as.authorizations];
+  logged = await quietly(async () => {
+    const start = await fetch(`${app.origin}/mcp/connect/pinned`, { headers: signedIn("ada"), redirect: "manual" });
+    check("a server naming an authorization server other than its issuer: failed, before any redirect", start.status === 200 && (await messageOf(start))?.error === "failed");
+  });
+  check(
+    "…with no client registered there, and why logged",
+    as.registrations === counts[0] &&
+      as.authorizations === counts[1] &&
+      logged.some((line) => line.startsWith("@haikit/mcp: pinned: connecting user ada couldn't start:") && line.includes('not "https://login.example.com"')),
+  );
+
+  as.clients.set("app-client", { secret: "app-secret", redirect_uris: [redirectUri] });
+  const linear = mcpServer({
+    name: "linear",
+    transport: http(rs.url),
+    auth: mcpAuth.oauth({ issuer: as.issuer, client: { id: "app-client", secret: "app-secret" } }),
+  });
+  const linearWho = linear.tool("whoami", { args: anything });
+  const viaClient = await connectFlow(app, "/mcp/connect/linear", "ada");
+  check(
+    "a client the app registered: used as it is, with no registration",
+    viaClient.to.searchParams.get("client_id") === "app-client" && as.registrations === counts[0] && viaClient.message?.ok === true,
+  );
+  check("…its secret sent as Basic auth", JSON.stringify(as.tokens.at(-1)) === JSON.stringify({ grant: "authorization_code", clientId: "app-client", basic: true, resource: rs.url }));
+  check("…and the user's calls go", (await text(linearWho.call({}, { userId: "ada" }))) === "ada");
+  expire("ada");
+  await linearWho.call({}, { userId: "ada" });
+  check("…refreshed with it too", as.tokens.at(-1).grant === "refresh_token" && as.tokens.at(-1).basic);
+
+  as.issued.set("sdk-token", { sub: "sdk-user", scope: "read" });
+  let made = 0;
+  const custom = mcpServer({
+    name: "custom",
+    transport: http(rs.url),
+    auth: mcpAuth.sdk((user) => {
+      made++;
+      return user === "ada" ? { token: async () => "sdk-token" } : null;
+    }),
+  });
+  const customWho = custom.tool("whoami", { args: anything });
+  check("sdk(): the app's own provider, made for the user", (await text(customWho.call({}, { userId: "ada" }))) === "sdk-user");
+  await customWho.call({}, { userId: "ada" });
+  check("…once for their connection", made === 1);
+  check("…and a user it has none for: connect, with no link", sameNeed(await rejection(customWho.call({}, { userId: "bob" })), { kind: "connect" }));
+  check("an sdk() server has no connect route", (await fetch(`${app.origin}/mcp/connect/custom`, { headers: signedIn("ada"), redirect: "manual" })).status === 404);
+  check(
+    "sdk() needs a function",
+    thrown(() => mcpAuth.sdk("provider"))?.message === "sdk: make must be a function that takes a user id and returns their AuthProvider, or null",
+  );
+
+  // sealed values are bound to their row
+  {
+    const sealer = new Sealer([SECRET]);
+    const value = sealer.seal({ a: 1 }, binding.credential("ada", "github"));
+    check("a sealed value opens for its own row", JSON.stringify(sealer.open(value, binding.credential("ada", "github"))) === '{"a":1}');
+    check(
+      "…and no other: another user's, another server's, a client's or a flow's",
+      [binding.credential("bob", "github"), binding.credential("ada", "linear"), binding.client("github", "ada"), binding.flow("ada")].every(
+        (b) => sealer.open(value, b) === null,
+      ),
+    );
+    const flipped = `${value.slice(0, -2)}${value.at(-2) === "A" ? "B" : "A"}${value.at(-1)}`;
+    check("a sealed value with a character changed doesn't open", sealer.open(flipped, binding.credential("ada", "github")) === null);
+    check("…nor one sealed with another secret", new Sealer([NEW_SECRET]).open(value, binding.credential("ada", "github")) === null);
+    logged = await quietly(async () => {
+      await store.put("dan", "github", await store.get("ada", "github"), null);
+      check("a credential copied to another user's row doesn't open there: connect", (await rejection(whoami.call({}, { userId: "dan" })))?.auth?.kind === "connect");
+    });
+    check("…and is logged", logged.includes("@haikit/mcp: github: the credential of user dan doesn't open: sealed with a secret that's gone, or for another row"));
+  }
+
+  // disconnecting
+  {
+    check("the user's call works before", (await text(whoami.call({}, { userId: "bob" }))) === "bob");
+    const disconnect = (user, headers = {}, name = "github") =>
+      fetch(`${app.origin}/mcp/disconnect/${name}`, { method: "POST", headers: { ...signedIn(user), ...headers } });
+    const cross = await disconnect("bob", { origin: "https://evil.example" });
+    check(
+      "disconnect from another site's page: 403, and nothing deleted",
+      cross.status === 403 && (await cross.json()).error === "this request came from another site" && (await store.get("bob", "github")) !== null,
+    );
+    check("…nor from a request the browser says is cross-site", (await disconnect("bob", { "sec-fetch-site": "cross-site" })).status === 403);
+    check("disconnect signed out: 401", (await disconnect(null, { origin: app.origin })).status === 401);
+    check("disconnect from a server with no such name: 404", (await disconnect("bob", { origin: app.origin }, "nope")).status === 404);
+    // the latest: bob connected twice
+    const refresh = [...as.refreshes].filter(([, who]) => who.sub === "bob").at(-1)?.[0];
+    const done = await disconnect("bob", { origin: app.origin });
+    check(
+      "disconnect from this site: 204, with the tokens revoked and deleted",
+      done.status === 204 &&
+        (await store.get("bob", "github")) === null &&
+        as.revoked.some((r) => r.token === refresh && r.hint === "refresh_token" && r.clientId === "dcr-1"),
+    );
+    mark = rs.seen.length;
+    check(
+      "…and the user's connection closed: the next call is connect",
+      sameNeed(await rejection(whoami.call({}, { userId: "bob" })), { kind: "connect", connect: "/mcp/connect/github" }) && rs.seen.length === mark,
+    );
+    await store.put("cy", "retired", "v1.whatever", null);
+    const revoked = as.revoked.length;
+    await mcpAuth.disconnect("cy");
+    check("disconnect(userId) with no server: every one of theirs, configured or not", (await store.list("cy")).length === 0 && as.revoked.length === revoked + 1);
+
+    // a disconnect while a refresh is on its way, and its write still to come
+    await connectFlow(app, "/mcp/connect/github", "eve");
+    let slowPut = 0;
+    const lagging = createMcpAuth({ ...options, store: { ...store, put: async (...args) => (await wait(slowPut), store.put(...args)) }, onConnected: undefined });
+    const gh8 = mcpServer({ name: "github", transport: http(rs.url), auth: lagging.oauth({ issuer: as.issuer }) });
+    const eveWho = gh8.tool("whoami", { args: anything });
+    check("a user's call works before", (await text(eveWho.call({}, { userId: "eve" }))) === "eve");
+    expire("eve");
+    slowPut = 300;
+    const pending = rejection(eveWho.call({}, { userId: "eve" }));
+    await wait(150);
+    await mcpAuth.disconnect("eve");
+    const lost = await pending;
+    slowPut = 0;
+    check(
+      "…then disconnected: the refresh's write finds the credential gone, and the call is reconnect",
+      lost?.auth?.kind === "reconnect" && (await store.get("eve", "github")) === null,
+    );
+    check("…and the tokens it got are revoked, not left live", ![...as.refreshes.values()].some((who) => who.sub === "eve"));
+    await gh8.close();
+  }
+
+  // what another process does to a user's credential, seen at this one's next call
+  {
+    await connectFlow(app, "/mcp/connect/github", "fay");
+    const apart = createMcpAuth({ ...options, onConnected: undefined });
+    const ghA = mcpServer({ name: "github", transport: http(rs.url), auth: apart.oauth({ issuer: as.issuer }) });
+    const fayWho = ghA.tool("whoami", { args: anything });
+    check("a user's call in another process", (await text(fayWho.call({}, { userId: "fay" }))) === "fay");
+    expire("fay");
+    await whoami.call({}, { userId: "fay" });
+    let dials = rs.handshakes("fay");
+    mark = rs.refusals.length;
+    check(
+      "a credential another process refreshed: used as it is, on the same connection, with no 401",
+      (await text(fayWho.call({}, { userId: "fay" }))) === "fay" && rs.handshakes("fay") === dials && rs.refusals.length === mark,
+    );
+    const again = await authorize(app, "/mcp/connect/github", "fay", "fay-elsewhere");
+    await comeBack(again.back, "fay");
+    dials = rs.handshakes("fay-elsewhere");
+    check(
+      "the user connected again, as another account, in another process: the connection is made again, as that account",
+      (await text(fayWho.call({}, { userId: "fay" }))) === "fay-elsewhere" && rs.handshakes("fay-elsewhere") === dials + 1,
+    );
+    await mcpAuth.disconnect("fay");
+    mark = rs.seen.length;
+    check(
+      "…and disconnected in another process: connect, with nothing sent",
+      sameNeed(await rejection(fayWho.call({}, { userId: "fay" })), { kind: "connect", connect: "/mcp/connect/github" }) && rs.seen.length === mark,
+    );
+
+    // connected again, as another account, in another process, between a call's read of the store and its 401
+    await connectFlow(app, "/mcp/connect/github", "gus");
+    check("a user's call in another process, again", (await text(fayWho.call({}, { userId: "gus" }))) === "gus");
+    expire("gus");
+    rs.beforeRefusal = async () => {
+      rs.beforeRefusal = null;
+      const elsewhere = await authorize(app, "/mcp/connect/github", "gus", "gus-elsewhere");
+      await comeBack(elsewhere.back, "gus");
+    };
+    mark = rs.seen.length;
+    const raced = await rejection(fayWho.call({}, { userId: "gus" }));
+    check(
+      "the user connected again, as another account, as a call's 401 is answered: the call is connection, and nothing of that account's is sent on the old connection",
+      isMcpError(raced) &&
+        raced.reason === "connection" &&
+        raced.cause?.message === "the user connected again since this connection was made" &&
+        !rs.seen.slice(mark).some((line) => line.endsWith("[gus-elsewhere]")),
+    );
+    dials = rs.handshakes("gus-elsewhere");
+    check(
+      "…and the next call makes the connection again, as that account",
+      (await text(fayWho.call({}, { userId: "gus" }))) === "gus-elsewhere" && rs.handshakes("gus-elsewhere") === dials + 1,
+    );
+    await ghA.close();
+  }
+
+  // a new secret first, and the old after it
+  {
+    const rotated = createMcpAuth({ ...options, secret: [NEW_SECRET, SECRET], onConnected: undefined });
+    const gh4 = mcpServer({ name: "github", transport: http(rs.url), auth: rotated.oauth({ issuer: as.issuer }) });
+    const who4 = gh4.tool("whoami", { args: anything });
+    check("with a new secret first, what the old one sealed still opens", (await text(who4.call({}, { userId: "ada" }))) === "ada");
+    expire("ada");
+    await who4.call({}, { userId: "ada" });
+    const resealed = await store.get("ada", "github");
+    check(
+      "…and what it writes is sealed with the new one",
+      new Sealer([NEW_SECRET]).open(resealed, binding.credential("ada", "github")) !== null &&
+        new Sealer([SECRET]).open(resealed, binding.credential("ada", "github")) === null,
+    );
+    await gh4.close();
+  }
+
+  // the app's redirect URI changes: a new client for new connects, and those connected before keep theirs
+  {
+    const app2 = await appServer();
+    const movedApp = createMcpAuth({ ...options, secret: [NEW_SECRET, SECRET], redirectUri: `${app2.origin}/mcp/callback`, onConnected: undefined });
+    app2.handle = movedApp.handler();
+    const gh6 = mcpServer({ name: "github", transport: http(rs.url), auth: movedApp.oauth({ issuer: as.issuer }) });
+    const before = as.registrations;
+    const dan = await connectFlow(app2, "/mcp/connect/github", "dan");
+    check(
+      "a new redirect URI: the next connect registers a client for it",
+      dan.message?.ok === true && as.registrations === before + 1 && dan.to.searchParams.get("client_id") === `dcr-${before + 1}`,
+    );
+    expire("ada");
+    check(
+      "…and a user connected before refreshes as the client their tokens were issued to",
+      (await text(gh6.tool("whoami", { args: anything }).call({}, { userId: "ada" }))) === "ada" && as.tokens.at(-1).grant === "refresh_token" && as.tokens.at(-1).clientId === "dcr-1",
+    );
+    await gh6.close();
+    await app2.close();
+  }
+
+  // two first connects at once, with no client kept: each registers one
+  {
+    const app3 = await appServer();
+    const firstApp = createMcpAuth({ ...options, store: memoryCredentialStore(), redirectUri: `${app3.origin}/mcp/callback`, onConnected: undefined });
+    app3.handle = firstApp.handler();
+    const gh7 = mcpServer({ name: "github", transport: http(rs.url), auth: firstApp.oauth({ issuer: as.issuer }) });
+    const who7 = gh7.tool("whoami", { args: anything });
+    const before = as.registrations;
+    as.registerDelay = 100;
+    const users = ["ada", "bob"];
+    const flows = await Promise.all(users.map((user) => authorize(app3, "/mcp/connect/github", user)));
+    as.registerDelay = 0;
+    const ids = new Set(flows.map((f) => f.to.searchParams.get("client_id")));
+    const back = await Promise.all(flows.map((f, i) => returned(f.back, users[i])));
+    check("two first connects at once each register a client, and each comes back as its own", as.registrations === before + 2 && ids.size === 2 && back.every((m) => m?.ok === true));
+    for (const user of users) expire(user);
+    const calls = await Promise.all(users.map((user) => text(who7.call({}, { userId: user }))));
+    check("…and each refreshes as its own", calls.join() === users.join());
+    await gh7.close();
+    await app3.close();
+  }
+
+  // the client metadata document, for a redirect URI that's https
+  {
+    const app2 = await appServer();
+    const https = createMcpAuth({ ...options, store: memoryCredentialStore(), redirectUri: "https://app.example.com/mcp/callback", onConnected: undefined });
+    app2.handle = https.handler();
+    const gh5 = mcpServer({ name: "github", transport: http(rs.url), auth: https.oauth({ issuer: as.issuer }) });
+    const doc = await fetch(`${app2.origin}/mcp/client.json`);
+    check(
+      "with an https redirect URI, the client metadata document is served",
+      doc.status === 200 &&
+        doc.headers.get("cache-control") === "max-age=3600" &&
+        JSON.stringify(await doc.json()) ===
+          JSON.stringify({
+            client_id: "https://app.example.com/mcp/client.json",
+            client_name: "app.example.com",
+            redirect_uris: ["https://app.example.com/mcp/callback"],
+            grant_types: ["authorization_code", "refresh_token"],
+            response_types: ["code"],
+            token_endpoint_auth_method: "none",
+          }),
+    );
+    check("…but not on localhost, where an authorization server can't use it", (await fetch(`${app.origin}/mcp/client.json`)).status === 404);
+    as.cimd = true;
+    const before = as.registrations;
+    const start = await fetch(`${app2.origin}/mcp/connect/github`, { headers: signedIn("ada"), redirect: "manual" });
+    const to = new URL(start.headers.get("location"));
+    check(
+      "…which an authorization server that takes one knows the app by, with no registration",
+      to.searchParams.get("client_id") === "https://app.example.com/mcp/client.json" &&
+        to.searchParams.get("redirect_uri") === "https://app.example.com/mcp/callback" &&
+        as.registrations === before,
+    );
+    as.cimd = false;
+    await gh5.close();
+    await app2.close();
+  }
+
+  for (const s of [gh, plain, pinned, linear, custom]) await s.close();
+  await app.close();
+  await rs.close();
+  await as.close();
+}
+{
+  const base = { userOf: () => null };
+  const full = { ...base, store: memoryCredentialStore(), secret: SECRET, redirectUri: "https://app.example.com/mcp/callback" };
+  const refusals = [
+    ["a store alone", { ...base, store: memoryCredentialStore() }, "createMcpAuth: store, secret and redirectUri go together: oauth() needs all three"],
+    ["a store that isn't one", { ...full, store: {} }, "createMcpAuth: store must be a CredentialStore, such as memoryCredentialStore()"],
+    ["a short secret", { ...full, secret: "short" }, "createMcpAuth: each secret must be at least 32 bytes"],
+    ["…in a list", { ...full, secret: [SECRET, "short"] }, "createMcpAuth: each secret must be at least 32 bytes"],
+    ["no secret in the list", { ...full, secret: [] }, "createMcpAuth: secret must be a string, or a list of them"],
+    ["a redirectUri that isn't a URL", { ...full, redirectUri: "callback" }, "createMcpAuth: redirectUri must be a URL, such as https://app.example.com/mcp/callback"],
+    ["one that's http", { ...full, redirectUri: "http://app.example.com/mcp/callback" }, "createMcpAuth: redirectUri must be https, except on localhost"],
+    ["one with a query", { ...full, redirectUri: "https://app.example.com/mcp/callback?from=x" }, "createMcpAuth: redirectUri can't have a query or a fragment"],
+    [
+      "one at a route of handler()'s",
+      { ...full, redirectUri: "https://app.example.com/mcp/connect/github" },
+      "createMcpAuth: redirectUri comes back to /mcp/connect/github, a route handler() answers already",
+    ],
+    ["a basePath with a trailing slash", { ...full, basePath: "/mcp/" }, 'createMcpAuth: basePath must be a path such as "/mcp", with no trailing slash (got "/mcp/")'],
+    ["a basePath with a dot segment", { ...full, basePath: "/api/../mcp" }, 'createMcpAuth: basePath can\'t have a "." or ".." segment (got "/api/../mcp")'],
+    ["…or one percent-encoded", { ...full, basePath: "/api/%2e%2e/mcp" }, 'createMcpAuth: basePath can\'t have a "." or ".." segment (got "/api/%2e%2e/mcp")'],
+    ["a requestUser that isn't a function", { ...full, requestUser: "ada" }, "createMcpAuth: requestUser must be a function"],
+    ["an onConnected that isn't one", { ...full, onConnected: true }, "createMcpAuth: onConnected must be a function"],
+    ["an empty clientName", { ...full, clientName: "" }, "createMcpAuth: clientName must be a non-empty string"],
+  ];
+  for (const [label, opts, message] of refusals) {
+    const err = thrown(() => createMcpAuth(opts));
+    check(`createMcpAuth refuses ${label}`, err instanceof TypeError && err.message === message);
+  }
+  check("a redirectUri on localhost may be http", !thrown(() => createMcpAuth({ ...full, redirectUri: "http://localhost:5173/mcp/callback" })));
+  const bare = createMcpAuth(base);
+  check("oauth() without a store", thrown(() => bare.oauth())?.message === "oauth() needs createMcpAuth({ store, secret, redirectUri })");
+  check("handler() without one", thrown(() => bare.handler())?.message === "handler() needs createMcpAuth({ store, secret, redirectUri })");
+  check("connections() without one", (await rejection(bare.connections("ada")))?.message === "connections() needs createMcpAuth({ store, secret, redirectUri })");
+  check("disconnect() without one", (await rejection(bare.disconnect("ada")))?.message === "disconnect() needs createMcpAuth({ store, secret, redirectUri })");
+  check(
+    "handler() needs requestUser",
+    thrown(() => createMcpAuth(full).handler())?.message === "handler() needs createMcpAuth's requestUser: its routes act for the user signed in",
+  );
+  const ready = createMcpAuth(full);
+  const scopes = 'oauth: scopes must be a list of OAuth scopes, such as ["repo"], each without spaces';
+  const oauthRefusals = [
+    ["options that aren't an object", null, "oauth: options must be an object"],
+    ["an issuer that isn't a URL", { issuer: "github" }, "oauth: issuer must be the authorization server's issuer URL"],
+    ["an issuer that's http", { issuer: "http://login.example.com" }, "oauth: issuer must be https, except on localhost"],
+    ["scopes that aren't a list", { scopes: "repo" }, scopes],
+    ["a scope with a space", { scopes: ["read write"] }, scopes],
+    ["a client without the issuer", { client: { id: "app" } }, "oauth: a client needs the issuer it was registered with"],
+    ["a client without an id", { issuer: "https://login.example.com", client: { id: "" } }, "oauth: client must be { id, secret? }, as registered with the authorization server"],
+  ];
+  for (const [label, opts, message] of oauthRefusals) {
+    const err = thrown(() => ready.oauth(opts));
+    check(`oauth() refuses ${label}`, err instanceof TypeError && err.message === message);
+  }
+  check("connections() needs a userId", (await rejection(ready.connections("")))?.message === "connections() needs a userId");
+  check("disconnect()'s server must be a name", (await rejection(ready.disconnect("ada", "")))?.message === "disconnect(): server must be a server's name");
+  check("each says its kind", ready.oauth().kind === "oauth" && ready.sdk(() => null).kind === "sdk" && Object.isFrozen(ready.oauth()));
 }
 
 // ── textOf ──────────────────────────────────────────────────────────────
