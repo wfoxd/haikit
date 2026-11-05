@@ -39,6 +39,11 @@ check("the schema is one statement per entry", schema.length === 3 && schema.eve
   check("a flow nobody took is swept away as another comes", JSON.stringify(rows.map((r) => r.state)) === JSON.stringify(["st-new"]));
   const { rows: stamped } = await db.query(`SELECT extract(epoch FROM updated_at) AS at FROM haikit_mcp_credentials WHERE user_id = 'kept'`);
   check("a credential says when it was written", Math.abs(Number(stamped[0].at) * 1000 - Date.now()) < 60_000);
+  const writtenAt = async () => (await db.query(`SELECT updated_at::text AS at FROM haikit_mcp_credentials WHERE user_id = 'kept'`)).rows[0].at;
+  const at = await writtenAt();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await s.lease("kept", "github", "sealed", "p", 60_000);
+  check("a lease isn't a write: updated_at stays", (await writtenAt()) === at);
 }
 await db.close();
 

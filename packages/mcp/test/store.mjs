@@ -1,8 +1,9 @@
 /**
  * The CredentialStore contract, which `memoryCredentialStore` (in mcptest)
  * and `pgCredentialStore` (in pgtest) must both keep: a write lands only on
- * the value it expects, a delete with a value takes only that one, flows are
- * taken once, and nothing crosses from one user, server or issuer to another.
+ * the value it expects, a delete with a value takes only that one, a refresh
+ * lease has one holder at a time, flows are taken once, and nothing crosses
+ * from one user, server or issuer to another.
  */
 
 /**
@@ -51,6 +52,35 @@ export async function conform(label, make, check) {
     const next = await Promise.all([s.put("race", "github", "c", now), s.put("race", "github", "d", now)]);
     const after = await s.get("race", "github");
     check("two writes onto the same value at once: one lands", next.filter(Boolean).length === 1 && (after === "c" || after === "d"));
+  }
+
+  {
+    await s.put("lea", "github", "l1", null);
+    check("a lease on the value the row holds is taken", (await s.lease("lea", "github", "l1", "p1", 60_000)) === true);
+    check("…and not by another holder while it lasts", (await s.lease("lea", "github", "l1", "p2", 60_000)) === false);
+    check("…but by its own again", (await s.lease("lea", "github", "l1", "p1", 60_000)) === true);
+    check("a lease on a value the row no longer holds is refused", (await s.lease("lea", "github", "l0", "p3", 60_000)) === false);
+    check("…as on a row that isn't there", (await s.lease("lea", "linear", "l1", "p3", 60_000)) === false && (await s.get("lea", "linear")) === null);
+    check("another holder can't give it back", (await s.lease("lea", "github", "l1", "p2", 0)) === false);
+    check("its own holder can, with ms 0", (await s.lease("lea", "github", "l1", "p1", 0)) === true);
+    check("…and then another takes it", (await s.lease("lea", "github", "l1", "p2", 200)) === true);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    check("a lease lapses after its ms", (await s.lease("lea", "github", "l1", "p3", 60_000)) === true);
+    check("a lease is no write: the value is as it was", (await s.get("lea", "github")) === "l1");
+    check("a write onto a leased row lands", (await s.put("lea", "github", "l2", "l1")) === true);
+    check("…and ends its lease", (await s.lease("lea", "github", "l2", "p4", 60_000)) === true);
+    await s.delete("lea", "github");
+    await s.put("lea", "github", "l3", null);
+    check("so does a delete", (await s.lease("lea", "github", "l3", "p5", 60_000)) === true);
+    await s.delete("lea");
+    await s.put("lea", "github", "l4", null);
+    check("…of all the user's", (await s.lease("lea", "github", "l4", "p6", 60_000)) === true);
+    const taken = await Promise.all([s.lease("lea", "github", "l4", "a", 60_000), s.lease("lea", "github", "l4", "b", 60_000)]);
+    check("two leases by others at once, on a row whose lease is held: neither", !taken.includes(true));
+    await s.put("lea2", "github", "m1", null);
+    const both = await Promise.all([s.lease("lea2", "github", "m1", "a", 60_000), s.lease("lea2", "github", "m1", "b", 60_000)]);
+    check("two leases at once: one is taken", both.filter(Boolean).length === 1);
+    check("leases are kept per user and server", (await s.lease("lea2", "linear", "m1", "c", 60_000)) === false && (await s.put("lea3", "github", "n1", null)) && (await s.lease("lea3", "github", "n1", "c", 60_000)) === true);
   }
 
   check("an unknown client is null", (await s.getClient("github", "https://github.com")) === null);

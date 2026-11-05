@@ -266,7 +266,8 @@ const linked = mcpServer({ name: "linked", transport: http("https://example.com/
 const unconnected = await linked.tool("search", { args: z.object({}) }).call({}, { userId: "ada" }).catch((err) => err);
 out.mcpOAuth =
   unconnected?.auth?.connect === "/mcp/connect/linked" && typeof withOAuth.handler() === "function" &&
-  (await credentials.put("ada", "linked", "sealed", null)) === true;
+  (await credentials.put("ada", "linked", "sealed", null)) === true &&
+  (await credentials.lease("ada", "linked", "sealed", "holder", 60_000)) === true;
 out.mcpPostgres = typeof pgCredentialStore({ query: async () => ({ rows: [] }) }).takeFlow === "function" && typeof migrateMcp === "function" && mcpSchema.length === 3;
 
 // the contract layer does real work, not just re-export shapes
@@ -336,7 +337,7 @@ console.log(JSON.stringify(out));
   check("@haikit/auth/oauth2 starts a sign-in with GitHub", () => runtime.authOauth2 === true);
   check("@haikit/mcp declares and calls a tool, and makes text of a result", () => runtime.mcpWorks === true);
   check("@haikit/mcp makes calls as each user, and refuses one with no user", () => runtime.mcpAuthWorks === true);
-  check("@haikit/mcp gives a user with no OAuth account the connect link", () => runtime.mcpOAuth === true);
+  check("@haikit/mcp gives a user with no OAuth account the connect link, and its store takes a refresh lease", () => runtime.mcpOAuth === true);
   check("@haikit/mcp/postgres resolves via exports", () => runtime.mcpPostgres === true);
   check("defineSurface builds a surface", () => runtime.surfaceName === "packtest_picker");
   check("cap() caps (3 of 47)", () => runtime.capShown === 3 && runtime.capTotal === 47);

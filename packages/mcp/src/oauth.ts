@@ -26,6 +26,16 @@ import type { CredentialStore } from "./store.js";
 
 /** How long a connect flow lasts: from the connect route to the callback. */
 export const FLOW_MS = 600_000;
+/** A refresh lease lasts this many `timeoutMs`: past the refresh request, which `timeoutMs` bounds, and the write after it. */
+const LEASE_TIMEOUTS = 2;
+/** How often the store is read while another process holds the refresh lease. */
+const LEASE_POLL_MS = 250;
+
+/** A wait that doesn't keep the process going. */
+const pause = (ms: number) =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, ms).unref();
+  });
 
 export interface OAuthServerOptions {
   /**
@@ -402,7 +412,7 @@ export class OAuthServer {
    * each user at a time, shared until it settles, however long that takes,
    * on whichever connection of theirs: a second would spend a refresh token
    * the first may have spent already, and delete the credential when it's
-   * refused.
+   * refused. Across processes, the store's lease does the same.
    */
   refresh(user: string, before: Held, resourceMetadataUrl: URL | undefined): Promise<Held> {
     let refreshing = this.refreshing.get(user);
@@ -420,8 +430,8 @@ export class OAuthServer {
 
   /**
    * The store's newer credential if another refresh wrote one, else a
-   * refresh of `before`. A refusal deletes it, unless another write came
-   * first; an outage keeps it.
+   * refresh of `before`, under the store's lease. A refusal deletes it,
+   * unless another write came first; an outage keeps it.
    */
   private async renew(user: string, before: Held, resourceMetadataUrl: URL | undefined): Promise<Held> {
     const moved = await this.newer(user, before);
@@ -432,6 +442,11 @@ export class OAuthServer {
       throw new NeedsAuth("reconnect");
     }
     const where = await this.where(tokens.issuer, resourceMetadataUrl);
+    const holder = randomBytes(16).toString("base64url");
+    const written = await this.lease(user, before, holder);
+    if (written) return written;
+    // given back when this refresh writes nothing; a write or delete ends it anyway
+    const giveBack = () => this.core.store.lease(user, this.name, before.sealed, holder, 0).catch(() => false);
     let fresh: Awaited<ReturnType<typeof refreshAuthorization>>;
     try {
       fresh = await refreshAuthorization(where.url, {
@@ -443,14 +458,16 @@ export class OAuthServer {
       });
     } catch (err) {
       if (err instanceof OAuthError && REFUSED.has(err.code)) {
-        // Refused: unless another refresh spent the token first, and stored
-        // what it got, which is then the one to use.
+        // Refused: unless another refresh spent the token first, after this
+        // one's lease lapsed, and stored what it got, which is then the one
+        // to use.
         const moved = await this.newer(user, before);
         if (moved) return moved;
         await this.drop(user, before);
         throw new NeedsAuth("reconnect");
       }
       // an outage, or an answer that isn't OAuth's: kept, for the next 401 to try
+      await giveBack();
       throw new LookupFailed(err);
     }
     const kept: Kept = { ...before.kept, tokens: { ...fresh, issuer: tokens.issuer }, scope: fresh.scope ?? before.kept.scope };
@@ -458,8 +475,27 @@ export class OAuthServer {
     if (await this.core.store.put(user, this.name, sealed, before.sealed)) return { sealed, kept };
     // another write came first, and stands
     const stands = await this.newer(user, before);
-    if (!stands) throw new Error("the store refused a write of what it still holds");
-    return stands;
+    if (stands) return stands;
+    await giveBack();
+    throw new Error("the store refused a write of what it still holds");
+  }
+
+  /**
+   * Takes the refresh lease of the user's credential, so one process at a
+   * time spends its refresh token. While another holds it: the credential
+   * that one writes, which is then the one to use, or the lease once it
+   * lapses, as it does when that process is gone.
+   */
+  private async lease(user: string, before: Held, holder: string): Promise<Held | null> {
+    const ms = LEASE_TIMEOUTS * this.timeoutMs;
+    const giveUp = Date.now() + 2 * ms;
+    while (!(await this.core.store.lease(user, this.name, before.sealed, holder, ms))) {
+      const moved = await this.newer(user, before);
+      if (moved) return moved;
+      if (Date.now() >= giveUp) throw new Error(`other processes held the refresh lease for ${2 * ms} ms`);
+      await pause(LEASE_POLL_MS);
+    }
+    return null;
   }
 
   /** The store's credential if it's newer than `before`, or null if it's still `before`. With none, the server's refusal stands. */

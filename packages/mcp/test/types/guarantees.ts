@@ -105,6 +105,7 @@ async function withAccounts(err: McpError) {
   const accounts: McpAccount[] = await withOAuth.connections("u1");
   const connectedAt: number = accounts[0].connectedAt;
   const landed: boolean = await store.put("u1", "linear", "sealed", null);
+  const leased: boolean = await store.lease("u1", "linear", "sealed", "holder", 60_000);
   const handle: (req: IncomingMessage, res: ServerResponse) => Promise<boolean> = withOAuth.handler();
   await withOAuth.disconnect("u1");
   withOAuth.sdk(async () => ({ token: async () => "t" }));
@@ -123,7 +124,9 @@ async function withAccounts(err: McpError) {
   const written: string = await store.put("u1", "linear", "sealed", null);
   // @ts-expect-error  a write names the value it expects there, or null for none
   await store.put("u1", "linear", "sealed");
-  return [connect, connectedAt, landed, handle, when, written, linear, shared];
+  // @ts-expect-error  a lease names its holder, and how long it lasts
+  await store.lease("u1", "linear", "sealed");
+  return [connect, connectedAt, landed, leased, handle, when, written, linear, shared];
 }
 
 export { asTool, tools, typed, asEachUser, withAccounts };

@@ -102,9 +102,11 @@ never to give the model. A job outside any conversation passes `{ userId }`.
 
 With `oauth()`, the connect route sends the user to the authorization server
 with PKCE, and the callback stores their tokens sealed with `secret`, bound
-to the user and the server. A 401 refreshes them, once however many calls
-get one, and across app processes sharing the store. `connections(userId)` lists
-what a user connected, and `disconnect(userId, server?)` revokes and deletes.
+to the user and the server. A 401 refreshes them once, however many calls
+get one. Across app processes sharing the store, one at a time takes the
+store's refresh lease and spends the refresh token, and the others use what
+it stores. `connections(userId)` lists what a user connected, and
+`disconnect(userId, server?)` revokes and deletes.
 `mcpAuth.sdk(make)` takes one of the SDK's own providers for each user
 instead.
 

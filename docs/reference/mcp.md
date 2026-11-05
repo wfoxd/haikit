@@ -749,7 +749,7 @@ they connect again.
 - `createMcpAuth: store, secret and redirectUri go together: oauth() needs
   all three`, for one or two of them.
 - `createMcpAuth: store must be a CredentialStore, such as
-  memoryCredentialStore()`, for one missing any of its eight methods.
+  memoryCredentialStore()`, for one missing any of its nine methods.
 - `createMcpAuth: secret must be a string, or a list of them`, for an empty
   list, or one with anything but strings.
 - `createMcpAuth: each secret must be at least 32 bytes`.
@@ -867,12 +867,14 @@ secret isn't kept with them: it's read from the options each time.
   server, and refreshed only at the authorization server that issued it.
 - **On a 401,** the credential is refreshed, once for the user at a time,
   however many requests got a 401 together, such as a new connection's
-  stream and its list of tools. A 401 waits for the refresh, steps 1 to 6,
-  for at most `timeoutMs`, then the call rejects with reason `connection`,
-  its `cause` `Error: no refresh within <timeoutMs> ms`. The refresh itself
-  goes on until it settles, since it may have spent the refresh token
-  already: a 401 meanwhile, on the user's connection or a new one, waits for
-  it rather than sending another, and the tokens it gets are stored.
+  stream and its list of tools, and once for the user at a time across the
+  app's processes sharing the store, by the store's lease (step 4). A 401
+  waits for the refresh, steps 1 to 7, for at most `timeoutMs`, then the
+  call rejects with reason `connection`, its `cause` `Error: no refresh
+  within <timeoutMs> ms`. The refresh itself goes on until it settles, since
+  it may have spent the refresh token already: a 401 meanwhile, on the
+  user's connection or a new one, waits for it rather than sending another,
+  and the tokens it gets are stored.
   1. The store is read again. A newer credential, as another process's
      refresh wrote, is used as it is, with nothing sent to the authorization
      server. With none, the call rejects with kind `reconnect`.
@@ -884,20 +886,30 @@ secret isn't kept with them: it's read from the options each time.
      rejects with reason `protocol`, nothing is sent, and `@haikit/mcp:
      <server>: no refresh for user <userId>: <why>` is logged. The
      credential is kept.
-  4. The refresh is sent, as the client the tokens were issued to (see
+  4. The store's refresh lease is taken ([`lease`](#credentialstore)), for
+     2 × `timeoutMs`, so one process at a time spends the refresh token.
+     While another process holds it, the store is read every 250 ms: the
+     credential it writes is used as it is, with nothing sent, one it
+     deletes rejects the call with kind `reconnect`, and once its lease
+     lapses, as when that process is gone, this one takes it. After 4 ×
+     `timeoutMs` of other processes' leases, the refresh fails, `Error:
+     other processes held the refresh lease for <4 × timeoutMs> ms`, and
+     the credential is kept.
+  5. The refresh is sent, as the client the tokens were issued to (see
      [The app's client](#oauth)), with the resource indicator. If the
-     authorization server refuses it, with `invalid_grant`, `invalid_client` or
-     `unauthorized_client`, the store is read again, and a newer credential,
-     as when another process spent the same refresh token first, is used.
-     Else the credential is deleted, if the store still holds the one the
-     refresh began with, and the call rejects with kind `reconnect`.
-  5. Anything else, such as no answer, a 503, or any other error, rejects
-     the call with reason `connection`, and keeps the credential, for the
-     next 401 to try again.
-  6. The new tokens are written over the credential the refresh began with,
+     authorization server refuses it, with `invalid_grant`, `invalid_client`
+     or `unauthorized_client`, the store is read again, and a newer
+     credential, as when another process spent the same refresh token after
+     this one's lease lapsed, is used. Else the credential is deleted, if
+     the store still holds the one the refresh began with, and the call
+     rejects with kind `reconnect`.
+  6. Anything else, such as no answer, a 503, or any other error, rejects
+     the call with reason `connection`, keeps the credential, and gives the
+     lease back, for the next 401 to try again.
+  7. The new tokens are written over the credential the refresh began with,
      keeping its `connectedAt` and its client, and its scope unless the
-     tokens name one. If another write came first, the store's credential
-     is used instead. The transport then sends the request once more, with
+     tokens name one, which ends the lease. If another write came first, the
+     store's credential is used instead. The transport then sends the request once more, with
      the new token: a 401 again rejects with kind `reconnect`, and keeps the
      credential.
 - **No call starts a sign-in,** or registers a client: only the connect
@@ -1293,6 +1305,7 @@ interface CredentialStore {
   put(userId: string, server: string, value: string, previous: string | null): Promise<boolean>;
   delete(userId: string, server?: string, previous?: string): Promise<void>;
   list(userId: string): Promise<string[]>;
+  lease(userId: string, server: string, previous: string, holder: string, ms: number): Promise<boolean>;
   getClient(server: string, issuer: string): Promise<string | null>;
   putClient(server: string, issuer: string, value: string): Promise<void>;
   putFlow(state: string, value: string, expiresAt: number): Promise<void>;
@@ -1300,8 +1313,9 @@ interface CredentialStore {
 }
 ```
 
-Where each user's credentials are kept, with the app's clients registered at
-each authorization server and the connect flows on their way. Every value is
+Where each user's credentials are kept, with their refresh leases, the
+app's clients registered at each authorization server, and the connect
+flows on their way. Every value is
 an opaque string, [sealed](#sealing) before the store sees it. Two sealings
 of the same thing never give the same string, so a value tells one write
 from another.
@@ -1312,11 +1326,12 @@ from another.
 | `put` | Writes it only if the row still holds `previous` (`null`: no row yet), and resolves `true`; else `false`, changing nothing. The check and the write must be one atomic step: of two writes onto the same value at once, one lands |
 | `delete` | Deletes the user's credential for `server`, or with no `server`, all of theirs. With `previous`, only if the row still holds it. Nothing there is fine |
 | `list` | The names of the servers the user has a credential for |
+| `lease` | Takes the refresh lease of the user's credential for `server` for `ms`, by the store's own clock, and resolves `true`, only if the row still holds `previous` and no lease is held but `holder`'s; else `false`, changing nothing. Its own `holder` may take it again, and gives it back with `ms` 0. A `put` or `delete` of the row ends its lease. A lease isn't a write of the credential. The check and the take must be one atomic step: of two takes at once by different holders, at most one is `true` |
 | `getClient`, `putClient` | The app's client for a server at an authorization server's `issuer`, which every user's next connect starts with. `putClient` replaces one |
 | `putFlow` | Keeps a flow under its `state` until it's taken, or `expiresAt` (epoch ms) passes |
 | `takeFlow` | Removes a flow and gives it, once: of two takes at once, one gets it. `null` for none, or one past its `expiresAt` |
 
-`createMcpAuth` checks only that the eight methods are functions. A store of
+`createMcpAuth` checks only that the nine methods are functions. A store of
 the app's own can run the contract tests in `packages/mcp/test/store.mjs`.
 
 ### `memoryCredentialStore`
@@ -1346,7 +1361,10 @@ interface Queryable {
 Keeps everything in Postgres, shared by every server. Each method is one
 statement. `put` onto no row is an `INSERT … ON CONFLICT DO NOTHING`, and
 onto a value an `UPDATE … WHERE value = <previous>`, so of two servers'
-writes at once, one lands. `takeFlow` is a `DELETE … RETURNING`, so a flow
+writes at once, one lands, and either ends the row's lease. `lease` is an
+`UPDATE … WHERE value = <previous>` that also checks the lease, by the
+database's clock, so the app's servers agree on when it lapses however
+their own clocks differ. `takeFlow` is a `DELETE … RETURNING`, so a flow
 is taken once, and is past its time by the database's clock. `putFlow`
 deletes the flows past their time in the same statement. `Queryable` is the
 same shape as `@haikit/postgres`'s and `@haikit/auth/postgres`'s (see
@@ -1358,10 +1376,12 @@ if you have one.
 
 ```sql
 CREATE TABLE IF NOT EXISTS haikit_mcp_credentials (
-  user_id    text NOT NULL,
-  server     text NOT NULL,
-  value      text NOT NULL,
-  updated_at timestamptz NOT NULL DEFAULT now(),
+  user_id      text NOT NULL,
+  server       text NOT NULL,
+  value        text NOT NULL,
+  updated_at   timestamptz NOT NULL DEFAULT now(),
+  lease_holder text,
+  lease_until  timestamptz,
   PRIMARY KEY (user_id, server)
 );
 CREATE TABLE IF NOT EXISTS haikit_mcp_clients (
@@ -1377,7 +1397,9 @@ CREATE TABLE IF NOT EXISTS haikit_mcp_flows (
 );
 ```
 
-`updated_at` is set on each write of a credential.
+`updated_at` is set on each write of a credential, and not by a lease.
+`lease_holder` and `lease_until` are its refresh lease, cleared by each
+write.
 
 ### Sealing
 

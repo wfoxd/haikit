@@ -23,6 +23,14 @@ export interface CredentialStore {
   delete(userId: string, server?: string, previous?: string): Promise<void>;
   /** The servers a user has a credential for. */
   list(userId: string): Promise<string[]>;
+  /**
+   * The refresh lease of a user's credential for a server, so one process at
+   * a time spends its refresh token. Taken for `ms`, by the store's clock, if
+   * the row still holds `previous` and no lease but `holder`'s is held: true.
+   * Else false, changing nothing. `ms` 0 gives `holder`'s back. A write or a
+   * delete of the row ends its lease; a lease is no write.
+   */
+  lease(userId: string, server: string, previous: string, holder: string, ms: number): Promise<boolean>;
   /** A registered OAuth client, per server and authorization server, shared by every user. */
   getClient(server: string, issuer: string): Promise<string | null>;
   putClient(server: string, issuer: string, value: string): Promise<void>;
@@ -33,7 +41,7 @@ export interface CredentialStore {
 }
 
 /** The methods a `CredentialStore` has, to check one an app passes. */
-export const STORE_METHODS = ["get", "put", "delete", "list", "getClient", "putClient", "putFlow", "takeFlow"] as const;
+export const STORE_METHODS = ["get", "put", "delete", "list", "lease", "getClient", "putClient", "putFlow", "takeFlow"] as const;
 
 /** The most flows `memoryCredentialStore` keeps: past it, the oldest goes. */
 const MEMORY_FLOWS = 10_000;
@@ -45,6 +53,8 @@ const MEMORY_FLOWS = 10_000;
  */
 export function memoryCredentialStore(): CredentialStore {
   const credentials = new Map<string, Map<string, string>>();
+  /** Each credential's refresh lease, by user and server. */
+  const leases = new Map<string, { holder: string; until: number }>();
   const clients = new Map<string, string>();
   const flows = new Map<string, { value: string; expiresAt: number }>();
   const key = (a: string, b: string) => JSON.stringify([a, b]);
@@ -57,21 +67,32 @@ export function memoryCredentialStore(): CredentialStore {
       if ((servers.get(server) ?? null) !== previous) return false;
       servers.set(server, value);
       credentials.set(userId, servers);
+      leases.delete(key(userId, server));
       return true;
     },
     async delete(userId, server, previous) {
       const servers = credentials.get(userId);
       if (!servers) return;
       if (server === undefined) {
+        for (const name of servers.keys()) leases.delete(key(userId, name));
         credentials.delete(userId);
         return;
       }
       if (previous !== undefined && servers.get(server) !== previous) return;
       servers.delete(server);
+      leases.delete(key(userId, server));
       if (!servers.size) credentials.delete(userId);
     },
     async list(userId) {
       return [...(credentials.get(userId)?.keys() ?? [])];
+    },
+    async lease(userId, server, previous, holder, ms) {
+      if (credentials.get(userId)?.get(server) !== previous) return false;
+      const now = Date.now();
+      const held = leases.get(key(userId, server));
+      if (held && held.until > now && held.holder !== holder) return false;
+      leases.set(key(userId, server), { holder, until: now + ms });
+      return true;
     },
     async getClient(server, issuer) {
       return clients.get(key(server, issuer)) ?? null;

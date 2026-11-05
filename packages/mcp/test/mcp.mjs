@@ -1795,15 +1795,34 @@ const NEW_SECRET = "the secret that replaces it, of 32 bytes or more";
     as.refreshDelay = as.reuseDelay = 100;
     granted = as.granted;
     const refused = as.refused;
+    const refreshesSent = () => as.tokens.filter((t) => t.grant === "refresh_token").length;
+    let sent = refreshesSent();
     const both = await Promise.all([text(whoami.call({}, { userId: "ada" })), text(whoami2.call({}, { userId: "ada" }))]);
     check(
-      "two processes refreshing at once: one is granted, and the one refused takes what the other stored",
-      both.every((t) => t === "ada") && as.granted === granted + 1 && as.refused === refused + 1 && (await store.get("ada", "github")) !== null,
+      "two processes refreshing at once: one refresh is sent, under the store's lease, and the other takes what it stored",
+      both.every((t) => t === "ada") &&
+        refreshesSent() === sent + 1 &&
+        as.granted === granted + 1 &&
+        as.refused === refused &&
+        (await store.get("ada", "github")) !== null,
     );
     granted = as.granted;
     await Promise.all([whoami.call({}, { userId: "ada" }), whoami2.call({}, { userId: "ada" })]);
     check("…and both call with it after", as.granted === granted);
     await gh2.close();
+
+    // a process that took the lease, and is gone
+    await gh.forget("ada");
+    expire("ada");
+    as.refreshDelay = as.reuseDelay = 0;
+    check("a lease another process holds", await store.lease("ada", "github", await store.get("ada", "github"), "gone", 600));
+    sent = refreshesSent();
+    const started = Date.now();
+    check(
+      "…is waited for, and once it lapses this process takes it and refreshes",
+      (await text(whoami.call({}, { userId: "ada" }))) === "ada" && refreshesSent() === sent + 1 && Date.now() - started >= 500,
+    );
+    as.refreshDelay = as.reuseDelay = 100;
 
     rs.expireOnInitialized.add("ada");
     await gh.forget("ada");
@@ -1825,13 +1844,12 @@ const NEW_SECRET = "the secret that replaces it, of 32 bytes or more";
     const briefWho = brief.tool("whoami", { args: anything });
     expire("ada");
     slowPut = 400;
-    const refreshes = () => as.tokens.filter((t) => t.grant === "refresh_token").length;
-    const sent = refreshes();
+    sent = refreshesSent();
     const late = await rejection(briefWho.call({}, { userId: "ada" }));
     check("a refresh the call can't wait for: connection", late?.reason === "connection");
     check(
       "…and a call meanwhile waits for that refresh, rather than spending its refresh token again",
-      (await text(briefWho.call({}, { userId: "ada" }))) === "ada" && refreshes() === sent + 1 && (await store.get("ada", "github")) !== null,
+      (await text(briefWho.call({}, { userId: "ada" }))) === "ada" && refreshesSent() === sent + 1 && (await store.get("ada", "github")) !== null,
     );
     slowPut = 0;
     await brief.close();
@@ -1845,6 +1863,7 @@ const NEW_SECRET = "the secret that replaces it, of 32 bytes or more";
       "a refresh the authorization server can't answer: connection, and the credential kept",
       outage?.reason === "connection" && outage.message === "github/whoami could not be reached" && (await store.get("ada", "github")) === held,
     );
+    check("…and its lease given back", (await store.lease("ada", "github", held, "another", 0)) === true);
     as.refresh = "ok";
     check("…so once it's back, the next 401 refreshes", (await text(whoami.call({}, { conversationId: "c1" }))) === "ada");
 
