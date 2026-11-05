@@ -31,8 +31,13 @@ export class Mismatch extends Error {
 
 /** One user's credential for one server, and the `AuthProvider` that sends it. */
 export interface Credential {
-  /** Before a connection or call: finds the credential, or throws `NeedsAuth("connect")`, so nothing is sent without one. */
-  ensure(): Promise<void>;
+  /**
+   * Before a connection or call: finds the credential, or throws
+   * `NeedsAuth("connect")`, so nothing is sent without one. True when it's
+   * now another account than before: the connection made with the old one
+   * is made again.
+   */
+  ensure(): Promise<boolean>;
   /** For a connection being closed: stops a lookup on its way, and its timer. */
   close(): void;
   /** What the transport is given, once `ensure()` has found the credential. */

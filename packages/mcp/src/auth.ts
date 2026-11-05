@@ -370,9 +370,10 @@ export class BearerCredential implements Credential {
     this.lookups = new Lookup(timeoutMs, "token");
   }
 
-  async ensure(): Promise<void> {
+  async ensure(): Promise<boolean> {
     if (this.token === null) await this.look();
     if (this.token === null) throw new NeedsAuth("connect");
+    return false;
   }
 
   close(): void {
@@ -432,7 +433,7 @@ class SdkCredential implements Credential {
     this.lookups = new Lookup(timeoutMs, "provider");
   }
 
-  async ensure(): Promise<void> {
+  async ensure(): Promise<boolean> {
     if (this.made === null) {
       this.looking ??= this.lookups
         .run(() => this.make(this.user))
@@ -450,6 +451,7 @@ class SdkCredential implements Credential {
       await this.looking;
     }
     if (this.made === null) throw new NeedsAuth("connect");
+    return false;
   }
 
   close(): void {

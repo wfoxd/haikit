@@ -1855,6 +1855,44 @@ const NEW_SECRET = "the secret that replaces it, of 32 bytes or more";
     await brief.close();
     await gh.forget("ada");
 
+    // a store that fails as a refreshed credential is written
+    let failPuts = 0;
+    let landThenFail = false;
+    const flakyStore = {
+      ...store,
+      put: async (...args) => {
+        if (landThenFail) {
+          landThenFail = false;
+          await store.put(...args);
+          throw new Error("the store's answer was lost");
+        }
+        if (failPuts > 0) {
+          failPuts--;
+          throw new Error("the store is down");
+        }
+        return store.put(...args);
+      },
+    };
+    const flaky = createMcpAuth({ ...options, store: flakyStore, onConnected: undefined });
+    const ghF = mcpServer({ name: "github", transport: http(rs.url), auth: flaky.oauth({ issuer: as.issuer }) });
+    const flakyWho = ghF.tool("whoami", { args: anything });
+    const revokedBefore = as.revoked.length;
+    expire("ada");
+    failPuts = 2;
+    sent = refreshesSent();
+    check(
+      "a refreshed credential the store fails to write twice: written on the third try",
+      (await text(flakyWho.call({}, { userId: "ada" }))) === "ada" && failPuts === 0 && refreshesSent() === sent + 1,
+    );
+    expire("ada");
+    landThenFail = true;
+    const unwritten = await store.get("ada", "github");
+    check(
+      "…and one that landed, though the store's answer was lost: written, and nothing revoked",
+      (await text(flakyWho.call({}, { userId: "ada" }))) === "ada" && (await store.get("ada", "github")) !== unwritten && as.revoked.length === revokedBefore,
+    );
+    await ghF.close();
+
     as.refresh = "503";
     expire("ada");
     const held = await store.get("ada", "github");
@@ -2074,6 +2112,37 @@ const NEW_SECRET = "the secret that replaces it, of 32 bytes or more";
     );
     check("…and the tokens it got are revoked, not left live", ![...as.refreshes.values()].some((who) => who.sub === "eve"));
     await gh8.close();
+  }
+
+  // what another process does to a user's credential, seen at this one's next call
+  {
+    await connectFlow(app, "/mcp/connect/github", "fay");
+    const apart = createMcpAuth({ ...options, onConnected: undefined });
+    const ghA = mcpServer({ name: "github", transport: http(rs.url), auth: apart.oauth({ issuer: as.issuer }) });
+    const fayWho = ghA.tool("whoami", { args: anything });
+    check("a user's call in another process", (await text(fayWho.call({}, { userId: "fay" }))) === "fay");
+    expire("fay");
+    await whoami.call({}, { userId: "fay" });
+    let dials = rs.handshakes("fay");
+    mark = rs.refusals.length;
+    check(
+      "a credential another process refreshed: used as it is, on the same connection, with no 401",
+      (await text(fayWho.call({}, { userId: "fay" }))) === "fay" && rs.handshakes("fay") === dials && rs.refusals.length === mark,
+    );
+    const again = await authorize(app, "/mcp/connect/github", "fay", "fay-elsewhere");
+    await comeBack(again.back, "fay");
+    dials = rs.handshakes("fay-elsewhere");
+    check(
+      "the user connected again, as another account, in another process: the connection is made again, as that account",
+      (await text(fayWho.call({}, { userId: "fay" }))) === "fay-elsewhere" && rs.handshakes("fay-elsewhere") === dials + 1,
+    );
+    await mcpAuth.disconnect("fay");
+    mark = rs.seen.length;
+    check(
+      "…and disconnected in another process: connect, with nothing sent",
+      sameNeed(await rejection(fayWho.call({}, { userId: "fay" })), { kind: "connect", connect: "/mcp/connect/github" }) && rs.seen.length === mark,
+    );
+    await ghA.close();
   }
 
   // a new secret first, and the old after it

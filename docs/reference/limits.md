@@ -324,6 +324,8 @@ None of these can be changed without changing HaiKIT's code.
 | A 401's wait for a refresh, and each request to an authorization server | `timeoutMs` each | [MCP servers](mcp.md#oauth) |
 | A refresh lease, unless the refresh writes, deletes or gives it back first | 2 × `timeoutMs` | [MCP servers](mcp.md#oauth) |
 | Reading the store while another process holds the refresh lease; giving up | every 250; after 4 × `timeoutMs` | [MCP servers](mcp.md#oauth) |
+| Writes of a refreshed credential while the store throws; the pause between them | 3; 250 | [MCP servers](mcp.md#oauth) |
+| Reads of a user's OAuth credential from the store | 1 before every call, shared by calls that start together, within `timeoutMs` | [MCP servers](mcp.md#oauth) |
 | A connect flow, from the connect route to the callback; taken once | 600,000 (10 minutes) | [MCP servers](mcp.md#connecting) |
 | Flows `memoryCredentialStore` keeps; past it, the oldest goes | 10,000 | [MCP servers](mcp.md#memorycredentialstore) |
 | A connect link's `scope` | 1,000 characters | [MCP servers](mcp.md#connecting) |

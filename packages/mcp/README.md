@@ -105,7 +105,8 @@ with PKCE, and the callback stores their tokens sealed with `secret`, bound
 to the user and the server. A 401 refreshes them once, however many calls
 get one. Across app processes sharing the store, one at a time takes the
 store's refresh lease and spends the refresh token, and the others use what
-it stores. `connections(userId)` lists what a user connected, and
+it stores. Each call reads the store first, so a refresh, a connect or a
+disconnect in another process is seen on the next call. `connections(userId)` lists what a user connected, and
 `disconnect(userId, server?)` revokes and deletes.
 `mcpAuth.sdk(make)` takes one of the SDK's own providers for each user
 instead.

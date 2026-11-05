@@ -857,14 +857,23 @@ secret isn't kept with them: it's read from the options each time.
 
 **A call:**
 
-- **Before a connection,** the user's credential is read from the store,
-  within `timeoutMs`. With none, the call rejects with reason `auth`, kind
-  `connect`, with the connect link, and nothing is sent. One that doesn't
-  open counts as none, and is logged: `@haikit/mcp: <server>: the credential
-  of user <userId> doesn't open: sealed with a secret that's gone, or for
-  another row`. A store that throws or rejects, or doesn't answer within
+- **Before every call,** the user's credential is read from the store,
+  within `timeoutMs`, once for the calls that start together, since another
+  of the app's processes may have refreshed it, or the user connected again
+  or disconnected there. With none, the call rejects with reason `auth`,
+  kind `connect`, with the connect link, and nothing is sent; the user's
+  connection, if they have one, is closed, and a call in flight on it
+  rejects as when [it drops](#the-connection). One that doesn't open counts
+  as none, and is logged: `@haikit/mcp: <server>: the credential of user
+  <userId> doesn't open: sealed with a secret that's gone, or for another
+  row`. A store that throws or rejects, or doesn't answer within
   `timeoutMs`, rejects the call with reason `connection`, its `cause` what
   it threw, or `Error: no credential within <timeoutMs> ms`.
+- **A credential that changed** since the last call is used from then on.
+  One refreshed elsewhere, with the same `connectedAt`, is used on the same
+  connection. One the user connected again, with a new `connectedAt`, as
+  when they connected another account, closes the connection as above, and
+  the call makes a new one with it.
 - **Every request** on the user's connection carries their access token, as
   `Authorization: Bearer`, and the token is bound to the server by the
   resource indicator it was issued for (RFC 8707). It's sent only to that
@@ -912,7 +921,13 @@ secret isn't kept with them: it's read from the options each time.
      lease back, for the next 401 to try again.
   7. The new tokens are written over the credential the refresh began with,
      keeping its `connectedAt` and its client, and its scope unless the
-     tokens name one, which ends the lease. If another write came first, or
+     tokens name one, which ends the lease. The old refresh token may be
+     spent, so a store that throws or rejects is tried twice more, 250 ms
+     apart, under the lease, and a try that landed though its answer was
+     lost counts as written. If the third throws too, the call rejects with
+     reason `connection`, its `cause` what the store threw, and the lease is
+     kept until it lapses, for another process to read what may have
+     landed. If another write came first, or
      a delete, as by a [disconnect](#disconnect), the new tokens are no
      one's, and are revoked rather than left live: the refresh token if the
      authorization server rotated it, else only the access token, since the
@@ -1097,6 +1112,9 @@ works as the one connection of a server without `auth` does (see
 - **Closed when idle,** after `idleMs` (300,000 ms by default) with no call.
   The timer doesn't keep the process alive.
 - **Closed by [`forget(userId)`](#forget),** and by [`close()`](#close).
+- **For `oauth()`, closed when a call finds the credential gone,** or the
+  user connected again in another process. That call, once they have one,
+  or the next, makes a new connection with it (see [`oauth`](#oauth)).
 
 A user whose connection was closed for room, for idling or by `forget` gets
 a new one on their next call, checked as a first one, with their credential
@@ -1642,14 +1660,16 @@ more (got <value>)`.
 | Connections, without `auth` | 1, shared by every call | |
 | Connections, with `auth` | 1 per user; at most `maxConnections`, 100 by default, with no call in flight | `maxConnections` |
 | A user's connection with no call is kept | 300,000 ms, by default | `idleMs` |
-| Lookups of a user's credential at once, for each user's connection | 1, shared by first calls and, for `bearer`, 401s that come together | [`bearer`](#bearer), [`oauth`](#oauth), [`sdk`](#sdk) |
+| Lookups of a user's credential at once, for each user's connection | 1, shared by first calls (for `oauth()`, by calls) and, for `bearer`, 401s that come together | [`bearer`](#bearer), [`oauth`](#oauth), [`sdk`](#sdk) |
 | Refreshes of a user's OAuth credential at once, for each user's connection | 1, shared by 401s that come together | [`oauth`](#oauth) |
+| Reads of a user's OAuth credential, for each user's connection | 1 before every call, shared by calls that start together | [`oauth`](#oauth) |
 | A refresh, and each request to an authorization server | `timeoutMs` each | [`oauth`](#oauth) |
 | A connect flow | 600,000 ms (10 min), and taken once | [Connecting](#connecting) |
 | Flows `memoryCredentialStore` keeps | 10,000 | [`memoryCredentialStore`](#memorycredentialstore) |
 | A connect link's `scope` | 1,000 characters | [Connecting](#connecting) |
 | A connect link's `conversation`, to be kept | 512 characters | [Connecting](#connecting) |
 | Writes of a new credential at the callback | 3 tries | [The callback](#the-callback) |
+| Writes of a refreshed credential, while the store throws | 3 tries, 250 ms apart | [`oauth`](#oauth) |
 | A `secret` | 32 bytes or more, each | [`createMcpAuth`](#createmcpauth) |
 | The client metadata document, in a cache | 3,600 s | `cache-control: max-age=3600` |
 | Times a call is sent | 1 | |

@@ -30,6 +30,9 @@ export const FLOW_MS = 600_000;
 const LEASE_TIMEOUTS = 2;
 /** How often the store is read while another process holds the refresh lease. */
 const LEASE_POLL_MS = 250;
+/** Tries at writing a refreshed credential while the store fails, and the pause between them. */
+const WRITE_TRIES = 3;
+const WRITE_PAUSE_MS = 250;
 
 /** A wait that doesn't keep the process going. */
 const pause = (ms: number) =>
@@ -181,10 +184,11 @@ export class OAuthServer {
     return new OAuthCredential(this, user);
   }
 
-  /** A user's credential as the store holds it, or null if there's none, or none that opens. */
-  async read(user: string): Promise<Held | null> {
+  /** A user's credential as the store holds it, or null if there's none, or none that opens. `known` is given back as it is if the store still holds it. */
+  async read(user: string, known: Held | null = null): Promise<Held | null> {
     const sealed = await this.core.store.get(user, this.name);
     if (sealed === null) return null;
+    if (sealed === known?.sealed) return known;
     const kept = this.core.sealer.open(sealed, binding.credential(user, this.name)) as Kept | null;
     if (
       typeof kept?.tokens?.access_token !== "string" ||
@@ -472,7 +476,7 @@ export class OAuthServer {
     }
     const kept: Kept = { ...before.kept, tokens: { ...fresh, issuer: tokens.issuer }, scope: fresh.scope ?? before.kept.scope };
     const sealed = this.seal(user, kept);
-    if (await this.core.store.put(user, this.name, sealed, before.sealed)) return { sealed, kept };
+    if (await this.write(user, before, sealed)) return { sealed, kept };
     // Another write came first, or a delete, as by a disconnect: the tokens
     // just issued are no one's, so they're revoked rather than left live.
     await this.orphaned(user, kept, tokens.refresh_token);
@@ -480,6 +484,24 @@ export class OAuthServer {
     if (stands) return stands;
     await giveBack();
     throw new Error("the store refused a write of what it still holds");
+  }
+
+  /**
+   * Writes a refresh's credential onto `before`, tried again while the
+   * store fails: the old refresh token is spent, so this is the only copy,
+   * and the lease is still held. False if another write or a delete came
+   * first. A try that landed, though its answer was lost, is written.
+   */
+  private async write(user: string, before: Held, sealed: string): Promise<boolean> {
+    for (let tries = 1; ; tries++) {
+      try {
+        if (await this.core.store.put(user, this.name, sealed, before.sealed)) return true;
+        return tries > 1 && (await this.core.store.get(user, this.name)) === sealed;
+      } catch (err) {
+        if (tries >= WRITE_TRIES) throw err;
+        await pause(WRITE_PAUSE_MS);
+      }
+    }
   }
 
   /**
@@ -549,9 +571,17 @@ class OAuthCredential implements Credential {
     this.refreshes = new Lookup(server.timeoutMs, "refresh");
   }
 
-  async ensure(): Promise<void> {
-    if (this.held === null) await this.look();
-    if (this.held === null) throw new NeedsAuth("connect");
+  /**
+   * Before every call: the store's credential, since another process may
+   * have refreshed it, connected it again, or deleted it. A refresh is used
+   * as it is; another connect says so, for the connection to be made again.
+   */
+  async ensure(): Promise<boolean> {
+    const before = this.held;
+    await this.look();
+    const now = this.held;
+    if (now === null) throw new NeedsAuth("connect");
+    return before !== null && now !== before && now.kept.connectedAt !== before.kept.connectedAt;
   }
 
   close(): void {
@@ -589,7 +619,7 @@ class OAuthCredential implements Credential {
 
   private look(): Promise<void> {
     this.looking ??= this.lookups
-      .run(() => this.server.read(this.user))
+      .run(() => this.server.read(this.user, this.held))
       .then(
         (found) => {
           this.held = found;

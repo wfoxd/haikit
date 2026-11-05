@@ -576,6 +576,8 @@ class Link {
   private listed: Map<string, ServerTool> | null = null;
   /** The declared tools checked against this connection's tools. */
   private readonly checked = new Set<string>();
+  /** The credential's check before a call, which calls at once share. */
+  private checking: Promise<void> | null = null;
   /** Calls and `connect()`s using it now: a busy link is never closed for room or for idling. */
   busy = 0;
   private idle: ReturnType<typeof setTimeout> | null = null;
@@ -605,8 +607,12 @@ class Link {
   /** Connected, with a credential if it needs one. */
   async ready(): Promise<Client> {
     if (this.credential && !this.closed) {
+      const credential = this.credential;
+      this.checking ??= this.check(credential).finally(() => {
+        this.checking = null;
+      });
       try {
-        await unless(this.credential.ensure(), [[this.ending.signal, () => this.server.error("closed", undefined)]]);
+        await unless(this.checking, [[this.ending.signal, () => this.server.error("closed", undefined)]]);
       } catch (err) {
         // closed, whatever the lookup did meanwhile
         if (this.closed) throw isMcpError(err) ? err : this.server.error("closed", undefined, { cause: err });
@@ -614,6 +620,30 @@ class Link {
       }
     }
     return this.open();
+  }
+
+  /**
+   * The credential, before a call. A connection made with one that's gone,
+   * or that the user has since replaced by connecting again, is hung up, so
+   * nothing more is sent with it, and the next is made with what's held now.
+   */
+  private async check(credential: Credential): Promise<void> {
+    let changed: boolean;
+    try {
+      changed = await credential.ensure();
+    } catch (err) {
+      if (err instanceof NeedsAuth) await this.hangUp();
+      throw err;
+    }
+    if (changed) await this.hangUp();
+  }
+
+  /** Ends the connection, as when it drops, but not the link: the next call connects again. */
+  private async hangUp(): Promise<void> {
+    await this.dialing?.catch(() => {});
+    const client = this.client;
+    this.client = null;
+    await client?.close().catch(() => {});
   }
 
   /**
