@@ -681,6 +681,11 @@ const mcpRoutes = mcpAuth.handler();
 ```
 
 The URLs above show the shape only.
+[`examples/hello-mcp`](https://github.com/wfoxd/haikit/tree/main/examples/hello-mcp)
+is a whole app built this way, offline: an `oauth()` server behind its own
+authorization server, a `bearer()` one and one with the app's own key, with
+a connect card made from `err.auth`, a wake notice from `onConnected`, and a
+settings panel on the routes.
 
 Without `auth`, every call on a server shares one connection, made with the
 app's own credentials, whoever the conversation belongs to. With it, each
@@ -1199,8 +1204,9 @@ query as [`McpAuthNeed.connect`](#mcpauthneed) puts them. In order:
 7. **303** to the authorization endpoint, `cache-control: no-store`, with
    `response_type=code`, `client_id`, `code_challenge` and
    `code_challenge_method=S256` (PKCE), `redirect_uri`, `state`, `scope`
-   (as [`oauth`](#oauth)'s `scopes` says, with the link's added), and
-   `resource`, the server's resource indicator.
+   (as [`oauth`](#oauth)'s `scopes` says, with the link's added),
+   `prompt=consent` when that scope has `offline_access`, as the SDK asks
+   for a refresh token, and `resource`, the server's resource indicator.
 
 A failure in steps 5 to 7 is the done page, `failed`, and is logged:
 `@haikit/mcp: <server>: connecting user <userId> couldn't start: <err>`.
