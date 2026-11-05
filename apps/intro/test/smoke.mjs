@@ -566,8 +566,8 @@ try {
         ? ok("the rail lists 14 lessons in 2 parts, and every page of the three tutorials: 12, 11 and 12")
         : bad(`menu.json: ${menu.lessons.length} parts, ${lessons.length} lessons, ${JSON.stringify(pages)}`);
       const manual = menu.reference?.pages ?? [];
-      manual.length === 19 && manual[0].id === "index" && manual[0].title === "Contents" && manual[18].id === "limits"
-        ? ok("…and the reference manual's 19 pages, its contents first")
+      manual.length === 20 && manual[0].id === "index" && manual[0].title === "Contents" && manual[19].id === "limits"
+        ? ok("…and the reference manual's 20 pages, its contents first")
         : bad(`menu.json reference: ${JSON.stringify(manual.map((p) => p.id))}`);
       const demos = menu.demos ?? [];
       demos.some((d) => d.title === "Rebook" && d.url === "https://rebook.haikit.app/" && d.detail) && demos.every((d) => /^https:\/\//.test(d.url))
@@ -611,11 +611,11 @@ try {
       const id = fresh.find((e) => e.type === "hello")?.conversationId;
       const screen = opened(fresh)[0];
       const panel = propsOf(fresh, screen?.handle)?.reference;
-      panel?.pages?.length === 19 && panel.pages[0].id === "index" && panel.pages[0].title === "Contents" && panel.pages[18].id === "limits"
-        ? ok("the welcome offers the reference manual's 19 pages, its contents first")
+      panel?.pages?.length === 20 && panel.pages[0].id === "index" && panel.pages[0].title === "Contents" && panel.pages[19].id === "limits"
+        ? ok("the welcome offers the reference manual's 20 pages, its contents first")
         : bad(`the welcome's reference: ${JSON.stringify(panel?.pages?.map((p) => p.id))}`);
       const said = fresh.find((e) => e.type === "block_update")?.result ?? "";
-      /built into this app: 19 pages, index \(the contents\), concepts, .*, limits; show_reference_page opens one/.test(said)
+      /built into this app: 20 pages, index \(the contents\), concepts, .*, limits; show_reference_page opens one/.test(said)
         ? ok("the welcome digest names every page of the manual for the model")
         : bad(`the welcome digest on the manual: ${said}`);
 
@@ -627,8 +627,8 @@ try {
       const into = await sse("/hai/interact", { conversationId: id, handle: screen?.handle, action: "reference", value: "surfaces" });
       const surfaces = pageOf(into);
       surfaces.ui?.mode === "elicit" && surfaces.props?.id === "surfaces" && surfaces.props.position.index === 3 &&
-        surfaces.props.position.total === 19 && lastStatus(into) === "awaiting"
-        ? ok("the welcome's panel opens Surfaces, page 3 of 19, waiting for the reader")
+        surfaces.props.position.total === 20 && lastStatus(into) === "awaiting"
+        ? ok("the welcome's panel opens Surfaces, page 3 of 20, waiting for the reader")
         : bad(`the welcome's Surfaces: ${JSON.stringify({ ...surfaces.props, blocks: undefined })}`);
       const digest = into.find((e) => e.type === "block_update" && /^Reference page surfaces/.test(e.result ?? ""))?.result ?? "";
       const pageTokens = Math.ceil(JSON.stringify(surfaces.props).length / 4);
@@ -708,8 +708,8 @@ try {
           if (!there || (anchor && !anchorsOf(there.blocks).includes(anchor))) broken.push(`${page} → ${target}`);
         }
       }
-      shown.size === 19 && links > 500 && !broken.length
-        ? ok(`all 19 reference pages render, and all ${links} of their links lead somewhere`)
+      shown.size === 20 && links > 500 && !broken.length
+        ? ok(`all 20 reference pages render, and all ${links} of their links lead somewhere`)
         : bad(`reference pages shown: ${shown.size}; links that lead nowhere: ${broken.slice(0, 5).join(", ")}`);
 
       // nothing the Markdown holds is lost on the way: as many headings, code
