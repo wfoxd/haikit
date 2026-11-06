@@ -2,6 +2,12 @@ name: release
 
 on:
   push: { branches: [main] }
+  # A merge that fails partway can move main without sending the push event:
+  # #190's merge answered 502, landed, and no workflow ran on it, so its
+  # changeset waited for the next push. Dispatch runs it by hand, with
+  # `gh workflow run release.yml --ref main`. Only from main: see the job's
+  # `if`, since a run publishes whatever versions npm doesn't have yet.
+  workflow_dispatch:
 
 concurrency: release
 
@@ -12,6 +18,8 @@ permissions:
 
 jobs:
   release:
+    # a dispatch can name any branch; a push here is always main
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     outputs:
       release-pr: ${{ steps.changesets.outputs.pullRequestNumber }}
