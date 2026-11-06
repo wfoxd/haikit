@@ -17,7 +17,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { getEventListeners } from "node:events";
 import { createServer } from "node:http";
 import path from "node:path";
-import { InMemoryTransport } from "@modelcontextprotocol/client";
+import { InMemoryTransport, SdkErrorCode, SdkHttpError } from "@modelcontextprotocol/client";
 import { McpServer, ProtocolError, Server, WebStandardStreamableHTTPServerTransport, createMcpHandler } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import {
@@ -1015,26 +1015,32 @@ async function sessionServer({ toolsFor = () => ["whoami", "json", "slow"], sess
   await web.close();
 }
 {
-  // a fetch of the app's own that rejects with what isn't an object
+  // a fetch of the app's own that rejects with what isn't a TypeError
   const web = await sessionServer();
-  let offline = false;
+  let reject = null;
   const s = mcpServer({
     name: "own-fetch",
-    transport: http(web.url, { fetch: (input, init) => (offline ? Promise.reject("offline") : fetch(input, init)) }),
+    transport: http(web.url, { fetch: (input, init) => (reject ? Promise.reject(reject.with) : fetch(input, init)) }),
   });
   const whoami = s.tool("whoami", { args: anything });
-  const first = textOf(await whoami.call({}));
-  offline = true;
-  const away = await rejection(whoami.call({}));
-  check(
-    "a fetch that rejects with a string: connection, its cause an Error with the string as its cause",
-    away?.reason === "connection" &&
-      away.cause instanceof Error &&
-      away.cause.message === "fetch rejected with offline" &&
-      away.cause.cause === "offline",
-  );
-  offline = false;
-  check("…and the next call connects again", textOf(await whoami.call({})) !== first && web.handshakes() === 2);
+  let last = textOf(await whoami.call({}));
+  const refusal = new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, "Service Unavailable", { status: 503 });
+  for (const [label, value] of [
+    ["a string", "offline"],
+    ["the SDK's own HTTP error", refusal],
+    ["undefined", undefined],
+  ]) {
+    reject = { with: value };
+    const away = await rejection(whoami.call({}));
+    reject = null;
+    const next = textOf(await whoami.call({}));
+    check(
+      `a fetch that rejects with ${label}: connection, its cause what was thrown, and the next call connects again`,
+      away?.reason === "connection" && away.cause === value && next !== last,
+    );
+    last = next;
+  }
+  check("…a new connection each time", web.handshakes() === 4);
   await s.close();
   await web.close();
 }
@@ -1554,6 +1560,42 @@ const sameNeed = (err, need) => JSON.stringify(err?.auth) === JSON.stringify(nee
   await web.start();
   const back = textOf(await whoami.call({}, { userId: "u1" }));
   check("…and so is a server that can't be reached, with no idleMs or forget() between", away?.reason === "connection" && back !== second && web.handshakes() === 3);
+  await s.close();
+  await web.close();
+}
+{
+  // a fetch that throws one Error for every request, to the server and to an authorization server
+  const users = new Map([["good", { user: "ada" }]]);
+  const web = await userServer({ users });
+  const reused = new Error("offline");
+  let down = false;
+  let token = "good";
+  const s = mcpServer({
+    name: "reused",
+    transport: http(web.url, { fetch: (input, init) => (down || String(input) !== web.url ? Promise.reject(reused) : fetch(input, init)) }),
+    auth: createMcpAuth({ userOf: () => null }).sdk(() => ({
+      token: async () => token,
+      // a 401 sends the provider to its authorization server, through the transport's fetch
+      onUnauthorized: async ({ fetchFn }) => {
+        await fetchFn("http://127.0.0.1:9/token");
+      },
+    })),
+  });
+  const whoami = s.tool("whoami", { args: anything });
+  await whoami.call({}, { userId: "ada" });
+  down = true;
+  const away = await rejection(whoami.call({}, { userId: "ada" }));
+  down = false;
+  await whoami.call({}, { userId: "ada" });
+  check("the server's request rejects with it: connection, and a new connection", away?.reason === "connection" && away.cause === reused && web.handshakes("good") === 2);
+  token = "bad";
+  const refused = await rejection(whoami.call({}, { userId: "ada" }));
+  token = "good";
+  await whoami.call({}, { userId: "ada" });
+  check(
+    "…then the authorization server's: protocol, and the connection is kept",
+    refused?.reason === "protocol" && refused.cause === reused && web.handshakes("good") === 2,
+  );
   await s.close();
   await web.close();
 }

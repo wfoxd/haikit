@@ -543,9 +543,10 @@ with `auth`, the SDK's `InsufficientScopeError` (a 403 with
 `UnauthorizedError`, or an `SdkHttpError` with code
 `ClientHttpAuthentication` (a 401 again, on the transport's retry), is
 `auth`, kind `reconnect`, with its message as `text`. Over HTTP, an
-`SdkHttpError` with status 404 on a connection with a session, or what a
-request from `http()` threw for want of an answer, is `connection`, and
-drops the connection (see [The connection](#the-connection)). A JSON-RPC
+`SdkHttpError` with status 404 on a connection with a session, or a
+request from `http()` that got no answer, is `connection`, its `cause` the
+`SdkHttpError` or what `fetch` threw, and drops the connection (see
+[The connection](#the-connection)). A JSON-RPC
 error (`ProtocolError`) is `protocol`, with its `code` and its message as
 `text`, unless the message is about an output schema, which is the SDK's
 check above, and `result`. Of the SDK's own errors (`SdkError`): a timeout
@@ -687,10 +688,8 @@ Two do:
   this client aborted, as for a timeout.
 
 That call rejects with reason `connection`, its `cause` the SDK's
-`SdkHttpError` (`data.status` `404`) or what `fetch` threw (in Node,
-`TypeError: fetch failed`), and isn't sent again. A `fetch` that rejects
-with something other than an object, such as a string, gives
-`Error: fetch rejected with <value>`, with that value as its `cause`. The connection is
+`SdkHttpError` (`data.status` `404`) or what `fetch` threw, whatever it
+is (in Node, `TypeError: fetch failed`), and isn't sent again. The connection is
 dropped: forgotten and closed, so a call still in flight on it rejects with
 reason `connection` too, and the next call or `connect()` makes a new one,
 as above.
@@ -1801,11 +1800,14 @@ The SDK sets some headers itself, over any of these: `Authorization`, when
 an `authProvider` gives a token, and the protocol's own.
 
 The transport is given a `fetch` that calls the one in the options, or the
-global `fetch`, with the same arguments, and returns or throws what it
-does. When it throws for a request to `url` that wasn't aborted, the call
-that sees it drops the connection (see [The connection](#the-connection)).
-Thrown there, a value that isn't an object, such as a string, is thrown as
-`Error: fetch rejected with <value>`, with the value as its `cause`.
+global `fetch`, with the same arguments, and returns what it does. What it
+throws for a request to another URL, or for one that was aborted, it
+throws as it is. For a request to `url` that wasn't aborted, the transport
+is given an error of this package's own instead, made for that request,
+with what was thrown as its `cause`. So the call that sees it drops the
+connection, and rejects with what `fetch` threw as its `cause` (see
+[The connection](#the-connection)). One error thrown again for another
+request, as a `fetch` that reuses one may do, is read anew each time.
 
 For a server with `auth`, `http()` must have no `authProvider`, and no
 `Authorization` header in `headers` or `requestInit.headers`: each user's

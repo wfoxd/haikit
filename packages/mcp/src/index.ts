@@ -35,7 +35,7 @@ import {
 import { configOf, type AuthConfig, type Binding, type McpServerAuth } from "./auth.js";
 import { LookupFailed, Mismatch, NeedsAuth, type Credential } from "./credential.js";
 import { McpError, McpToolError, isMcpError, type McpAuthNeed, type McpErrorReason } from "./errors.js";
-import { madeByHttp, unanswered } from "./transports.js";
+import { Unanswered, madeByHttp, thrownBy } from "./transports.js";
 
 export {
   createMcpAuth,
@@ -760,7 +760,7 @@ class Link {
     } catch (err) {
       await client?.close().catch(() => {});
       if (this.closed) throw server.error("closed", undefined, { cause: err });
-      throw this.authFailure(err, undefined) ?? server.error("connection", undefined, { cause: err });
+      throw this.authFailure(err, undefined) ?? server.error("connection", undefined, { cause: thrownBy(err) });
     }
 
     let tools: ServerTool[];
@@ -848,7 +848,7 @@ class Link {
     if (auth) return auth;
     if (this.gone(err, client)) {
       this.lose(client);
-      return server.error("connection", tool, { cause: err });
+      return server.error("connection", tool, { cause: thrownBy(err) });
     }
     if (err instanceof ProtocolError) {
       // The SDK's own check of a call's result throws one too: the server's
@@ -884,8 +884,8 @@ class Link {
    * session id is the transport's, which keeps it once the client is closed.
    */
   private gone(err: unknown, client: Client): boolean {
-    if (err instanceof SdkHttpError) return err.status === 404 && this.transports.get(client)?.sessionId !== undefined;
-    return typeof err === "object" && err !== null && unanswered.has(err);
+    if (err instanceof Unanswered) return true;
+    return err instanceof SdkHttpError && err.status === 404 && this.transports.get(client)?.sessionId !== undefined;
   }
 
   /** Forgets a connection that has gone, and closes it: the next call makes a new one. */

@@ -28,11 +28,20 @@ export interface HttpMade {
 export const madeByHttp = new WeakMap<object, HttpMade>();
 
 /**
- * What a request to the server threw instead of an answer, as when the server
- * can't be reached: the SDK's transport doesn't close for it, so the call
- * that sees it drops the connection.
+ * A request to the server got no answer, as when it can't be reached: its
+ * `cause` is what `fetch` threw. The SDK's transport doesn't close for it, so
+ * the call that sees it drops the connection. One is made for each request,
+ * so what a `fetch` throws again for another request never reads as this.
  */
-export const unanswered = new WeakSet<object>();
+export class Unanswered extends Error {
+  constructor(thrown: unknown) {
+    super("the request got no answer", { cause: thrown });
+    this.name = "Unanswered";
+  }
+}
+
+/** What fetch threw, for an `Unanswered`; any other error as it is. */
+export const thrownBy = (err: unknown): unknown => (err instanceof Unanswered ? err.cause : err);
 
 /**
  * A server at `url`, over Streamable HTTP. Everything but `headers` is the
@@ -48,18 +57,15 @@ export function http(url: string | URL, options: HttpOptions = {}): (authProvide
     for (const [name, value] of Object.entries(headers)) merged.set(name, value);
     rest.requestInit = { ...rest.requestInit, headers: merged };
   }
-  // the same fetch, marking what a request to the server throws; not one to
-  // an authorization server, and not an abort, which was asked for
+  // the same fetch, but what a request to the server throws is Unanswered;
+  // not one to an authorization server, and not an abort, which was asked for
   const own = rest.fetch;
   const fetch: FetchLike = async (input, init) => {
     try {
       return await (own ?? globalThis.fetch)(input, init);
     } catch (err) {
-      if (String(input) !== target.href || init?.signal?.aborted) throw err;
-      // a value that can't be marked, such as a string, is carried as a cause
-      const thrown = typeof err === "object" && err !== null ? err : new Error(`fetch rejected with ${String(err)}`, { cause: err });
-      unanswered.add(thrown);
-      throw thrown;
+      if (String(input) === target.href && !init?.signal?.aborted) throw new Unanswered(err);
+      throw err;
     }
   };
   const make = (authProvider?: AuthProvider) =>
