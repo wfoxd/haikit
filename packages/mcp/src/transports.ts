@@ -28,6 +28,22 @@ export interface HttpMade {
 export const madeByHttp = new WeakMap<object, HttpMade>();
 
 /**
+ * A request to the server got no answer, as when it can't be reached: its
+ * `cause` is what `fetch` threw. The SDK's transport doesn't close for it, so
+ * the call that sees it drops the connection. One is made for each request,
+ * so what a `fetch` throws again for another request never reads as this.
+ */
+export class Unanswered extends Error {
+  constructor(thrown: unknown) {
+    super("the request got no answer", { cause: thrown });
+    this.name = "Unanswered";
+  }
+}
+
+/** What fetch threw, for an `Unanswered`; any other error as it is. */
+export const thrownBy = (err: unknown): unknown => (err instanceof Unanswered ? err.cause : err);
+
+/**
  * A server at `url`, over Streamable HTTP. Everything but `headers` is the
  * SDK's own `StreamableHTTPClientTransportOptions`, such as an `authProvider`.
  * The URL is checked now, so a bad one fails at startup. For a server with
@@ -41,8 +57,19 @@ export function http(url: string | URL, options: HttpOptions = {}): (authProvide
     for (const [name, value] of Object.entries(headers)) merged.set(name, value);
     rest.requestInit = { ...rest.requestInit, headers: merged };
   }
+  // the same fetch, but what a request to the server throws is Unanswered;
+  // not one to an authorization server, and not an abort, which was asked for
+  const own = rest.fetch;
+  const fetch: FetchLike = async (input, init) => {
+    try {
+      return await (own ?? globalThis.fetch)(input, init);
+    } catch (err) {
+      if (String(input) === target.href && !init?.signal?.aborted) throw new Unanswered(err);
+      throw err;
+    }
+  };
   const make = (authProvider?: AuthProvider) =>
-    new StreamableHTTPClientTransport(target, authProvider ? { ...rest, authProvider } : rest);
+    new StreamableHTTPClientTransport(target, authProvider ? { ...rest, fetch, authProvider } : { ...rest, fetch });
   madeByHttp.set(make, {
     authProvider: rest.authProvider !== undefined,
     authorization: new Headers(rest.requestInit?.headers).has("authorization"),
