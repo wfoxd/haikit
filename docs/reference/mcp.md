@@ -21,7 +21,7 @@ Exported by `@haikit/mcp`: `mcpServer`, `McpServerOptions`, `McpConnection`,
 `@haikit/mcp/postgres`: `pgCredentialStore`, `migrate`, `schema` and
 `Queryable`.
 
-Checked against `@haikit/*` 0.33.0 and `@modelcontextprotocol/client` 2.4.0.
+Checked against `@haikit/*` 0.35.0 and `@modelcontextprotocol/client` 2.4.0.
 Source, in `packages/mcp/src/`: `index.ts`, `auth.ts`, `credential.ts`,
 `oauth.ts`, `routes.ts`, `store.ts`, `seal.ts`, `postgres.ts`, `errors.ts`,
 `contracts.ts`, `text.ts` and `transports.ts`.
@@ -93,7 +93,8 @@ An `McpTool` has no `run`, `description`, `input`, `inputJsonSchema` or
 `strict`, so `createHai({ tools })` won't take one. `npm run typetest`
 asserts that, in `packages/mcp/test/types/guarantees.ts`.
 
-The package imports only `@haikit/core`, like the model adapters.
+Of HaiKIT's packages it imports only `@haikit/core`, like the model
+adapters. Its one other dependency is the SDK, `@modelcontextprotocol/client`.
 
 ## `mcpServer`
 
@@ -123,10 +124,10 @@ The connection to one MCP server. Nothing connects until
 | `auth` | none: every call shares one connection, and one identity | Makes each call as the user it runs for, with their own credential, over a connection of their own: `mcpAuth.bearer(token)`, `mcpAuth.oauth()` or `mcpAuth.sdk(make)`, from [`createMcpAuth`](#createmcpauth). See [Calls as each user](#calls-as-each-user) |
 | `maxConnections` | `100`, with `auth` | The most users connected at once. Past it, the least recently used connections with no call in flight are closed. Only with `auth` |
 | `idleMs` | `300_000` (5 min), with `auth` | A user's connection is closed after this long with no call. Only with `auth` |
-| `timeoutMs` | `30_000` (30 s) | How long the server may go without answering a call or reporting progress on it. It also bounds making the transport, connecting, listing the server's tools and, with `auth`, looking up a user's credential. For `oauth()`, it bounds each request to an authorization server, and each refresh |
+| `timeoutMs` | `30_000` (30 s) | How long the server may go without answering a call or reporting progress on it. It also bounds making the transport, connecting, listing the server's tools and, with `auth`, looking up a user's credential. For `oauth()`, it bounds each request to an authorization server, and a 401's wait for a refresh |
 | `maxTotalMs` | `90_000` (90 s) | The longest a call may take, progress or not, connecting included |
 | `onChange` | a `console.warn` | Hears that a declared tool was removed, or its schema changed. See [Changes to the server's tools](#changes-to-the-servers-tools) |
-| `versionNegotiation` | `"legacy"`, the SDK's default | Passed to the SDK as `versionNegotiation: { mode }`. `"legacy"` connects with the 2025 handshake; `"auto"` asks the server first which protocol revision it speaks; `{ pin: "<revision>" }` speaks only that one |
+| `versionNegotiation` | `"legacy"`, the SDK's default | Passed to the SDK as `versionNegotiation: { mode }`. `"legacy"` connects with the 2025 handshake; `"auto"` asks the server first which protocol revision it speaks; `{ pin: "<revision>" }` speaks only that one, which must be 2026-07-28 or later. Another pin isn't refused here: connecting rejects with reason `connection`, its `cause` the SDK's `TypeError`. `VersionNegotiationMode` is the SDK's, *not exported*: one of `"legacy"`, `"auto"` or `{ pin: string }` |
 
 **Throws:**
 
@@ -199,8 +200,8 @@ There is no untyped call by name.
 | --- | --- | --- |
 | `args` | required | A [`Schema`](surfaces.md#schemas) for the args. `call` parses them with it before anything is sent |
 | `result` | none | A `Schema` for the result. With one, `call` resolves to what it parses (see [What a call resolves to](#what-a-call-resolves-to)). Without one, `call` resolves to the result's content, as the server sent it |
-| `timeoutMs` | the server's | This tool's `timeoutMs` |
-| `maxTotalMs` | the server's | This tool's `maxTotalMs` |
+| `timeoutMs` | the server's | This tool's `timeoutMs`, for its `tools/call`: connecting and listing the tools keep the server's |
+| `maxTotalMs` | the server's | This tool's `maxTotalMs`, connecting included |
 
 **Returns** an `McpTool`: a frozen object with `server`, `name` and `call`.
 
@@ -218,8 +219,9 @@ as in `tool<A, R>(name, { args })`, doesn't compile.
 - `TypeError: tool "<name>" has a result schema with no parse method`.
 - The `RangeError` of [`mcpServer`](#mcpserver) for a `timeoutMs` or
   `maxTotalMs` out of range.
-- Declared after a first [`connect`](#connect) has succeeded, the tool is
-  checked against the server's latest list of tools at once, even if a tool
+- Declared once a first connection, made by [`connect`](#connect) or by a
+  call, has passed the check, the tool is checked against the server's
+  latest list of tools at once, even if a tool
   of that name was declared and checked before, and the
   `Error` `connect` would throw is thrown here: `<server>: the server has no
   tool named "<name>"`, or `<server>: tool "<name>" can only run as an MCP
@@ -244,8 +246,9 @@ On a server with `auth`, `connect(userId)` makes that user's connection, and
 checks the tools that user sees, as their first call would: such as just
 after the user has given the app their key. Their credential is looked up
 first (see [`bearer`](#bearer), [`oauth`](#oauth) and [`sdk`](#sdk)), and
-nothing is sent without one. An `auth` error from it has a connect link
-with no conversation (see [`McpAuthNeed`](#mcpauthneed)). The
+nothing is sent without one. On an `oauth()` server, an `auth` error from
+it has a connect link with no conversation (see
+[`McpAuthNeed`](#mcpauthneed)). The
 connection is then kept as the user's, as a call's would be (see
 [Each user's connection](#each-users-connection)).
 
@@ -253,13 +256,20 @@ connection is then kept as the user's, as a call's would be (see
    `timeoutMs`. One made later is closed when it comes. An SDK `Client`
    connects over it, within `timeoutMs`. See [The connection](#the-connection)
    for what the client tells the server.
-2. The server's tools are listed, every page of them, within `timeoutMs`.
+2. The server's tools are listed, every page of them, each within
+   `timeoutMs`, and at most 64 pages (the SDK's `listMaxPages`): past them,
+   it rejects with reason `protocol`, the SDK's `tools/list: exceeded
+   listMaxPages (64); server pagination did not terminate` on `text`. A
+   server that doesn't advertise the `tools` capability is listed as having
+   none, so every declared tool fails the check.
 3. On the first connection, each declared tool is checked: the server must
    have a tool of that name, and it mustn't be one that can only run as an
    MCP task (`execution.taskSupport: "required"`). A tool whose task support
    is `"optional"` is called as a plain call.
 
-Resolves once connected and checked. Connected already, it resolves at once.
+Resolves once connected and checked. Connected already, it resolves at
+once; for `oauth()`, once the store has been read, as before every call,
+and a credential that's gone rejects with reason `auth`, kind `connect`.
 Calls and `connect()`s that arrive while a connection is being made share
 it.
 
@@ -274,11 +284,15 @@ it.
 | `close()` was called, before or while connecting | `McpError`, reason `closed`: `<server>: the connection was closed` |
 | With `auth`: the user's credential is missing, refused, or needs more access | `McpError`, reason `auth`: `<server>: the user has not connected an account`, `<server>: the server refused the user's credential`, or `<server>: the user's account needs more access` (see [`McpAuthNeed`](#mcpauthneed)) |
 | With `auth`: the user's credential can't be looked up: `token(userId)`, `make(userId)` or the store throws or rejects, or gives nothing within `timeoutMs` | `McpError`, reason `connection`: `<server> could not be reached`, its `cause` what it threw, or `Error: no token within <timeoutMs> ms` (`no credential …` for `oauth()`, `no provider …` for `sdk()`) |
+| With `oauth()`: a 401's refresh fails, as when the authorization server can't be reached, or isn't done within `timeoutMs` | `McpError`, reason `connection`: `<server> could not be reached`, its `cause` the error, or `Error: no refresh within <timeoutMs> ms` (see [`oauth`](#oauth)) |
+| With `oauth()`: a 401's refresh finds an authorization server other than the one that issued the credential, or than the one `issuer` pins, or one whose authorization endpoint isn't https or on a loopback host | `McpError`, reason `protocol`: `<server> was refused by the server`, its `cause` an `Error` that says which |
 | With `auth`, and no `userId`, or `""` | `TypeError: connect() needs a userId for a server with auth: each user's connection is checked as it's made` |
 | Without `auth`, and a `userId` | `TypeError: connect() takes a user only for a server with auth` |
 
-After any rejection the connection is closed and nothing is kept, so the
-next `connect()` or call starts again from step 1. Only the first connection
+After any rejection the connection is closed, so the next `connect()` or
+call starts again from step 1. With `auth`, the user's place in the pool
+is kept until it's idle, and so is a `bearer()` token or `sdk()` provider
+already found. Only the first connection
 to succeed is checked; see [The connection](#the-connection) for later ones.
 With `auth`, that is each user's first.
 
@@ -319,7 +333,7 @@ A `stdio` server is sent end-of-input, then `SIGTERM` after 2 s, then
 A connection still being made is stopped where it is: a `transport()` still
 pending is given up on, and what it makes later is closed; a client still
 connecting, or listing the tools, is closed. The `connect()` or call waiting
-on it rejects with reason `closed`, and so does a call in flight. It is final: every later call rejects with
+on it rejects with reason `closed`, and so does a call in flight. It is final: every later call whose args parse rejects with
 `McpError`, reason `closed`, `<server>/<tool>: the connection was closed`,
 without connecting, and `connect()` with `<server>: the connection was
 closed`.
@@ -363,11 +377,13 @@ call(args: A, ctx?: McpCallCtx): Promise<R>;
    connection. If there is no one to call as, the call rejects with reason
    `user`, and nothing is sent. Looking up counts against `maxTotalMs`.
 3. **It connects,** if it isn't connected, as [`connect`](#connect) does.
-   With `auth`, the user's credential is looked up first, if their
-   connection has none, and a user with none rejects with reason `auth`,
+   With `auth`, the user's credential is looked up first: for `bearer()`
+   and `sdk()` if their connection has none, and for `oauth()` from the
+   store, before every call. A user with none rejects with reason `auth`,
    kind `connect`, before anything is sent. A failure rejects the call with
    the same reason, named for the call, as in `<server>/<tool> could not be
-   reached`, and the same `cause`, `text`, `code` and `auth`. The `Error` of
+   reached`, with the same `text`, `code` and `auth`, and as its `cause`
+   the failure's, or with none, the failure's own `McpError`. The `Error` of
    a declared tool failing the check rejects the call as it is, and so does
    that of a tool declared after the user's connection was checked, on the
    user's first call to it. Connecting counts against `maxTotalMs`: a call
@@ -376,7 +392,9 @@ call(args: A, ctx?: McpCallCtx): Promise<R>;
 4. **The tool is called** (`tools/call`) with the parsed args.
    - It times out after `timeoutMs` with no answer and no progress, and once
      `maxTotalMs` has passed since the call began, connecting included.
-     Either way the server is sent `notifications/cancelled` for it.
+     Either way the request is cancelled: the server is sent
+     `notifications/cancelled` for it, or on a 2026-07-28 connection over
+     HTTP, the request's stream is aborted.
    - Progress is always asked for, so a server that reports it keeps a long
      call alive whether or not a `ctx` hears it. Each progress notification
      starts `timeoutMs` again.
@@ -389,10 +407,14 @@ call(args: A, ctx?: McpCallCtx): Promise<R>;
      once more (see [`bearer`](#bearer) and [`oauth`](#oauth)). That is the
      SDK's retry of one HTTP request, not a second call: a request the
      server refused with a 401 wasn't run.
+   - On a 2026-07-28 connection, a call the server refuses because it
+     doesn't match its headers (code `-32020`) has the SDK list the tools
+     again and send the call once more. That one wasn't run either.
 5. **The result is decided** (see below).
 
-A call is sent once. One that fails is never sent again on its own, even
-when a reconnect follows: the server may have run it.
+A call is sent once, apart from those two retries of a request the server
+refused without running it. One that fails is never sent again on its own,
+even when a reconnect follows: the server may have run it.
 
 ### What a call resolves to
 
@@ -469,13 +491,18 @@ and the tool, never what the server said. What it said is on `text`.
 
 ```ts
 class McpError extends Error {
-  readonly name: "McpError";
+  readonly name = "McpError";
   readonly server: string;
   readonly tool: string | undefined;
   readonly reason: McpErrorReason;
   readonly text: string | undefined;
   readonly code: number | undefined;
   readonly auth: McpAuthNeed | undefined;
+  constructor(
+    reason: McpErrorReason,
+    message: string,
+    detail: { server: string; tool?: string; text?: string; code?: number; cause?: unknown; auth?: McpAuthNeed },
+  );
 }
 
 type McpErrorReason = "args" | "result" | "timeout" | "connection" | "protocol" | "closed" | "user" | "auth";
@@ -498,9 +525,9 @@ A call that got no result, or one its schema refused.
 | `args` | The `args` schema refused the args, or they aren't an object. Nothing was sent | `<server>/<tool> was not called: its args do not match the schema`, or `… its args must be an object` |
 | `result` | The `result` schema refused the result, there was nothing to parse, or the SDK refused it against the server's output schema (see [What a call resolves to](#what-a-call-resolves-to)). Only a call has it: listing the tools never fails with `result` | `<server>/<tool> returned a result that does not match the schema` |
 | `timeout` | No answer within `timeoutMs`, or not done within `maxTotalMs`, connecting included | `<server>/<tool> did not answer in time` |
-| `connection` | The server couldn't be reached, or the connection dropped before the answer. With `auth`, also: the user's credential couldn't be looked up, or for `oauth()`, refreshed, as when the authorization server couldn't be reached, or answered with something other than a refusal, or found the user connected again as the call was made | `<server>/<tool> could not be reached` |
-| `protocol` | The server refused the call, as for a tool it doesn't have (`code` `-32602`), whatever its words. Also a listing of tools the SDK can't read, and any other SDK error, such as an HTTP 401 or 403 on a server without `auth`, or a server asking this client for input. For `oauth()`, also a server that now names an authorization server other than the one that issued the user's credential | `<server>/<tool> was refused by the server` |
-| `closed` | `close()` or, with `auth`, [`forget()`](#forget) was called, before or during the call | `<server>/<tool>: the connection was closed` |
+| `connection` | The server couldn't be reached, or the connection dropped before the answer: over HTTP, only while connecting (see [The connection](#the-connection)). With `auth`, also: the user's credential couldn't be looked up, or for `oauth()`, refreshed, as when the authorization server couldn't be reached, or answered with something other than a refusal, or found the user connected again as the call was made | `<server>/<tool> could not be reached` |
+| `protocol` | The server refused the call, as for a tool it doesn't have (`code` `-32602`), whatever its words. Also a listing of tools the SDK can't read, and any other SDK error, such as an HTTP 401 or 403 on a server without `auth`, or a server asking this client for input. Over HTTP, once connected, also any other HTTP error, such as a 404 for a session the server ended, and a server that can't be reached. For `oauth()`, also a 401's refresh that finds an authorization server other than the one that issued the user's credential, or than the one `issuer` pins, or one whose authorization endpoint isn't https or on a loopback host | `<server>/<tool> was refused by the server` |
+| `closed` | `close()` was called before or during the call, or with `auth`, [`forget()`](#forget) during it | `<server>/<tool>: the connection was closed` |
 | `user` | A server with `auth` had no user to call as (see [Who a call runs as](#who-a-call-runs-as)). Nothing was sent | `<server>/<tool> was not called: there is no user to call it as`, `… the user it runs for could not be looked up`, or `… its userId is not the conversation's owner` |
 | `auth` | A server with `auth`: the user's credential is missing, was refused, or needs more access. `auth.kind` says which | `<server>/<tool>: the user has not connected an account` (`connect`), `<server>/<tool>: the server refused the user's credential` (`reconnect`), or `<server>/<tool>: the user's account needs more access` (`scope`) |
 
@@ -574,11 +601,12 @@ try {
 
 ```ts
 class McpToolError extends Error {
-  readonly name: "McpToolError";
+  readonly name = "McpToolError";
   readonly server: string;
   readonly tool: string;
   readonly text: string;
   readonly content: ContentBlock[];
+  constructor(server: string, tool: string, content: ContentBlock[]);
 }
 ```
 
@@ -629,17 +657,28 @@ made wait for it.
   protocol that answers a call with `input_required` gets the call refused,
   reason `protocol`, rather than a reply nobody wrote.
 - `versionNegotiation`, if given.
+- `listChanged.tools`, so the SDK hears a server that advertises
+  `tools.listChanged` (see
+  [Changes to the server's tools](#changes-to-the-servers-tools)). On a
+  2026-07-28 connection, the client opens a `subscriptions/listen`
+  subscription for it as it connects, within `timeoutMs`.
 
-**When it drops** (a `stdio` server exits, an HTTP session ends), it is
-forgotten, and a call in flight rejects with reason `connection`. The next
+**When it drops,** as when a `stdio` server exits, it is forgotten, and a
+call in flight rejects with reason `connection`. The next
 call or `connect()` makes a new connection, with a new `Client` and a new
 `Transport`: one attempt per call. If that fails, the call rejects, and the
 one after tries again.
 
+**Over HTTP, it doesn't drop:** the SDK's transport closes only on
+`close()`. Once connected, an HTTP error, such as a 404 for a session the
+server ended, or a server that can't be reached, rejects the call with
+reason `protocol`, and the connection is kept.
+
 **A new connection is not checked** the way the first was. Its list of
 tools is compared with the last one instead, and a change is reported (see
 below). A call to a tool the server no longer has rejects with reason
-`protocol`.
+`protocol` from a server built with the SDK, which refuses it with code
+`-32602`.
 
 All of this is for one identity. On a server with `auth`, each user has a
 connection of their own that works this way (see
@@ -843,7 +882,7 @@ tokens, sealed. Needs `createMcpAuth`'s `store`, `secret` and
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `issuer` | none: whichever the server names | The authorization server the server must use, as its metadata's `issuer`, one trailing slash apart at most. A server names its own in its protected resource metadata. With `issuer`, a server that names another is refused before the app registers a client there, or sends a user to it. Pin it for a third party's server |
-| `scopes` | the server's `scopes_supported`, from its metadata | Asked for whenever a user connects. A connect link's `scope` is added to them. The SDK adds `offline_access`, so a refresh token is issued, where the authorization server lists it in its `scopes_supported` |
+| `scopes` | the server's `scopes_supported`, from its metadata | Asked for whenever a user connects. A connect link's `scope` is added to them, or with no `scopes`, asked for instead of `scopes_supported`. When any scope is asked for, the SDK adds `offline_access`, so a refresh token is issued, where the authorization server lists it in its `scopes_supported`. With none, no `scope` is sent |
 | `client` | none: one is registered for the app | A client the app registered with the authorization server: its `id`, and its `secret` for a confidential one, sent as the authorization server takes it, HTTP Basic before a form field. Needs `issuer`. Never replaced by one registered on the fly |
 
 **The app's client.** With no `client`, one is registered on the first
@@ -852,7 +891,9 @@ by the URL of the app's [client metadata
 document](#the-client-metadata-document), where the authorization server
 says it takes one (`client_id_metadata_document_supported`) and the
 redirect URI is https; else by dynamic client registration (RFC 7591), as a
-public client with the same metadata as that document. A kept client
+public client with that document's metadata and what the SDK adds to it:
+`application_type`, `"native"` for a loopback redirect URI, else `"web"`,
+and the scope asked for. A kept client
 registered for another redirect URI, or another document, or one that
 doesn't open, is registered again on the next connect.
 
@@ -884,7 +925,7 @@ secret isn't kept with them: it's read from the options each time.
   when they connected another account, closes the connection as above, and
   the call makes a new one with it. Nothing of one account's is sent on a
   connection made as another: if a 401's refresh finds the user connected
-  again (steps 1, 4 and 5), the call rejects with reason `connection`, its
+  again (steps 1, 4, 5 and 7), the call rejects with reason `connection`, its
   `cause` `Error: the user connected again since this connection was
   made`, and the next call makes the connection again.
 - **Every request** on the user's connection carries their access token, as
@@ -948,7 +989,11 @@ secret isn't kept with them: it's read from the options each time.
      fails is logged, `@haikit/mcp: <server>: the tokens refreshed for user
      <userId> weren't stored, and couldn't be revoked: <err>`. The store's
      credential is then used instead, or with none, the call rejects with
-     kind `reconnect`. The transport then sends the request once more, with
+     kind `reconnect`. A store that refused the write though it still holds
+     the credential the refresh began with, which breaks `put`'s contract,
+     has the lease given back, and the call rejects with reason
+     `connection`, its `cause` `Error: the store refused a write of what it
+     still holds`. The transport then sends the request once more, with
      the new token: a 401 again rejects with kind `reconnect`, and keeps the
      credential.
 - **No call starts a sign-in,** or registers a client: only the connect
@@ -1003,6 +1048,13 @@ re-exported.
   `onUnauthorized`, or for an `OAuthClientProvider`, the SDK's own refresh,
   and its `redirectToAuthorization` when that can't. A call that still has
   no token the server takes rejects with kind `reconnect`.
+- **On a 403 with `error="insufficient_scope"`,** an `AuthProvider`'s
+  call rejects with kind `scope`, and the `scope` the challenge named. For
+  an `OAuthClientProvider`, the SDK asks again for the union of the
+  scopes, by its `auth()`, which for more than the tokens have goes to
+  `redirectToAuthorization`, and the call rejects with kind `reconnect`;
+  with `http(url, { onInsufficientScope: "throw" })`, kind `scope`
+  instead.
 
 **Returns** a frozen `McpServerAuth`, `{ kind: "sdk" }`, for one
 `mcpServer`.
@@ -1048,7 +1100,8 @@ credential of the user's for:
 
 1. **The tokens are revoked** (RFC 7009) where the authorization server's
    metadata has a `revocation_endpoint`: the refresh token if there is one,
-   else the access token, within `timeoutMs`. The client the tokens were
+   else the access token, each request within `timeoutMs`, finding the
+   authorization server included. The client the tokens were
    issued to authenticates, as the token requests do, as the metadata's
    `revocation_endpoint_auth_methods_supported` says, or else its
    `token_endpoint_auth_methods_supported`. A revocation that fails, or an
@@ -1172,7 +1225,8 @@ Every route acts for the user `requestUser` gives, never for one a request
 names. A route that throws is logged, `@haikit/mcp: a request failed:
 <err>`, and answered, unless it had answered already: with the done page,
 `failed`, for connect and the callback, and 500 `{ "error": <its message> }`
-for the others.
+for the others. Every JSON answer has `content-type: application/json` and
+`cache-control: no-store`.
 
 **Throws** a `TypeError`: `handler() needs createMcpAuth({ store, secret,
 redirectUri })`, or `handler() needs createMcpAuth's requestUser: its routes
@@ -1194,7 +1248,8 @@ query as [`McpAuthNeed.connect`](#mcpauthneed) puts them. In order:
    looked up, so it's dropped:`.
 4. **The scope** must be an OAuth scope (RFC 6749: tokens of printable ASCII
    but `"` and `\`, one space apart) of at most 1,000 characters. Else the
-   done page, `failed`, logged.
+   done page, `failed`, logged: `@haikit/mcp: <server>: a connect link
+   asked for a scope that isn't an OAuth scope`.
 5. **The authorization server is found,** by the SDK's `auth()`, from the
    server's protected resource metadata, each request within `timeoutMs`.
    Before a client is looked up or registered, it is refused if `issuer`
@@ -1208,7 +1263,8 @@ query as [`McpAuthNeed.connect`](#mcpauthneed) puts them. In order:
 7. **303** to the authorization endpoint, `cache-control: no-store`, with
    `response_type=code`, `client_id`, `code_challenge` and
    `code_challenge_method=S256` (PKCE), `redirect_uri`, `state`, `scope`
-   (as [`oauth`](#oauth)'s `scopes` says, with the link's added),
+   when there is one (`scopes` with the link's added, or with no `scopes`
+   the link's, else `scopes_supported`: see [`oauth`](#oauth)),
    `prompt=consent` when that scope has `offline_access`, as the SDK asks
    for a refresh token, and `resource`, the server's resource indicator.
 
@@ -1229,8 +1285,11 @@ browser back, with `code`, `state` and `iss`. In order:
    `expired`.
 2. **Signed out:** `signed_out`. **Signed in as another user** than the one
    who started it: `refused`.
-3. **`error=access_denied`:** `access_denied`. Any other `error`, no
-   `code`, or a server no longer configured: `failed`, logged.
+3. **`error=access_denied`:** `access_denied`. A server no longer
+   configured, any other `error`, or no `code`: `failed`, logged as
+   `@haikit/mcp: <server>: connecting user <userId> failed: ` then `the
+   server is no longer configured`, `the authorization server answered
+   <error>` (the `error` as JSON), or `the answer has no code`.
 4. **The code is exchanged** at the authorization server, and as the
    client, the flow started with, with the PKCE verifier, the redirect URI
    and the resource indicator, within `timeoutMs`. Before it asks for a
@@ -1276,7 +1335,8 @@ status 200, `text/html; charset=utf-8`, with:
 
 Its script posts `{ type: "haikit:mcp", server, ok, error? }` to the window
 that opened it, at the page's own origin, and closes. `server` is absent
-when no flow was found. With no window that opened it, as when the app
+when no flow was found, when a signed-out connect names no `oauth()`
+server, and when the route threw. With no window that opened it, as when the app
 navigated to the connect link rather than opening a popup, the page shows
 one line, and a link back to `/`:
 
@@ -1324,7 +1384,7 @@ window.addEventListener("message", (e) => {
 ### The client metadata document
 
 `GET <basePath>/client.json`, only when the redirect URI is https: 200,
-`cache-control: max-age=3600`, as in:
+`content-type: application/json`, `cache-control: max-age=3600`, as in:
 
 ```json
 {
@@ -1388,7 +1448,11 @@ conversation they have. They are declarations, as
 [`defineNotice`](notices.md#definenotice) make, and nothing more. The app
 implements each on the server, with its own words for the model, and
 renders each in the browser with its own component, registered under
-`connect_card` and `account_connected`. Neither can be given other props:
+`connect_card` and `account_connected`. On the server, both
+implementations go in `createHai({ surfaces, notices })`: `hai.notify`
+refuses a notice that isn't there, `Error: notice "account_connected" is
+not registered: list it in createHai({ notices })` (see
+[`hai.notify`](notices.md#hainotify)). Neither can be given other props:
 an app that needs them declares a surface of its own.
 
 **In the browser, import them as types only,** with `import type`. A
@@ -1545,8 +1609,8 @@ function memoryCredentialStore(): CredentialStore;
 
 Keeps everything in this process's memory: gone on a restart, and seen by no
 other process. For one server, and for development. It keeps the latest
-10,000 flows: putting one drops those past their time, and the oldest while
-there are 10,000.
+10,000 flows: putting one drops the oldest while they're past their time,
+or there are 10,000.
 
 ### `@haikit/mcp/postgres`
 
@@ -1640,9 +1704,10 @@ interface McpToolChange {
 }
 ```
 
-The server's list of tools is read again when the server says it changed
-(`notifications/tools/list_changed`; the SDK reads it, after a short
-debounce), and on each new connection. Each declared tool in the last list
+The server's list of tools is read again when a server that advertises
+`tools.listChanged` says it changed (`notifications/tools/list_changed`:
+the SDK reads it 300 ms after the last one, and a read that fails is
+ignored, the last list kept), and on each new connection. Each declared tool in the last list
 is compared with the new one:
 
 - **`removed`**: the new list has no tool of that name.
@@ -1658,8 +1723,9 @@ On a server with `auth`, each user's connection compares its own lists,
 and `user` is the user it is for. Without `auth`, the change has no `user`.
 
 Nothing else changes: the model's tools are the app's, and calls go on as
-before. A call to a removed tool rejects with reason `protocol`; one whose
-args no longer suit the server gets `McpToolError` from it.
+before. From a server built with the SDK, a call to a removed tool rejects
+with reason `protocol`, and one whose args no longer suit the server with
+`McpToolError`.
 
 **The default `onChange`** writes one `console.warn`: `@haikit/mcp:
 <server>: `, or with a `user`, `@haikit/mcp: <server> (for user <user>): `,
@@ -1782,7 +1848,8 @@ more (got <value>)`.
   give such a server only what every user may see and do. With `auth`, a
   call runs as the conversation's owner, or the `userId` of a call outside
   any conversation, over that user's own connection, and no request on it
-  is sent without their token. It never falls back to the app's credentials,
+  is sent without their token, for `bearer()` and `oauth()`; for `sdk()`,
+  the app's provider decides what's sent. It never falls back to the app's credentials,
   another user's, or none, and a `userId` that isn't the
   conversation's owner is refused (see
   [Who a call runs as](#who-a-call-runs-as)).
@@ -1825,17 +1892,21 @@ more (got <value>)`.
 | A call with no answer and no progress | 30,000 ms, by default | `timeoutMs` |
 | A call in all, connecting included | 90,000 ms, by default | `maxTotalMs` |
 | Making the transport, connecting, listing the tools, and with `auth` looking up a user's credential | `timeoutMs` each | `connect` |
-| Longest `timeoutMs` and `maxTotalMs` | 2,147,483,647 ms | Node's longest timer |
+| Longest `timeoutMs`, `maxTotalMs` and `idleMs` | 2,147,483,647 ms | Node's longest timer |
 | `textOf` | 8,000 characters, by default | `maxChars` |
 | Pages of tools listed | 64 | the SDK's `listMaxPages` |
+| A read of the tools after `notifications/tools/list_changed` | 300 ms after the last one | the SDK's `debounceMs` |
 | One stdio message | 10 MB | the SDK's `maxBufferSize` |
+| A `stdio` server's stop: end of input, then `SIGTERM`, then `SIGKILL` | 2,000 ms apart | the SDK's `StdioClientTransport.close` |
 | Connections, without `auth` | 1, shared by every call | |
 | Connections, with `auth` | 1 per user; at most `maxConnections`, 100 by default, with no call in flight | `maxConnections` |
 | A user's connection with no call is kept | 300,000 ms, by default | `idleMs` |
 | Lookups of a user's credential at once, for each user's connection | 1, shared by first calls (for `oauth()`, by calls) and, for `bearer`, 401s that come together | [`bearer`](#bearer), [`oauth`](#oauth), [`sdk`](#sdk) |
-| Refreshes of a user's OAuth credential at once, for each user's connection | 1, shared by 401s that come together | [`oauth`](#oauth) |
+| Refreshes of a user's OAuth credential at once, for each server | 1, shared by every 401 of the user's in the process until it settles, and across processes sharing the store by its lease | [`oauth`](#oauth) |
+| The refresh lease, unless the refresh writes, deletes or gives it back first | 2 × `timeoutMs` | [`oauth`](#oauth) |
+| Reading the store while another process holds the lease; giving up | every 250 ms; after 4 × `timeoutMs` | [`oauth`](#oauth) |
 | Reads of a user's OAuth credential, for each user's connection | 1 before every call, shared by calls that start together | [`oauth`](#oauth) |
-| A refresh, and each request to an authorization server | `timeoutMs` each | [`oauth`](#oauth) |
+| A 401's wait for a refresh, and each request to an authorization server | `timeoutMs` each | [`oauth`](#oauth) |
 | A connect flow | 600,000 ms (10 min), and taken once | [Connecting](#connecting) |
 | Flows `memoryCredentialStore` keeps | 10,000 | [`memoryCredentialStore`](#memorycredentialstore) |
 | A connect link's `scope` | 1,000 characters | [Connecting](#connecting) |
@@ -1844,7 +1915,8 @@ more (got <value>)`.
 | Writes of a refreshed credential, while the store throws | 3 tries, 250 ms apart | [`oauth`](#oauth) |
 | A `secret` | 32 bytes or more, each | [`createMcpAuth`](#createmcpauth) |
 | The client metadata document, in a cache | 3,600 s | `cache-control: max-age=3600` |
-| Times a call is sent | 1 | |
+| Times a call is sent | 1, apart from the SDK's one retry of a request the server refused unrun, with a 401 or a header mismatch | [`call`](#call) |
+| Reconnect attempts per call | 1 | [The connection](#the-connection) |
 
 A call runs inside a turn, which holds the conversation's lease. The lease
 lasts 120,000 ms by default (`leaseMs` in [Stores](stores.md)) and isn't
