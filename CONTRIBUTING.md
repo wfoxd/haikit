@@ -86,6 +86,14 @@ release workflow runs `npm test` and `npm run packtest` before it will publish
 anything. The PR is made by `npm run version-packages`: `changeset version`,
 then `npm install`, so `package-lock.json` moves with the versions.
 
+If a merge reaches `main` and the release workflow doesn't run on it (a merge
+that fails partway can skip the push event), run it by hand. It runs only on
+`main`:
+
+```bash
+gh workflow run release.yml --ref main
+```
+
 Auth is **trusted publishing**: npm verifies the release workflow's OIDC identity
 against a trusted publisher configured on each of the nine packages
 (npmjs.com → package → Settings → Trusted Publisher → `wfoxd/haikit`,
