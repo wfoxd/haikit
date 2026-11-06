@@ -573,6 +573,8 @@ class Link {
   private closing: Promise<void> | null = null;
   /** Clients whose connection has gone. */
   private readonly dropped = new WeakSet<Client>();
+  /** The transport each client was made over: the client lets go of it once closed. */
+  private readonly transports = new WeakMap<Client, Transport>();
   /** The server's tools at the last listing, by name. Null until a first connect passes the check. */
   private listed: Map<string, ServerTool> | null = null;
   /** The declared tools checked against this connection's tools. */
@@ -749,6 +751,7 @@ class Link {
       );
       client = self;
       this.connecting = self;
+      this.transports.set(self, transport);
       self.onclose = () => {
         this.dropped.add(self);
         if (this.client === self) this.client = null;
@@ -877,12 +880,11 @@ class Link {
   /**
    * Whether an HTTP connection has gone, which its transport never says: it
    * closes only on `close()`. The server ended the session (a 404 to a
-   * request that carried its id), or a request got no answer at all.
+   * request that carried its id), or a request got no answer at all. The
+   * session id is the transport's, which keeps it once the client is closed.
    */
   private gone(err: unknown, client: Client): boolean {
-    if (err instanceof SdkHttpError) {
-      return err.status === 404 && (this.dropped.has(client) || client.transport?.sessionId !== undefined);
-    }
+    if (err instanceof SdkHttpError) return err.status === 404 && this.transports.get(client)?.sessionId !== undefined;
     return typeof err === "object" && err !== null && unanswered.has(err);
   }
 

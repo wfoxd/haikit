@@ -825,8 +825,9 @@ console.log("\nhttp");
  * A Streamable HTTP server with sessions, as the spec has them: initialize
  * starts one, and a request with a session id it doesn't hold gets a 404.
  * `end()` ends every session, as a restart would. `stop()` takes the server
- * off its port, ending them too, and `start()` puts it back. The next
- * tools/call gets the status in `refuse`, if one is set. `toolsFor(n)` names
+ * off its port, ending them too, and `start()` puts it back. With `refuse`
+ * set to `{ method, status }`, the next request for that method gets that
+ * status instead, such as a tools/call a 503. `toolsFor(n)` names
  * the tools the nth session offers; `whoami` answers with its session id.
  * With `sessions: false` it keeps none, and answers each request on its own.
  * `seen` is every request, as `method [session id]`.
@@ -864,8 +865,8 @@ async function sessionServer({ toolsFor = () => ["whoami", "json", "slow"], sess
     } catch {}
     const id = req.headers["mcp-session-id"];
     seen.push(`${rpc?.method ?? req.method}${rpc?.params?.name ? ` ${rpc.params.name}` : ""} [${id ?? ""}]`);
-    if (rpc?.method === "tools/call" && it.refuse) {
-      res.writeHead(it.refuse, { "content-type": "text/plain" });
+    if (it.refuse && rpc?.method === it.refuse.method) {
+      res.writeHead(it.refuse.status, { "content-type": "text/plain" });
       it.refuse = null;
       return res.end("refused");
     }
@@ -937,7 +938,7 @@ async function sessionServer({ toolsFor = () => ["whoami", "json", "slow"], sess
     changes.length === 1 && JSON.stringify(changes[0]) === JSON.stringify({ server: "sessions", removed: ["json"], changed: [] }),
   );
   for (const status of [400, 403, 500, 503]) {
-    web.refuse = status;
+    web.refuse = { method: "tools/call", status };
     const refused = await rejection(whoami.call({}));
     const after = textOf(await whoami.call({}));
     check(`a ${status} is protocol, and the connection is kept`, refused?.reason === "protocol" && after === second && web.handshakes() === 2);
@@ -954,7 +955,7 @@ async function sessionServer({ toolsFor = () => ["whoami", "json", "slow"], sess
   await s.connect();
   const inFlight = rejection(slow.call({ ms: 1000 }));
   await wait(50);
-  web.refuse = 404;
+  web.refuse = { method: "tools/call", status: 404 };
   const lost = await rejection(whoami.call({}));
   const cut = await inFlight;
   check("a call in flight on the connection a 404 drops: connection too", lost?.reason === "connection" && cut?.reason === "connection");
@@ -968,11 +969,20 @@ async function sessionServer({ toolsFor = () => ["whoami", "json", "slow"], sess
   const s = mcpServer({ name: "stateless", transport: http(web.url) });
   const whoami = s.tool("whoami", { args: anything });
   await s.connect();
-  web.refuse = 404;
+  web.refuse = { method: "tools/call", status: 404 };
   const lost = await rejection(whoami.call({}));
   await whoami.call({});
   check("a 404 with no session is protocol, and the connection is kept", lost?.reason === "protocol" && web.handshakes() === 1);
   await s.close();
+  const listing = mcpServer({ name: "stateless", transport: http(web.url) });
+  listing.tool("whoami", { args: anything });
+  web.refuse = { method: "tools/list", status: 404 };
+  const unlisted = await rejection(listing.connect());
+  check(
+    "…and so is one to the listing, as it connects",
+    isMcpError(unlisted) && unlisted.reason === "protocol" && unlisted.message === "stateless was refused by the server",
+  );
+  await listing.close();
   await web.close();
 }
 {
@@ -1001,6 +1011,30 @@ async function sessionServer({ toolsFor = () => ["whoami", "json", "slow"], sess
   const back = textOf(await whoami.call({}));
   check("once it's back, the next call connects again", back !== first && web.handshakes() === 2 && transports === 3);
   check("…and a call sent while it was away was sent once", web.sent("whoami") === 2);
+  await s.close();
+  await web.close();
+}
+{
+  // a fetch of the app's own that rejects with what isn't an object
+  const web = await sessionServer();
+  let offline = false;
+  const s = mcpServer({
+    name: "own-fetch",
+    transport: http(web.url, { fetch: (input, init) => (offline ? Promise.reject("offline") : fetch(input, init)) }),
+  });
+  const whoami = s.tool("whoami", { args: anything });
+  const first = textOf(await whoami.call({}));
+  offline = true;
+  const away = await rejection(whoami.call({}));
+  check(
+    "a fetch that rejects with a string: connection, its cause an Error with the string as its cause",
+    away?.reason === "connection" &&
+      away.cause instanceof Error &&
+      away.cause.message === "fetch rejected with offline" &&
+      away.cause.cause === "offline",
+  );
+  offline = false;
+  check("…and the next call connects again", textOf(await whoami.call({})) !== first && web.handshakes() === 2);
   await s.close();
   await web.close();
 }

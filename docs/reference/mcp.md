@@ -688,7 +688,9 @@ Two do:
 
 That call rejects with reason `connection`, its `cause` the SDK's
 `SdkHttpError` (`data.status` `404`) or what `fetch` threw (in Node,
-`TypeError: fetch failed`), and isn't sent again. The connection is
+`TypeError: fetch failed`), and isn't sent again. A `fetch` that rejects
+with something other than an object, such as a string, gives
+`Error: fetch rejected with <value>`, with that value as its `cause`. The connection is
 dropped: forgotten and closed, so a call still in flight on it rejects with
 reason `connection` too, and the next call or `connect()` makes a new one,
 as above.
@@ -1802,6 +1804,8 @@ The transport is given a `fetch` that calls the one in the options, or the
 global `fetch`, with the same arguments, and returns or throws what it
 does. When it throws for a request to `url` that wasn't aborted, the call
 that sees it drops the connection (see [The connection](#the-connection)).
+Thrown there, a value that isn't an object, such as a string, is thrown as
+`Error: fetch rejected with <value>`, with the value as its `cause`.
 
 For a server with `auth`, `http()` must have no `authProvider`, and no
 `Authorization` header in `headers` or `requestInit.headers`: each user's

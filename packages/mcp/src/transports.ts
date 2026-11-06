@@ -55,8 +55,11 @@ export function http(url: string | URL, options: HttpOptions = {}): (authProvide
     try {
       return await (own ?? globalThis.fetch)(input, init);
     } catch (err) {
-      if (String(input) === target.href && !init?.signal?.aborted && typeof err === "object" && err !== null) unanswered.add(err);
-      throw err;
+      if (String(input) !== target.href || init?.signal?.aborted) throw err;
+      // a value that can't be marked, such as a string, is carried as a cause
+      const thrown = typeof err === "object" && err !== null ? err : new Error(`fetch rejected with ${String(err)}`, { cause: err });
+      unanswered.add(thrown);
+      throw thrown;
     }
   };
   const make = (authProvider?: AuthProvider) =>
