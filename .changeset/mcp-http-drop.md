@@ -1,5 +1,0 @@
----
-"@haikit/mcp": patch
----
-
-A connection over HTTP now recovers when the server ends its session or can't be reached, the way a `stdio` connection recovers when its child exits. The SDK's HTTP transport closes only on `close()`, so before this, such a connection was kept, and every later call on it failed with reason `protocol`: for good without `auth`, and with `auth` until the user's connection was closed for idling, by `forget()`, or for `oauth()` by a reconnect. Now a request that gets a 404 on a connection with a session id (the spec's word that the session has ended), or a request to the server's URL from `http()`'s transport whose `fetch` rejects, drops the connection: that call rejects with reason `connection` and isn't sent again, a call in flight on the connection rejects with `connection` too, and the next call or `connect()` makes a new connection, whose tools are compared with the last list. Every other HTTP status, a 404 with no session, a 400 and a 5xx among them, keeps the connection and its reason, as before.
