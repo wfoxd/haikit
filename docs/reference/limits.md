@@ -166,9 +166,9 @@ Checked against `@haikit/*` 0.20.0. Durations are in milliseconds.
 | `github`'s `scopes` | `["read:user", "user:email"]` | [Sign-in and ownership](auth.md#github) |
 | `github`'s `tokenEndpointAuthMethod` | `"client_secret_post"` | [Sign-in and ownership](auth.md#github) |
 
-### `mcpServer`, `tool` and `textOf` (`@haikit/mcp`)
+### `mcpServer`, `createMcpAuth`, `http`, `stdio` and `textOf` (`@haikit/mcp`)
 
-Checked against `@haikit/*` 0.33.0.
+Checked against `@haikit/*` 0.35.0.
 
 | Option | Default | Valid values | Page |
 | --- | --- | --- | --- |
@@ -196,7 +196,7 @@ Checked against `@haikit/*` 0.33.0.
 | `client` (`oauth`) | none: one is registered for the app | `{ id, secret? }`, with `issuer` | [MCP servers](mcp.md#oauth) |
 | `make` (`sdk`) | required | a function from a user id to an `AuthProvider` or `OAuthClientProvider`, or `null` | [MCP servers](mcp.md#sdk) |
 | `headers` (`http`) | none | names and values, set over `requestInit.headers` | [MCP servers](mcp.md#http) |
-| `env` (`stdio`) | `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `USER` from this process | names and values, over those | [MCP servers](mcp.md#stdio) |
+| `env` (`stdio`) | `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `USER` from this process, on Linux and macOS: the SDK's list, which is another on Windows | names and values, over those | [MCP servers](mcp.md#stdio) |
 | `maxChars` (`textOf`) | `8000` | a whole number, 0 or more | [MCP servers](mcp.md#textof) |
 
 ### `hai.css`
@@ -333,9 +333,10 @@ None of these can be changed without changing HaiKIT's code.
 | Writes of a new credential at the callback, while the store's changes under it | 3 | [MCP servers](mcp.md#the-callback) |
 | A `secret` that seals credentials | 32 bytes or more, each | [MCP servers](mcp.md#createmcpauth) |
 | The client metadata document, in a cache | 3,600 s (`max-age=3600`) | [MCP servers](mcp.md#the-client-metadata-document) |
-| Times a call is sent | 1: a failed call is never sent again on its own | [MCP servers](mcp.md#call) |
+| Times a call is sent | 1: a failed call is never sent again on its own. A request the server refused unrun, with a 401 or, on a 2026-07-28 connection, a header mismatch, is sent once more | [MCP servers](mcp.md#call) |
 | Reconnect attempts per call | 1 | [MCP servers](mcp.md#the-connection) |
 | Pages of tools listed | 64 (the SDK's `listMaxPages`) | [MCP servers](mcp.md#limits) |
+| A read of the server's tools after `notifications/tools/list_changed` | 300 after the last one (the SDK's `debounceMs`) | [MCP servers](mcp.md#changes-to-the-servers-tools) |
 | One stdio message | 10 MB (the SDK's `maxBufferSize`) | [MCP servers](mcp.md#limits) |
 | A `stdio` server's stop: end of input, then `SIGTERM`, then `SIGKILL` | 2,000 apart (the SDK's) | [MCP servers](mcp.md#close) |
 
