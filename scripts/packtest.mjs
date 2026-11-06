@@ -195,7 +195,7 @@ import { createAuth, memoryAuthStore } from "@haikit/auth";
 import { pgAuthStore, migrate as migrateAuth, schema as authSchema } from "@haikit/auth/postgres";
 import { google, oidc } from "@haikit/auth/oidc";
 import { github, oauth2 } from "@haikit/auth/oauth2";
-import { createMcpAuth, mcpServer, memoryCredentialStore, http, stdio, textOf, isMcpError } from "@haikit/mcp";
+import { createMcpAuth, mcpServer, memoryCredentialStore, http, stdio, textOf, isMcpError, connectCard, connectCardFor, accountConnected } from "@haikit/mcp";
 import { pgCredentialStore, migrate as migrateMcp, schema as mcpSchema } from "@haikit/mcp/postgres";
 import { z } from "zod";
 
@@ -268,6 +268,11 @@ out.mcpOAuth =
   unconnected?.auth?.connect === "/mcp/connect/linked" && typeof withOAuth.handler() === "function" &&
   (await credentials.put("ada", "linked", "sealed", null)) === true &&
   (await credentials.lease("ada", "linked", "sealed", "holder", 60_000)) === true;
+// the connect card's props from that error, as the card takes them, and the notice
+out.mcpContracts =
+  JSON.stringify(connectCard.props.parse(connectCardFor(unconnected, "Linked"))) ===
+    JSON.stringify({ server: "linked", label: "Linked", need: "connect", href: "/mcp/connect/linked" }) &&
+  connectCard.name === "connect_card" && accountConnected.name === "account_connected" && accountConnected.kind === "wake";
 out.mcpPostgres = typeof pgCredentialStore({ query: async () => ({ rows: [] }) }).takeFlow === "function" && typeof migrateMcp === "function" && mcpSchema.length === 3;
 
 // the contract layer does real work, not just re-export shapes
@@ -338,6 +343,7 @@ console.log(JSON.stringify(out));
   check("@haikit/mcp declares and calls a tool, and makes text of a result", () => runtime.mcpWorks === true);
   check("@haikit/mcp makes calls as each user, and refuses one with no user", () => runtime.mcpAuthWorks === true);
   check("@haikit/mcp gives a user with no OAuth account the connect link, and its store takes a refresh lease", () => runtime.mcpOAuth === true);
+  check("@haikit/mcp makes the connect card's props from that error, and declares the notice", () => runtime.mcpContracts === true);
   check("@haikit/mcp/postgres resolves via exports", () => runtime.mcpPostgres === true);
   check("defineSurface builds a surface", () => runtime.surfaceName === "packtest_picker");
   check("cap() caps (3 of 47)", () => runtime.capShown === 3 && runtime.capTotal === 47);
@@ -387,7 +393,7 @@ import { pgStore } from "@haikit/postgres";
 import { createChat, type Registry, type MountCtx } from "@haikit/client";
 import { mountChat } from "@haikit/client/app.js";
 import { h } from "@haikit/client/transcript.js";
-import { reactNotice, reactSurface, type ReactOptions, type SurfaceProps } from "@haikit/react";
+import { reactNotice, reactSurface, type NoticeProps, type ReactOptions, type SurfaceProps } from "@haikit/react";
 import { createAuth, memoryAuthStore, type Auth, type AuthStore, type AuthUser } from "@haikit/auth";
 import { pgAuthStore } from "@haikit/auth/postgres";
 import { google, oidc, type GoogleOptions, type OidcOptions, type OidcProfile, type SignInAs } from "@haikit/auth/oidc";
@@ -395,6 +401,7 @@ import { github, oauth2, type GitHubOptions, type OAuth2Options, type OAuth2Prof
 import type { SignInProvider } from "@haikit/auth";
 import { createMcpAuth, mcpServer, http, stdio, textOf, McpError, McpToolError, type McpAuthNeed, type McpConnection, type McpResult, type McpTool, type McpToolChange } from "@haikit/mcp";
 import { memoryCredentialStore, type CredentialStore, type McpAccount, type McpConnected, type OAuthServerOptions } from "@haikit/mcp";
+import { accountConnected, connectCard, connectCardFor, type ConnectCardProps } from "@haikit/mcp";
 import { pgCredentialStore } from "@haikit/mcp/postgres";
 import type { Gate, Tool, ToolCtx } from "@haikit/core";
 import { z } from "zod";
@@ -540,6 +547,13 @@ const accounts: Promise<McpAccount[]> = mcpAuth.connections("u1");
 const connectLink: string | undefined = need?.connect;
 const routes: (req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) => Promise<boolean> = mcpAuth.handler();
 void credentialStore; void accounts; void connectLink; void routes;
+// the connect card and the notice: implemented on the server, rendered against their types
+const cardProps: ConnectCardProps | null = connectCardFor(new McpError("auth", "m", { server: "s", auth: { kind: "connect", connect: "/mcp/connect/s" } }), "S");
+void connectCard.implement({ digest: (p) => \`Shown: a button for the user to connect \${p.label}.\`, actions: {}, queries: {} });
+void accountConnected.implement({ model: (p) => \`The user connected \${p.server}.\` });
+void reactSurface(({ props }: SurfaceProps<typeof connectCard>) => (void props.href, null));
+void reactNotice(({ payload }: NoticeProps<typeof accountConnected>) => (void payload.server, null));
+void cardProps;
 // the OpenAI adapter type-checks as a ModelAdapter
 const gpt: ModelAdapter = openai({ model: "gpt-6-luna", effort: "low", promptCacheKey: "packtest" });
 void gpt;

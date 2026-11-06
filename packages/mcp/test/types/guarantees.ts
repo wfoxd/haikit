@@ -8,17 +8,22 @@
  * The first two are the package's guarantee: an MCP tool is not a HaiKIT tool,
  * so `createHai({ tools })`, which takes `Tool[]`, can't be given one, and the
  * model never sees one. The rest keep calls typed by the app's own schemas,
- * made as a user given by a string, and each user's OAuth typed as the
- * store and the routes keep it.
+ * made as a user given by a string, each user's OAuth typed as the store
+ * and the routes keep it, and the connect card's and the notice's contracts
+ * typed as the browser gets them.
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ActionCtx, Schema, Tool, ToolCtx } from "@haikit/core";
 import {
+  accountConnected,
+  connectCard,
+  connectCardFor,
   createMcpAuth,
   http,
   mcpServer,
   memoryCredentialStore,
+  type ConnectCardProps,
   type CredentialStore,
   type McpAccount,
   type McpAuthNeed,
@@ -129,4 +134,23 @@ async function withAccounts(err: McpError) {
   return [connect, connectedAt, landed, leased, handle, when, written, linear, shared];
 }
 
-export { asTool, tools, typed, asEachUser, withAccounts };
+// ── the connect card and the notice ────────────────────────────────────
+function withContracts(err: unknown) {
+  const props: ConnectCardProps | null = connectCardFor(err, "Linear");
+  const card = connectCard.implement({ digest: (p) => `Shown: a button for the user to connect ${p.label}.`, actions: {}, queries: {} });
+  const notice = accountConnected.implement({ model: (p) => `The user connected ${p.server}.` });
+  const need: McpAuthNeed["kind"] | undefined = props?.need;
+  // @ts-expect-error  connectCardFor may find no link to connect at
+  const always: ConnectCardProps = connectCardFor(err);
+  // @ts-expect-error  need is McpAuthNeed's kind
+  const login: ConnectCardProps = { server: "linear", label: "Linear", need: "login", href: "/mcp/connect/linear" };
+  // @ts-expect-error  the card's props say nothing of a token
+  connectCard.implement({ digest: (p) => p.token, actions: {}, queries: {} });
+  // @ts-expect-error  a wake notice's model text can't be null
+  accountConnected.implement({ model: () => null });
+  // @ts-expect-error  the notice's payload is only the server
+  accountConnected.implement({ model: (p) => p.userId });
+  return [card, notice, need, always, login];
+}
+
+export { asTool, tools, typed, asEachUser, withAccounts, withContracts };

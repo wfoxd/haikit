@@ -13,8 +13,9 @@ Exported by `@haikit/mcp`: `mcpServer`, `McpServerOptions`, `McpConnection`,
 `createMcpAuth`, `McpAuthOptions`, `McpAuth`, `McpServerAuth`,
 `OAuthServerOptions`, `McpConnected`, `McpAccount`, `CredentialStore`,
 `memoryCredentialStore`, `McpError`, `McpErrorReason`, `McpAuthNeed`,
-`McpToolError`, `isMcpError`, `isMcpToolError`, `http`, `HttpOptions`,
-`stdio`, `textOf`, `TextOptions`, and, re-exported from
+`McpToolError`, `isMcpError`, `isMcpToolError`, `connectCard`,
+`ConnectCardProps`, `connectCardFor`, `accountConnected`, `http`,
+`HttpOptions`, `stdio`, `textOf`, `TextOptions`, and, re-exported from
 `@modelcontextprotocol/client`, the types `AuthProvider`,
 `OAuthClientProvider`, `ContentBlock` and `Transport`. Exported by
 `@haikit/mcp/postgres`: `pgCredentialStore`, `migrate`, `schema` and
@@ -23,7 +24,7 @@ Exported by `@haikit/mcp`: `mcpServer`, `McpServerOptions`, `McpConnection`,
 Checked against `@haikit/*` 0.33.0 and `@modelcontextprotocol/client` 2.4.0.
 Source, in `packages/mcp/src/`: `index.ts`, `auth.ts`, `credential.ts`,
 `oauth.ts`, `routes.ts`, `store.ts`, `seal.ts`, `postgres.ts`, `errors.ts`,
-`text.ts` and `transports.ts`.
+`contracts.ts`, `text.ts` and `transports.ts`.
 
 - [The rule](#the-rule): the model never sees an MCP tool
 - [`mcpServer`](#mcpserver): `McpServerOptions`
@@ -42,6 +43,8 @@ Source, in `packages/mcp/src/`: `index.ts`, `auth.ts`, `credential.ts`,
 - [The routes](#the-routes): `handler`, connecting, the callback,
   `McpConnected`, the done page, disconnecting, the user's connections, the
   client metadata document
+- [The connect card and the notice](#the-connect-card-and-the-notice):
+  `connectCard`, `ConnectCardProps`, `connectCardFor`, `accountConnected`
 - [Credential stores](#credential-stores): `CredentialStore`,
   `memoryCredentialStore`, `@haikit/mcp/postgres`, sealing
 - [Changes to the server's tools](#changes-to-the-servers-tools):
@@ -553,16 +556,16 @@ app's origin. Don't give it to the model.
 
 A tool that catches the error decides what to do with it: such as tell the
 model the user must connect an account first, or show a surface that asks
-them to, with `connect` as its link:
+them to, with `connect` as its link, as
+[the connect card](#the-connect-card-and-the-notice) does:
 
 ```ts
 try {
   const { items } = await searchIssues.call({ q: query }, ctx);
   return ctx.render(issueList, { issues: items });
 } catch (err) {
-  if (isMcpError(err) && err.reason === "auth") {
-    return ctx.render(connectCard, { server: "github", need: err.auth!.kind, href: err.auth!.connect });
-  }
+  const card = connectCardFor(err, "GitHub");
+  if (card) return ctx.render(connectCardServer, card); // connectCard, implemented
   throw err;
 }
 ```
@@ -681,6 +684,12 @@ const mcpRoutes = mcpAuth.handler();
 ```
 
 The URLs above show the shape only.
+[`examples/hello-mcp`](https://github.com/wfoxd/haikit/tree/main/examples/hello-mcp)
+is a whole app built this way, offline: an `oauth()` server behind its own
+authorization server, a `bearer()` one and one with the app's own key, with
+the [connect card](#connectcard) made from `err.auth`, the
+[`accountConnected`](#accountconnected) notice sent from `onConnected`, and a
+settings panel on the routes.
 
 Without `auth`, every call on a server shares one connection, made with the
 app's own credentials, whoever the conversation belongs to. With it, each
@@ -1199,8 +1208,9 @@ query as [`McpAuthNeed.connect`](#mcpauthneed) puts them. In order:
 7. **303** to the authorization endpoint, `cache-control: no-store`, with
    `response_type=code`, `client_id`, `code_challenge` and
    `code_challenge_method=S256` (PKCE), `redirect_uri`, `state`, `scope`
-   (as [`oauth`](#oauth)'s `scopes` says, with the link's added), and
-   `resource`, the server's resource indicator.
+   (as [`oauth`](#oauth)'s `scopes` says, with the link's added),
+   `prompt=consent` when that scope has `offline_access`, as the SDK asks
+   for a refresh token, and `resource`, the server's resource indicator.
 
 A failure in steps 5 to 7 is the done page, `failed`, and is logged:
 `@haikit/mcp: <server>: connecting user <userId> couldn't start: <err>`.
@@ -1251,7 +1261,8 @@ interface McpConnected {
 
 What `onConnected` is told: the user, the server's `name`, and the
 conversation the connect link named, only if it's the user's. Waking that
-conversation, as with [`hai.notify`](notices.md#hainotify), is for the app to do.
+conversation, as with [`hai.notify`](notices.md#hainotify), is for the app to do,
+such as with [`accountConnected`](#accountconnected).
 
 ### The done page
 
@@ -1330,6 +1341,162 @@ Its URL, `<basePath>/client.json` on the redirect URI's origin, is the app's
 `client_id` at an authorization server that takes one, so the app needs no
 registration there. The handler must be mounted on that origin. With an http
 redirect URI, the SDK can't use one, and the route resolves `false`.
+
+## The connect card and the notice
+
+```ts
+import { accountConnected, connectCard, connectCardFor } from "@haikit/mcp";
+
+// the server: what the model hears is the app's to say
+const connectCardServer = connectCard.implement({
+  digest: (p) => `Shown: a button for the user to connect ${p.label}. Its tools work once they have; you'll be told.`,
+  actions: {},
+  queries: {},
+});
+const accountConnectedServer = accountConnected.implement({
+  model: (p) => `The user connected ${labels[p.server] ?? p.server}.`,
+});
+
+// in a tool's run
+try {
+  return ctx.render(issueList, await searchIssues.call({ q }, ctx));
+} catch (err) {
+  const card = connectCardFor(err, "GitHub");
+  if (card) return ctx.render(connectCardServer, card);
+  throw err;
+}
+
+// in createMcpAuth's options
+onConnected: async ({ server, conversationId }) => {
+  if (conversationId) await hai.notify(conversationId, accountConnectedServer, { server });
+},
+```
+
+```tsx
+// the browser: types only
+import type { accountConnected, connectCard } from "@haikit/mcp";
+
+function ConnectCard({ props }: SurfaceProps<typeof connectCard>) { /* a button that opens props.href */ }
+export const registry = { connect_card: reactSurface(ConnectCard) };
+export const notices = { account_connected: reactNotice(AccountConnected) };
+```
+
+Two contracts for a user who hasn't connected an [`oauth()`](#oauth)
+server's account: a card that asks them to, and a notice that tells the
+conversation they have. They are declarations, as
+[`defineSurface`](surfaces.md#definesurface) and
+[`defineNotice`](notices.md#definenotice) make, and nothing more. The app
+implements each on the server, with its own words for the model, and
+renders each in the browser with its own component, registered under
+`connect_card` and `account_connected`. Neither can be given other props:
+an app that needs them declares a surface of its own.
+
+**In the browser, import them as types only,** with `import type`. A
+component needs only the type, and the package's entry loads Node's
+modules.
+
+A display card and a wake notice, rather than an elicit card:
+
+- **The tool returns at once.** The turn's lease isn't renewed while a tool
+  runs, so a tool mustn't wait for the user to connect.
+- **More than one at a time.** Two servers' cards can show in one reply, and
+  the user can go on talking, then connect later or in another tab. A
+  second elicit surface in the same reply isn't shown (see
+  [`render`](tools.md#render)).
+
+[`examples/hello-mcp`](https://github.com/wfoxd/haikit/tree/main/examples/hello-mcp)
+uses both, with a popup.
+
+### `connectCard`
+
+```ts
+const connectCard: Surface<ConnectCardProps, {}, {}>;
+```
+
+A surface named `connect_card`, version 1, with no actions and no queries,
+for `display` mode. Its props are [`ConnectCardProps`](#connectcardprops),
+as [`connectCardFor`](#connectcardfor) makes them.
+
+Its props are checked as any surface's are, when it's rendered (see
+[`defineSurface`](surfaces.md#definesurface)): parsing gives
+`{ server, label, need, href }`, and drops any other key. What it refuses:
+
+| Props | Throws |
+| --- | --- |
+| Not an object | `TypeError: connect_card: props must be an object` |
+| `server` not a non-empty string | `TypeError: connect_card: server must be a non-empty string` |
+| `label` not a non-empty string | `TypeError: connect_card: label must be a non-empty string` |
+| `need` none of `connect`, `reconnect` or `scope` | `TypeError: connect_card: need must be "connect", "reconnect" or "scope"` |
+| `href` not a path on this app | `TypeError: connect_card: href must be a path on this app, such as err.auth.connect` |
+
+A path on this app starts with `/` and, resolved against any origin, keeps
+that origin. So a URL with a scheme is refused, and so are
+`//evil.example`, `/\evil.example`, and `/` with a tab or a newline before
+the next `/`, which a browser reads as `//`. No message quotes a prop: a
+tool that lets the error through reaches the model as
+`<tool> failed: <message>`.
+
+The digest is all the model hears of the card. Don't put `href` in it.
+
+### `ConnectCardProps`
+
+```ts
+interface ConnectCardProps {
+  server: string;
+  label: string;
+  need: McpAuthNeed["kind"];
+  href: string;
+}
+```
+
+| Field | What it is |
+| --- | --- |
+| `server` | The server's `name`, as on the error's `server` |
+| `label` | What the user calls it, such as `GitHub`, for the card's words |
+| `need` | The error's `auth.kind`: connect, connect again, or give more access (see [`McpAuthNeed`](#mcpauthneed)) |
+| `href` | The error's `auth.connect`, the app's [connect route](#connecting) for the server and the conversation. For the browser alone |
+
+### `connectCardFor`
+
+```ts
+function connectCardFor(err: unknown, label?: string): ConnectCardProps | null;
+```
+
+The connect card's props for a call that needs the user to connect:
+
+```ts
+{ server: err.server, label: label ?? err.server, need: err.auth.kind, href: err.auth.connect }
+```
+
+for an [`McpError`](#mcperror) with reason `auth` and an `auth.connect`.
+Only an `oauth()` server's has one, so an `auth` error from a `bearer()` or
+`sdk()` server gives `null`, and so does any other error, or anything
+else. It never throws. It doesn't check `label`: an empty one is refused
+when the card is rendered.
+
+### `accountConnected`
+
+```ts
+const accountConnected: Notice<{ server: string }, "wake">;
+```
+
+A notice named `account_connected`, version 1, of kind `wake`, with the
+server's `name` as `server`. Send it from `onConnected` to the conversation
+it's told, with [`hai.notify`](notices.md#hainotify).
+[`McpConnected`](#mcpconnected) names a conversation only when the connect
+link did and it's the user's, so a connect from a settings panel, whose
+link names none, sends nothing.
+
+Its payload is checked when it's sent: parsing gives `{ server }`, and drops
+any other key. A payload that isn't an object with a non-empty string
+`server` throws `TypeError: account_connected: server must be a non-empty
+string`.
+
+Its model text is the app's, and a string, as a wake notice's must be. The
+model hears it as `[App notification: account_connected] <model text>` (see
+[What the model hears](notices.md#what-the-model-hears)), in a
+[wake turn](notices.md#wake-turns), and can call the tool that showed the
+card again.
 
 ## Credential stores
 
@@ -1628,7 +1795,8 @@ more (got <value>)`.
   and the model never sees one.
 - **The connect link is for the browser.** `err.auth.connect` is a path on
   the app, for a surface or a link the user follows: don't give it to the
-  model.
+  model. [`connectCard`](#connectcard) takes only a path on the app as its
+  `href`, so a card can't send the user to another site.
 - **Pin the issuer** of a third party's server, with `oauth({ issuer })`. A
   server names its own authorization server, and one compromised could send
   users to a fake sign-in page. A server that names another is refused

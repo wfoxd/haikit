@@ -526,6 +526,203 @@ for (const c of CASES) {
   }
 }
 
+// ── hello-mcp: MCP servers called as each user ──────────────────────────
+// Its tools call three MCP servers, each as a different identity: Notes as
+// each user's own account there, connected through @haikit/mcp's routes;
+// Calendar with each user's own key; Almanac with the app's own. The example
+// runs all three, and Notes' authorization server, in its own process, so
+// none of this leaves the machine. Asked for their notes before connecting,
+// the user gets a card; once they connect, a wake notice has the model call
+// the tool again.
+{
+  console.log("\nhello-mcp");
+  signedIn = {};
+  const port = 5278;
+  const base = `http://127.0.0.1:${port}`;
+  const env = {
+    NODE_ENV: "production",
+    HAI_SCRIPTED: "1",
+    PORT: String(port),
+    HAIKIT_AUTH_SECRET: "a-smoke-test-secret-of-at-least-32-bytes",
+    HAIKIT_MCP_SECRET: "another-smoke-test-secret-of-32-bytes-or-more",
+  };
+  const said = (events) => events.filter((e) => e.type === "text_delta").map((e) => e.text).join("");
+  const resultOf = (events) => events.find((e) => e.type === "block_update")?.result ?? "";
+  const doneMessage = async (response) => {
+    const found = /data-message="([^"]*)"/.exec(await response.text());
+    return found ? JSON.parse(found[1].replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&")) : null;
+  };
+  // nothing a credential is made of, or the link to make one, ever reaches the model
+  const secretsIn = (messages) => ["/mcp/connect", "notes_at_", "notes_rt_", "notes_code_", "cal_", "alm_", "Bearer"].filter((s) => JSON.stringify(messages ?? []).includes(s));
+  let child;
+  try {
+    execFileSync("npx", ["vite", "build", "--logLevel", "error"], { cwd: path.join(ROOT, "examples/hello-mcp"), stdio: "pipe" });
+    ok("builds with vite");
+    child = spawn("node", ["examples/hello-mcp/src/server/main.ts"], { cwd: ROOT, env: { ...process.env, ...env }, stdio: "ignore" });
+    if (!(await waitFor(`${base}/sign-in`))) throw new Error("server did not start");
+    ok("boots and serves the page");
+
+    signedIn = { cookie: (await signInAs(base, "ada")).cookie.split(";")[0], origin: base };
+    const registry = await clientCode(base);
+    ["connect_card", "note_list", "note_draft", "account_connected"].every((name) => new RegExp(`\\b${name}\\s*:`).test(registry))
+      ? ok("the card, the notes, the draft and the notice are registered in the built bundle")
+      : bad("a component is missing from the client registry");
+
+    // 1 · the init tool reads connections(): nothing yet
+    const started = await sse(`${base}/hai/start`, {});
+    const conversationId = started.find((e) => e.type === "hello")?.conversationId;
+    /^Signed in as ada\. Notes isn't connected/.test(resultOf(started))
+      ? ok("init reads connections(), and tells the model Notes isn't connected")
+      : bad(`init said ${resultOf(started)}`);
+
+    // 2 · asked for their notes, the user gets the connect card; the model gets no link
+    const asked = await sse(`${base}/hai/chat`, { conversationId, message: "show my notes" });
+    const card = asked.find((e) => e.type === "ui_open");
+    const cardProps = asked.find((e) => e.type === "ui_props" && e.handle === card?.handle)?.props;
+    asked.find((e) => e.type === "block_start" && e.block.kind === "tool")?.block.name === "show_notes" &&
+    card?.component === "connect_card" &&
+    card.mode === "display"
+      ? ok("show_notes, not connected, renders connect_card as display")
+      : bad(`expected a connect_card, got ${JSON.stringify(card)}`);
+    cardProps?.need === "connect" && cardProps.href === `/mcp/connect/notes?conversation=${conversationId}`
+      ? ok("its href is err.auth.connect, naming the conversation")
+      : bad(`its props were ${JSON.stringify(cardProps)}`);
+    const history = asked.filter((e) => e.type === "context").at(-1)?.messages;
+    resultOf(asked).startsWith("Shown: a button for the user to connect Notes.") && history && !secretsIn(history).length
+      ? ok("the model hears the digest, and never the link")
+      : bad(`the model heard ${resultOf(asked)}; leaked ${secretsIn(history)}`);
+    asked.filter((e) => e.type === "status").at(-1)?.status === "idle" ? ok("the card doesn't park the turn") : bad("the turn parked on the card");
+
+    // 3 · the popup: the connect route, Notes' sign-in, and back to the callback
+    const start = await fetch(new URL(cardProps.href, base), { headers: signedIn, redirect: "manual" });
+    const to = new URL(start.headers.get("location") ?? base);
+    start.status === 303 && to.pathname === "/authorize" && to.origin !== base && to.searchParams.get("code_challenge_method") === "S256" && to.searchParams.get("resource")
+      ? ok("the connect route sends the browser to Notes' authorization server, with PKCE and the resource")
+      : bad(`the connect route answered ${start.status} to ${to}`);
+    const consent = await fetch(to).then((r) => r.text());
+    consent.includes("<strong>hello-mcp</strong> wants to") ? ok("Notes asks the user, naming the client registered by DCR") : bad("no consent page");
+    const allowed = await fetch(to, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ account: "ada-at-notes", decision: "allow" }),
+      redirect: "manual",
+    });
+    const back = new URL(allowed.headers.get("location") ?? base);
+    const done = await fetch(back, { headers: signedIn, redirect: "manual" });
+    const message = await doneMessage(done.clone());
+    back.pathname === "/mcp/callback" && message?.type === "haikit:mcp" && message.server === "notes" && message.ok === true && /script-src 'sha256-/.test(done.headers.get("content-security-policy") ?? "")
+      ? ok("the callback answers the done page, which posts { type: haikit:mcp, server: notes, ok: true }")
+      : bad(`the callback answered ${done.status}: ${JSON.stringify(message)}`);
+    const replayed = await doneMessage(await fetch(back, { headers: signedIn }));
+    replayed?.ok === false && replayed.error === "expired" ? ok("the same callback again is expired: a flow is taken once") : bad(`replayed: ${JSON.stringify(replayed)}`);
+
+    // 4 · onConnected's wake notice starts a turn, which calls the tool again
+    const woke = await eventsUntil(
+      `${base}/hai/events?conversationId=${conversationId}`,
+      (got) => {
+        const listed = got.findIndex((e) => e.type === "ui_open" && e.component === "note_list");
+        return listed >= 0 && got.slice(listed).some((e) => e.type === "status" && e.status === "idle");
+      },
+      10_000,
+      signedIn,
+    );
+    const notice = woke.find((e) => e.type === "notice");
+    notice?.name === "account_connected" && notice.payload?.server === "notes"
+      ? ok("account_connected arrives on the events stream")
+      : bad(`expected account_connected, got ${JSON.stringify(notice)}`);
+    const wokeContext = woke.filter((e) => e.type === "context").at(-1)?.messages;
+    woke.some((e) => e.type === "block_start" && e.block.kind === "tool" && e.block.name === "show_notes") &&
+    woke.some((e) => e.type === "ui_open" && e.component === "note_list") &&
+    /Here are your 2 notes, from ada-at-notes's Notes account/.test(said(woke))
+      ? ok("it wakes the conversation, and the model calls show_notes again, as the account the user connected")
+      : bad(`the wake turn said: ${said(woke) || "(nothing)"}`);
+    JSON.stringify(wokeContext ?? []).includes("[App notification: account_connected] The user connected Notes.") && !secretsIn(wokeContext).length
+      ? ok("the model hears that Notes is connected, and no token")
+      : bad(`the wake turn's history leaked ${secretsIn(wokeContext)}`);
+
+    // 5 · a new conversation of the same user: connected once, connected in every one
+    const second = await sse(`${base}/hai/start`, {});
+    const secondId = second.find((e) => e.type === "hello")?.conversationId;
+    /Notes is connected\./.test(resultOf(second)) ? ok("init in a new conversation says Notes is connected") : bad(`init said ${resultOf(second)}`);
+    const listed = await fetch(`${base}/mcp/connections`, { headers: signedIn }).then((r) => r.json());
+    listed.servers?.length === 1 && listed.servers[0].name === "notes" && listed.servers[0].scope === "notes.read notes.write"
+      ? ok("GET /mcp/connections lists Notes, for the settings panel")
+      : bad(`connections were ${JSON.stringify(listed)}`);
+
+    // 6 · the approval: draft_note shows the note, and only the click writes it
+    const drafted = await sse(`${base}/hai/chat`, { conversationId, message: "note: water the plants" });
+    const draft = drafted.find((e) => e.type === "ui_open");
+    draft?.component === "note_draft" && draft.mode === "elicit" && drafted.filter((e) => e.type === "status").at(-1)?.status === "awaiting"
+      ? ok("draft_note renders note_draft as elicit, and the turn parks")
+      : bad(`expected a parked note_draft, got ${JSON.stringify(draft)}`);
+    const before = await sse(`${base}/hai/chat`, { conversationId: secondId, message: "show my notes" });
+    /^ada-at-notes's 2 notes/.test(resultOf(before)) ? ok("while it waits, Notes still has 2 notes: nothing is written yet") : bad(`before the click: ${resultOf(before)}`);
+    const saved = await sse(`${base}/hai/interact`, { conversationId, handle: draft?.handle, action: "decide", value: "save" });
+    const label = saved.find((e) => e.type === "block_start" && e.block.kind === "interaction")?.block.label ?? "";
+    label === 'Saved to ada-at-notes\'s notes: "water the plants".' && saved.filter((e) => e.type === "status").at(-1)?.status === "idle"
+      ? ok("the click's handler makes the MCP call, and its label is the tool_result")
+      : bad(`the click's label was: ${label}`);
+    const after = await sse(`${base}/hai/chat`, { conversationId: secondId, message: "show my notes" });
+    /^ada-at-notes's 3 notes, newest first: "water the plants"/.test(resultOf(after)) ? ok("after it, Notes has the note") : bad(`after the click: ${resultOf(after)}`);
+
+    // 7 · Calendar takes each user's own key, and Almanac the app's
+    const adaDay = await sse(`${base}/hai/chat`, { conversationId: secondId, message: "what's on my calendar?" });
+    const almanac = await sse(`${base}/hai/chat`, { conversationId: secondId, message: "what day is it?" });
+    signedIn = { cookie: (await signInAs(base, "bob")).cookie.split(";")[0], origin: base };
+    const bobs = (await sse(`${base}/hai/start`, {})).find((e) => e.type === "hello")?.conversationId;
+    const bobDay = await sse(`${base}/hai/chat`, { conversationId: bobs, message: "what's on my calendar?" });
+    resultOf(adaDay).startsWith("ada's calendar today: ") && resultOf(bobDay).startsWith("bob's calendar today: ") && resultOf(adaDay).slice(5) !== resultOf(bobDay).slice(5)
+      ? ok("bearer(): Calendar sees each user's own key, and answers with their own day")
+      : bad(`ada's: ${resultOf(adaDay)}; bob's: ${resultOf(bobDay)}`);
+    /^\w+ \d{4}-\d{2}-\d{2}: day \d+ of 36[56]\.$/.test(resultOf(almanac)) ? ok("Almanac answers with the app's own key") : bad(`almanac said ${resultOf(almanac)}`);
+    const bobNotes = await sse(`${base}/hai/chat`, { conversationId: bobs, message: "show my notes" });
+    bobNotes.find((e) => e.type === "ui_open")?.component === "connect_card"
+      ? ok("ada's Notes account is hers: bob is asked to connect his own")
+      : bad(`bob got ${JSON.stringify(bobNotes.find((e) => e.type === "ui_open"))}`);
+
+    // 8 · the settings panel disconnects, and the next call shows the card again
+    signedIn = { cookie: (await signInAs(base, "ada")).cookie.split(";")[0], origin: base };
+    const crossSite = await fetch(`${base}/mcp/disconnect/notes`, { method: "POST", headers: { cookie: signedIn.cookie, origin: "https://evil.example" } });
+    const gone = await fetch(`${base}/mcp/disconnect/notes`, { method: "POST", headers: signedIn });
+    const left = await fetch(`${base}/mcp/connections`, { headers: signedIn }).then((r) => r.json());
+    crossSite.status === 403 && gone.status === 204 && left.servers?.length === 0
+      ? ok("POST /mcp/disconnect/notes: 403 from another site, 204 from the app, and it's gone from the list")
+      : bad(`disconnect: ${crossSite.status} from another site, ${gone.status} from the app; then ${JSON.stringify(left)}`);
+    const again = await sse(`${base}/hai/chat`, { conversationId: secondId, message: "show my notes" });
+    again.find((e) => e.type === "ui_open")?.component === "connect_card" ? ok("disconnected, show_notes shows the connect card again") : bad(`after disconnecting: ${resultOf(again)}`);
+
+    // 9 · a draft is for the account it names: connected as another since, its Save writes nothing
+    const connectAs = async (account) => {
+      const to = (await fetch(`${base}/mcp/connect/notes`, { headers: signedIn, redirect: "manual" })).headers.get("location");
+      const allowed = await fetch(to, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ account, decision: "allow" }),
+        redirect: "manual",
+      });
+      return doneMessage(await fetch(allowed.headers.get("location"), { headers: signedIn }));
+    };
+    const thirdId = (await sse(`${base}/hai/start`, {})).find((e) => e.type === "hello")?.conversationId;
+    const backAgain = await connectAs("ada-at-notes");
+    const forAda = (await sse(`${base}/hai/chat`, { conversationId: thirdId, message: "note: buy bread" })).find((e) => e.type === "ui_open");
+    await fetch(`${base}/mcp/disconnect/notes`, { method: "POST", headers: signedIn });
+    const elsewhere = await connectAs("ada-elsewhere");
+    const refused = await sse(`${base}/hai/interact`, { conversationId: thirdId, handle: forAda?.handle, action: "decide", value: "save" });
+    const refusedLabel = refused.find((e) => e.type === "block_start" && e.block.kind === "interaction")?.block.label ?? "";
+    const theirs = await sse(`${base}/hai/chat`, { conversationId: secondId, message: "show my notes" });
+    backAgain?.ok && elsewhere?.ok && forAda?.component === "note_draft" &&
+    refusedLabel === "Not saved: Notes is connected as another account now, not ada-at-notes. Nothing was written." &&
+    /^ada-elsewhere's 2 notes/.test(resultOf(theirs))
+      ? ok("a draft shown for one Notes account isn't saved to another the user connected since")
+      : bad(`connected: ${backAgain?.ok}, ${elsewhere?.ok}; the click's label: ${refusedLabel}; then ${resultOf(theirs)}`);
+  } catch (err) {
+    bad(`hello-mcp: ${err.stack ?? err}`);
+  } finally {
+    child?.kill("SIGKILL");
+    signedIn = {};
+  }
+}
+
 // ── progress is throttled, and only what its type says goes out ─────────
 // The flights case shows frames arriving. This one reports faster than the
 // throttle allows, and passes what a JavaScript caller might: the frames
