@@ -225,7 +225,11 @@ is one, else the cookie. `null` with neither. For the app's own routes.
 
 Who owns a conversation, or `null` if no one does. A tool learns who it
 runs for with `await auth.ownerOf(ctx.conversationId)`. That works in a wake
-turn too, which no request carries a token for.
+turn too, which no request carries a token for. `@haikit/mcp` makes each
+call to a server with `auth` as the conversation's owner, given
+`createMcpAuth({ userOf: (id) => auth.ownerOf(id) })`, and its routes act
+for `(await auth.user(req))?.id` (see
+[MCP servers: calls as each user](mcp.md#calls-as-each-user)).
 
 Owners never change, so each one found is kept in memory, the latest
 10,000 of them. A conversation with no owner yet is always looked up, since
@@ -406,7 +410,8 @@ does this when `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are set, and
 step 10 of [Who's asking](../tutorial-3.md) builds it.
 
 [`github()`](#github), from `@haikit/auth/oauth2`, is the same for GitHub,
-at `/auth/github`. A provider that speaks OpenID Connect goes through
+at `/auth/github`: the example does that too when `GITHUB_CLIENT_ID` and
+`GITHUB_CLIENT_SECRET` are set, and the same step builds it. A provider that speaks OpenID Connect goes through
 [`oidc`](#oidc), and one that speaks only OAuth 2.0 through
 [`oauth2`](#oauth2).
 

@@ -14,6 +14,7 @@ Checked against `@haikit/*` 0.20.0. Source: `packages/core/src/index.ts` and
 - [How a tool call runs](#how-a-tool-call-runs)
 - [The tool's context](#the-tools-context): `ToolCtx`, `ToolReturn`,
   `Progress`
+- [Calling an MCP server](#calling-an-mcp-server)
 - [The built-in `query_ui` tool](#the-built-in-query_ui-tool)
 - [Capping](#capping): `makeCap`, `Cap`, `CapOptions`, `Capped`
 - [`estTokens`](#esttokens)
@@ -184,7 +185,10 @@ The conversation the call runs in. Keep it if the tool starts work that ends
 later and should tell the conversation, with `hai.notify` or `hai.update`.
 Behind `@haikit/auth`'s gate, `await auth.ownerOf(ctx.conversationId)` is the
 user the call runs for, in a wake turn too (see
-[Sign-in and ownership](auth.md#ownerof)).
+[Sign-in and ownership](auth.md#ownerof)). An MCP call passed this `ctx`, on
+a server with `auth`, runs as that owner, and a connect link it gives back
+names this conversation (see
+[MCP servers: who a call runs as](mcp.md#who-a-call-runs-as)).
 
 Don't await `hai.update` on this conversation inside the call. The running
 turn holds the lease, so it waits its `timeoutMs` (30,000 ms by default) and
@@ -309,6 +313,23 @@ interface Progress {
 | `message` | What the tool is doing now, for a person to read |
 | `done` | Steps finished so far |
 | `total` | Steps in all, when the tool knows. With it, the default UI draws a progress bar |
+
+## Calling an MCP server
+
+An MCP server's tools are never the model's tools. `@haikit/mcp` declares the
+ones an app may call, typed by its own schemas, and a tool calls them from
+`run`, passing its `ctx`, so the server's progress reaches `ctx.progress`:
+
+```ts
+async run({ query }, ctx) {
+  const { items } = await searchIssues.call({ q: query }, ctx);
+  return ctx.render(issueList, { issues: items });
+}
+```
+
+The tool decides what the model hears of the result. A declared MCP tool
+isn't a `Tool`, so it can't be listed in `createHai({ tools })`. See
+[MCP servers](mcp.md).
 
 ## The built-in `query_ui` tool
 

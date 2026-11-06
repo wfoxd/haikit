@@ -24,6 +24,7 @@ statement by statement, at the version the page names.
 | `@haikit/client` | The browser runtime, the default chat UI and its stylesheet | browser, no build step |
 | `@haikit/react` | Write surfaces and notices as React components | browser |
 | `@haikit/auth` | Sign-in from a verified JWT, and which conversations are each user's: a gate for `nodeHandler`, with a Postgres store at `@haikit/auth/postgres`, sign-in with Google or any OpenID Connect provider at `@haikit/auth/oidc`, and with GitHub or any OAuth 2.0 provider at `@haikit/auth/oauth2` | Node |
+| `@haikit/mcp` | Call MCP servers' tools from inside the app's own tools, as the app or as each user. The model never sees an MCP tool. Its Postgres credential store is at `@haikit/mcp/postgres` | Node, and the browser (its contracts' types) |
 
 ## Contents
 
@@ -39,6 +40,7 @@ statement by statement, at the version the page names.
 | [The server](server.md) | `createHai`, the `Hai` class and every `HaiConfig` option | written |
 | [HTTP routes and the wire](http.md) | `nodeHandler`, gates, each route's requests, responses and errors, the events stream and its polling mode, and every wire event | written |
 | [Sign-in and ownership](auth.md) | `@haikit/auth`: `createAuth`, the tokens it issues and accepts, its gate, its routes, revocation, signing in with Google or another provider, and its stores | written |
+| [MCP servers](mcp.md) | `@haikit/mcp`: `mcpServer`, declaring a server's tools, a call and what it resolves to, its errors, connecting and reconnecting, calls as each user with `createMcpAuth` (a token, each user's OAuth account, or the SDK's own provider), the connect and disconnect routes, the connect card and the `accountConnected` notice, credential stores with `@haikit/mcp/postgres`, changes to the server's tools, `http` and `stdio`, and `textOf` | written |
 | [Models](models.md) | The model adapter interface, `@haikit/anthropic` and `@haikit/openai` | written |
 | [Stores](stores.md) | The store interface every store implements, `memoryStore`, and `@haikit/postgres`: schema, migration, cross-server channels, cleanup | written |
 | [The browser client](client.md) | `createChat`, the `Chat` object and its state, and the registries for surfaces, notices and signals | written |
@@ -319,3 +321,53 @@ From `@haikit/auth/postgres`:
 | `pgAuthStore` | function | [Sign-in and ownership](auth.md#pgauthstore) |
 | `Queryable` | interface | [Sign-in and ownership](auth.md#pgauthstore) |
 | `schema` | constant | [Sign-in and ownership](auth.md#migrate-schema) |
+
+### `@haikit/mcp`
+
+| Symbol | Kind | Page |
+| --- | --- | --- |
+| `accountConnected` | constant (a notice) | [MCP servers](mcp.md#accountconnected) |
+| `AuthProvider` | type (the SDK's, re-exported) | [MCP servers](mcp.md#http) |
+| `connectCard` | constant (a surface) | [MCP servers](mcp.md#connectcard) |
+| `connectCardFor` | function | [MCP servers](mcp.md#connectcardfor) |
+| `ConnectCardProps` | interface | [MCP servers](mcp.md#connectcardprops) |
+| `ContentBlock` | type (the SDK's, re-exported) | [MCP servers](mcp.md#mcpresult) |
+| `createMcpAuth` | function | [MCP servers](mcp.md#createmcpauth) |
+| `CredentialStore` | interface | [MCP servers](mcp.md#credentialstore) |
+| `http` | function | [MCP servers](mcp.md#http) |
+| `HttpOptions` | interface | [MCP servers](mcp.md#http) |
+| `isMcpError` | function | [MCP servers](mcp.md#ismcperror-ismcptoolerror) |
+| `isMcpToolError` | function | [MCP servers](mcp.md#ismcperror-ismcptoolerror) |
+| `McpAccount` | interface | [MCP servers](mcp.md#connections) |
+| `McpAuth` | interface | [MCP servers](mcp.md#createmcpauth) |
+| `McpAuthNeed` | interface | [MCP servers](mcp.md#mcpauthneed) |
+| `McpAuthOptions` | interface | [MCP servers](mcp.md#createmcpauth) |
+| `McpCallCtx` | interface | [MCP servers](mcp.md#mcpcallctx) |
+| `McpConnected` | interface | [MCP servers](mcp.md#mcpconnected) |
+| `McpConnection` | interface | [MCP servers](mcp.md#mcpconnection) |
+| `McpError` | class | [MCP servers](mcp.md#mcperror) |
+| `McpErrorReason` | type | [MCP servers](mcp.md#mcperror) |
+| `McpResult` | interface | [MCP servers](mcp.md#mcpresult) |
+| `mcpServer` | function | [MCP servers](mcp.md#mcpserver) |
+| `McpServerAuth` | interface | [MCP servers](mcp.md#mcpserverauth) |
+| `McpServerOptions` | interface | [MCP servers](mcp.md#mcpserver) |
+| `McpTool` | interface | [MCP servers](mcp.md#mcptool) |
+| `McpToolChange` | interface | [MCP servers](mcp.md#changes-to-the-servers-tools) |
+| `McpToolDef` | interface | [MCP servers](mcp.md#tool) |
+| `McpToolError` | class | [MCP servers](mcp.md#mcptoolerror) |
+| `memoryCredentialStore` | function | [MCP servers](mcp.md#memorycredentialstore) |
+| `OAuthClientProvider` | type (the SDK's, re-exported) | [MCP servers](mcp.md#sdk) |
+| `OAuthServerOptions` | interface | [MCP servers](mcp.md#oauth) |
+| `stdio` | function | [MCP servers](mcp.md#stdio) |
+| `textOf` | function | [MCP servers](mcp.md#textof) |
+| `TextOptions` | interface | [MCP servers](mcp.md#textof) |
+| `Transport` | type (the SDK's, re-exported) | [MCP servers](mcp.md#transports) |
+
+From `@haikit/mcp/postgres`:
+
+| Symbol | Kind | Page |
+| --- | --- | --- |
+| `migrate` | function | [MCP servers](mcp.md#haikitmcppostgres) |
+| `pgCredentialStore` | function | [MCP servers](mcp.md#haikitmcppostgres) |
+| `Queryable` | interface | [MCP servers](mcp.md#haikitmcppostgres) |
+| `schema` | constant | [MCP servers](mcp.md#haikitmcppostgres) |

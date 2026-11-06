@@ -166,6 +166,39 @@ Checked against `@haikit/*` 0.20.0. Durations are in milliseconds.
 | `github`'s `scopes` | `["read:user", "user:email"]` | [Sign-in and ownership](auth.md#github) |
 | `github`'s `tokenEndpointAuthMethod` | `"client_secret_post"` | [Sign-in and ownership](auth.md#github) |
 
+### `mcpServer`, `createMcpAuth`, `http`, `stdio` and `textOf` (`@haikit/mcp`)
+
+Checked against `@haikit/*` 0.35.0.
+
+| Option | Default | Valid values | Page |
+| --- | --- | --- | --- |
+| `name` | required | a non-empty string | [MCP servers](mcp.md#mcpserver) |
+| `transport` | required | a function that makes a new `Transport`, such as `http(url)` or `stdio({ command })`; with `auth`, only what `http()` returned, with no `authProvider` or `Authorization` header of its own | [MCP servers](mcp.md#mcpserver) |
+| `auth` | none: every call shares one connection | what an `McpAuth`'s `bearer`, `oauth` or `sdk` returned; one name per server for each `createMcpAuth` | [MCP servers](mcp.md#calls-as-each-user) |
+| `maxConnections` | `100`, with `auth` | a whole number, 1 or more; only with `auth` | [MCP servers](mcp.md#each-users-connection) |
+| `idleMs` | `300000`, with `auth` | a whole number from 1 to 2147483647; only with `auth` | [MCP servers](mcp.md#each-users-connection) |
+| `timeoutMs` | `30000` | a whole number from 1 to 2147483647 | [MCP servers](mcp.md#mcpserver) |
+| `maxTotalMs` | `90000` | a whole number from 1 to 2147483647 | [MCP servers](mcp.md#mcpserver) |
+| `onChange` | a `console.warn` | a function | [MCP servers](mcp.md#changes-to-the-servers-tools) |
+| `versionNegotiation` | `"legacy"`, the SDK's default | `"legacy"`, `"auto"`, or `{ pin: "<revision>" }` | [MCP servers](mcp.md#mcpserver) |
+| `args` (on a `tool`) | required | anything with a `parse` method, whose result is an object | [MCP servers](mcp.md#tool) |
+| `result` (on a `tool`) | none: `call` resolves to the content as sent | anything with a `parse` method | [MCP servers](mcp.md#tool) |
+| `timeoutMs`, `maxTotalMs` (on a `tool`) | the server's | as on the server | [MCP servers](mcp.md#tool) |
+| `userOf` (`createMcpAuth`) | required | a function from a conversation id to a user id, or `null` | [MCP servers](mcp.md#createmcpauth) |
+| `store`, `secret`, `redirectUri` (`createMcpAuth`) | none: no `oauth()`, `handler()`, `connections()` or `disconnect()` | all three or none: a `CredentialStore`; a string, or a list of them, each 32 bytes or more; an https URL, or http on a loopback host, with no query or fragment, not at one of `handler()`'s routes | [MCP servers](mcp.md#createmcpauth) |
+| `requestUser` (`createMcpAuth`) | none: no `handler()` | a function from a request to the user signed in, or `null` | [MCP servers](mcp.md#createmcpauth) |
+| `onConnected` (`createMcpAuth`) | none | a function | [MCP servers](mcp.md#mcpconnected) |
+| `basePath` (`createMcpAuth`) | `"/mcp"` | a path of one or more segments, with no trailing slash, and no `.` or `..` segment | [MCP servers](mcp.md#createmcpauth) |
+| `clientName` (`createMcpAuth`) | the redirect URI's host | a non-empty string | [MCP servers](mcp.md#createmcpauth) |
+| `token` (`bearer`) | required | a function from a user id to their token, or `null` | [MCP servers](mcp.md#bearer) |
+| `issuer` (`oauth`) | none: whichever authorization server the server names | an https URL, or http on a loopback host | [MCP servers](mcp.md#oauth) |
+| `scopes` (`oauth`) | the server's `scopes_supported` | a list of OAuth scopes, each without spaces | [MCP servers](mcp.md#oauth) |
+| `client` (`oauth`) | none: one is registered for the app | `{ id, secret? }`, with `issuer` | [MCP servers](mcp.md#oauth) |
+| `make` (`sdk`) | required | a function from a user id to an `AuthProvider` or `OAuthClientProvider`, or `null` | [MCP servers](mcp.md#sdk) |
+| `headers` (`http`) | none | names and values, set over `requestInit.headers` | [MCP servers](mcp.md#http) |
+| `env` (`stdio`) | `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `USER` from this process, on Linux and macOS: the SDK's list, which is another on Windows | names and values, over those | [MCP servers](mcp.md#stdio) |
+| `maxChars` (`textOf`) | `8000` | a whole number, 0 or more | [MCP servers](mcp.md#textof) |
+
 ### `hai.css`
 
 Every `--hai-*` custom property, colours and the layout tokens `--hai-radius`
@@ -276,6 +309,37 @@ None of these can be changed without changing HaiKIT's code.
 | `oidc`: the provider's settings are kept | for the process's life, once read; a failed read is tried again | [Sign-in and ownership](auth.md#oidc) |
 | `oauth2`: exchanging the code, and each `api.get`, give up after | 10,000 | [Sign-in and ownership](auth.md#oauth2) |
 
+### MCP servers (`@haikit/mcp`)
+
+| What | Value | Page |
+| --- | --- | --- |
+| A call with no answer and no progress, by default; each progress notification starts it again | 30,000 | [MCP servers](mcp.md#call) |
+| A call in all, connecting included, by default | 90,000 | [MCP servers](mcp.md#call) |
+| Making the transport, connecting, listing the server's tools, and with `auth` looking up a user's credential | `timeoutMs` each | [MCP servers](mcp.md#connect) |
+| Connections being made at once, per server, or with `auth` per user | 1, shared by every call | [MCP servers](mcp.md#the-connection) |
+| Users connected at once, with `auth`, by default; a connection with a call in flight is never closed for room | 100 (`maxConnections`) | [MCP servers](mcp.md#each-users-connection) |
+| A user's connection with no call is closed after, by default | 300,000 (`idleMs`) | [MCP servers](mcp.md#each-users-connection) |
+| Lookups of a user's token at once, for each user's connection; after one on a 401, one more try of that request | 1, shared by first calls and 401s that come together | [MCP servers](mcp.md#bearer) |
+| Refreshes of a user's OAuth credential at once, for each server; after one, one more try of that request | 1, shared by every 401 in the process until it settles, however long that takes, and across processes sharing the store by its lease | [MCP servers](mcp.md#oauth) |
+| A 401's wait for a refresh, and each request to an authorization server | `timeoutMs` each | [MCP servers](mcp.md#oauth) |
+| A refresh lease, unless the refresh writes, deletes or gives it back first | 2 × `timeoutMs` | [MCP servers](mcp.md#oauth) |
+| Reading the store while another process holds the refresh lease; giving up | every 250; after 4 × `timeoutMs` | [MCP servers](mcp.md#oauth) |
+| Writes of a refreshed credential while the store throws; the pause between them | 3; 250 | [MCP servers](mcp.md#oauth) |
+| Reads of a user's OAuth credential from the store | 1 before every call, shared by calls that start together, within `timeoutMs` | [MCP servers](mcp.md#oauth) |
+| A connect flow, from the connect route to the callback; taken once | 600,000 (10 minutes) | [MCP servers](mcp.md#connecting) |
+| Flows `memoryCredentialStore` keeps; past it, the oldest goes | 10,000 | [MCP servers](mcp.md#memorycredentialstore) |
+| A connect link's `scope` | 1,000 characters | [MCP servers](mcp.md#connecting) |
+| A connect link's `conversation`, to be kept | 512 characters | [MCP servers](mcp.md#connecting) |
+| Writes of a new credential at the callback, while the store's changes under it | 3 | [MCP servers](mcp.md#the-callback) |
+| A `secret` that seals credentials | 32 bytes or more, each | [MCP servers](mcp.md#createmcpauth) |
+| The client metadata document, in a cache | 3,600 s (`max-age=3600`) | [MCP servers](mcp.md#the-client-metadata-document) |
+| Times a call is sent | 1: a failed call is never sent again on its own. A request the server refused unrun, with a 401 or, on a 2026-07-28 connection, a header mismatch, is sent once more | [MCP servers](mcp.md#call) |
+| Reconnect attempts per call | 1 | [MCP servers](mcp.md#the-connection) |
+| Pages of tools listed | 64 (the SDK's `listMaxPages`) | [MCP servers](mcp.md#limits) |
+| A read of the server's tools after `notifications/tools/list_changed` | 300 after the last one (the SDK's `debounceMs`) | [MCP servers](mcp.md#changes-to-the-servers-tools) |
+| One stdio message | 10 MB (the SDK's `maxBufferSize`) | [MCP servers](mcp.md#limits) |
+| A `stdio` server's stop: end of input, then `SIGTERM`, then `SIGKILL` | 2,000 apart (the SDK's) | [MCP servers](mcp.md#close) |
+
 ### Limits that don't exist
 
 - **Request bodies** have no size limit, and their content type isn't
@@ -301,6 +365,15 @@ None of these can be changed without changing HaiKIT's code.
 `query_ui` is HaiKIT's own tool. A tool of yours with that name is replaced
 by it (see [Tools](tools.md#the-built-in-query_ui-tool)).
 
+### Surface and notice names
+
+`@haikit/mcp`'s `connectCard` is the surface `connect_card`, and its
+`accountConnected` the notice `account_connected`, each version 1. An app
+that registers them can't use either name for its own: of two surfaces with
+one name, `createHai` keeps the later, and two notices with one name throw
+`two notices are named "<name>"` (see [The server](server.md)). See
+[MCP servers](mcp.md#the-connect-card-and-the-notice).
+
 ### Routes and parameters
 
 `POST {basePath}/chat`, `/start` and `/interact`, and `GET {basePath}/events`
@@ -308,6 +381,14 @@ with the parameters `conversationId`, `after`, `poll`, `wait`, `turn` and
 `signals`, and the `Last-Event-ID` header. A stream opens with the comment
 `: open`, and stays open with `: ping`. See
 [HTTP routes and the wire](http.md).
+
+`@haikit/mcp`'s `handler()`, under its own `basePath` (`/mcp` by default):
+`GET {basePath}/connect/{server}` with `conversation` and `scope`, the
+callback at the redirect URI's path with `code`, `state`, `iss` and
+`error`, `POST {basePath}/disconnect/{server}`, `GET
+{basePath}/connections` and `GET {basePath}/client.json`. Its done page
+posts `{ type: "haikit:mcp", server, ok, error? }` to the window that opened
+it. See [MCP servers: the routes](mcp.md#the-routes).
 
 ### Browser storage
 
@@ -334,6 +415,8 @@ index `haikit_payloads_created_at`: see
 [Stores: the schema](stores.md#the-schema). `@haikit/auth/postgres`'s
 `haikit_auth_owners` and `haikit_auth_revocations`, and the index
 `haikit_auth_owners_user`: see [Sign-in and ownership](auth.md#migrate-schema).
+`@haikit/mcp/postgres`'s `haikit_mcp_credentials`, `haikit_mcp_clients` and
+`haikit_mcp_flows`: see [MCP servers](mcp.md#haikitmcppostgres).
 
 ### Cookies
 
@@ -371,6 +454,7 @@ index `haikit_payloads_created_at`: see
 | `No such handle: <handle>`, `Unsupported query "<query>". Available: <names, or none>.`, `Invalid args for "<query>": <message>` | `query_ui` couldn't answer | [Surfaces](surfaces.md#query-handlers) |
 | `(<handle> has since been revised: it is <latest> now.)` | Added to a `query_ui` answer about a revised surface | [Surfaces](surfaces.md#query-handlers) |
 | `0 of <total> match.`, `<n> of <total> match. <k> shown[, <m> omitted]:` | A capped query answer's first line | [Tools](tools.md#cap-capoptions) |
+| `<name> failed: <server>/<tool> reported an error`, `… could not be reached`, `… did not answer in time`, and the rest | A HaiKIT tool let an `@haikit/mcp` error through. The server's own words aren't in it | [MCP servers](mcp.md#what-the-model-hears-of-one) |
 
 ### Framework text the model sees outside the history
 
@@ -380,6 +464,11 @@ index `haikit_payloads_created_at`: see
   [The server](server.md#init)).
 - `query_ui`'s description and input schema (see
   [Tools](tools.md#the-built-in-query_ui-tool)).
+
+### What an MCP server is told
+
+`@haikit/mcp` connects as `clientInfo` `{ name: "haikit", version: "<@haikit/mcp's version>" }`,
+with no client capabilities (see [MCP servers](mcp.md#the-connection)).
 
 ### Id formats
 
@@ -396,6 +485,10 @@ The client adds block ids of its own: `ui:<handle>`, `n:<seq>`, and
 `e<n>` and `x<n>`, where `n` is the number of blocks before it (see
 [The browser client](client.md#block)).
 
+`@haikit/mcp`'s connect flow `state` is 32 random bytes, base64url (43
+characters), and every value its credential stores keep is `v1.` and
+base64url (see [MCP servers: Sealing](mcp.md#sealing)).
+
 ### Messages the browser shows
 
 The server's and the client's out-of-date messages, `initialisation failed:
@@ -409,4 +502,8 @@ and [The browser client](client.md). `@haikit/auth`'s gate answers
 `sign in to continue` and `your sign-in has expired or is invalid` (401),
 `the request body must be sent as application/json` (415) and
 `this request came from another site` (403): see
-[Sign-in and ownership](auth.md#the-gate).
+[Sign-in and ownership](auth.md#the-gate). `@haikit/mcp`'s routes answer
+`sign in to continue` (401), `this request came from another site` (403)
+and `no server of that name connects with OAuth` (404), and its done page
+shows one line, such as `Connected. You can close this window.`: see
+[MCP servers: the routes](mcp.md#the-routes).
