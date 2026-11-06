@@ -28,6 +28,13 @@ export interface HttpMade {
 export const madeByHttp = new WeakMap<object, HttpMade>();
 
 /**
+ * What a request to the server threw instead of an answer, as when the server
+ * can't be reached: the SDK's transport doesn't close for it, so the call
+ * that sees it drops the connection.
+ */
+export const unanswered = new WeakSet<object>();
+
+/**
  * A server at `url`, over Streamable HTTP. Everything but `headers` is the
  * SDK's own `StreamableHTTPClientTransportOptions`, such as an `authProvider`.
  * The URL is checked now, so a bad one fails at startup. For a server with
@@ -41,8 +48,19 @@ export function http(url: string | URL, options: HttpOptions = {}): (authProvide
     for (const [name, value] of Object.entries(headers)) merged.set(name, value);
     rest.requestInit = { ...rest.requestInit, headers: merged };
   }
+  // the same fetch, marking what a request to the server throws; not one to
+  // an authorization server, and not an abort, which was asked for
+  const own = rest.fetch;
+  const fetch: FetchLike = async (input, init) => {
+    try {
+      return await (own ?? globalThis.fetch)(input, init);
+    } catch (err) {
+      if (String(input) === target.href && !init?.signal?.aborted && typeof err === "object" && err !== null) unanswered.add(err);
+      throw err;
+    }
+  };
   const make = (authProvider?: AuthProvider) =>
-    new StreamableHTTPClientTransport(target, authProvider ? { ...rest, authProvider } : rest);
+    new StreamableHTTPClientTransport(target, authProvider ? { ...rest, fetch, authProvider } : { ...rest, fetch });
   madeByHttp.set(make, {
     authProvider: rest.authProvider !== undefined,
     authorization: new Headers(rest.requestInit?.headers).has("authorization"),

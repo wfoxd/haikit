@@ -35,7 +35,7 @@ import {
 import { configOf, type AuthConfig, type Binding, type McpServerAuth } from "./auth.js";
 import { LookupFailed, Mismatch, NeedsAuth, type Credential } from "./credential.js";
 import { McpError, McpToolError, isMcpError, type McpAuthNeed, type McpErrorReason } from "./errors.js";
-import { madeByHttp } from "./transports.js";
+import { madeByHttp, unanswered } from "./transports.js";
 
 export {
   createMcpAuth,
@@ -843,6 +843,10 @@ class Link {
     if (this.closed) return server.error("closed", tool, { cause: err });
     const auth = this.authFailure(err, tool);
     if (auth) return auth;
+    if (this.gone(err, client)) {
+      this.lose(client);
+      return server.error("connection", tool, { cause: err });
+    }
     if (err instanceof ProtocolError) {
       // The SDK's own check of a call's result throws one too: the server's
       // result is at fault there, not the call. Only a call has a result.
@@ -868,6 +872,25 @@ class Link {
     }
     // the SDK throws a plain Error for a call on a connection that has gone
     return server.error(this.dropped.has(client) ? "connection" : "protocol", tool, { cause: err });
+  }
+
+  /**
+   * Whether an HTTP connection has gone, which its transport never says: it
+   * closes only on `close()`. The server ended the session (a 404 to a
+   * request that carried its id), or a request got no answer at all.
+   */
+  private gone(err: unknown, client: Client): boolean {
+    if (err instanceof SdkHttpError) {
+      return err.status === 404 && (this.dropped.has(client) || client.transport?.sessionId !== undefined);
+    }
+    return typeof err === "object" && err !== null && unanswered.has(err);
+  }
+
+  /** Forgets a connection that has gone, and closes it: the next call makes a new one. */
+  private lose(client: Client): void {
+    this.dropped.add(client);
+    if (this.client === client) this.client = null;
+    client.close().catch(() => {});
   }
 }
 

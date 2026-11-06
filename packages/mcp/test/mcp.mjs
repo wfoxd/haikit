@@ -13,12 +13,12 @@
  * The OAuth authorization server is a fake one, in this file.
  */
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { getEventListeners } from "node:events";
 import { createServer } from "node:http";
 import path from "node:path";
 import { InMemoryTransport } from "@modelcontextprotocol/client";
-import { McpServer, ProtocolError, Server, createMcpHandler } from "@modelcontextprotocol/server";
+import { McpServer, ProtocolError, Server, WebStandardStreamableHTTPServerTransport, createMcpHandler } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import {
   McpError,
@@ -821,6 +821,190 @@ console.log("\nhttp");
   await new Promise((resolve) => web.close(resolve));
 }
 
+/**
+ * A Streamable HTTP server with sessions, as the spec has them: initialize
+ * starts one, and a request with a session id it doesn't hold gets a 404.
+ * `end()` ends every session, as a restart would. `stop()` takes the server
+ * off its port, ending them too, and `start()` puts it back. The next
+ * tools/call gets the status in `refuse`, if one is set. `toolsFor(n)` names
+ * the tools the nth session offers; `whoami` answers with its session id.
+ * With `sessions: false` it keeps none, and answers each request on its own.
+ * `seen` is every request, as `method [session id]`.
+ */
+async function sessionServer({ toolsFor = () => ["whoami", "json", "slow"], sessions: stateful = true } = {}) {
+  const sessions = new Map();
+  const seen = [];
+  let made = 0;
+  const open = async () => {
+    const offered = toolsFor(++made);
+    const server = new McpServer({ name: "sessions", version: "1.0.0" });
+    const reply = (text) => ({ content: [{ type: "text", text }] });
+    if (offered.includes("whoami")) server.registerTool("whoami", { inputSchema: z.object({}) }, async (_args, ctx) => reply(String(ctx.sessionId)));
+    if (offered.includes("json")) server.registerTool("json", { inputSchema: z.object({}) }, async () => reply("{}"));
+    if (offered.includes("slow")) {
+      server.registerTool("slow", { inputSchema: z.object({ ms: z.number() }) }, async ({ ms }) => {
+        await wait(ms);
+        return reply("slept");
+      });
+    }
+    const transport = new WebStandardStreamableHTTPServerTransport({
+      sessionIdGenerator: stateful ? () => randomUUID() : undefined,
+      onsessioninitialized: (id) => sessions.set(id, transport),
+    });
+    await server.connect(transport);
+    return transport;
+  };
+  const web = createServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const body = chunks.length ? Buffer.concat(chunks) : undefined;
+    let rpc = null;
+    try {
+      rpc = body ? JSON.parse(body) : null;
+    } catch {}
+    const id = req.headers["mcp-session-id"];
+    seen.push(`${rpc?.method ?? req.method}${rpc?.params?.name ? ` ${rpc.params.name}` : ""} [${id ?? ""}]`);
+    if (rpc?.method === "tools/call" && it.refuse) {
+      res.writeHead(it.refuse, { "content-type": "text/plain" });
+      it.refuse = null;
+      return res.end("refused");
+    }
+    const transport = !stateful || (id === undefined && rpc?.method === "initialize") ? await open() : sessions.get(id);
+    if (!transport) {
+      res.writeHead(404, { "content-type": "application/json" });
+      return res.end(JSON.stringify({ jsonrpc: "2.0", error: { code: -32001, message: "Session not found" }, id: null }));
+    }
+    const response = await transport.handleRequest(
+      new Request(`http://${req.headers.host}${req.url}`, { method: req.method, headers: req.headers, body }),
+    );
+    res.writeHead(response.status, Object.fromEntries(response.headers));
+    if (response.body) for await (const chunk of response.body) res.write(chunk);
+    res.end();
+  });
+  await new Promise((resolve) => web.listen(0, "127.0.0.1", resolve));
+  const { port } = web.address();
+  const end = async () => {
+    const ending = [...sessions.values()];
+    sessions.clear();
+    await Promise.all(ending.map((transport) => transport.close()));
+  };
+  const it = {
+    url: `http://127.0.0.1:${port}/mcp`,
+    seen,
+    refuse: null,
+    end,
+    async stop() {
+      await end();
+      web.closeAllConnections();
+      await new Promise((resolve) => web.close(resolve));
+    },
+    start: () => new Promise((resolve) => web.listen(port, "127.0.0.1", resolve)),
+    handshakes: () => seen.filter((line) => line.startsWith("initialize ")).length,
+    sent: (tool) => seen.filter((line) => line.startsWith(`tools/call ${tool} `)).length,
+  };
+  it.close = it.stop;
+  return it;
+}
+
+{
+  // the server ends the session, as it does when it restarts
+  const web = await sessionServer({ toolsFor: (n) => (n === 1 ? ["whoami", "json"] : ["whoami"]) });
+  const changes = [];
+  let transports = 0;
+  const make = http(web.url);
+  const s = mcpServer({
+    name: "sessions",
+    transport: () => {
+      transports++;
+      return make();
+    },
+    onChange: (c) => changes.push(c),
+  });
+  const whoami = s.tool("whoami", { args: anything });
+  s.tool("json", { args: anything });
+  const first = textOf(await whoami.call({}));
+  await web.end();
+  const ended = await rejection(whoami.call({}));
+  check(
+    "a session the server ended, a 404: McpError, connection",
+    isMcpError(ended) && ended.reason === "connection" && ended.message === "sessions/whoami could not be reached",
+  );
+  check("…sent once, and not again", web.sent("whoami") === 2 && web.handshakes() === 1);
+  const second = textOf(await whoami.call({}));
+  check("the next call makes a new connection, with a new transport, in a new session", second !== first && web.handshakes() === 2 && transports === 2);
+  check(
+    "…whose tools are compared with the last, not checked",
+    changes.length === 1 && JSON.stringify(changes[0]) === JSON.stringify({ server: "sessions", removed: ["json"], changed: [] }),
+  );
+  for (const status of [400, 403, 500, 503]) {
+    web.refuse = status;
+    const refused = await rejection(whoami.call({}));
+    const after = textOf(await whoami.call({}));
+    check(`a ${status} is protocol, and the connection is kept`, refused?.reason === "protocol" && after === second && web.handshakes() === 2);
+  }
+  await s.close();
+  await web.close();
+}
+{
+  // a call in flight on the connection another call's 404 drops
+  const web = await sessionServer();
+  const s = mcpServer({ name: "sessions", transport: http(web.url) });
+  const whoami = s.tool("whoami", { args: anything });
+  const slow = s.tool("slow", { args: anything });
+  await s.connect();
+  const inFlight = rejection(slow.call({ ms: 1000 }));
+  await wait(50);
+  web.refuse = 404;
+  const lost = await rejection(whoami.call({}));
+  const cut = await inFlight;
+  check("a call in flight on the connection a 404 drops: connection too", lost?.reason === "connection" && cut?.reason === "connection");
+  check("…and the next call connects again", (await slow.call({ ms: 1 })).content[0].text === "slept" && web.handshakes() === 2);
+  await s.close();
+  await web.close();
+}
+{
+  // a 404 to a request with no session id: the server has no session to end
+  const web = await sessionServer({ sessions: false });
+  const s = mcpServer({ name: "stateless", transport: http(web.url) });
+  const whoami = s.tool("whoami", { args: anything });
+  await s.connect();
+  web.refuse = 404;
+  const lost = await rejection(whoami.call({}));
+  await whoami.call({});
+  check("a 404 with no session is protocol, and the connection is kept", lost?.reason === "protocol" && web.handshakes() === 1);
+  await s.close();
+  await web.close();
+}
+{
+  // the server goes away, and comes back
+  const web = await sessionServer();
+  let transports = 0;
+  const make = http(web.url);
+  const s = mcpServer({
+    name: "away",
+    transport: () => {
+      transports++;
+      return make();
+    },
+  });
+  const whoami = s.tool("whoami", { args: anything });
+  const first = textOf(await whoami.call({}));
+  await web.stop();
+  const away = await rejection(whoami.call({}));
+  check(
+    "a server that can't be reached: McpError, connection",
+    isMcpError(away) && away.reason === "connection" && away.message === "away/whoami could not be reached",
+  );
+  const still = await rejection(whoami.call({}));
+  check("…and while it stays away, each call tries a new connection, once", still?.reason === "connection" && transports === 2);
+  await web.start();
+  const back = textOf(await whoami.call({}));
+  check("once it's back, the next call connects again", back !== first && web.handshakes() === 2 && transports === 3);
+  check("…and a call sent while it was away was sent once", web.sent("whoami") === 2);
+  await s.close();
+  await web.close();
+}
+
 // ── as each user ────────────────────────────────────────────────────────
 console.log("\nas each user");
 
@@ -1315,6 +1499,28 @@ const sameNeed = (err, need) => JSON.stringify(err?.auth) === JSON.stringify(nee
   check("a call in flight on a forgotten connection: closed", cut?.reason === "closed");
   check("…and the user's next call works", (await fWho.call({}, { userId: "s1" })).content[0].text === "s1 with t-s1");
   await f.close();
+  await web.close();
+}
+{
+  // a user's connection whose session the server ended, or that can't reach it
+  const web = await sessionServer();
+  const mcpAuth = createMcpAuth({ userOf: () => null });
+  const s = mcpServer({ name: "sessions", transport: http(web.url), auth: mcpAuth.bearer((u) => `t-${u}`) });
+  const whoami = s.tool("whoami", { args: anything });
+  const first = textOf(await whoami.call({}, { userId: "u1" }));
+  await web.end();
+  const ended = await rejection(whoami.call({}, { userId: "u1" }));
+  const second = textOf(await whoami.call({}, { userId: "u1" }));
+  check(
+    "with auth, a session the server ended is connection, and the user's next call connects again",
+    ended?.reason === "connection" && second !== first && web.handshakes() === 2,
+  );
+  await web.stop();
+  const away = await rejection(whoami.call({}, { userId: "u1" }));
+  await web.start();
+  const back = textOf(await whoami.call({}, { userId: "u1" }));
+  check("…and so is a server that can't be reached, with no idleMs or forget() between", away?.reason === "connection" && back !== second && web.handshakes() === 3);
+  await s.close();
   await web.close();
 }
 {

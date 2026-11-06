@@ -525,8 +525,8 @@ A call that got no result, or one its schema refused.
 | `args` | The `args` schema refused the args, or they aren't an object. Nothing was sent | `<server>/<tool> was not called: its args do not match the schema`, or `… its args must be an object` |
 | `result` | The `result` schema refused the result, there was nothing to parse, or the SDK refused it against the server's output schema (see [What a call resolves to](#what-a-call-resolves-to)). Only a call has it: listing the tools never fails with `result` | `<server>/<tool> returned a result that does not match the schema` |
 | `timeout` | No answer within `timeoutMs`, or not done within `maxTotalMs`, connecting included | `<server>/<tool> did not answer in time` |
-| `connection` | The server couldn't be reached, or the connection dropped before the answer: over HTTP, only while connecting (see [The connection](#the-connection)). With `auth`, also: the user's credential couldn't be looked up, or for `oauth()`, refreshed, as when the authorization server couldn't be reached, or answered with something other than a refusal, or found the user connected again as the call was made | `<server>/<tool> could not be reached` |
-| `protocol` | The server refused the call, as for a tool it doesn't have (`code` `-32602`), whatever its words. Also a listing of tools the SDK can't read, and any other SDK error, such as an HTTP 401 or 403 on a server without `auth`, or a server asking this client for input. Over HTTP, once connected, also any other HTTP error, such as a 404 for a session the server ended, and a server that can't be reached. For `oauth()`, also a 401's refresh that finds an authorization server other than the one that issued the user's credential, or than the one `issuer` pins, or one whose authorization endpoint isn't https or on a loopback host | `<server>/<tool> was refused by the server` |
+| `connection` | The server couldn't be reached, or the connection dropped before the answer. Over HTTP, that is a request that got no answer, or a 404 for a session the server ended, and the connection is made again on the next call (see [The connection](#the-connection)). With `auth`, also: the user's credential couldn't be looked up, or for `oauth()`, refreshed, as when the authorization server couldn't be reached, or answered with something other than a refusal, or found the user connected again as the call was made | `<server>/<tool> could not be reached` |
+| `protocol` | The server refused the call, as for a tool it doesn't have (`code` `-32602`), whatever its words. Also a listing of tools the SDK can't read, and any other SDK error, such as an HTTP 401 or 403 on a server without `auth`, or a server asking this client for input. Over HTTP, that is every other HTTP error but a 404 for a session the server ended, such as a 404 on a connection with no session, a 400, or a 5xx, and the connection is kept. For `oauth()`, also a 401's refresh that finds an authorization server other than the one that issued the user's credential, or than the one `issuer` pins, or one whose authorization endpoint isn't https or on a loopback host | `<server>/<tool> was refused by the server` |
 | `closed` | `close()` was called before or during the call, or with `auth`, [`forget()`](#forget) during it | `<server>/<tool>: the connection was closed` |
 | `user` | A server with `auth` had no user to call as (see [Who a call runs as](#who-a-call-runs-as)). Nothing was sent | `<server>/<tool> was not called: there is no user to call it as`, `… the user it runs for could not be looked up`, or `… its userId is not the conversation's owner` |
 | `auth` | A server with `auth`: the user's credential is missing, was refused, or needs more access. `auth.kind` says which | `<server>/<tool>: the user has not connected an account` (`connect`), `<server>/<tool>: the server refused the user's credential` (`reconnect`), or `<server>/<tool>: the user's account needs more access` (`scope`) |
@@ -542,7 +542,10 @@ with `auth`, the SDK's `InsufficientScopeError` (a 403 with
 `requiredScope` as `scope` and its message as `text`; and its
 `UnauthorizedError`, or an `SdkHttpError` with code
 `ClientHttpAuthentication` (a 401 again, on the transport's retry), is
-`auth`, kind `reconnect`, with its message as `text`. A JSON-RPC
+`auth`, kind `reconnect`, with its message as `text`. Over HTTP, an
+`SdkHttpError` with status 404 on a connection with a session, or what a
+request from `http()` threw for want of an answer, is `connection`, and
+drops the connection (see [The connection](#the-connection)). A JSON-RPC
 error (`ProtocolError`) is `protocol`, with its `code` and its message as
 `text`, unless the message is about an output schema, which is the SDK's
 check above, and `result`. Of the SDK's own errors (`SdkError`): a timeout
@@ -669,10 +672,34 @@ call or `connect()` makes a new connection, with a new `Client` and a new
 `Transport`: one attempt per call. If that fails, the call rejects, and the
 one after tries again.
 
-**Over HTTP, it doesn't drop:** the SDK's transport closes only on
-`close()`. Once connected, an HTTP error, such as a 404 for a session the
-server ended, or a server that can't be reached, rejects the call with
-reason `protocol`, and the connection is kept.
+**Over HTTP, a call finds the drop:** the SDK's transport closes only on
+`close()`, so it's a call's request that shows the connection has gone.
+Two do:
+
+- **A 404 on a connection with a session:** the server has ended the
+  session, as it does when it restarts. Its session id came with the
+  `initialize` answer, as `Mcp-Session-Id`, and every request since has
+  carried it. This holds for any of the SDK's
+  `StreamableHTTPClientTransport`s, not only `http()`'s.
+- **No answer at all:** a request to the server's URL from
+  [`http()`](#http)'s transport whose `fetch` rejects, as when the server
+  can't be reached. Not a request to an authorization server, and not one
+  this client aborted, as for a timeout.
+
+That call rejects with reason `connection`, its `cause` the SDK's
+`SdkHttpError` (`data.status` `404`) or what `fetch` threw (in Node,
+`TypeError: fetch failed`), and isn't sent again. The connection is
+dropped: forgotten and closed, so a call still in flight on it rejects with
+reason `connection` too, and the next call or `connect()` makes a new one,
+as above.
+
+Every other HTTP error keeps the connection, and rejects the call as
+[Errors](#errors) says: with reason `protocol`, or on a server with `auth`,
+a 401 or a 403 for more scope with reason `auth`. Among them are a 404 on a
+connection with no session, a 400, which some servers send for a session
+they don't know, and a 5xx, such as a proxy's 502 or 503 while the server
+restarts. If the server lost the session meanwhile, the next request's 404
+drops it.
 
 **A new connection is not checked** the way the first was. Its list of
 tools is compared with the last one instead, and a change is reported (see
@@ -1177,6 +1204,12 @@ works as the one connection of a server without `auth` does (see
   back as each call finishes.
 - **Closed when idle,** after `idleMs` (300,000 ms by default) with no call.
   The timer doesn't keep the process alive.
+- **Dropped** when the server ends the user's session, or can't be reached
+  (see [The connection](#the-connection)). The user's next call makes a new
+  connection, with no wait for `idleMs` or `forget()`. Its tools are
+  compared with that user's last list, and the user keeps their place in
+  the pool and their credential: a `bearer()` token or `sdk()` provider
+  already found isn't looked up again.
 - **Closed by [`forget(userId)`](#forget),** and by [`close()`](#close).
 - **For `oauth()`, closed when a call finds the credential gone,** or the
   user connected again in another process. That call, once they have one,
@@ -1764,6 +1797,11 @@ interface, re-exported.
 
 The SDK sets some headers itself, over any of these: `Authorization`, when
 an `authProvider` gives a token, and the protocol's own.
+
+The transport is given a `fetch` that calls the one in the options, or the
+global `fetch`, with the same arguments, and returns or throws what it
+does. When it throws for a request to `url` that wasn't aborted, the call
+that sees it drops the connection (see [The connection](#the-connection)).
 
 For a server with `auth`, `http()` must have no `authProvider`, and no
 `Authorization` header in `headers` or `requestInit.headers`: each user's
