@@ -155,9 +155,23 @@ and, in the server's request handler, straight after `handleAuth`:
   if (await handleMcp(req, res)) return;                              // 2
 ```
 
+and, at the end, have the server listen on this machine only:
+
+```ts
+// the sign-in takes any name, and from here on a name comes with its GitHub account
+server.listen(5175, "127.0.0.1", () => console.log("hello  http://localhost:5175"));  // 3
+```
+
 **1** Four routes: the connect link, which sends the browser to GitHub; the callback it comes back to; disconnect; and the list of what the user has connected. Like `handleAuth`, it resolves `false` for anything else.
 
 **2** Before Vite, which would answer the callback with the chat page.
+
+**3** `127.0.0.1`, rather than every network the machine is on. You still open it at `http://localhost:5175`.
+
+> [!WARNING]
+> **Whoever signs in as ada gets her GitHub account**
+>
+> The third tutorial's sign-in asks only for a name. That did little harm while a name opened only its own conversations. From this step on, it also opens the GitHub account connected to that name: the issues of every repository the account can read, including private ones where the app is installed. Listening on `127.0.0.1` keeps out everyone who isn't at this machine. Leave it that way until a real login has replaced the name, as the third tutorial's *Before you ship it* says. Until then, connect only a GitHub account you'd let anyone at this machine use.
 
 > [!TIP]
 > **Checkpoint**
@@ -1063,6 +1077,7 @@ The hello app now asks GitHub for issues as each person who uses it: with their 
 
 ### Before you ship it
 
+- **Put a real login in front of it** where the third tutorial's step 04 checks the name, before the server listens anywhere but `127.0.0.1`: whoever signs in as a user calls GitHub as them.
 - **Set `HAIKIT_MCP_SECRET`** on every server, the same on each: `openssl rand -base64 32`. To change it without disconnecting everyone, give `secret` a list: the first seals, and every one opens.
 - **Keep the tokens in Postgres.** `memoryCredentialStore` forgets on a restart and isn't shared. With the pool from the third tutorial's *Before you ship it*:
 

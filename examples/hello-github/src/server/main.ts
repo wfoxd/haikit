@@ -110,7 +110,9 @@ const vite = PRODUCTION
   ? null
   : await (await import("vite")).createServer({ root: ROOT, appType: "spa", server: { middlewareMode: true, ws: { server } } });
 
-server.listen(PORT, () => {
+// This machine only: the sign-in takes any name, with no password, and each name comes with
+// the GitHub account connected to it. A real login goes in before anything wider.
+server.listen(PORT, "127.0.0.1", () => {
   const how = PRODUCTION ? "built" : "vite dev";
   console.log(`hello-github  http://localhost:${PORT}   ${how}   model=${SCRIPTED ? "scripted" : "claude-haiku-5-5"}`);
   if (!process.env.HAIKIT_AUTH_SECRET) console.log("no HAIKIT_AUTH_SECRET — signing with a random secret: sign-ins end when this server stops");

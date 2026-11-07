@@ -39,6 +39,11 @@ npm --prefix examples/hello-github run dev   # GitHub itself, and Claude: needs 
 HAI_SCRIPTED=1 npm --prefix examples/hello-github run dev   # GitHub itself, and the scripted model
 ```
 
+The sign-in takes any name, with no password, and whoever signs in as a name
+uses the GitHub account connected to it. So the server listens on `127.0.0.1`
+only: keep it so, and connect only an account you'd let anyone at this machine
+use. A real login goes in before it listens anywhere else.
+
 The scripted model knows a request such as *"find issues about tutorial in
 wfoxd/haikit"* or *"read issue 187 in wfoxd/haikit"*. A GitHub App reads public
 repositories as any user can; a private one only once it's installed there.
@@ -99,6 +104,8 @@ repositories as any user can; a private one only once it's installed there.
   be https anywhere but localhost, and the GitHub App's callback URL.
 - `memoryCredentialStore()` keeps the tokens in this process, so a restart
   forgets every connection.
+- The server listens on `127.0.0.1`, this machine only, since the sign-in
+  takes any name.
 
 `npm run smoke` drives the offline app: the card, the connect flow through the
 stand-in, the wake turn, reading an issue, GitHub's refusals, two refreshes of

@@ -12,6 +12,7 @@
  */
 
 import { execFileSync, spawn } from "node:child_process";
+import { networkInterfaces } from "node:os";
 import path from "node:path";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
@@ -767,6 +768,12 @@ for (const c of CASES) {
     child = spawn("node", ["examples/hello-github/src/offline.ts"], { cwd: ROOT, env: { ...process.env, ...env }, stdio: "ignore" });
     if (!(await waitFor(`${base}/sign-in`))) throw new Error("server did not start");
     ok("boots against the stand-in for GitHub, and serves the page");
+    // the sign-in takes any name, and a name comes with its GitHub account: nothing off this machine reaches it
+    const outside = Object.values(networkInterfaces()).flat().find((a) => a && !a.internal && a.family === "IPv4")?.address;
+    if (outside) {
+      const reached = await fetch(`http://${outside}:${port}/sign-in`, { signal: AbortSignal.timeout(3_000) }).then(() => true, () => false);
+      reached ? bad(`${outside}:${port} answered: the server listens beyond this machine`) : ok("listens on 127.0.0.1 only: this machine's other addresses get no answer");
+    }
 
     signedIn = { cookie: (await signInAs(base, "ada")).cookie.split(";")[0], origin: base };
     const registry = await clientCode(base);
