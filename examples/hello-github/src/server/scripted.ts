@@ -39,7 +39,7 @@ const MATCHED = /^(\d+) of (\d+) match/m;
 const CARD = /^Shown: a button for the user to (?:connect (.+?)(?: again)?|give (.+?) more access)[.,]/;
 const LISTED = /^(\d+) issues? match(?:es)? (".*?")(?:, the first (\d+) shown)?[:.]/;
 const READ = /^([\w.-]+\/[\w.-]+#\d+), as GitHub sent it\./;
-const GITHUB_SAID_NO = /^GitHub (?:refused the search|has no issue) .*$/m;
+const GITHUB_SAID_NO = /^GitHub reported an error (?:for the search|reading)\b.*$/m;
 /** owner/name, as a user types a repository. */
 const REPO = /\b([\w.-]+\/[\w.-]+)\b/;
 
@@ -153,7 +153,8 @@ export function scripted(): ModelAdapter {
       // typed is the last block.
       const typed = String((typeof last?.content === "string" ? last.content : (last?.content as any[] | undefined)?.at(-1)?.text) ?? "");
       const text = typed.toLowerCase();
-      const handle = JSON.stringify(messages).match(/ui_\d+/)?.[0];
+      // the picker's handle, from the latest digest of one: the connect card and the issue list have handles too
+      const handle = [...JSON.stringify(messages).matchAll(/translations in \d+ scripts\.[^"]*?Rendered as (ui_\d+)/g)].at(-1)?.[1];
 
       // A wake turn: the user connected GitHub, and said nothing. Make the
       // call that was waiting for it again.

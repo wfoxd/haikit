@@ -110,7 +110,7 @@ export const findIssues = defineTool({
       // GitHub ran the search, and said no. The model hears it in this app's words; GitHub's go to the log.
       if (isMcpToolError(err)) {
         console.warn(`[hello-github] ${err.message}: ${err.text}`);
-        return ctx.text(`GitHub refused the search${repo ? ` of ${repo}` : ""}, as it does for a repository that doesn't exist, or that the user can't see.`);
+        return ctx.text(`GitHub reported an error for the search${repo ? ` of ${repo}` : ""}: it does for a repository that doesn't exist or that the user can't see, and when something fails at GitHub.`);
       }
       throw err;
     }
@@ -145,7 +145,7 @@ export const readIssue = defineTool({
       if (card) return ctx.render(connectCardServer, card);
       if (isMcpToolError(err)) {
         console.warn(`[hello-github] ${err.message}: ${err.text}`);
-        return ctx.text(`GitHub has no issue ${repo}#${number} that the user can see.`);
+        return ctx.text(`GitHub reported an error reading ${repo}#${number}: it does for an issue that doesn't exist or that the user can't see, and when something fails at GitHub.`);
       }
       throw err;
     }

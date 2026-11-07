@@ -817,7 +817,6 @@ for (const c of CASES) {
       redirect: "manual",
     });
     const back = new URL(authorized.headers.get("location") ?? base);
-    const connectedAt = Date.now();
     const done = await fetch(back, { headers: signedIn, redirect: "manual" });
     const message = await doneMessage(done);
     back.pathname === "/mcp/callback" && back.searchParams.get("iss")?.endsWith("/login/oauth") && message?.type === "haikit:mcp" && message.server === "github" && message.ok === true
@@ -867,17 +866,28 @@ for (const c of CASES) {
     const nowhere = await ask(conversationId, "find issues about bugs in haikit-demo/nowhere");
     const missing = await ask(conversationId, "read issue 99 in haikit-demo/greetings");
     const heard = JSON.stringify(contextOf(missing) ?? []);
-    resultOf(nowhere) === "GitHub refused the search of haikit-demo/nowhere, as it does for a repository that doesn't exist, or that the user can't see." &&
-    resultOf(missing) === "GitHub has no issue haikit-demo/greetings#99 that the user can see." &&
+    resultOf(nowhere) === "GitHub reported an error for the search of haikit-demo/nowhere: it does for a repository that doesn't exist or that the user can't see, and when something fails at GitHub." &&
+    resultOf(missing) === "GitHub reported an error reading haikit-demo/greetings#99: it does for an issue that doesn't exist or that the user can't see, and when something fails at GitHub." &&
     !heard.includes("Validation Failed") &&
     !heard.includes("api.github.com")
       ? ok("McpToolError: a search and an issue GitHub refused reach the model in the app's words")
       : bad(`the model heard ${resultOf(nowhere)} / ${resultOf(missing)}`);
 
-    // 7 · tokens that expire are refreshed, and GitHub's refresh tokens are spent by each refresh
+    // a query after a search goes to the picker, not to the first surface in the history
+    const picking = await ask(conversationId, "greet me");
+    const picker = picking.find((e) => e.type === "ui_open" && e.component === "greeting_picker");
+    await sse(`${base}/hai/interact`, { conversationId, handle: picker?.handle, action: "choose", value: "he" });
+    const rtl = await ask(conversationId, "which ones are right-to-left?");
+    const queried = rtl.find((e) => e.type === "block_start" && e.block.kind === "tool")?.block;
+    queried?.name === "query_ui" && queried.input?.handle === picker?.handle && /^\d+ of \d+ match/.test(resultOf(rtl))
+      ? ok("after the connect card and the issues, a query goes to the greeting picker's handle")
+      : bad(`the query was ${JSON.stringify(queried?.input)}, for a picker at ${picker?.handle}: ${resultOf(rtl).slice(0, 120)}`);
+
+    // 7 · tokens that expire are refreshed, and GitHub's refresh tokens are spent by each refresh.
+    // Each search waits past the 2-second life of the token before it, so each one refreshes.
     const refreshed = [];
-    for (const n of [1, 2]) {
-      await sleep(Math.max(0, connectedAt + n * 2_500 - Date.now()));
+    for (let n = 0; n < 2; n++) {
+      await sleep(2_500);
       refreshed.push((await ask(conversationId, "find issues about welsh in haikit-demo/greetings")).some((e) => e.type === "ui_open" && e.component === "issue_list"));
     }
     refreshed.every(Boolean)

@@ -417,6 +417,10 @@ if (listed) {
 const typed = String((typeof last?.content === "string" ? last.content : (last?.content as any[] | undefined)?.at(-1)?.text) ?? "");
 const text = typed.toLowerCase();
 
+// replacing the line that finds the handle to query, unless the second tutorial already did:
+// the picker's handle, from the latest digest of one, now that the issue list has a handle too
+const handle = [...JSON.stringify(messages).matchAll(/translations in \d+ scripts\.[^"]*?Rendered as (ui_\d+)/g)].at(-1)?.[1];
+
 // after the [ui interaction] check, before every other branch:
 // "find issues about MCP in owner/repo". "greetings" could name a repository too.
 const repo = typed.match(REPO)?.[1];
@@ -426,7 +430,7 @@ if (/\bissues?\b/.test(text)) {
 }
 ```
 
-`typed` keeps the case the user typed, for a repository's name and a search's words. Reading it from the last block is what the second tutorial's step 06 does; this app needs it by step 07, whose notice rides ahead of it.
+`typed` keeps the case the user typed, for a repository's name and a search's words. Reading it from the last block is what the second tutorial's step 06 does; this app needs it by step 07, whose notice rides ahead of it. And the first handle in the history is no longer always the picker's: after a search, *“which ones are right-to-left?”* would ask the issue list, which has no `filter` query.
 
 </details>
 
@@ -983,7 +987,7 @@ import { connectCardFor, isMcpToolError, textOf } from "@haikit/mcp";
       // GitHub ran the search, and said no. The model hears it in this app's words; GitHub's go to the log.
       if (isMcpToolError(err)) {                                       // 1
         console.warn(`[hello-github] ${err.message}: ${err.text}`);    // 2
-        return ctx.text(`GitHub refused the search${repo ? ` of ${repo}` : ""}, as it does for a repository that doesn't exist, or that the user can't see.`);
+        return ctx.text(`GitHub reported an error for the search${repo ? ` of ${repo}` : ""}: it does for a repository that doesn't exist or that the user can't see, and when something fails at GitHub.`);
       }
       throw err;                                                       // 3
     }
@@ -991,13 +995,13 @@ import { connectCardFor, isMcpToolError, textOf } from "@haikit/mcp";
 // and in read_issue
       if (isMcpToolError(err)) {
         console.warn(`[hello-github] ${err.message}: ${err.text}`);
-        return ctx.text(`GitHub has no issue ${repo}#${number} that the user can see.`);
+        return ctx.text(`GitHub reported an error reading ${repo}#${number}: it does for an issue that doesn't exist or that the user can't see, and when something fails at GitHub.`);
       }
 ```
 
 **1** It tests the error's name rather than its class, so it still works if your project ends up with two copies of the package.
 
-**2** GitHub's own words, `err.text`, such as the URL its API answered `404 Not Found` for. Useful to you; to the model, they're another stranger's text, and the sentence after this one says what it needs.
+**2** GitHub's own words, `err.text`, such as the URL its API answered `404 Not Found` for. Useful to you; to the model, they're another stranger's text, and the sentence after this one says what it needs. An `McpToolError` says GitHub's tool failed, not why: a repository that doesn't exist, one the user can't see, and a failure at GitHub itself all reach your code alike. So the sentence says what it can mean, rather than guessing which.
 
 **3** An `McpError` goes on through, and the model hears `<tool> failed: <message>`, as in step 05. Each `reason` has a message of its own:
 
@@ -1018,7 +1022,7 @@ None of them is sent again by itself: the server may have run it. The next call 
 
 ```ts
 // beside the other patterns
-const GITHUB_SAID_NO = /^GitHub (?:refused the search|has no issue) .*$/m;
+const GITHUB_SAID_NO = /^GitHub reported an error (?:for the search|reading)\b.*$/m;
 
 // in the branch that reacts to a tool result, after the issue's
 const no = results.match(GITHUB_SAID_NO);
@@ -1030,7 +1034,7 @@ if (no) return say(no[0], onTextDelta);
 > [!TIP]
 > **Checkpoint**
 >
-> Say *“find issues about bugs in wfoxd/no-such-repo”*. The row's result is the sentence above, and so is the reply. The server's terminal has GitHub's own words: `[hello-github] github/search_issues reported an error: failed to search issues: …`, then GitHub's API answering *422 Validation Failed*. Then *“read issue 99999 in wfoxd/haikit”*: *GitHub has no issue wfoxd/haikit#99999 that the user can see.*, and in the terminal, the API's *404 Not Found*. Open **Context**: neither of GitHub's messages is there.
+> Say *“find issues about bugs in wfoxd/no-such-repo”*. The row's result is the sentence above, and so is the reply. The server's terminal has GitHub's own words: `[hello-github] github/search_issues reported an error: failed to search issues: …`, then GitHub's API answering *422 Validation Failed*. Then *“read issue 99999 in wfoxd/haikit”*: *GitHub reported an error reading wfoxd/haikit#99999*, and in the terminal, the API's *404 Not Found*. Open **Context**: neither of GitHub's messages is there.
 
 ## 10 · Break it on purpose
 
