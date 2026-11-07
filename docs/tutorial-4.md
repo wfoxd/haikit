@@ -1029,7 +1029,7 @@ import { connectCardFor, isMcpToolError, textOf } from "@haikit/mcp";
 
 | `reason` | When | The model hears, for `find_issues` |
 | --- | --- | --- |
-| `auth` | the user has no tokens, GitHub refused theirs, or needs more access | the card, from step 06 |
+| `auth` | the user has no tokens, GitHub refused theirs, as once they revoke the app on GitHub, or needs more access | the card, from step 06 |
 | `timeout` | no answer or progress for 30 seconds, or not done in 90 | `find_issues failed: github/search_issues did not answer in time` |
 | `connection` | GitHub couldn't be reached, or the connection dropped | `find_issues failed: github/search_issues could not be reached` |
 | `protocol` | GitHub refused the request itself, such as a 5xx | `find_issues failed: github/search_issues was refused by the server` |
@@ -1090,7 +1090,7 @@ The hello app now asks GitHub for issues as each person who uses it: with their 
 
   The servers sharing it share each user's tokens, and refresh them one at a time, so a refresh token GitHub has already replaced is never spent twice.
 - **Register your https callback URL** with the GitHub App, set `MCP_REDIRECT_URI` to it, and keep the client secret where `HAIKIT_MCP_SECRET` is, out of the code.
-- **Let people disconnect.** `POST /mcp/disconnect/github` deletes the app's copy of their tokens, and `GET /mcp/connections` lists what they've connected: `examples/hello-mcp` has a settings panel built on the two. GitHub has nowhere for the app to revoke a token, so the ones it deletes stay good at GitHub until they expire: the access token within 8 hours, and the refresh token, which with your client secret gets new ones, for up to 6 months. Only the user ends the authorization itself, by revoking the app on GitHub, under **Settings**, **Applications**, **Authorized GitHub Apps**.
+- **Let people disconnect.** `POST /mcp/disconnect/github` deletes the app's copy of their tokens, and `GET /mcp/connections` lists what they've connected: `examples/hello-mcp` has a settings panel built on the two. GitHub has nowhere for the app to revoke a token, so the ones it deletes stay good at GitHub until they expire: the access token within 8 hours, and the refresh token, which with your client secret gets new ones, for up to 6 months. Only the user ends the authorization itself, by revoking the app on GitHub, under **Settings**, **Applications**, **Authorized GitHub Apps**. GitHub then refuses the app's tokens, and its refresh token with `bad_refresh_token`, as it does one 6 months old, so `@haikit/mcp` deletes them, and the user's next call shows the card as *Connect GitHub again*.
 - **Let it be installed by others.** Under **Where can this GitHub App be installed?**, choose **Any account** when people outside yours should read their private repositories through it.
 
 ### More of GitHub

@@ -86,8 +86,9 @@ repositories as any user can; a private one only once it's installed there.
 - `src/stand-in/github.ts`: the stand-in, on two ports of its own on
   127.0.0.1: GitHub's MCP server at `/mcp/x/issues/readonly`, and its sign-in
   at `/login/oauth`, with GitHub's metadata, its token lifetimes, its rotating
-  refresh tokens and its error codes. `src/offline.ts` starts it, then the
-  app, configured for it.
+  refresh tokens and its error codes, sent with a 200 as GitHub sends them,
+  and a page to revoke the app at `/settings/apps/authorizations`.
+  `src/offline.ts` starts it, then the app, configured for it.
 
 ## Configuration
 
@@ -109,4 +110,5 @@ repositories as any user can; a private one only once it's installed there.
 
 `npm run smoke` drives the offline app: the card, the connect flow through the
 stand-in, the wake turn, reading an issue, GitHub's refusals, two refreshes of
-tokens that expire after 2 seconds, and disconnecting.
+tokens that expire after 2 seconds, disconnecting, and revoking the app at the
+stand-in, after which the card asks the user to connect again.
