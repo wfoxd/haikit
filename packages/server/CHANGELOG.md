@@ -1,5 +1,11 @@
 # @haikit/server
 
+## 0.35.2
+
+### Patch Changes
+
+- @haikit/core@0.35.2
+
 ## 0.35.1
 
 ### Patch Changes
