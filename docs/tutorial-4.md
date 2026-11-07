@@ -39,10 +39,10 @@ npm install @haikit/mcp
 
 ## 02 · Register a GitHub App
 
-Your app calls GitHub as each user, so GitHub must know the app first. Its sign-in registers no client on the fly, as some do: you register one, and give your server its client ID and secret. GitHub has two kinds, and [its guide for apps that connect to its MCP server](https://github.com/github/github-mcp-server/blob/main/docs/host-integration.md) recommends a **GitHub App**:
+Your app calls GitHub as each user, so GitHub must know the app first. Its sign-in registers no client on the fly, as some do: you register one, and give your server its client ID and secret. GitHub has two kinds: an **OAuth App**, such as the one the third tutorial's step 10 registers to sign people in, and a **GitHub App**. [Its guide for apps that connect to its MCP server](https://github.com/github/github-mcp-server/blob/main/docs/host-integration.md) recommends a GitHub App, and this tutorial uses one:
 
-- **What it may do is permissions you choose,** such as *read issues*, rather than OAuth scopes. The narrowest scope that reads a private repository's issues, `repo`, also grants writing to all of its code.
-- **Its tokens expire after 8 hours,** and come with a refresh token: `@haikit/mcp` refreshes them as they expire, and stores the new ones.
+- **What it may do is permissions you choose,** such as reading issues and nothing else. An OAuth App asks for scopes instead, and the narrowest that reads a private repository's issues, `repo`, also grants writing to all of its code.
+- **Its tokens expire after 8 hours,** and come with a refresh token: `@haikit/mcp` refreshes them as they expire, and stores the new ones. An OAuth App's are long-lived by default, so one that leaks stays good until it's revoked.
 - **It reads private repositories only where it's installed.** Public ones it reads as any user can.
 
 Register one:
