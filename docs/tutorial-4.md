@@ -294,7 +294,7 @@ export const findIssues = defineTool({
 
   async run({ query, repo }, ctx) {
     // GitHub searches a repo: in the query, whatever `repo` says: one or the other, so the list says what was searched
-    if (repo && /(^|\s)repo:/i.test(query)) return ctx.text("Name the repository once: as repo, or as repo: in the query, not both.");  // 1
+    if (repo && /(^|\W)repo:\S/i.test(query)) return ctx.text("Name the repository once: as repo, or as repo: in the query, not both.");  // 1
     const [owner, name] = repo?.split("/") ?? [];
     // as the conversation's owner, with the GitHub account they connected
     const found = await searchIssues.call({ query, owner, repo: name, perPage: 10 }, ctx);  // 2
@@ -320,7 +320,7 @@ and add it to the tools:
 export const tools = [listGreetings, showGreeting, findIssues];
 ```
 
-**1** GitHub adds `repo:owner/name` to the query only when the query has no `repo:` of its own. Given both, it would search the query's repository, and the list would say it searched the other. The model is told why, and nothing is sent.
+**1** GitHub adds `repo:owner/name` to the query only when the query has no `repo:` of its own, after a space, a `(` or a `-` as much as at the start: this is its server's own test. Given both, it would search the query's repository, and the list would say it searched the other. The model is told why, and nothing is sent.
 
 **2** `ctx` is what makes the call ada's: it carries the conversation, `userOf` from step 03 finds its owner, and the call uses her tokens. Ten issues at most: the list is for the user to open, and the model hears every one of them.
 
@@ -485,7 +485,7 @@ import { connectCardServer, issueListServer } from "./surfaces.ts";   // add to 
 
   async run({ query, repo }, ctx) {
     // GitHub searches a repo: in the query, whatever `repo` says: one or the other, so the list says what was searched
-    if (repo && /(^|\s)repo:/i.test(query)) return ctx.text("Name the repository once: as repo, or as repo: in the query, not both.");
+    if (repo && /(^|\W)repo:\S/i.test(query)) return ctx.text("Name the repository once: as repo, or as repo: in the query, not both.");
     const [owner, name] = repo?.split("/") ?? [];
     try {
       // as the conversation's owner, with the GitHub account they connected

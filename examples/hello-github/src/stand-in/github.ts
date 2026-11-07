@@ -220,7 +220,7 @@ export async function startGitHub({ appName, callbackUrl, tokenSeconds = ACCESS_
         if (!query) return failed("missing required parameter: query");
         // as GitHub's server does: scoped to issues, and to the repository it's given
         let q = /(^|\s)is:issue(\s|$)/.test(query) ? query : `is:issue ${query}`;
-        if (owner && repo && !/(^|\s)repo:/.test(q)) q = `repo:${owner}/${repo} ${q}`;
+        if (owner && repo && !/(^|\W)repo:\S/.test(q)) q = `repo:${owner}/${repo} ${q}`;
 
         const words: string[] = [];
         const repos: string[] = [];

@@ -876,6 +876,11 @@ for (const c of CASES) {
     resultOf(twice) === "Name the repository once: as repo, or as repo: in the query, not both."
       ? ok("a search naming its repository both as repo and as repo: in the query is refused, so the list never says it searched another")
       : bad(`a search naming two repositories gave ${resultOf(twice)}`);
+    // as GitHub's server tells: -repo: and (repo: are repo: qualifiers too
+    const excluding = await ask(conversationId, "find issues about bugs -repo:haikit-demo/postcards in haikit-demo/greetings");
+    resultOf(excluding) === "Name the repository once: as repo, or as repo: in the query, not both."
+      ? ok("…and so is one with -repo: in the query, which GitHub's server counts as naming one")
+      : bad(`a search with -repo: and repo gave ${resultOf(excluding)}`);
 
     // a query after a search goes to the picker, not to the first surface in the history
     const picking = await ask(conversationId, "greet me");
