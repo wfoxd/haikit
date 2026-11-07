@@ -738,6 +738,10 @@ providers: [
 
 One that speaks only OAuth 2.0, as GitHub does, takes [`oauth2()`](reference/auth.md#oauth2) from `@haikit/auth/oauth2`: its two endpoints, and a `profile` that reads who signed in from its API with the access token.
 
+### Call GitHub as them
+
+Each conversation now has an owner, so the app can call other services as that person. *On their behalf*, the fourth tutorial (`docs/tutorial-4.md`), connects their GitHub accounts, and searches GitHub's issues through its MCP server as each of them.
+
 ### Conversations from before sign-in
 
 A conversation made before you added the gate has no owner, so the gate tells everyone it doesn't exist. If you know whose one is, `auth.claim(conversationId, userId)` makes it theirs. Don't give one to whoever asks for it first: a conversation id may have been seen by others.

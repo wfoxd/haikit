@@ -64,7 +64,7 @@ const github = mcpServer({
   transport: http("https://api.example.com/mcp", { headers: { Authorization: `Bearer ${token}` } }),
 });
 const searchIssues = github.tool("search_issues", {
-  args: z.object({ q: z.string() }),
+  args: z.object({ query: z.string() }),
   result: z.object({ items: z.array(Issue) }),
 });
 
@@ -74,7 +74,7 @@ const findIssues = defineTool({
   input: z.object({ query: z.string() }),
   inputJsonSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
   async run({ query }, ctx) {
-    const { items } = await searchIssues.call({ q: `repo:acme/app ${query}` }, ctx);
+    const { items } = await searchIssues.call({ query: `repo:acme/app ${query}` }, ctx);
     return ctx.render(issueList, { issues: items });
   },
 });
@@ -592,7 +592,7 @@ them to, with `connect` as its link, as
 
 ```ts
 try {
-  const { items } = await searchIssues.call({ q: query }, ctx);
+  const { items } = await searchIssues.call({ query }, ctx);
   return ctx.render(issueList, { issues: items });
 } catch (err) {
   const card = connectCardFor(err, "GitHub");
@@ -757,6 +757,10 @@ authorization server, a `bearer()` one and one with the app's own key, with
 the [connect card](#connectcard) made from `err.auth`, the
 [`accountConnected`](#accountconnected) notice sent from `onConnected`, and a
 settings panel on the routes.
+[`examples/hello-github`](https://github.com/wfoxd/haikit/tree/main/examples/hello-github)
+calls GitHub's own MCP server this way, through a GitHub App, and runs
+offline against a stand-in for it; the fourth tutorial,
+[On their behalf](../tutorial-4.md), builds it step by step.
 
 Without `auth`, every call on a server shares one connection, made with the
 app's own credentials, whoever the conversation belongs to. With it, each
@@ -910,7 +914,7 @@ tokens, sealed. Needs `createMcpAuth`'s `store`, `secret` and
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `issuer` | none: whichever the server names | The authorization server the server must use, as its metadata's `issuer`, one trailing slash apart at most. A server names its own in its protected resource metadata. With `issuer`, a server that names another is refused before the app registers a client there, or sends a user to it. Pin it for a third party's server |
-| `scopes` | the server's `scopes_supported`, from its metadata | Asked for whenever a user connects. A connect link's `scope` is added to them, or with no `scopes`, asked for instead of `scopes_supported`. When any scope is asked for, the SDK adds `offline_access`, so a refresh token is issued, where the authorization server lists it in its `scopes_supported`. With none, no `scope` is sent |
+| `scopes` | the server's `scopes_supported`, from its metadata | Asked for whenever a user connects. A connect link's `scope` is added to them, or with no `scopes`, asked for instead of `scopes_supported`. An empty list is the same as none. When any scope is asked for, the SDK adds `offline_access`, so a refresh token is issued, where the authorization server lists it in its `scopes_supported`. When none of these gives a scope, no `scope` is sent |
 | `client` | none: one is registered for the app | A client the app registered with the authorization server: its `id`, and its `secret` for a confidential one, sent as the authorization server takes it, HTTP Basic before a form field. Needs `issuer`. Never replaced by one registered on the fly |
 
 **The app's client.** With no `client`, one is registered on the first
@@ -1457,7 +1461,7 @@ const accountConnectedServer = accountConnected.implement({
 
 // in a tool's run
 try {
-  return ctx.render(issueList, await searchIssues.call({ q }, ctx));
+  return ctx.render(issueList, await searchIssues.call({ query }, ctx));
 } catch (err) {
   const card = connectCardFor(err, "GitHub");
   if (card) return ctx.render(connectCardServer, card);
