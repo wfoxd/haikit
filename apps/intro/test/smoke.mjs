@@ -154,11 +154,12 @@ try {
     tutorial?.steps?.length === 10 && tutorial.steps.every((st, i) => st.id === String(i + 1).padStart(2, "0"))
       ? ok("welcome lists the tutorial's ten steps, in order")
       : bad(`welcome tutorial: ${JSON.stringify(tutorial)}`);
-    const [second, third] = tutorial?.more ?? [];
-    tutorial?.more?.length === 2 &&
+    const [second, third, fourth] = tutorial?.more ?? [];
+    tutorial?.more?.length === 3 &&
     second.first.id === "2-intro" && second.steps === 9 && second.title === "Tell them later" &&
-    third.first.id === "3-intro" && third.steps === 10 && third.title === "Who's asking"
-      ? ok("…and the second and third tutorials after it, nine and ten steps, from 2-intro and 3-intro")
+    third.first.id === "3-intro" && third.steps === 10 && third.title === "Who's asking" &&
+    fourth.first.id === "4-intro" && fourth.steps === 10 && fourth.title === "On their behalf"
+      ? ok("…and the second, third and fourth tutorials after it, nine, ten and ten steps, from 2-intro, 3-intro and 4-intro")
       : bad(`welcome's later tutorials: ${JSON.stringify(tutorial?.more)}`);
     const { today, versus, example, tokens, values } = welcomeProps ?? {};
     welcomeProps?.summary?.length > 40 ? ok("welcome says what HaiKIT is under the lede") : bad("welcome has no summary");
@@ -344,8 +345,9 @@ try {
       const map = await sse("/hai/chat", { conversationId: id, message: "contents" });
       const mapUi = opened(map).find((e) => e.component === "course_map");
       const tutorials = propsOf(map, mapUi?.handle)?.tutorials ?? [];
-      tutorials.length === 3 && tutorials[0].pages.length === 12 && tutorials[1].pages.length === 11 && tutorials[2].pages.length === 12
-        ? ok("the course map lists all three tutorials: 12 pages, then 11, then 12")
+      tutorials.length === 4 && tutorials[0].pages.length === 12 && tutorials[1].pages.length === 11 && tutorials[2].pages.length === 12 &&
+      tutorials[3].pages.length === 12
+        ? ok("the course map lists all four tutorials: 12 pages, then 11, then 12, then 12")
         : bad(`the course map's tutorials: ${JSON.stringify(tutorials.map((t) => t.pages.length))}`);
       const fromMap = await sse("/hai/interact", { conversationId: id, handle: mapUi?.handle, action: "open", value: "07" });
       propsOf(fromMap, opened(fromMap).find((e) => e.component === "tutorial_step")?.handle)?.id === "07"
@@ -388,6 +390,15 @@ try {
       !unlinked.length && targets.some((href) => href.startsWith("https://github.com/wfoxd/haikit/blob/main/docs/"))
         ? ok(`the tutorials' ${targets.length} links lead somewhere, a relative one to its document on GitHub`)
         : bad(`tutorial links the browser can't follow: ${unlinked.join(", ") || "(no docs link rewritten)"}`);
+
+      // a number on a line links to its note in the same block, and the note back to it,
+      // also where the notes follow several blocks numbered on (3-03, 4-03)
+      const numbered = TUTORIALS.flatMap((t) => t.pages.flatMap((p) => p.blocks.filter((b) => b.kind === "code" && (b.marks || b.notes)).map((b) => ({ id: p.id, b }))));
+      const numbers = (list) => (list ?? []).map((x) => x.n).sort((x, y) => x - y).join(",");
+      const astray = numbered.filter(({ b }) => numbers(b.marks) !== numbers(b.notes)).map(({ id, b }) => `${id} ${b.file ?? "(no file)"}`);
+      astray.length
+        ? bad(`tutorial code whose numbers and notes are in different blocks: ${astray.join("; ")}`)
+        : ok(`each of the tutorials' ${numbered.length} numbered blocks of code has its own notes, every number with its note`);
     }
 
     // 7b2 · the second tutorial: from the welcome, between its pages, from the map and by typing
@@ -479,13 +490,84 @@ try {
         if (n === 10) {
           const last = await sse("/hai/interact", { conversationId: id, handle: got.ui?.handle, action: "go", value: "3-next-steps" });
           const end = pageOf(last).props;
-          if (end?.id !== "3-next-steps" || end.next !== null) broken.push("3-next-steps");
+          // the third tutorial's last page reads on into the fourth
+          if (end?.id !== "3-next-steps" || end.next?.id !== "4-intro") broken.push("3-next-steps");
         }
       }
-      broken.length ? bad(`third tutorial pages that did not render: ${broken.join(", ")}`) : ok("all 12 pages of the third tutorial render, its last with nothing after it");
+      broken.length ? bad(`third tutorial pages that did not render: ${broken.join(", ")}`) : ok("all 12 pages of the third tutorial render");
     }
 
-    // 7b4 · a conversation saved before the second tutorial: its welcome digest
+    // 7b4 · the fourth tutorial: from the welcome, the rail, typing, the course
+    //       map and the manual's link to it, after the third's last page, and
+    //       every page of it
+    {
+      const fresh = await sse("/hai/start", {});
+      const id = fresh.find((e) => e.type === "hello")?.conversationId;
+      const screen = opened(fresh)[0];
+      const pageOf = (evs) => {
+        const ui = opened(evs).find((e) => e.component === "tutorial_step");
+        return { ui, props: propsOf(evs, ui?.handle) };
+      };
+      const into = await sse("/hai/interact", { conversationId: id, handle: screen?.handle, action: "tutorial", value: "4-intro" });
+      const intro = pageOf(into);
+      intro.props?.id === "4-intro" && intro.props.tutorial === "On their behalf" && intro.props.prev?.id === "3-next-steps" &&
+        intro.props.next?.id === "4-01" && intro.props.position?.index === 1 && intro.props.position?.total === 12
+        ? ok("the welcome opens the fourth tutorial, page 1 of 12, after the third tutorial's last page")
+        : bad(`the fourth tutorial's intro: ${JSON.stringify({ ...intro.props, blocks: undefined })}`);
+
+      const register = await sse("/hai/chat", { conversationId: id, message: "Open tutorial step 4-02" });
+      const two = pageOf(register).props;
+      const numbered = two?.blocks?.find((b) => b.kind === "items");
+      two?.id === "4-02" && numbered?.ordered === true && numbered.items.length === 7 &&
+        numbered.items.every((item) => item.length === 1 && item[0].kind === "p" && !/^\d+\. /.test(item[0].text))
+        ? ok("the rail's choice opens step 4-02, registering the GitHub App in a numbered list of 7")
+        : bad(`step 4-02: ${two?.id}, ${JSON.stringify(numbered)?.slice(0, 200)}`);
+      const connect = await sse("/hai/chat", { conversationId: id, message: "Open tutorial step 4-03" });
+      const three = pageOf(connect).props;
+      const annotated = three?.blocks?.find((b) => b.kind === "code" && b.marks);
+      three?.id === "4-03" && annotated?.file === "src/server/github.ts" && annotated.marks.length === 10 && annotated.notes?.length === 10
+        ? ok("…and step 4-03, the MCP connection's code with its file and its 10 numbered notes")
+        : bad(`step 4-03: ${three?.id}, ${annotated?.file}, ${annotated?.marks?.length} marks, ${annotated?.notes?.length} notes`);
+      const checkpoint = three?.blocks?.find((b) => b.kind === "callout" && b.body.some((part) => part.kind === "code"));
+      const commands = checkpoint?.body.find((part) => part.kind === "code");
+      commands?.lang === "bash" && commands.code.split("\n").length === 2 && commands.code.split("\n").every((l) => l.startsWith("curl ")) &&
+      !checkpoint.body.some((part) => part.kind === "p" && part.text.includes("```"))
+        ? ok("…its checkpoint holds its two curl commands as code, a line each, not run into its words")
+        : bad(`step 4-03's checkpoint: ${JSON.stringify(checkpoint?.body)?.slice(0, 300)}`);
+
+      const typed = await sse("/hai/chat", { conversationId: id, message: "show me the GitHub tutorial" });
+      pageOf(typed).props?.id === "4-intro" ? ok("typing “GitHub tutorial” opens its introduction") : bad("“GitHub tutorial” did not open it");
+
+      const map = await sse("/hai/chat", { conversationId: id, message: "contents" });
+      const mapUi = opened(map).find((e) => e.component === "course_map");
+      const fromMap = await sse("/hai/interact", { conversationId: id, handle: mapUi?.handle, action: "open", value: "4-07" });
+      pageOf(fromMap).props?.id === "4-07" ? ok("the course map opens tutorial step 4-07") : bad("the map did not open step 4-07");
+
+      // the manual's MCP page links to the tutorial, and the link opens it here, not on GitHub
+      const mcp = await sse("/hai/chat", { conversationId: id, message: "Open reference page mcp" });
+      const mcpUi = opened(mcp).find((e) => e.component === "reference_page");
+      const linked = JSON.stringify(propsOf(mcp, mcpUi?.handle)?.blocks ?? []).includes("](tutorial:4-intro)");
+      const followed = pageOf(await sse("/hai/interact", { conversationId: id, handle: mcpUi?.handle, action: "go", value: "tutorial:4-intro" }));
+      linked && followed.props?.id === "4-intro"
+        ? ok("the manual's link to *On their behalf* opens the fourth tutorial here")
+        : bad(`the MCP page's link to the fourth tutorial: linked ${linked}, opened ${followed.props?.id}`);
+
+      const broken = [];
+      for (let n = 1; n <= 10; n++) {
+        const want = `4-${String(n).padStart(2, "0")}`;
+        const evs = await sse("/hai/chat", { conversationId: id, message: `step ${want}` });
+        const got = pageOf(evs);
+        if (got.props?.id !== want || !got.props.blocks?.length) broken.push(want);
+        if (n === 10) {
+          const last = await sse("/hai/interact", { conversationId: id, handle: got.ui?.handle, action: "go", value: "4-next-steps" });
+          const end = pageOf(last).props;
+          if (end?.id !== "4-next-steps" || end.next !== null) broken.push("4-next-steps");
+        }
+      }
+      broken.length ? bad(`fourth tutorial pages that did not render: ${broken.join(", ")}`) : ok("all 12 pages of the fourth tutorial render, its last with nothing after it");
+    }
+
+    // 7b5 · a conversation saved before the second tutorial: its welcome digest
     //       doesn't mention it, so the scripted guide finds it in today's prompt
     {
       const { scripted } = await import("../src/server/scripted.ts");
@@ -510,6 +592,11 @@ try {
       third?.name === "show_tutorial_step" && third.input?.id === "3-03"
         ? ok("…and the third tutorial's too")
         : bad(`an old conversation's "Open tutorial step 3-03": ${JSON.stringify(third)}`);
+      messages[messages.length - 1] = { role: "user", content: "Open tutorial step 4-03" };
+      const fourth = (await scripted().generate({ system, tools: [], messages, onTextDelta() {} })).content.find((b) => b.type === "tool_use");
+      fourth?.name === "show_tutorial_step" && fourth.input?.id === "4-03"
+        ? ok("…and the fourth tutorial's")
+        : bad(`an old conversation's "Open tutorial step 4-03": ${JSON.stringify(fourth)}`);
 
       // one saved when the third tutorial had nine steps: its digest stops at 3-09, today's prompt doesn't
       const nineSteps = oldWelcome.replace(
@@ -538,7 +625,7 @@ try {
       // what the model is told it can show, against the tutorials themselves
       const { tutorialRefs } = await import("../src/server/tutorial.ts");
       const { showTutorialStep } = await import("../src/server/tools.ts");
-      const stale = [1, 2, 3].flatMap((n) => {
+      const stale = [1, 2, 3, 4].flatMap((n) => {
         const ids = tutorialRefs(n).map((p) => p.id);
         const steps = ids.filter((id) => /^(\d+-)?\d+$/.test(id));
         const [intro, first, last, end] = [ids[0], steps[0], steps.at(-1), ids.at(-1)];
@@ -562,8 +649,9 @@ try {
       const pages = (menu.tutorials ?? []).map((t) => t.pages.map((p) => p.id));
       const each = (t, prefix, steps) =>
         t?.length === steps + 2 && t[0] === `${prefix}intro` && t[1] === `${prefix}01` && t.at(-1) === `${prefix}next-steps`;
-      menu.lessons.length === 2 && lessons.length === 14 && pages.length === 3 && each(pages[0], "", 10) && each(pages[1], "2-", 9) && each(pages[2], "3-", 10)
-        ? ok("the rail lists 14 lessons in 2 parts, and every page of the three tutorials: 12, 11 and 12")
+      menu.lessons.length === 2 && lessons.length === 14 && pages.length === 4 &&
+      each(pages[0], "", 10) && each(pages[1], "2-", 9) && each(pages[2], "3-", 10) && each(pages[3], "4-", 10)
+        ? ok("the rail lists 14 lessons in 2 parts, and every page of the four tutorials: 12, 11, 12 and 12")
         : bad(`menu.json: ${menu.lessons.length} parts, ${lessons.length} lessons, ${JSON.stringify(pages)}`);
       const manual = menu.reference?.pages ?? [];
       manual.length === 20 && manual[0].id === "index" && manual[0].title === "Contents" && manual[19].id === "limits"

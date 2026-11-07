@@ -1293,6 +1293,10 @@ Everything in this tutorial happens inside a request. *Tell them later*, the sec
 
 Anyone who has a conversation's id can use it, which is fine for one person on `localhost`. *Who's asking*, the third tutorial (`docs/tutorial-3.md`), puts `@haikit/auth` in front of this app: a sign-in, a gate that keeps each person to their own conversations, the model greeting them by name, and *sign out everywhere*.
 
+### Call other services as the user
+
+Once people sign in, the app can call other services as each of them. *On their behalf*, the fourth tutorial (`docs/tutorial-4.md`), connects the signed-in app to GitHub's MCP server with `@haikit/mcp`: a few of GitHub's tools, called from tools of your own, with the GitHub account each person connects.
+
 ### Things that will tempt you
 
 **A `render_ui(component, props)` tool** so the model can compose interface freely. It feels flexible and it dissolves every guarantee in step 10 — the registry stops being typed, reviewable, or bounded. Tools owning their rendering contract is the constraint that makes the rest work.

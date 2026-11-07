@@ -126,16 +126,18 @@ try {
     );
     check(
       "the tutorials are numbered in order, each with its steps beside its title",
-      text(w.el).includes(`1${current.tutorial.title} 10 steps`) && current.tutorial.more.every((t, i) => text(w.el).includes(`${i + 2}${t.title} ${t.steps} steps`)) && text(w.el).includes("3 tutorials, 29 steps"),
+      text(w.el).includes(`1${current.tutorial.title} 10 steps`) && current.tutorial.more.every((t, i) => text(w.el).includes(`${i + 2}${t.title} ${t.steps} steps`)) && text(w.el).includes("4 tutorials, 39 steps"),
     );
     await click(button(w.el, current.tutorial.title));
     check("the first tutorial's title sends tutorial: intro", JSON.stringify(w.sent.at(-1)) === '["tutorial","intro"]');
     await w.release();
     // each tutorial that carries on is offered after the first, and opens at its introduction
-    await click(button(w.el, "Who's asking"));
+    await click(button(w.el, "On their behalf"));
     check(
-      "the tutorials after the first are offered in turn, and the third opens at its introduction",
-      text(w.el).indexOf("Tell them later") < text(w.el).indexOf("Who's asking") && JSON.stringify(w.sent.at(-1)) === '["tutorial","3-intro"]',
+      "the tutorials after the first are offered in turn, and the fourth opens at its introduction",
+      text(w.el).indexOf("Tell them later") < text(w.el).indexOf("Who's asking") &&
+        text(w.el).indexOf("Who's asking") < text(w.el).indexOf("On their behalf") &&
+        JSON.stringify(w.sent.at(-1)) === '["tutorial","4-intro"]',
     );
     await w.release();
     await click(button(w.el, "Contents"));
@@ -261,6 +263,7 @@ try {
         ],
       },
       { kind: "sequence", title: "A round trip", steps: [step("browser", "server", "ask"), step("server", "model", "call"), step("server", "server", "park")] },
+      { kind: "callout", tone: "tip", title: "Checkpoint", body: [{ kind: "p", text: "Run it:" }, { kind: "code", lang: "bash", code: "curl -s one\ncurl -s two" }] },
     ];
     const l = await mount("lesson", { ...props, blocks }, { mode: "display" });
     const body = l.el;
@@ -268,6 +271,11 @@ try {
     check("markup in a payload stays text", !body.querySelector("b") && text(body).includes("<b>not bold</b>"));
     check("an ordered list starts where it says", body.querySelector("ol[start='3']")?.children.length === 2 && !!body.querySelector("ol[start='3'] li ul"));
     check("notes and callouts are labelled asides", ["Look", "Try it", "Before you ship", "Warning"].every((label) => [...body.querySelectorAll('[role="note"]')].some((n) => n.textContent.startsWith(label))));
+    const checkpoint = [...body.querySelectorAll('[role="note"]')].find((n) => n.textContent.includes("Checkpoint"));
+    check(
+      "code in a callout is a code block, its lines kept, with its copy button",
+      checkpoint?.querySelector("pre code")?.textContent === "curl -s one\ncurl -s two" && buttons(checkpoint).some((b) => b.title === "Copy the code"),
+    );
     check("a fold holds what's between details and details-end", body.querySelector("details summary")?.textContent === "More" && body.querySelector("details p")?.textContent === "Folded away.");
     const marked = body.querySelector('a[aria-label="Note 1"]');
     check("a numbered line links to its note, and the note back to it", !!marked && !!body.querySelector(`#${marked.getAttribute("href").slice(1)} a[aria-label="Show the line for note 1"]`));
@@ -276,7 +284,7 @@ try {
     await click(document.activeElement.querySelector("a"));
     check("and the note's number, back to its line", document.activeElement?.id === marked.closest("[id]")?.id);
     check("a comment that spans lines is coloured on each", [...body.querySelectorAll("pre .italic")].some((s) => s.textContent === " lines */"));
-    check("each code block has a copy button, and the live source its bar", body.querySelectorAll('button[title="Copy the code"]').length === 3 && text(body).includes("Live source") && text(body).includes("new file"));
+    check("each code block has a copy button, one in a callout too, and the live source its bar", body.querySelectorAll('button[title="Copy the code"]').length === 4 && text(body).includes("Live source") && text(body).includes("new file"));
     await click(body.querySelector('button[title="Copy the code"]'));
     check("copy puts the code as written on the clipboard", copied.at(-1) === blocks[11].code && body.querySelector('button[title="Copy the code"]').textContent === "Copied");
     check("a table, its cells inline", body.querySelector("table th")?.textContent === "Name" && !!body.querySelector("table td code") && !!body.querySelector("table td strong"));
@@ -347,6 +355,20 @@ try {
     check("Next sends go: the next page's id", JSON.stringify(t.sent) === `[["go","${refs[at + 1].id}"]]`);
     await t.freeze(refs[at + 1].id);
     check("frozen, it names where you went, by its number", text(t.el).includes(`You went on to ${refs[at + 1].id.replace(/^\d+-/, "")} ${refs[at + 1].title}.`));
+    const fourth = tutorialOf("4-02");
+    const register = fourth.pages.find((p) => p.id === "4-02");
+    const numbered = await mount("tutorial_step", {
+      blocks: register.blocks,
+      id: register.id,
+      label: register.label,
+      title: register.title,
+      tutorial: fourth.title,
+      position: { index: 3, total: fourth.pages.length },
+      prev: null,
+      next: null,
+    });
+    const steps = numbered.el.querySelector("ol");
+    check("a tutorial's numbered list is a list, an item for each step", steps?.children.length === 7 && !/^\d\. /.test(steps.children[0].textContent));
 
     const manual = referenceRefs();
     const surfaces = referencePageOf("surfaces");
@@ -428,8 +450,8 @@ try {
     check(
       "it lists Welcome, the course map, the parts, the tutorials, the manual and the demos",
       ["Welcome", "Course map"].every((l) => row(nav(), l)) &&
-        ["Part 1: ", "Part 2: ", "Build your first HaiKIT app", "Tell them later", "Who's asking", "HaiKIT reference manual"].every((t) => group(nav(), t)) &&
-        text(nav()).includes("69 pages"),
+        ["Part 1: ", "Part 2: ", "Build your first HaiKIT app", "Tell them later", "Who's asking", "On their behalf", "HaiKIT reference manual"].every((t) => group(nav(), t)) &&
+        text(nav()).includes("81 pages"),
     );
     check("its groups start closed", buttons(nav()).filter((b) => b.hasAttribute("aria-expanded")).every((b) => b.getAttribute("aria-expanded") === "false"));
     const demos = [...nav().querySelectorAll("a")];
@@ -440,7 +462,7 @@ try {
     await r.chat.show("tutorial_step", "3-04");
     const third = group(nav(), "Who's asking");
     check("a tutorial page on screen opens its group and is marked, and Welcome isn't", third.getAttribute("aria-expanded") === "true" && row(nav(), "Sign in")?.getAttribute("aria-current") === "page" && !row(nav(), "Welcome").hasAttribute("aria-current"));
-    check("it has its tick, its group counts it, and so does the head", row(nav(), "Sign in").textContent.endsWith(", opened") && third.textContent.includes("1 of 12 opened") && text(nav()).includes("1 of 69 pages opened"));
+    check("it has its tick, its group counts it, and so does the head", row(nav(), "Sign in").textContent.endsWith(", opened") && third.textContent.includes("1 of 12 opened") && text(nav()).includes("1 of 81 pages opened"));
     await r.chat.tell("text_delta");
     check("an event that shows no page changes nothing", row(nav(), "Sign in")?.getAttribute("aria-current") === "page");
 
@@ -489,7 +511,7 @@ try {
     r.chat.state.blocks = [];
     r.chat.state.surfaces = new Map();
     await r.chat.tell("reset");
-    check("a new chat starts with nothing marked and no ticks", !nav().querySelector("[aria-current]") && !text(nav()).includes(", opened") && text(nav()).includes("69 pages"));
+    check("a new chat starts with nothing marked and no ticks", !nav().querySelector("[aria-current]") && !text(nav()).includes(", opened") && text(nav()).includes("81 pages"));
 
     await click(r.slot.querySelector('button[aria-label="Close the contents"]'));
     check(
