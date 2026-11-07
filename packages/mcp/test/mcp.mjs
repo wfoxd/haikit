@@ -1676,13 +1676,20 @@ async function listen(handle) {
   return { origin: `http://127.0.0.1:${web.address().port}`, close };
 }
 
+/** GitHub's refusals of a refresh, as its token endpoint words them. */
+const GITHUB_REFUSALS = {
+  bad_refresh_token: "The refresh token passed is incorrect or expired.",
+  incorrect_client_credentials: "The client_id and/or client_secret passed are incorrect.",
+};
 /**
  * An OAuth authorization server. `/authorize` signs in whoever `x-login`
  * names and sends the browser straight back. Access tokens go into `issued`,
  * which the resource server reads, and a refresh token is spent by its
  * refresh: one used again, or by another client than it was issued to, is
  * refused. `refresh` says how a refresh is answered, "ok", "invalid_grant"
- * or "503", after `refreshDelay`; a refusal waits `reuseDelay` more.
+ * or "503", after `refreshDelay`, or as GitHub refuses one, with a 200:
+ * "bad_refresh_token" or "incorrect_client_credentials". A refusal waits
+ * `reuseDelay` more.
  * A registration waits `registerDelay`. `dud` issues access tokens no
  * resource server takes. `tokens` is every token request, `revoked` every
  * revocation.
@@ -1787,9 +1794,10 @@ async function authorizationServer() {
         await wait(as.refreshDelay);
         if (as.refresh === "503") return res.writeHead(503, { "content-type": "text/plain" }).end("down for maintenance");
         const held = as.refreshes.get(form.get("refresh_token"));
-        if (as.refresh === "invalid_grant" || !held || held.client !== client.id) {
+        if (as.refresh !== "ok" || !held || held.client !== client.id) {
           as.refused++;
           await wait(as.reuseDelay);
+          if (as.refresh in GITHUB_REFUSALS) return answer(res, 200, { error: as.refresh, error_description: GITHUB_REFUSALS[as.refresh] });
           return answer(res, 400, { error: "invalid_grant" });
         }
         as.refreshes.delete(form.get("refresh_token"));
@@ -2235,6 +2243,20 @@ const NEW_SECRET = "the secret that replaces it, of 32 bytes or more";
   });
   check("no refresh started a sign-in, or registered a client", as.authorizations === authorizations && as.registrations === registrations);
   check("…or had the SDK warn", !logged.some((line) => line.includes("[mcp-sdk]")));
+
+  for (const code of Object.keys(GITHUB_REFUSALS)) {
+    await connectFlow(app, "/mcp/connect/github?conversation=c1", "ada");
+    as.refresh = code;
+    expire("ada");
+    const refused = await rejection(whoami.call({}, { conversationId: "c1" }));
+    check(
+      `a refresh GitHub refuses with ${code}, with a 200: auth, reconnect, and the credential deleted`,
+      refused?.reason === "auth" &&
+        sameNeed(refused, { kind: "reconnect", connect: "/mcp/connect/github?conversation=c1" }) &&
+        (await store.get("ada", "github")) === null,
+    );
+    as.refresh = "ok";
+  }
 
   await connectFlow(app, "/mcp/connect/github?conversation=c1", "ada");
   const scope = await rejection(write.call({}, { conversationId: "c1" }));

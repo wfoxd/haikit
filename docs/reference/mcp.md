@@ -525,7 +525,7 @@ A call that got no result, or one its schema refused.
 | `args` | The `args` schema refused the args, or they aren't an object. Nothing was sent | `<server>/<tool> was not called: its args do not match the schema`, or `… its args must be an object` |
 | `result` | The `result` schema refused the result, there was nothing to parse, or the SDK refused it against the server's output schema (see [What a call resolves to](#what-a-call-resolves-to)). Only a call has it: listing the tools never fails with `result` | `<server>/<tool> returned a result that does not match the schema` |
 | `timeout` | No answer within `timeoutMs`, or not done within `maxTotalMs`, connecting included | `<server>/<tool> did not answer in time` |
-| `connection` | The server couldn't be reached, or the connection dropped before the answer. Over HTTP, that is a request that got no answer, or a 404 for a session the server ended, and the connection is made again on the next call (see [The connection](#the-connection)). With `auth`, also: the user's credential couldn't be looked up, or for `oauth()`, refreshed, as when the authorization server couldn't be reached, or answered with something other than a refusal, or found the user connected again as the call was made | `<server>/<tool> could not be reached` |
+| `connection` | The server couldn't be reached, or the connection dropped before the answer. Over HTTP, that is a request that got no answer, or a 404 for a session the server ended, and the connection is made again on the next call (see [The connection](#the-connection)). With `auth`, also: the user's credential couldn't be looked up, or for `oauth()`, refreshed, as when the authorization server couldn't be reached, or answered with something other than one of the refusals [`oauth`](#oauth) names, or found the user connected again as the call was made | `<server>/<tool> could not be reached` |
 | `protocol` | The server refused the call, as for a tool it doesn't have (`code` `-32602`), whatever its words. Also a listing of tools the SDK can't read, and any other SDK error, such as an HTTP 401 or 403 on a server without `auth`, or a server asking this client for input. Over HTTP, that is every other HTTP error but a 404 for a session the server ended, such as a 404 on a connection with no session, a 400, or a 5xx, and the connection is kept. For `oauth()`, also a 401's refresh that finds an authorization server other than the one that issued the user's credential, or than the one `issuer` pins, or one whose authorization endpoint isn't https or on a loopback host | `<server>/<tool> was refused by the server` |
 | `closed` | `close()` was called before or during the call, or with `auth`, [`forget()`](#forget) during it | `<server>/<tool>: the connection was closed` |
 | `user` | A server with `auth` had no user to call as (see [Who a call runs as](#who-a-call-runs-as)). Nothing was sent | `<server>/<tool> was not called: there is no user to call it as`, `… the user it runs for could not be looked up`, or `… its userId is not the conversation's owner` |
@@ -570,7 +570,7 @@ What a call with reason `auth` needs from the user, on the error's `auth`.
 | `kind` | When | What the user can do |
 | --- | --- | --- |
 | `connect` | The app has no credential for the user: `token(userId)` or `make(userId)` gave `null`, or for `oauth()`, the store has none that opens. Nothing was sent | Give the app one, such as their key, or for `oauth()`, connect at `connect` |
-| `reconnect` | The server refused theirs: a 401, and again after the transport looked up the token once more, or that lookup found none. For `oauth()`: a 401 again after a refresh, a refresh the authorization server refused, or a credential with no refresh token | Give the app a new one, or for `oauth()`, connect again at `connect` |
+| `reconnect` | The server refused theirs: a 401, and again after the transport looked up the token once more, or that lookup found none. For `oauth()`: a 401 again after a refresh, a refresh the authorization server refused with `invalid_grant`, `invalid_client`, `unauthorized_client`, or GitHub's `bad_refresh_token` or `incorrect_client_credentials` (see [`oauth`](#oauth)), or a credential with no refresh token | Give the app a new one, or for `oauth()`, connect again at `connect` |
 | `scope` | Theirs needs more access: a 403 with `error="insufficient_scope"` | Grant it more access, or for `oauth()`, connect at `connect`, which asks for it. `scope` is what the server asked for |
 
 `scope` is there only with kind `scope`, and only when the server's
@@ -993,14 +993,18 @@ secret isn't kept with them: it's read from the options each time.
   5. The refresh is sent, as the client the tokens were issued to (see
      [The app's client](#oauth)), with the resource indicator. If the
      authorization server refuses it, with `invalid_grant`, `invalid_client`
-     or `unauthorized_client`, the store is read again, and a newer
-     credential, as when another process spent the same refresh token after
-     this one's lease lapsed, is used. Else the credential is deleted, if
-     the store still holds the one the refresh began with, and the call
-     rejects with kind `reconnect`.
-  6. Anything else, such as no answer, a 503, or any other error, rejects
-     the call with reason `connection`, keeps the credential, and gives the
-     lease back, for the next 401 to try again.
+     or `unauthorized_client`, or GitHub's own words for them,
+     `bad_refresh_token` or `incorrect_client_credentials`, as the `error`
+     of a JSON answer of any status, the 200 GitHub sends them with
+     included, the store is read again, and a newer credential, as when
+     another process spent the same refresh token after this one's lease
+     lapsed, is used. Else the credential is deleted, if the store still
+     holds the one the refresh began with, and the call rejects with kind
+     `reconnect`.
+  6. Anything else, such as no answer, a 503, or any other `error`, such as
+     `temporarily_unavailable`, rejects the call with reason `connection`,
+     keeps the credential, and gives the lease back, for the next 401 to try
+     again.
   7. The new tokens are written over the credential the refresh began with,
      keeping its `connectedAt` and its client, and its scope unless the
      tokens name one, which ends the lease. The old refresh token may be
