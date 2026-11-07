@@ -34,7 +34,7 @@ software. You steer.":
 
 It ends with **Start here**: three ways in, side by side where there's room.
 **Course** names its two parts and starts lesson 1.1 or opens the course map;
-**Tutorials** lists HaiKIT's three tutorials in order, each opening right
+**Tutorials** lists HaiKIT's four tutorials in order, each opening right
 here; **Reference** has a button for each page of HaiKIT's reference manual. The text lives in
 `src/server/course/index.ts`, and the drawings are SVG, drawn by React
 components in `src/client/drawings/`: the illustrations, the architecture
@@ -161,24 +161,26 @@ GOOGLE_CLIENT_ID=… GOOGLE_CLIENT_SECRET=… GITHUB_CLIENT_ID=… GITHUB_CLIENT
 
 ## The tutorials
 
-HaiKIT's three tutorials are built in:
+HaiKIT's four tutorials are built in:
 
 | Tutorial | Pages | What it builds |
 | --- | --- | --- |
 | *Build a haikit app* | `intro`, `01`–`10`, `next-steps` | Hello, World! in whichever language the world picks |
 | *Tell them later* | `2-intro`, `2-01`–`2-09`, `2-next-steps` | the same app, speaking up after the request is over: progress, notices, wake turns and live updates |
 | *Who's asking* | `3-intro`, `3-01`–`3-10`, `3-next-steps` | the same app, signed in with `@haikit/auth`: a login, a gate that keeps each person to their own conversations, sign out everywhere, and sign in with Google |
+| *On their behalf* | `4-intro`, `4-01`–`4-10`, `4-next-steps` | the same app, calling GitHub's MCP server with `@haikit/mcp` as each person: the GitHub account they connect, a button when they haven't, and the model picking up where it left off once they have |
 
 Each page is one the visitor reads in the app, with the tutorial's code (each
 file labelled, numbered lines linked to their notes), callouts, and Previous /
 Next buttons; each tutorial's last page leads on to the next. Each page is a
 HaiKIT surface: the browser holds the whole page, and the model gets a short
-digest of it. The welcome screen lists the three tutorials, and the course
+digest of it. The welcome screen lists the four tutorials, and the course
 map and the contents rail list every page of each.
 
-`content/tutorial.md`, `content/tutorial-2.md` and `content/tutorial-3.md` are
-copies of `docs/tutorial.md`, `docs/tutorial-2.md` and `docs/tutorial-3.md`
-from the haikit repository, so the app stays self-contained. The server parses them when it starts
+`content/tutorial.md`, `content/tutorial-2.md`, `content/tutorial-3.md` and
+`content/tutorial-4.md` are copies of `docs/tutorial.md`, `docs/tutorial-2.md`,
+`docs/tutorial-3.md` and `docs/tutorial-4.md` from the haikit repository, so
+the app stays self-contained. The server parses them when it starts
 (`src/server/tutorial.ts`), and stops with the line it couldn't read if a
 tutorial ever uses Markdown the parser doesn't know. To pick up the latest of
 the tutorials and the reference manual:
@@ -449,7 +451,7 @@ src/server/tools.ts        welcome (init), show_welcome, show_course_map, show_l
 src/server/scripted.ts     the scripted guide, a ModelAdapter
 src/server/course/         the lessons, the introduction, the glossary and the answer key
 src/server/excerpts.ts     reads the code the lessons quote
-src/server/tutorial.ts     reads content/tutorial.md, tutorial-2.md and tutorial-3.md into the tutorials' pages
+src/server/tutorial.ts     reads content/tutorial.md and tutorial-2.md to tutorial-4.md into the tutorials' pages
 src/server/reference.ts    reads content/reference/ into the manual's pages, and checks its links
 src/server/auth.ts         signing in with Google or GitHub, when there's a client for it, and the
                            gate that lets anyone in and keeps a signed-in reader's conversations
@@ -482,6 +484,7 @@ test/smoke.mjs             the end-to-end check
 content/tutorial.md        HaiKIT's tutorials, copied from the haikit repository
 content/tutorial-2.md
 content/tutorial-3.md
+content/tutorial-4.md
 content/reference/         HaiKIT's reference manual, copied from the haikit repository
 scripts/update-docs.mjs    refreshes those copies
 ```

@@ -52,10 +52,12 @@ addressable by the handle in each digest (e.g. ui_01).
   1.3", "Open tutorial step 04", "Open tutorial step 2-03", "Open tutorial page
   3-intro", "Open reference page surfaces", "Show the welcome screen", "Show
   the course map". Show what they name; show_welcome shows the welcome screen.
-- HaiKIT's three tutorials are built in: show_tutorial_step shows a page. The
+- HaiKIT's four tutorials are built in: show_tutorial_step shows a page. The
   first builds a Hello, World! app (intro, 01 to 10, next-steps); the second
   teaches the same app notifications (2-intro, 2-01 to 2-09, 2-next-steps);
-  the third signs people in to it (3-intro, 3-01 to 3-10, 3-next-steps).
+  the third signs people in to it (3-intro, 3-01 to 3-10, 3-next-steps); the
+  fourth has it call GitHub's MCP server as each of them
+  (4-intro, 4-01 to 4-10, 4-next-steps).
   Each page waits for the reader's Previous, Next or Course map click. A click
   doesn't change the page by itself: show the page they chose. To answer a
   question about a page, use query_ui find on its handle.

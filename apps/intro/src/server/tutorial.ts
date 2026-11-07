@@ -1,20 +1,21 @@
 /**
  * HaiKIT's tutorials, built into this app.
  *
- * content/tutorial.md, content/tutorial-2.md and content/tutorial-3.md are
- * copies of docs/tutorial.md, docs/tutorial-2.md and docs/tutorial-3.md from
- * the haikit repository; `npm run docs:update` refreshes them. Each is parsed
- * here once, when the server starts, into the pages the browser shows: its
- * introduction, its steps, and where to go next. A later tutorial's page ids
- * carry its number as a prefix ("2-intro", "3-01"), so every page has an id
- * of its own.
+ * content/tutorial.md, content/tutorial-2.md, content/tutorial-3.md and
+ * content/tutorial-4.md are copies of docs/tutorial.md, docs/tutorial-2.md,
+ * docs/tutorial-3.md and docs/tutorial-4.md from the haikit repository;
+ * `npm run docs:update` refreshes them. Each is parsed here once, when the
+ * server starts, into the pages the browser shows: its introduction, its
+ * steps, and where to go next. A later tutorial's page ids carry its number
+ * as a prefix ("2-intro", "3-01"), so every page has an id of its own.
  *
- * The parser knows the Markdown the tutorial actually uses: headings,
- * paragraphs, lists, tables, fenced code under a **`file`** — *action* label,
- * code lines numbered `// 1` with their **1** notes after, > [!NOTE] callouts,
- * and one <details> fold. Anything else stops the server with the line it
- * couldn't place, so a change upstream fails `npm test` rather than showing a
- * garbled page.
+ * The parser knows the Markdown the tutorials actually use: headings,
+ * paragraphs, lists, numbered lists, tables, fenced code under a **`file`** —
+ * *action* label, code lines numbered `// 1` with their **1** notes after,
+ * > [!NOTE], [!TIP] and [!WARNING] callouts, with code fenced in them, and
+ * <details> folds. Anything else stops the server with the line it couldn't
+ * place, so a change upstream fails `npm test` rather than showing a garbled
+ * page.
  */
 
 import fs from "node:fs";
@@ -24,6 +25,7 @@ import type { Block } from "../shared/surfaces.ts";
 
 type Prose = { kind: "p"; text: string } | { kind: "list"; items: string[] };
 type CodeBlock = Extract<Block, { kind: "code" }>;
+type Callout = Extract<Block, { kind: "callout" }>;
 
 export interface TutorialPage {
   /** "intro", "01" … "10", or "next-steps"; in a later tutorial, "2-intro", "3-01" … */
@@ -39,7 +41,7 @@ export interface TutorialPage {
 }
 
 export interface Tutorial {
-  /** 1, 2 or 3. */
+  /** 1 to 4. */
   n: number;
   title: string;
   lead: string;
@@ -53,6 +55,7 @@ const SOURCES = [
   { n: 1, file: "tutorial.md", prefix: "" },
   { n: 2, file: "tutorial-2.md", prefix: "2-" },
   { n: 3, file: "tutorial-3.md", prefix: "3-" },
+  { n: 4, file: "tutorial-4.md", prefix: "4-" },
 ];
 
 /**
@@ -70,6 +73,7 @@ const NOTE = /^\*\*(\d+)\*\*\s+(.*)$/;
 const MARK = /^(.*?)\s+\/\/ (\d+)\s*$/;
 const CALLOUT = /^> \[!(NOTE|TIP|WARNING)\]\s*$/;
 const ITEM = /^(\s*)- (.*)$/;
+const ORDERED = /^(\d+)\. (.*)$/;
 const LANGS = ["ts", "tsx", "js", "json", "css", "html", "bash", "text"] as const;
 
 class TutorialError extends Error {
@@ -135,7 +139,8 @@ function prose(lines: string[]): Prose[] {
 function parseBlocks(lines: string[], first: number): Block[] {
   const blocks: Block[] = [];
   let file: { file: string; action: string } | null = null;
-  // the last code block with numbered lines, which **n** notes belong to
+  // the code blocks with numbered lines, the last of them the one that **n** notes belong to
+  const markedAll: CodeBlock[] = [];
   let marked: CodeBlock | null = null;
   // the note being read, which paragraphs and lists after it join
   let note: { n: number; body: Prose[] } | null = null;
@@ -144,7 +149,7 @@ function parseBlocks(lines: string[], first: number): Block[] {
   const at = () => first + i;
   const startsBlock = (line: string) =>
     FENCE.test(line) || FILE.test(line) || CALLOUT.test(line) || line.startsWith("#") ||
-    line.startsWith("|") || line.startsWith("<") || NOTE.test(line) || ITEM.test(line);
+    line.startsWith("|") || line.startsWith("<") || NOTE.test(line) || ITEM.test(line) || ORDERED.test(line);
   const lastMark = () => Math.max(0, ...(marked?.marks ?? []).map((m) => m.n));
 
   /** Prose belongs to the open note, unless it's past the last note's own text. */
@@ -172,7 +177,7 @@ function parseBlocks(lines: string[], first: number): Block[] {
       if (i >= lines.length) throw new TutorialError("a code fence that never closes", at());
       i++;
       const block = codeBlock(fence[2] ?? "", body, file);
-      if (block.marks) marked = block;
+      if (block.marks) markedAll.push((marked = block));
       blocks.push(block);
       file = null;
       note = null;
@@ -192,7 +197,24 @@ function parseBlocks(lines: string[], first: number): Block[] {
       i++;
       const inner: string[] = [];
       while (i < lines.length && lines[i]!.startsWith(">")) inner.push(lines[i++]!.replace(/^> ?/, ""));
-      const body = prose(inner);
+      // its paragraphs and lists, and the code fenced among them, such as a checkpoint's commands
+      const body: Callout["body"] = [];
+      let words: string[] = [];
+      for (let k = 0; k < inner.length; k++) {
+        const fence = inner[k]!.match(FENCE);
+        if (!fence) {
+          words.push(inner[k]!);
+          continue;
+        }
+        body.push(...prose(words));
+        words = [];
+        const code: string[] = [];
+        for (k++; k < inner.length && !/^\s*```\s*$/.test(inner[k]!); k++) code.push(inner[k]!.slice(fence[1]!.length));
+        if (k >= inner.length) throw new TutorialError("a code fence in a callout that never closes", at());
+        const { lang } = codeBlock(fence[2] ?? "", [], null);
+        body.push({ kind: "code", lang, code: code.join("\n") });
+      }
+      body.push(...prose(words));
       const head = body[0];
       const title = head?.kind === "p" ? head.text.match(/^\*\*(.+)\*\*$/)?.[1] : undefined;
       if (title) body.shift();
@@ -241,7 +263,10 @@ function parseBlocks(lines: string[], first: number): Block[] {
     if (numbered) {
       if (!marked) throw new TutorialError("a numbered note with no numbered code before it", at());
       const opened = { n: Number(numbered[1]), body: [] as Prose[] };
-      (marked.notes ??= []).push(opened);
+      // Notes after several blocks of code, each numbered on, belong to the block
+      // whose line has their number: the last one that has it and no note for it yet.
+      const owner = markedAll.findLast((b) => b.marks!.some((m) => m.n === opened.n) && !b.notes?.some((x) => x.n === opened.n)) ?? marked;
+      (owner.notes ??= []).push(opened);
       note = opened;
       const text = [numbered[2]!];
       i++;
@@ -261,6 +286,23 @@ function parseBlocks(lines: string[], first: number): Block[] {
       }
       // a list indented under a note is part of it
       place([{ kind: "list", items }], /^\s+- /.test(line));
+      continue;
+    }
+
+    // a numbered list, as the reference manual's are: each item one paragraph
+    const ordered = line.match(ORDERED);
+    if (ordered) {
+      const items: string[] = [];
+      while (i < lines.length && lines[i]!.trim() && !FENCE.test(lines[i]!)) {
+        const item = lines[i]!.match(ORDERED);
+        if (item) items.push(item[2]!.trim());
+        else if (startsBlock(lines[i]!)) break;
+        else items[items.length - 1] += ` ${lines[i]!.trim()}`;
+        i++;
+      }
+      const start = Number(ordered[1]);
+      blocks.push({ kind: "items", ordered: true, ...(start !== 1 ? { start } : {}), items: items.map((text) => [{ kind: "p", text }]) });
+      note = null;
       continue;
     }
 

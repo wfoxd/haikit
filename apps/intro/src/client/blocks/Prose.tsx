@@ -1,7 +1,5 @@
-import type { Block } from "../../shared/surfaces.ts";
+import type { Prose as Part } from "../../shared/surfaces.ts";
 import { inline, type Linker } from "./inline.tsx";
-
-type Part = Extract<Block, { kind: "callout" }>["body"][number];
 
 /** The body of a code note or a callout: a paragraph, or a list. */
 export function Prose({ part, link }: { part: Part; link?: Linker }) {

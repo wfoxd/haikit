@@ -594,6 +594,12 @@ const TUTORIAL_PANEL: WelcomeProps["tutorial"] = {
       first: tutorialRefs(3)[0]!,
       steps: tutorialSteps(3).length,
     },
+    {
+      title: "On their behalf",
+      lead: "The same app, asking GitHub's MCP server for issues as each person: with the GitHub account they connect, a button when they haven't, and the model picking up where it left off once they have.",
+      first: tutorialRefs(4)[0]!,
+      steps: tutorialSteps(4).length,
+    },
   ],
 };
 
@@ -602,6 +608,7 @@ const TUTORIAL_NAMES: Record<number, { title: string; blurb: string }> = {
   1: { title: TUTORIAL_PANEL.title, blurb: "Build a Hello, World! app with HaiKIT, step by step, read right here." },
   2: { title: TUTORIAL_PANEL.more[0]!.title, blurb: "Teach the same app to speak up later: progress, notices, wake turns and live updates." },
   3: { title: TUTORIAL_PANEL.more[1]!.title, blurb: "Sign people in to the same app: each sees only their own conversations, and the model knows who it's talking to." },
+  4: { title: TUTORIAL_PANEL.more[2]!.title, blurb: "Have the same app ask GitHub's MCP server for issues as each person, with the GitHub account they connect." },
 };
 
 /** The reference manual, as the welcome screen offers it: every page, read from the manual itself. */

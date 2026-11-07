@@ -24,7 +24,7 @@ actually exercises. `tutorial-2.md` is the same, with `examples/hello-notices`
 as its finished app, `tutorial-3.md` with `examples/hello-auth`, and
 `tutorial-4.md` with `examples/hello-github`.
 
-The introduction app (`apps/intro`) carries copies of the first three tutorials and
+The introduction app (`apps/intro`) carries copies of the four tutorials and
 of the reference manual in its `content/` folder and shows them as pages.
 After changing a tutorial, copy it there too (or run `npm run docs:update` in
 `apps/intro` once it's on `main`), and run that app's `npm test`: its parsers

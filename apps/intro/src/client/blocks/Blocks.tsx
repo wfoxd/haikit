@@ -79,8 +79,8 @@ function draw(block: Drawn, key: number, link?: Linker): ReactNode {
         </ul>
       );
     case "items": {
-      // a reference page's list: an item that is one paragraph is its text;
-      // anything more is its blocks
+      // a reference page's list, or a tutorial's numbered one: an item that
+      // is one paragraph is its text; anything more is its blocks
       const List = block.ordered ? "ol" : "ul";
       return (
         <List
@@ -110,9 +110,10 @@ function draw(block: Drawn, key: number, link?: Linker): ReactNode {
       return (
         <Aside key={key} tone={tone} label={label}>
           {block.title && <p className="font-bold">{inline(block.title, link)}</p>}
-          {block.body.map((part, i) => (
-            <Prose key={i} part={part} link={link} />
-          ))}
+          {block.body.map((part, i) =>
+            // code in a callout, such as a checkpoint's commands, is a code block of its own
+            part.kind === "code" ? <CodeBlock key={i} block={part} /> : <Prose key={i} part={part} link={link} />,
+          )}
         </Aside>
       );
     }
