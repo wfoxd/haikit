@@ -1,20 +1,20 @@
 /**
  * HaiKIT's tutorials, built into this app.
  *
- * content/tutorial.md, content/tutorial-2.md and content/tutorial-3.md are
- * copies of docs/tutorial.md, docs/tutorial-2.md and docs/tutorial-3.md from
- * the haikit repository; `npm run docs:update` refreshes them. Each is parsed
- * here once, when the server starts, into the pages the browser shows: its
- * introduction, its steps, and where to go next. A later tutorial's page ids
- * carry its number as a prefix ("2-intro", "3-01"), so every page has an id
- * of its own.
+ * content/tutorial.md, content/tutorial-2.md, content/tutorial-3.md and
+ * content/tutorial-4.md are copies of docs/tutorial.md, docs/tutorial-2.md,
+ * docs/tutorial-3.md and docs/tutorial-4.md from the haikit repository;
+ * `npm run docs:update` refreshes them. Each is parsed here once, when the
+ * server starts, into the pages the browser shows: its introduction, its
+ * steps, and where to go next. A later tutorial's page ids carry its number
+ * as a prefix ("2-intro", "3-01"), so every page has an id of its own.
  *
- * The parser knows the Markdown the tutorial actually uses: headings,
- * paragraphs, lists, tables, fenced code under a **`file`** — *action* label,
- * code lines numbered `// 1` with their **1** notes after, > [!NOTE] callouts,
- * and one <details> fold. Anything else stops the server with the line it
- * couldn't place, so a change upstream fails `npm test` rather than showing a
- * garbled page.
+ * The parser knows the Markdown the tutorials actually use: headings,
+ * paragraphs, lists, numbered lists, tables, fenced code under a **`file`** —
+ * *action* label, code lines numbered `// 1` with their **1** notes after,
+ * > [!NOTE], [!TIP] and [!WARNING] callouts, and <details> folds. Anything
+ * else stops the server with the line it couldn't place, so a change upstream
+ * fails `npm test` rather than showing a garbled page.
  */
 
 import fs from "node:fs";
@@ -39,7 +39,7 @@ export interface TutorialPage {
 }
 
 export interface Tutorial {
-  /** 1, 2 or 3. */
+  /** 1 to 4. */
   n: number;
   title: string;
   lead: string;
@@ -53,6 +53,7 @@ const SOURCES = [
   { n: 1, file: "tutorial.md", prefix: "" },
   { n: 2, file: "tutorial-2.md", prefix: "2-" },
   { n: 3, file: "tutorial-3.md", prefix: "3-" },
+  { n: 4, file: "tutorial-4.md", prefix: "4-" },
 ];
 
 /**
@@ -70,6 +71,7 @@ const NOTE = /^\*\*(\d+)\*\*\s+(.*)$/;
 const MARK = /^(.*?)\s+\/\/ (\d+)\s*$/;
 const CALLOUT = /^> \[!(NOTE|TIP|WARNING)\]\s*$/;
 const ITEM = /^(\s*)- (.*)$/;
+const ORDERED = /^(\d+)\. (.*)$/;
 const LANGS = ["ts", "tsx", "js", "json", "css", "html", "bash", "text"] as const;
 
 class TutorialError extends Error {
@@ -144,7 +146,7 @@ function parseBlocks(lines: string[], first: number): Block[] {
   const at = () => first + i;
   const startsBlock = (line: string) =>
     FENCE.test(line) || FILE.test(line) || CALLOUT.test(line) || line.startsWith("#") ||
-    line.startsWith("|") || line.startsWith("<") || NOTE.test(line) || ITEM.test(line);
+    line.startsWith("|") || line.startsWith("<") || NOTE.test(line) || ITEM.test(line) || ORDERED.test(line);
   const lastMark = () => Math.max(0, ...(marked?.marks ?? []).map((m) => m.n));
 
   /** Prose belongs to the open note, unless it's past the last note's own text. */
@@ -261,6 +263,23 @@ function parseBlocks(lines: string[], first: number): Block[] {
       }
       // a list indented under a note is part of it
       place([{ kind: "list", items }], /^\s+- /.test(line));
+      continue;
+    }
+
+    // a numbered list, as the reference manual's are: each item one paragraph
+    const ordered = line.match(ORDERED);
+    if (ordered) {
+      const items: string[] = [];
+      while (i < lines.length && lines[i]!.trim() && !FENCE.test(lines[i]!)) {
+        const item = lines[i]!.match(ORDERED);
+        if (item) items.push(item[2]!.trim());
+        else if (startsBlock(lines[i]!)) break;
+        else items[items.length - 1] += ` ${lines[i]!.trim()}`;
+        i++;
+      }
+      const start = Number(ordered[1]);
+      blocks.push({ kind: "items", ordered: true, ...(start !== 1 ? { start } : {}), items: items.map((text) => [{ kind: "p", text }]) });
+      note = null;
       continue;
     }
 

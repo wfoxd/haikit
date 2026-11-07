@@ -79,8 +79,8 @@ function draw(block: Drawn, key: number, link?: Linker): ReactNode {
         </ul>
       );
     case "items": {
-      // a reference page's list: an item that is one paragraph is its text;
-      // anything more is its blocks
+      // a reference page's list, or a tutorial's numbered one: an item that
+      // is one paragraph is its text; anything more is its blocks
       const List = block.ordered ? "ol" : "ul";
       return (
         <List

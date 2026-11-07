@@ -73,7 +73,8 @@ export const Block = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("list"), items: z.array(z.string()) }),
   /**
    * A reference page's list, whose items can hold paragraphs, code and lists
-   * of their own: each item is its blocks.
+   * of their own: each item is its blocks. A tutorial's numbered list is one
+   * too, each item a paragraph.
    */
   z.object({
     kind: z.literal("items"),
