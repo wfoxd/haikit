@@ -73,11 +73,13 @@ function waitingCall(messages: ModelRequest["messages"]) {
 /** What read_issue's text says of the issue: GitHub's JSON, read as any model would read it. */
 function issueOf(text: string) {
   const title = text.match(/"title":("(?:[^"\\]|\\.)*")/)?.[1];
+  const comments = text.match(/"comments":(\d+)/)?.[1];
   return {
     title: title ? JSON.parse(title) : "untitled",
     state: text.match(/"state":"(\w+)"/)?.[1] ?? "in an unknown state",
     author: text.match(/"user":\{"login":"([^"]+)"/)?.[1] ?? "someone",
-    comments: Number(text.match(/"comments":(\d+)/)?.[1] ?? 0),
+    // GitHub leaves the count out when there are none; past textOf's cut, it isn't known
+    comments: comments !== undefined ? Number(comments) : /\[Cut at \d+ of \d+ characters\.\]/.test(text) ? null : 0,
   };
 }
 
@@ -118,8 +120,8 @@ export function scripted(): ModelAdapter {
         const read = results.match(READ);
         if (read) {
           const i = issueOf(results);
-          const comments = i.comments === 1 ? "1 comment" : `${i.comments} comments`;
-          return say(`${read[1]}, ${JSON.stringify(i.title)}, is ${i.state}: opened by ${i.author}, with ${comments}.`, onTextDelta);
+          const comments = i.comments === null ? "" : `, with ${i.comments === 1 ? "1 comment" : `${i.comments} comments`}`;
+          return say(`${read[1]}, ${JSON.stringify(i.title)}, is ${i.state}: opened by ${i.author}${comments}.`, onTextDelta);
         }
 
         const no = results.match(GITHUB_SAID_NO);

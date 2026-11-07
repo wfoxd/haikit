@@ -941,11 +941,13 @@ const READ = /^([\w.-]+\/[\w.-]+#\d+), as GitHub sent it\./;
 // beside call()
 function issueOf(text: string) {
   const title = text.match(/"title":("(?:[^"\\]|\\.)*")/)?.[1];
+  const comments = text.match(/"comments":(\d+)/)?.[1];
   return {
     title: title ? JSON.parse(title) : "untitled",
     state: text.match(/"state":"(\w+)"/)?.[1] ?? "in an unknown state",
     author: text.match(/"user":\{"login":"([^"]+)"/)?.[1] ?? "someone",
-    comments: Number(text.match(/"comments":(\d+)/)?.[1] ?? 0),
+    // GitHub leaves the count out when there are none; past textOf's cut, it isn't known
+    comments: comments !== undefined ? Number(comments) : /\[Cut at \d+ of \d+ characters\.\]/.test(text) ? null : 0,
   };
 }
 
@@ -953,8 +955,8 @@ function issueOf(text: string) {
 const read = results.match(READ);
 if (read) {
   const i = issueOf(results);
-  const comments = i.comments === 1 ? "1 comment" : `${i.comments} comments`;
-  return say(`${read[1]}, ${JSON.stringify(i.title)}, is ${i.state}: opened by ${i.author}, with ${comments}.`, onTextDelta);
+  const comments = i.comments === null ? "" : `, with ${i.comments === 1 ? "1 comment" : `${i.comments} comments`}`;
+  return say(`${read[1]}, ${JSON.stringify(i.title)}, is ${i.state}: opened by ${i.author}${comments}.`, onTextDelta);
 }
 
 // between `const repo` and the search branch: "read issue 22 in owner/repo", or "owner/repo#22"
@@ -1067,7 +1069,7 @@ The hello app now asks GitHub for issues as each person who uses it: with their 
 
   The servers sharing it share each user's tokens, and refresh them one at a time, so a refresh token GitHub has already replaced is never spent twice.
 - **Register your https callback URL** with the GitHub App, set `MCP_REDIRECT_URI` to it, and keep the client secret where `HAIKIT_MCP_SECRET` is, out of the code.
-- **Let people disconnect.** `POST /mcp/disconnect/github` deletes the app's copy of their tokens, and `GET /mcp/connections` lists what they've connected: `examples/hello-mcp` has a settings panel built on the two. GitHub has nowhere for the app to revoke a token, so it stays good at GitHub until it expires, within 8 hours. To end the authorization itself, the user revokes the app on GitHub, under **Settings**, **Applications**, **Authorized GitHub Apps**.
+- **Let people disconnect.** `POST /mcp/disconnect/github` deletes the app's copy of their tokens, and `GET /mcp/connections` lists what they've connected: `examples/hello-mcp` has a settings panel built on the two. GitHub has nowhere for the app to revoke a token, so the ones it deletes stay good at GitHub until they expire: the access token within 8 hours, and the refresh token, which with your client secret gets new ones, for up to 6 months. Only the user ends the authorization itself, by revoking the app on GitHub, under **Settings**, **Applications**, **Authorized GitHub Apps**.
 - **Let it be installed by others.** Under **Where can this GitHub App be installed?**, choose **Any account** when people outside yours should read their private repositories through it.
 
 ### More of GitHub
