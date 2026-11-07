@@ -21,7 +21,7 @@ const github = mcpServer({
 
 // each server tool the app may call, checked both ways by your schemas
 const searchIssues = github.tool("search_issues", {
-  args: z.object({ q: z.string(), per_page: z.number() }),
+  args: z.object({ query: z.string(), perPage: z.number() }),
   result: z.object({ items: z.array(Issue) }),
 });
 
@@ -32,7 +32,7 @@ export const findIssues = defineTool({
   input: z.object({ query: z.string() }),
   inputJsonSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
   async run({ query }, ctx) {
-    const { items } = await searchIssues.call({ q: `repo:acme/app ${query}`, per_page: 50 }, ctx);
+    const { items } = await searchIssues.call({ query: `repo:acme/app ${query}`, perPage: 50 }, ctx);
     return ctx.render(issueList, { issues: items }); // rows to the browser, the digest to the model
   },
 });
@@ -144,6 +144,10 @@ Imports only `@haikit/core`, never `@haikit/server` or `@haikit/react`. `@haikit
 takes any driver with `query(text, params)`, such as a `pg.Pool`. Built on
 [`@modelcontextprotocol/client`](https://www.npmjs.com/package/@modelcontextprotocol/client),
 the official TypeScript SDK's client.
+
+*On their behalf*, the
+[fourth tutorial](https://github.com/wfoxd/haikit/blob/main/docs/tutorial-4.md),
+calls GitHub's own MCP server this way, as each user of an app, step by step.
 
 Everything it does, with every default and message:
 [the reference manual](https://github.com/wfoxd/haikit/blob/main/docs/reference/mcp.md).
