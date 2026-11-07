@@ -88,6 +88,8 @@ export const findIssues = defineTool({
   },
 
   async run({ query, repo }, ctx) {
+    // GitHub searches a repo: in the query, whatever `repo` says: one or the other, so the list says what was searched
+    if (repo && /(^|\s)repo:/i.test(query)) return ctx.text("Name the repository once: as repo, or as repo: in the query, not both.");
     const [owner, name] = repo?.split("/") ?? [];
     try {
       // as the conversation's owner, with the GitHub account they connected

@@ -293,10 +293,12 @@ export const findIssues = defineTool({
   },
 
   async run({ query, repo }, ctx) {
+    // GitHub searches a repo: in the query, whatever `repo` says: one or the other, so the list says what was searched
+    if (repo && /(^|\s)repo:/i.test(query)) return ctx.text("Name the repository once: as repo, or as repo: in the query, not both.");  // 1
     const [owner, name] = repo?.split("/") ?? [];
     // as the conversation's owner, with the GitHub account they connected
-    const found = await searchIssues.call({ query, owner, repo: name, perPage: 10 }, ctx);  // 1
-    const issues: Issue[] = found.items.map((i) => ({                 // 2
+    const found = await searchIssues.call({ query, owner, repo: name, perPage: 10 }, ctx);  // 2
+    const issues: Issue[] = found.items.map((i) => ({                 // 3
       // https://github.com/<owner>/<repo>/issues/<number>
       repo: new URL(i.html_url).pathname.split("/").slice(1, 3).join("/"),
       number: i.number,
@@ -318,9 +320,11 @@ and add it to the tools:
 export const tools = [listGreetings, showGreeting, findIssues];
 ```
 
-**1** `ctx` is what makes the call ada's: it carries the conversation, `userOf` from step 03 finds its owner, and the call uses her tokens. Ten issues at most: the list is for the user to open, and the model hears every one of them.
+**1** GitHub adds `repo:owner/name` to the query only when the query has no `repo:` of its own. Given both, it would search the query's repository, and the list would say it searched the other. The model is told why, and nothing is sent.
 
-**2** From GitHub's shape to yours, typed both ends: rename a field in step 04's schema, and this stops compiling.
+**2** `ctx` is what makes the call ada's: it carries the conversation, `userOf` from step 03 finds its owner, and the call uses her tokens. Ten issues at most: the list is for the user to open, and the model hears every one of them.
+
+**3** From GitHub's shape to yours, typed both ends: rename a field in step 04's schema, and this stops compiling.
 
 Register the surface, and tell the model what the tool is for:
 
@@ -480,6 +484,8 @@ import { ACCOUNTS, type Issue } from "../shared/surfaces.ts";        // replaces
 import { connectCardServer, issueListServer } from "./surfaces.ts";   // add to the existing import
 
   async run({ query, repo }, ctx) {
+    // GitHub searches a repo: in the query, whatever `repo` says: one or the other, so the list says what was searched
+    if (repo && /(^|\s)repo:/i.test(query)) return ctx.text("Name the repository once: as repo, or as repo: in the query, not both.");
     const [owner, name] = repo?.split("/") ?? [];
     try {
       // as the conversation's owner, with the GitHub account they connected

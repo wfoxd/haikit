@@ -872,6 +872,10 @@ for (const c of CASES) {
     !heard.includes("api.github.com")
       ? ok("McpToolError: a search and an issue GitHub refused reach the model in the app's words")
       : bad(`the model heard ${resultOf(nowhere)} / ${resultOf(missing)}`);
+    const twice = await ask(conversationId, "find issues about repo:haikit-demo/postcards in haikit-demo/greetings");
+    resultOf(twice) === "Name the repository once: as repo, or as repo: in the query, not both."
+      ? ok("a search naming its repository both as repo and as repo: in the query is refused, so the list never says it searched another")
+      : bad(`a search naming two repositories gave ${resultOf(twice)}`);
 
     // a query after a search goes to the picker, not to the first surface in the history
     const picking = await ask(conversationId, "greet me");
