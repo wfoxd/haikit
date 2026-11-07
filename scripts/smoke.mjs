@@ -932,6 +932,36 @@ for (const c of CASES) {
     crossSite.status === 403 && gone.status === 204 && left.servers?.length === 0 && again.find((e) => e.type === "ui_open")?.component === "connect_card"
       ? ok("POST /mcp/disconnect/github: 403 from another site, 204 from the app, and the next search shows the card again")
       : bad(`disconnect: ${crossSite.status} from another site, ${gone.status} from the app; then ${JSON.stringify(left)}`);
+
+    // 10 · the user revokes the app on GitHub: the refresh is refused, bad_refresh_token with a 200, and the card asks them to connect again
+    const restart = await fetch(new URL("/mcp/connect/github", base), { headers: signedIn, redirect: "manual" });
+    const reauthorized = await fetch(new URL(restart.headers.get("location") ?? base), {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ login: "ada-gh", decision: "authorize" }),
+      redirect: "manual",
+    });
+    const reconnected = await doneMessage(await fetch(new URL(reauthorized.headers.get("location") ?? base), { headers: signedIn, redirect: "manual" }));
+    const usable = await ask(secondId, "find issues about hebrew in haikit-demo/greetings");
+    reconnected?.ok === true && usable.some((e) => e.type === "ui_open" && e.component === "issue_list")
+      ? ok("connected again, from no conversation: the next search lists the issues")
+      : bad(`connecting again: ${JSON.stringify(reconnected)}, then ${resultOf(usable)}`);
+    const revoked = await fetch(new URL("/settings/apps/authorizations", to), {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ login: "ada-gh" }),
+    });
+    const refused = await ask(secondId, "find issues about hebrew in haikit-demo/greetings");
+    const refusedCard = refused.find((e) => e.type === "ui_open");
+    const refusedProps = refused.find((e) => e.type === "ui_props" && e.handle === refusedCard?.handle)?.props;
+    const afterRevoking = await fetch(`${base}/mcp/connections`, { headers: signedIn }).then((r) => r.json());
+    revoked.status === 200 &&
+    refusedCard?.component === "connect_card" &&
+    JSON.stringify(refusedProps) === JSON.stringify({ server: "github", label: "GitHub", need: "reconnect", href: `/mcp/connect/github?conversation=${secondId}` }) &&
+    resultOf(refused) === "Shown: a button for the user to connect GitHub again, as it no longer takes their sign-in. Its tools work once they have; you'll be told." &&
+    afterRevoking.servers?.length === 0
+      ? ok("revoked on GitHub: the refresh is refused, the tokens deleted, and the next search shows the card to connect again")
+      : bad(`after revoking (${revoked.status}): ${JSON.stringify(refusedProps)}, ${resultOf(refused)}; connections ${JSON.stringify(afterRevoking)}`);
   } catch (err) {
     bad(`hello-github: ${err.stack ?? err}`);
   } finally {

@@ -114,8 +114,18 @@ interface Where {
   resource: string | undefined;
 }
 
-/** What a refresh refused for good: the user must connect again. */
-const REFUSED = new Set<string>([OAuthErrorCode.InvalidGrant, OAuthErrorCode.InvalidClient, OAuthErrorCode.UnauthorizedClient]);
+/**
+ * What a refresh refused for good: the user must connect again. With
+ * GitHub's own words for `invalid_grant` and `invalid_client`, which its
+ * token endpoint sends instead, with a 200.
+ */
+const REFUSED = new Set<string>([
+  OAuthErrorCode.InvalidGrant,
+  OAuthErrorCode.InvalidClient,
+  OAuthErrorCode.UnauthorizedClient,
+  "bad_refresh_token",
+  "incorrect_client_credentials",
+]);
 
 /** Loopback hosts, exempt from https: what the SDK exempts, and RFC 8252 does. */
 export const isLoopback = (host: string) =>

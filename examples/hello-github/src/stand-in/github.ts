@@ -20,6 +20,7 @@ import { bearerOf, bodyOf, escape, json, listen, serveMcp } from "./http.ts";
  *   GET  /.well-known/oauth-authorization-server/login/oauth   its metadata (RFC 8414): no registration, no revocation
  *   GET  /login/oauth/authorize                                the user signs in, and authorizes the app or cancels
  *   POST /login/oauth/access_token                             a code for tokens, with PKCE; a refresh, which rotates
+ *   GET  /settings/apps/authorizations                         the user revokes the app: every token of theirs ends
  *   GET  /<owner>/<repo>/issues/<number>                       an issue's page, where html_url points
  *
  * Only public repositories, so every user sees the same issues: on GitHub a
@@ -343,6 +344,7 @@ export async function startGitHub({ appName, callbackUrl, tokenSeconds = ACCESS_
     }
     if (url.pathname === "/login/oauth/authorize" && (req.method === "GET" || req.method === "POST")) return authorize(req, res, url, issuer);
     if (url.pathname === "/login/oauth/access_token" && req.method === "POST") return accessToken(req, res);
+    if (url.pathname === "/settings/apps/authorizations" && (req.method === "GET" || req.method === "POST")) return authorizations(req, res);
 
     const page = /^\/([\w.-]+\/[\w.-]+)\/issues\/(\d+)$/.exec(url.pathname);
     const issue = page && REPOS[page[1]!.toLowerCase()]?.find((i) => i.number === Number(page[2]));
@@ -402,13 +404,35 @@ export async function startGitHub({ appName, callbackUrl, tokenSeconds = ACCESS_
     back({ code });
   }
 
+  /**
+   * Settings, Applications, Authorized GitHub Apps: where the user revokes
+   * the app, which ends every token GitHub issued it for them. The app isn't
+   * told: its next call gets a 401, and its refresh `bad_refresh_token`.
+   */
+  async function authorizations(req: http.IncomingMessage, res: http.ServerResponse) {
+    if (req.method === "GET") {
+      return html(
+        res,
+        200,
+        `<h2>Authorized GitHub Apps</h2>
+         <form method="post">
+           <label>Your GitHub login <input name="login" autofocus required maxlength="39" autocomplete="username"></label>
+           <button>Revoke ${escape(appName)}</button>
+         </form>`,
+      );
+    }
+    const login = (new URLSearchParams(await bodyOf(req)).get("login") ?? "").trim().toLowerCase();
+    for (const tokens of [accessTokens, refreshTokens]) for (const [token, held] of tokens) if (held.login === login) tokens.delete(token);
+    return html(res, 200, `<p>${escape(appName)} can no longer act for ${escape(login)}.</p>`);
+  }
+
   /** The token endpoint: as the GitHub App, by HTTP Basic or by form fields, a code or a refresh token for new tokens. */
   async function accessToken(req: http.IncomingMessage, res: http.ServerResponse) {
     const form = new URLSearchParams(await bodyOf(req));
     const basic = /^Basic (\S+)$/i.exec(req.headers.authorization ?? "")?.[1];
     const [id, secret] = basic ? Buffer.from(basic, "base64").toString().split(":").map(decodeURIComponent) : [form.get("client_id"), form.get("client_secret")];
-    // a refusal names one of GitHub's own errors, not RFC 6749's
-    const refuse = (error: string, error_description: string) => answer(res, req, 400, { error, error_description, error_uri: "https://docs.github.com/apps/managing-oauth-apps/troubleshooting-oauth-app-access-token-request-errors" });
+    // a refusal names one of GitHub's own errors, not RFC 6749's, and comes with a 200, as GitHub's do
+    const refuse = (error: string, error_description: string) => answer(res, req, 200, { error, error_description, error_uri: "https://docs.github.com/apps/managing-oauth-apps/troubleshooting-oauth-app-access-token-request-errors" });
     if (id !== client.id || secret !== client.secret) return refuse("incorrect_client_credentials", "The client_id and/or client_secret passed are incorrect.");
 
     if (form.get("grant_type") === "refresh_token") {
