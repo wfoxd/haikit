@@ -723,6 +723,197 @@ for (const c of CASES) {
   }
 }
 
+// ── hello-github: GitHub's MCP server, as each user, through a GitHub App ─
+// The fourth tutorial's app. It calls GitHub's MCP server with the GitHub
+// account each user connects, through a GitHub App: a client the app
+// registered, since GitHub registers none on the fly. Offline, it runs
+// against the example's stand-in for GitHub, in its own process, configured
+// as for the real one. Its tokens last 2 seconds here, not 8 hours, so calls
+// a few seconds apart are made with refreshed ones.
+{
+  console.log("\nhello-github");
+  signedIn = {};
+  const port = 5280;
+  const base = `http://127.0.0.1:${port}`;
+  const env = {
+    NODE_ENV: "production",
+    HAI_SCRIPTED: "1",
+    PORT: String(port),
+    HAIKIT_AUTH_SECRET: "a-smoke-test-secret-of-at-least-32-bytes",
+    HAIKIT_MCP_SECRET: "another-smoke-test-secret-of-32-bytes-or-more",
+    GITHUB_STAND_IN_TOKEN_SECONDS: "2",
+    // whatever this shell has: sign-in is by name only, and nothing leaves the machine
+    GOOGLE_CLIENT_ID: "",
+    GOOGLE_CLIENT_SECRET: "",
+    GITHUB_CLIENT_ID: "",
+    GITHUB_CLIENT_SECRET: "",
+  };
+  const said = (events) => events.filter((e) => e.type === "text_delta").map((e) => e.text).join("");
+  const resultOf = (events) => events.find((e) => e.type === "block_update")?.result ?? "";
+  const toolOf = (events) => events.find((e) => e.type === "block_start" && e.block.kind === "tool")?.block.name;
+  const doneMessage = async (response) => {
+    const found = /data-message="([^"]*)"/.exec(await response.text());
+    return found ? JSON.parse(found[1].replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&")) : null;
+  };
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  // nothing a credential is made of, the GitHub App's client, or the link to connect, ever reaches the model
+  const secretsIn = (messages) => ["/mcp/connect", "ghu_", "ghr_", "Iv23li", "Bearer"].filter((s) => JSON.stringify(messages ?? []).includes(s));
+  const contextOf = (events) => events.filter((e) => e.type === "context").at(-1)?.messages;
+  const ask = (conversationId, message) => sse(`${base}/hai/chat`, { conversationId, message });
+  let child;
+  try {
+    execFileSync("npx", ["vite", "build", "--logLevel", "error"], { cwd: path.join(ROOT, "examples/hello-github"), stdio: "pipe" });
+    ok("builds with vite");
+    child = spawn("node", ["examples/hello-github/src/offline.ts"], { cwd: ROOT, env: { ...process.env, ...env }, stdio: "ignore" });
+    if (!(await waitFor(`${base}/sign-in`))) throw new Error("server did not start");
+    ok("boots against the stand-in for GitHub, and serves the page");
+
+    signedIn = { cookie: (await signInAs(base, "ada")).cookie.split(";")[0], origin: base };
+    const registry = await clientCode(base);
+    ["greeting_picker", "connect_card", "issue_list", "account_connected"].every((name) => new RegExp(`\\b${name}\\s*:`).test(registry))
+      ? ok("the picker, the card, the issues and the notice are registered in the built bundle")
+      : bad("a component is missing from the client registry");
+
+    // 1 · welcome reads connections(): nothing yet
+    const started = await sse(`${base}/hai/start`, {});
+    const conversationId = started.find((e) => e.type === "hello")?.conversationId;
+    resultOf(started) === "Signed in as ada. GitHub isn't connected: its tools show the user a button to connect it."
+      ? ok("welcome reads connections(), and tells the model GitHub isn't connected")
+      : bad(`welcome said ${resultOf(started)}`);
+
+    // 2 · a search before connecting shows the connect card; the model gets no link
+    const asked = await ask(conversationId, "find issues about hebrew in haikit-demo/greetings");
+    const card = asked.find((e) => e.type === "ui_open");
+    const cardProps = asked.find((e) => e.type === "ui_props" && e.handle === card?.handle)?.props;
+    toolOf(asked) === "find_issues" && card?.component === "connect_card" && card.mode === "display"
+      ? ok("find_issues, not connected, renders connect_card as display")
+      : bad(`expected a connect_card, got ${JSON.stringify(card)}`);
+    JSON.stringify(cardProps) === JSON.stringify({ server: "github", label: "GitHub", need: "connect", href: `/mcp/connect/github?conversation=${conversationId}` })
+      ? ok("its props are connectCardFor(err, \"GitHub\"): the href names the conversation")
+      : bad(`its props were ${JSON.stringify(cardProps)}`);
+    resultOf(asked) === "Shown: a button for the user to connect GitHub. Its tools work once they have; you'll be told." && !secretsIn(contextOf(asked)).length
+      ? ok("the model hears the digest, and never the link")
+      : bad(`the model heard ${resultOf(asked)}; leaked ${secretsIn(contextOf(asked))}`);
+
+    // 3 · the popup: the connect route, GitHub's sign-in as the GitHub App, and back to the callback
+    const start = await fetch(new URL(cardProps.href, base), { headers: signedIn, redirect: "manual" });
+    const to = new URL(start.headers.get("location") ?? base);
+    const q = to.searchParams;
+    start.status === 303 &&
+    to.pathname === "/login/oauth/authorize" &&
+    q.get("client_id")?.startsWith("Iv23li") &&
+    q.get("redirect_uri") === `http://localhost:${port}/mcp/callback` &&
+    q.get("scope") === "offline_access" &&
+    q.get("code_challenge_method") === "S256" &&
+    q.get("resource")?.endsWith("/mcp/x/issues/readonly")
+      ? ok("the connect route sends the browser to GitHub's sign-in, as the GitHub App, asking for offline_access only, with PKCE")
+      : bad(`the connect route answered ${start.status} to ${to}`);
+    const authorizePage = await fetch(to).then((r) => r.text());
+    authorizePage.includes("Authorize hello-github") ? ok("GitHub asks the user to authorize hello-github") : bad("no authorize page");
+    const authorized = await fetch(to, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ login: "ada-gh", decision: "authorize" }),
+      redirect: "manual",
+    });
+    const back = new URL(authorized.headers.get("location") ?? base);
+    const connectedAt = Date.now();
+    const done = await fetch(back, { headers: signedIn, redirect: "manual" });
+    const message = await doneMessage(done);
+    back.pathname === "/mcp/callback" && back.searchParams.get("iss")?.endsWith("/login/oauth") && message?.type === "haikit:mcp" && message.server === "github" && message.ok === true
+      ? ok("the callback trades the code with the client secret, and answers the done page: { type: haikit:mcp, server: github, ok: true }")
+      : bad(`the callback answered ${done.status}: ${JSON.stringify(message)}`);
+
+    // 4 · onConnected's wake notice starts a turn, which searches again, as ada's GitHub account
+    const woke = await eventsUntil(
+      `${base}/hai/events?conversationId=${conversationId}`,
+      (got) => {
+        const listed = got.findIndex((e) => e.type === "ui_open" && e.component === "issue_list");
+        return listed >= 0 && got.slice(listed).some((e) => e.type === "status" && e.status === "idle");
+      },
+      10_000,
+      signedIn,
+    );
+    const notice = woke.find((e) => e.type === "notice");
+    notice?.name === "account_connected" && notice.payload?.server === "github"
+      ? ok("account_connected arrives on the events stream")
+      : bad(`expected account_connected, got ${JSON.stringify(notice)}`);
+    const list = woke.find((e) => e.type === "ui_open" && e.component === "issue_list");
+    const listProps = woke.find((e) => e.type === "ui_props" && e.handle === list?.handle)?.props;
+    const issue = listProps?.issues?.[0];
+    listProps?.total === 1 && issue?.repo === "haikit-demo/greetings" && issue.number === 11 && issue.author === "bob" && /^http:\/\/127\.0\.0\.1:\d+\/haikit-demo\/greetings\/issues\/11$/.test(issue.url)
+      ? ok("the wake turn calls find_issues again, and search_issues finds issue 11")
+      : bad(`the wake turn listed ${JSON.stringify(listProps)}`);
+    Object.keys(issue ?? {}).sort().join() === "author,comments,number,repo,state,title,updatedAt,url" && !JSON.stringify(listProps).includes("Safari")
+      ? ok("the browser gets only what the result schema kept: no body, no labels")
+      : bad(`issue_list's props were ${JSON.stringify(issue)}`);
+    const wokeContext = contextOf(woke);
+    JSON.stringify(wokeContext ?? []).includes("[App notification: account_connected] The user connected GitHub.") &&
+    /^1 issue matches "hebrew in haikit-demo\/greetings"/.test(said(woke).replace(/^You're connected\. Picking up where we left off\./, "")) &&
+    !secretsIn(wokeContext).length
+      ? ok("the model hears that GitHub is connected, the digest of what was found, and no token")
+      : bad(`the wake turn said ${said(woke)}; leaked ${secretsIn(wokeContext)}`);
+
+    // 5 · an issue, read whole: GitHub's text, cut to size, and marked as someone else's words
+    const read = await ask(conversationId, "read issue 7 in haikit-demo/greetings");
+    toolOf(read) === "read_issue" && resultOf(read).startsWith("haikit-demo/greetings#7, as GitHub sent it.") && resultOf(read).includes('"title":"Klingon, please"')
+      ? ok("read_issue passes the model issue_read's text, through textOf")
+      : bad(`read_issue gave ${resultOf(read).slice(0, 200)}`);
+    said(read).endsWith('haikit-demo/greetings#7, "Klingon, please", is open: opened by qapla, with 0 comments.') && !/token/i.test(said(read))
+      ? ok("an issue's body asks for a token, and the model reports the issue instead")
+      : bad(`the model said ${said(read)}`);
+
+    // 6 · GitHub ran the tool and said no: the model hears the app's words, not GitHub's
+    const nowhere = await ask(conversationId, "find issues about bugs in haikit-demo/nowhere");
+    const missing = await ask(conversationId, "read issue 99 in haikit-demo/greetings");
+    const heard = JSON.stringify(contextOf(missing) ?? []);
+    resultOf(nowhere) === "GitHub refused the search of haikit-demo/nowhere, as it does for a repository that doesn't exist, or that the user can't see." &&
+    resultOf(missing) === "GitHub has no issue haikit-demo/greetings#99 that the user can see." &&
+    !heard.includes("Validation Failed") &&
+    !heard.includes("api.github.com")
+      ? ok("McpToolError: a search and an issue GitHub refused reach the model in the app's words")
+      : bad(`the model heard ${resultOf(nowhere)} / ${resultOf(missing)}`);
+
+    // 7 · tokens that expire are refreshed, and GitHub's refresh tokens are spent by each refresh
+    const refreshed = [];
+    for (const n of [1, 2]) {
+      await sleep(Math.max(0, connectedAt + n * 2_500 - Date.now()));
+      refreshed.push((await ask(conversationId, "find issues about welsh in haikit-demo/greetings")).some((e) => e.type === "ui_open" && e.component === "issue_list"));
+    }
+    refreshed.every(Boolean)
+      ? ok("past each access token's 2 seconds, a call refreshes it, and the second refresh uses the rotated token")
+      : bad(`after the tokens expired, the searches found: ${refreshed.join(", ")}`);
+
+    // 8 · connected once, connected in every conversation of ada's, and in no one else's
+    const second = await sse(`${base}/hai/start`, {});
+    const listed = await fetch(`${base}/mcp/connections`, { headers: signedIn }).then((r) => r.json());
+    /GitHub is connected\./.test(resultOf(second)) && listed.servers?.length === 1 && listed.servers[0].name === "github"
+      ? ok("a new conversation's welcome says GitHub is connected, and GET /mcp/connections lists it")
+      : bad(`welcome said ${resultOf(second)}; connections were ${JSON.stringify(listed)}`);
+    const secondId = second.find((e) => e.type === "hello")?.conversationId;
+    signedIn = { cookie: (await signInAs(base, "bob")).cookie.split(";")[0], origin: base };
+    const bobs = (await sse(`${base}/hai/start`, {})).find((e) => e.type === "hello")?.conversationId;
+    (await ask(bobs, "find issues about hebrew in haikit-demo/greetings")).find((e) => e.type === "ui_open")?.component === "connect_card"
+      ? ok("ada's GitHub account is hers: bob is asked to connect his own")
+      : bad("bob's search didn't ask him to connect");
+
+    // 9 · disconnecting deletes the app's tokens: GitHub has no revocation endpoint to send them to
+    signedIn = { cookie: (await signInAs(base, "ada")).cookie.split(";")[0], origin: base };
+    const crossSite = await fetch(`${base}/mcp/disconnect/github`, { method: "POST", headers: { cookie: signedIn.cookie, origin: "https://evil.example" } });
+    const gone = await fetch(`${base}/mcp/disconnect/github`, { method: "POST", headers: signedIn });
+    const left = await fetch(`${base}/mcp/connections`, { headers: signedIn }).then((r) => r.json());
+    const again = await ask(secondId, "find issues about hebrew in haikit-demo/greetings");
+    crossSite.status === 403 && gone.status === 204 && left.servers?.length === 0 && again.find((e) => e.type === "ui_open")?.component === "connect_card"
+      ? ok("POST /mcp/disconnect/github: 403 from another site, 204 from the app, and the next search shows the card again")
+      : bad(`disconnect: ${crossSite.status} from another site, ${gone.status} from the app; then ${JSON.stringify(left)}`);
+  } catch (err) {
+    bad(`hello-github: ${err.stack ?? err}`);
+  } finally {
+    child?.kill("SIGKILL");
+    signedIn = {};
+  }
+}
+
 // ── progress is throttled, and only what its type says goes out ─────────
 // The flights case shows frames arriving. This one reports faster than the
 // throttle allows, and passes what a JavaScript caller might: the frames
