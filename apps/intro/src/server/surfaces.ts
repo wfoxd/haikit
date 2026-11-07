@@ -181,7 +181,7 @@ export function textOf(block: Block): string {
     case "sequence":
       return block.steps.map((s) => `${s.label}: ${s.note}`).join(" ");
     case "callout":
-      return [block.title ?? "", ...block.body.map(prose)].join(" ");
+      return [block.title ?? "", ...block.body.map((part) => (part.kind === "code" ? part.code : prose(part)))].join(" ");
     case "details":
       return block.summary;
     case "details-end":

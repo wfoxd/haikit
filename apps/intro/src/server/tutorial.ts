@@ -12,9 +12,10 @@
  * The parser knows the Markdown the tutorials actually use: headings,
  * paragraphs, lists, numbered lists, tables, fenced code under a **`file`** —
  * *action* label, code lines numbered `// 1` with their **1** notes after,
- * > [!NOTE], [!TIP] and [!WARNING] callouts, and <details> folds. Anything
- * else stops the server with the line it couldn't place, so a change upstream
- * fails `npm test` rather than showing a garbled page.
+ * > [!NOTE], [!TIP] and [!WARNING] callouts, with code fenced in them, and
+ * <details> folds. Anything else stops the server with the line it couldn't
+ * place, so a change upstream fails `npm test` rather than showing a garbled
+ * page.
  */
 
 import fs from "node:fs";
@@ -24,6 +25,7 @@ import type { Block } from "../shared/surfaces.ts";
 
 type Prose = { kind: "p"; text: string } | { kind: "list"; items: string[] };
 type CodeBlock = Extract<Block, { kind: "code" }>;
+type Callout = Extract<Block, { kind: "callout" }>;
 
 export interface TutorialPage {
   /** "intro", "01" … "10", or "next-steps"; in a later tutorial, "2-intro", "3-01" … */
@@ -137,7 +139,8 @@ function prose(lines: string[]): Prose[] {
 function parseBlocks(lines: string[], first: number): Block[] {
   const blocks: Block[] = [];
   let file: { file: string; action: string } | null = null;
-  // the last code block with numbered lines, which **n** notes belong to
+  // the code blocks with numbered lines, the last of them the one that **n** notes belong to
+  const markedAll: CodeBlock[] = [];
   let marked: CodeBlock | null = null;
   // the note being read, which paragraphs and lists after it join
   let note: { n: number; body: Prose[] } | null = null;
@@ -174,7 +177,7 @@ function parseBlocks(lines: string[], first: number): Block[] {
       if (i >= lines.length) throw new TutorialError("a code fence that never closes", at());
       i++;
       const block = codeBlock(fence[2] ?? "", body, file);
-      if (block.marks) marked = block;
+      if (block.marks) markedAll.push((marked = block));
       blocks.push(block);
       file = null;
       note = null;
@@ -194,7 +197,24 @@ function parseBlocks(lines: string[], first: number): Block[] {
       i++;
       const inner: string[] = [];
       while (i < lines.length && lines[i]!.startsWith(">")) inner.push(lines[i++]!.replace(/^> ?/, ""));
-      const body = prose(inner);
+      // its paragraphs and lists, and the code fenced among them, such as a checkpoint's commands
+      const body: Callout["body"] = [];
+      let words: string[] = [];
+      for (let k = 0; k < inner.length; k++) {
+        const fence = inner[k]!.match(FENCE);
+        if (!fence) {
+          words.push(inner[k]!);
+          continue;
+        }
+        body.push(...prose(words));
+        words = [];
+        const code: string[] = [];
+        for (k++; k < inner.length && !/^\s*```\s*$/.test(inner[k]!); k++) code.push(inner[k]!.slice(fence[1]!.length));
+        if (k >= inner.length) throw new TutorialError("a code fence in a callout that never closes", at());
+        const { lang } = codeBlock(fence[2] ?? "", [], null);
+        body.push({ kind: "code", lang, code: code.join("\n") });
+      }
+      body.push(...prose(words));
       const head = body[0];
       const title = head?.kind === "p" ? head.text.match(/^\*\*(.+)\*\*$/)?.[1] : undefined;
       if (title) body.shift();
@@ -243,7 +263,10 @@ function parseBlocks(lines: string[], first: number): Block[] {
     if (numbered) {
       if (!marked) throw new TutorialError("a numbered note with no numbered code before it", at());
       const opened = { n: Number(numbered[1]), body: [] as Prose[] };
-      (marked.notes ??= []).push(opened);
+      // Notes after several blocks of code, each numbered on, belong to the block
+      // whose line has their number: the last one that has it and no note for it yet.
+      const owner = markedAll.findLast((b) => b.marks!.some((m) => m.n === opened.n) && !b.notes?.some((x) => x.n === opened.n)) ?? marked;
+      (owner.notes ??= []).push(opened);
       note = opened;
       const text = [numbered[2]!];
       i++;

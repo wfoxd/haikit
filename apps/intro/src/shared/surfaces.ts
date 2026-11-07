@@ -44,10 +44,21 @@ export const Side = z.object({
   text: z.string(),
 });
 
-/** The body of a code note or a callout: paragraphs and lists. */
+/** The languages code is highlighted in. */
+const Lang = z.enum(["ts", "tsx", "js", "json", "css", "html", "bash", "text"]);
+
+/** The body of a code note: paragraphs and lists. */
 export const Prose = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("p"), text: z.string() }),
   z.object({ kind: z.literal("list"), items: z.array(z.string()) }),
+]);
+export type Prose = z.infer<typeof Prose>;
+
+/** The body of a callout: paragraphs, lists, and code, such as a checkpoint's commands. */
+export const CalloutPart = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("p"), text: z.string() }),
+  z.object({ kind: z.literal("list"), items: z.array(z.string()) }),
+  z.object({ kind: z.literal("code"), lang: Lang, code: z.string() }),
 ]);
 
 /**
@@ -88,7 +99,7 @@ export const Block = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("note"), tone: z.enum(["look", "tip", "warn"]), text: z.string() }),
   z.object({
     kind: z.literal("code"),
-    lang: z.enum(["ts", "tsx", "js", "json", "css", "html", "bash", "text"]),
+    lang: Lang,
     code: z.string(),
     /** Where it was read from, e.g. "src/shared/surfaces.ts, lines 40–58". */
     source: z.string().optional(),
@@ -105,7 +116,7 @@ export const Block = z.discriminatedUnion("kind", [
     kind: z.literal("callout"),
     tone: z.enum(["note", "tip", "warning"]),
     title: z.string().optional(),
-    body: z.array(Prose),
+    body: z.array(CalloutPart),
   }),
   /** The blocks after this one, up to a details-end, fold away under `summary`. */
   z.object({ kind: z.literal("details"), summary: z.string() }),

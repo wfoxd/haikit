@@ -263,6 +263,7 @@ try {
         ],
       },
       { kind: "sequence", title: "A round trip", steps: [step("browser", "server", "ask"), step("server", "model", "call"), step("server", "server", "park")] },
+      { kind: "callout", tone: "tip", title: "Checkpoint", body: [{ kind: "p", text: "Run it:" }, { kind: "code", lang: "bash", code: "curl -s one\ncurl -s two" }] },
     ];
     const l = await mount("lesson", { ...props, blocks }, { mode: "display" });
     const body = l.el;
@@ -270,6 +271,11 @@ try {
     check("markup in a payload stays text", !body.querySelector("b") && text(body).includes("<b>not bold</b>"));
     check("an ordered list starts where it says", body.querySelector("ol[start='3']")?.children.length === 2 && !!body.querySelector("ol[start='3'] li ul"));
     check("notes and callouts are labelled asides", ["Look", "Try it", "Before you ship", "Warning"].every((label) => [...body.querySelectorAll('[role="note"]')].some((n) => n.textContent.startsWith(label))));
+    const checkpoint = [...body.querySelectorAll('[role="note"]')].find((n) => n.textContent.includes("Checkpoint"));
+    check(
+      "code in a callout is a code block, its lines kept, with its copy button",
+      checkpoint?.querySelector("pre code")?.textContent === "curl -s one\ncurl -s two" && buttons(checkpoint).some((b) => b.title === "Copy the code"),
+    );
     check("a fold holds what's between details and details-end", body.querySelector("details summary")?.textContent === "More" && body.querySelector("details p")?.textContent === "Folded away.");
     const marked = body.querySelector('a[aria-label="Note 1"]');
     check("a numbered line links to its note, and the note back to it", !!marked && !!body.querySelector(`#${marked.getAttribute("href").slice(1)} a[aria-label="Show the line for note 1"]`));
@@ -278,7 +284,7 @@ try {
     await click(document.activeElement.querySelector("a"));
     check("and the note's number, back to its line", document.activeElement?.id === marked.closest("[id]")?.id);
     check("a comment that spans lines is coloured on each", [...body.querySelectorAll("pre .italic")].some((s) => s.textContent === " lines */"));
-    check("each code block has a copy button, and the live source its bar", body.querySelectorAll('button[title="Copy the code"]').length === 3 && text(body).includes("Live source") && text(body).includes("new file"));
+    check("each code block has a copy button, one in a callout too, and the live source its bar", body.querySelectorAll('button[title="Copy the code"]').length === 4 && text(body).includes("Live source") && text(body).includes("new file"));
     await click(body.querySelector('button[title="Copy the code"]'));
     check("copy puts the code as written on the clipboard", copied.at(-1) === blocks[11].code && body.querySelector('button[title="Copy the code"]').textContent === "Copied");
     check("a table, its cells inline", body.querySelector("table th")?.textContent === "Name" && !!body.querySelector("table td code") && !!body.querySelector("table td strong"));

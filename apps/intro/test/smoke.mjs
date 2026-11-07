@@ -390,6 +390,15 @@ try {
       !unlinked.length && targets.some((href) => href.startsWith("https://github.com/wfoxd/haikit/blob/main/docs/"))
         ? ok(`the tutorials' ${targets.length} links lead somewhere, a relative one to its document on GitHub`)
         : bad(`tutorial links the browser can't follow: ${unlinked.join(", ") || "(no docs link rewritten)"}`);
+
+      // a number on a line links to its note in the same block, and the note back to it,
+      // also where the notes follow several blocks numbered on (3-03, 4-03)
+      const numbered = TUTORIALS.flatMap((t) => t.pages.flatMap((p) => p.blocks.filter((b) => b.kind === "code" && (b.marks || b.notes)).map((b) => ({ id: p.id, b }))));
+      const numbers = (list) => (list ?? []).map((x) => x.n).sort((x, y) => x - y).join(",");
+      const astray = numbered.filter(({ b }) => numbers(b.marks) !== numbers(b.notes)).map(({ id, b }) => `${id} ${b.file ?? "(no file)"}`);
+      astray.length
+        ? bad(`tutorial code whose numbers and notes are in different blocks: ${astray.join("; ")}`)
+        : ok(`each of the tutorials' ${numbered.length} numbered blocks of code has its own notes, every number with its note`);
     }
 
     // 7b2 · the second tutorial: from the welcome, between its pages, from the map and by typing
@@ -519,6 +528,12 @@ try {
       three?.id === "4-03" && annotated?.file === "src/server/github.ts" && annotated.marks.length === 10 && annotated.notes?.length === 10
         ? ok("…and step 4-03, the MCP connection's code with its file and its 10 numbered notes")
         : bad(`step 4-03: ${three?.id}, ${annotated?.file}, ${annotated?.marks?.length} marks, ${annotated?.notes?.length} notes`);
+      const checkpoint = three?.blocks?.find((b) => b.kind === "callout" && b.body.some((part) => part.kind === "code"));
+      const commands = checkpoint?.body.find((part) => part.kind === "code");
+      commands?.lang === "bash" && commands.code.split("\n").length === 2 && commands.code.split("\n").every((l) => l.startsWith("curl ")) &&
+      !checkpoint.body.some((part) => part.kind === "p" && part.text.includes("```"))
+        ? ok("…its checkpoint holds its two curl commands as code, a line each, not run into its words")
+        : bad(`step 4-03's checkpoint: ${JSON.stringify(checkpoint?.body)?.slice(0, 300)}`);
 
       const typed = await sse("/hai/chat", { conversationId: id, message: "show me the GitHub tutorial" });
       pageOf(typed).props?.id === "4-intro" ? ok("typing “GitHub tutorial” opens its introduction") : bad("“GitHub tutorial” did not open it");
